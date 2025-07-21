@@ -1,4 +1,5 @@
 use std::{
+    cell::LazyCell,
     collections::{BTreeMap, HashMap},
     error::Error,
     fmt::Display,
@@ -17,6 +18,7 @@ use eth_trie::{EthTrie, MemoryDB, Trie};
 use itertools::Itertools;
 use k256::pkcs8::der::DateTime;
 use libp2p::PeerId;
+use opentelemetry::KeyValue;
 use parking_lot::{Mutex, RwLock, RwLockWriteGuard};
 use revm::Inspector;
 use serde::{Deserialize, Serialize};
@@ -25,7 +27,7 @@ use tracing::*;
 
 use crate::{
     api::types::eth::SyncingStruct,
-    blockhooks,
+    aux, blockhooks,
     cfg::{ConsensusConfig, ForkName, NodeConfig},
     constants::{EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, TIME_TO_ALLOW_PROPOSAL_BROADCAST},
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey, verify_messages},
@@ -42,7 +44,10 @@ use crate::{
         PendingOrQueued, TransactionPool, TxAddResult, TxPoolContent, TxPoolContentFrom,
         TxPoolStatus,
     },
-    state::State,
+    state::{Code, State},
+    static_hardfork_data::{
+        XSGD_CODE, XSGD_MAINNET_ADDR, build_ignite_wallet_addr_scilla_code_map,
+    },
     sync::{Sync, SyncPeers},
     time::SystemTime,
     transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
@@ -236,6 +241,8 @@ pub struct Consensus {
 impl Consensus {
     // determined empirically
     const PROP_SIZE_THRESHOLD: usize = 921 * 1024; // 90% of 1MB
+    // view buffer size limit
+    const VIEW_BUFFER_THRESHOLD: usize = 1000;
 
     pub fn new(
         secret_key: SecretKey,
@@ -355,6 +362,8 @@ impl Consensus {
             peers.clone(),
         )?;
 
+        let enable_ots_indices = config.enable_ots_indices;
+
         let mut consensus = Consensus {
             secret_key,
             config,
@@ -367,7 +376,7 @@ impl Consensus {
             network_message_cache: None,
             high_qc,
             state,
-            db,
+            db: db.clone(),
             receipts_cache: Default::default(),
             transaction_pool: Default::default(),
             early_proposal: Default::default(),
@@ -393,6 +402,8 @@ impl Consensus {
             // treat genesis as finalized
             consensus.set_finalized_view(latest_block_view)?;
             return Ok(consensus);
+        } else if enable_ots_indices {
+            aux::check_and_build_ots_indices(db, latest_block_view)?;
         }
 
         // If we started from a checkpoint, execute the checkpointed block now
@@ -896,6 +907,14 @@ impl Consensus {
         proposer: NodePublicKey,
         block: &Block,
     ) -> Result<()> {
+        let earned_reward = LazyCell::new(|| {
+            let meter = opentelemetry::global::meter("zilliqa");
+            meter
+                .f64_counter("validator_earned_reward")
+                .with_unit("ZIL")
+                .build()
+        });
+
         debug!("apply late rewards in view {}", block.view());
         let rewards_per_block: u128 = *config.rewards_per_hour / config.blocks_per_hour as u128;
 
@@ -938,6 +957,12 @@ impl Consensus {
                 Ok(())
             })?;
             total_rewards_issued += reward;
+
+            let attributes = [
+                KeyValue::new("address", format!("{proposer_address:?}")),
+                KeyValue::new("role", "proposer"),
+            ];
+            earned_reward.add((reward as f64) / 1e18, &attributes);
         }
 
         // Reward the committee
@@ -954,6 +979,12 @@ impl Consensus {
                     Ok(())
                 })?;
                 total_rewards_issued += reward;
+
+                let attributes = [
+                    KeyValue::new("address", format!("{cosigner:?}")),
+                    KeyValue::new("role", "cosigner"),
+                ];
+                earned_reward.add((reward as f64) / 1e18, &attributes);
             }
         }
 
@@ -1073,9 +1104,15 @@ impl Consensus {
         let current_view = self.get_view()?;
         info!(block_view, current_view, %block_hash, "handling vote from: {:?}", peer_id);
 
-        // if the vote is too old and does not count anymore
+        // if the vote is too old; or too new
         if block_view + 1 < current_view {
             trace!("vote is too old");
+            return Ok(None);
+        } else if block_view > current_view + 500 {
+            // when stuck in exponential backoff, +500 is effectively forever;
+            // when active syncing at ~30 blk/s, means that we're > 3 views behind.
+            // in either case, that vote is quite meaningless at this point and can be ignored.
+            trace!("vote is too early");
             return Ok(None);
         }
 
@@ -1087,14 +1124,26 @@ impl Consensus {
 
         // Retrieve the actual block this vote is for.
         let Some(block) = self.get_block(&block_hash)? else {
-            trace!("vote for unknown block, buffering");
+            // We try to limit the size of the buffered votes to prevent memory exhaustion.
+            // If the buffered votes exceed the threshold, we purge as many stale votes as possible.
+            // While this is not guaranteed to reduce the size of the buffered votes, it is a best-effort attempt.
+            if self.buffered_votes.len() > Self::VIEW_BUFFER_THRESHOLD {
+                self.buffered_votes.retain(|_hash, votes| {
+                    // purge stale votes
+                    votes.first().map(|(_p, v)| v.view + 1).unwrap_or_default() >= current_view
+                });
+            }
             // If we don't have the block yet, we buffer the vote in case we recieve the block later. Note that we
             // don't know the leader of this view without the block, so we may be storing this unnecessarily, however
             // non-malicious nodes should only have sent us this vote if they thought we were the leader.
-            self.buffered_votes
-                .entry(block_hash)
-                .or_default()
-                .push((peer_id, vote));
+            let mut buf = self.buffered_votes.entry(block_hash).or_default();
+            if buf.len() < MAX_COMMITTEE_SIZE {
+                // we only ever need 2/3 of the committee, so it should not exceed this number.
+                trace!("vote for unknown block, buffering");
+                buf.push((peer_id, vote));
+            } else {
+                error!(%peer_id, view=%block_view, "vote for unknown block, dropping");
+            }
             return Ok(None);
         };
 
@@ -1494,7 +1543,7 @@ impl Consensus {
         self.db.with_sqlite_tx(|sqlite_tx| {
             for tx in applied_txs {
                 self.db
-                    .insert_transaction_with_db_tx(sqlite_tx, &tx.hash, &tx.tx)?;
+                    .insert_transaction_with_db_tx(sqlite_tx, &tx.hash, tx)?;
             }
             Ok(())
         })?;
@@ -1642,7 +1691,7 @@ impl Consensus {
                 inspector::noop(),
                 false,
             )?;
-            self.db.insert_transaction(&txn.hash, &txn.tx)?;
+            self.db.insert_transaction(&txn.hash, &txn)?;
 
             // Skip transactions whose execution resulted in an error
             let Some(result) = result else {
@@ -2042,7 +2091,7 @@ impl Consensus {
 
     pub fn get_transaction_by_hash(&self, hash: Hash) -> Result<Option<VerifiedTransaction>> {
         Ok(match self.db.get_transaction(&hash)? {
-            Some(tx) => Some(tx.verify()?),
+            Some(tx) => Some(tx),
             None => self.transaction_pool.read().get_transaction(&hash).cloned(),
         })
     }
@@ -2288,7 +2337,7 @@ impl Consensus {
                             txn_hash,
                             parent.hash()
                         ))?;
-                        Ok::<_, anyhow::Error>(tx)
+                        Ok::<_, anyhow::Error>(tx.tx)
                     })
                     .collect::<Result<Vec<SignedTransaction>>>()?;
 
@@ -2328,7 +2377,7 @@ impl Consensus {
                     txn_hash,
                     parent.hash()
                 ))?;
-                Ok::<_, anyhow::Error>(tx)
+                Ok::<_, anyhow::Error>(tx.tx)
             })
             .collect::<Result<Vec<SignedTransaction>>>()?;
         let checkpoint_dir = self
@@ -2911,7 +2960,7 @@ impl Consensus {
             // block transactions need to be removed from self.transactions and re-injected
             let mut pool = self.transaction_pool.write();
             for tx_hash in &head_block.transactions {
-                let orig_tx = self.db.get_transaction(tx_hash)?.unwrap().verify()?;
+                let orig_tx = self.db.get_transaction(tx_hash)?.unwrap();
 
                 // Insert this unwound transaction back into the transaction pool.
                 let account = self.state.get_account(orig_tx.signer)?;
@@ -2971,15 +3020,7 @@ impl Consensus {
             let transactions = block_pointer.transactions.clone();
             let transactions = transactions
                 .iter()
-                .map(|tx_hash| {
-                    self.db
-                        .get_transaction(tx_hash)
-                        .unwrap()
-                        .unwrap()
-                        .verify()
-                        .unwrap()
-                        .tx
-                })
+                .map(|tx_hash| self.db.get_transaction(tx_hash).unwrap().unwrap().tx)
                 .collect();
             let parent = self
                 .get_block(&block_pointer.parent_hash())?
@@ -3142,7 +3183,7 @@ impl Consensus {
         self.db.with_sqlite_tx(|sqlite_tx| {
             for txn in &verified_txns {
                 self.db
-                    .insert_transaction_with_db_tx(sqlite_tx, &txn.hash, &txn.tx)?;
+                    .insert_transaction_with_db_tx(sqlite_tx, &txn.hash, txn)?;
             }
             for (addr, txn_hash) in touched_addresses {
                 self.db
@@ -3264,6 +3305,52 @@ impl Consensus {
                     }
                 }
             };
+        }
+
+        if fork.restore_xsgd_contract {
+            if let Some(fork_height) = self
+                .state
+                .forks
+                .find_height_fork_first_activated(ForkName::RestoreXsgdContract)
+            {
+                if fork_height == block.header.number {
+                    let code: Code = serde_json::from_slice(&hex::decode(XSGD_CODE)?)?;
+                    state.mutate_account(XSGD_MAINNET_ADDR, |a| {
+                        a.code = code;
+                        Ok(())
+                    })?;
+                }
+            }
+        }
+        if fork.revert_restore_xsgd_contract {
+            if let Some(fork_height) = self
+                .state
+                .forks
+                .find_height_fork_first_activated(ForkName::RevertRestoreXsgdContract)
+            {
+                if fork_height == block.header.number {
+                    state.mutate_account(XSGD_MAINNET_ADDR, |a| {
+                        a.code = Code::Evm(vec![]);
+                        Ok(())
+                    })?;
+                }
+            }
+        }
+        if fork.restore_ignite_wallet_contracts {
+            if let Some(fork_height) = self
+                .state
+                .forks
+                .find_height_fork_first_activated(ForkName::RestoreIgniteWalletContracts)
+            {
+                if fork_height == block.header.number {
+                    for (addr, code) in build_ignite_wallet_addr_scilla_code_map()?.iter() {
+                        state.mutate_account(*addr, |a| {
+                            a.code = code.clone();
+                            Ok(())
+                        })?;
+                    }
+                }
+            }
         }
 
         if self.block_is_first_in_epoch(block.header.number) {

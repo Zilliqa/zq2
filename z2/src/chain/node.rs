@@ -623,21 +623,17 @@ impl ChainNode {
 
         let mut validator_addresses = Vec::new();
 
-        if self.chain()? == Chain::Zq2ProtoTestnet || self.chain()? == Chain::Zq2ProtoMainnet {
-            validator_addresses.push(bootstrap_addresses[0].1.clone());
-        } else {
-            let validator_nodes = self.chain.nodes_by_role(NodeRole::Validator).await?;
-            for n in validator_nodes.into_iter() {
-                let (public_key, peer_id) = if let Some(node_keys) = keys_config.get(&n.name()) {
-                    let bls_public_key = node_keys["bls_public_key"].as_str().unwrap().to_string();
-                    let peer_id = node_keys["peer_id"].as_str().unwrap().to_string();
-                    (bls_public_key, peer_id)
-                } else {
-                    return Err(anyhow!("{} not found in keys config", n.name()));
-                };
+        let validator_nodes = self.chain.nodes_by_role(NodeRole::Validator).await?;
+        for n in validator_nodes.into_iter() {
+            let (public_key, peer_id) = if let Some(node_keys) = keys_config.get(&n.name()) {
+                let bls_public_key = node_keys["bls_public_key"].as_str().unwrap().to_string();
+                let peer_id = node_keys["peer_id"].as_str().unwrap().to_string();
+                (bls_public_key, peer_id)
+            } else {
+                return Err(anyhow!("{} not found in keys config", n.name()));
+            };
 
-                validator_addresses.push((public_key, peer_id));
-            }
+            validator_addresses.push((public_key, peer_id));
         }
 
         let role_name = self.role.to_string();
@@ -684,8 +680,10 @@ impl ChainNode {
         let private_api = json!({ "port": 4202, "enabled_apis": ["admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] });
         let api_servers = json!([public_api, private_api]);
 
-        // Enable Otterscan indices on API nodes.
-        let enable_ots_indices = self.role == NodeRole::Api || self.role == NodeRole::PrivateApi;
+        // Enable Otterscan indices on API and persistence nodes.
+        let enable_ots_indices = self.role == NodeRole::Api
+            || self.role == NodeRole::PrivateApi
+            || self.role == NodeRole::Persistence;
 
         let mut ctx = Context::new();
         ctx.insert("role", &role_name);

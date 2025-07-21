@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 // Source: https://github.com/Zilliqa/zilliqa-developer/blob/main/contracts/experimental/ERC20ProxyForZRC2/contracts/ScillaConnector.sol
 library ScillaConnector {
     uint private constant CALL_SCILLA_WITH_THE_SAME_SENDER = 1;
+    uint private constant CALL_SCILLA_WITH_CALLER_AS_SENDER = 0;
     uint private constant SCILLA_CALL_PRECOMPILE_ADDRESS = 0x5a494c53;
     uint private constant SCILLA_STATE_READ_PRECOMPILE_ADDRESS = 0x5a494c92;
 
@@ -92,6 +93,34 @@ library ScillaConnector {
                 gas(),
                 SCILLA_CALL_PRECOMPILE_ADDRESS,
                 0,
+                add(encodedArgs, 0x20),
+                argsLength,
+                0x20,
+                0
+            )
+            if iszero(ok) {
+                revert(0, 0)
+            }
+        }
+    }
+
+    function callScillaValue(
+        address target,
+        string memory tran_name,
+        uint128 value
+    ) internal {
+        bytes memory encodedArgs = abi.encode(
+            target,
+            tran_name,
+            CALL_SCILLA_WITH_CALLER_AS_SENDER
+        );
+        uint256 argsLength = encodedArgs.length;
+
+        assembly {
+            let ok := call(
+                gas(),
+                SCILLA_CALL_PRECOMPILE_ADDRESS,
+                value,
                 add(encodedArgs, 0x20),
                 argsLength,
                 0x20,
@@ -340,7 +369,7 @@ library ScillaConnector {
 contract ScillaInterop {
     using ScillaConnector for address;
 
-    constructor() {}
+    constructor() payable {}
 
     function readUint128(
         address scillaContract,
@@ -431,5 +460,86 @@ contract ScillaInterop {
     ) public {
         scillaContract.callScilla(transitionName, arg1, arg2);
         revert();
+    }
+
+    function callScillaValue(
+        address scillaContract,
+        string memory transitionName,
+        uint128 value
+    ) public {
+        scillaContract.callScillaValue(transitionName, value);
+    }
+
+    function readAfterWrite(
+        address scillaContract,
+        string memory transitionName,
+        address arg1,
+        uint128 arg2,
+        string memory fieldName
+    ) public {
+        address SOME_RANDOM_ADDRESS = 0x00000000005a494c4445504f53495450524f5859;
+
+        // reads to SOME_RANDOM_ADDRESS should give 0 before and after the call
+        uint128 beforeWriteRandAddr = readMapUint128(
+            scillaContract,
+            fieldName,
+            SOME_RANDOM_ADDRESS
+        );
+        require(beforeWriteRandAddr == 0, "Value must be 0");
+
+        // This is the key of our interest - before calling transition its value is 0
+        uint128 beforeWrite = readMapUint128(scillaContract, fieldName, arg1);
+        require(beforeWrite == 0, "Value must be 0");
+
+        scillaContract.callScilla(transitionName, arg1, arg2);
+
+        // reads to SOME_RANDOM_ADDRESS still gives 0
+        uint128 afterWriteRandAddr = readMapUint128(
+            scillaContract,
+            fieldName,
+            SOME_RANDOM_ADDRESS
+        );
+        require(afterWriteRandAddr == 0, "Value must be 0");
+
+        // Transition has updated this key so it should return updated value
+        uint128 afterWrite = readMapUint128(scillaContract, fieldName, arg1);
+        require(afterWrite == arg2, "Value must be arg2");
+    }
+
+    function callScillaCheckChangeRevert(
+        address scillaContract,
+        string memory transitionName,
+        address arg1,
+        uint128 arg2,
+        string memory fieldName
+    ) public {
+        scillaContract.callScilla(transitionName, arg1, arg2);
+        uint128 afterWrite = readMapUint128(scillaContract, fieldName, arg1);
+        require(afterWrite == arg2, "Value must be arg2");
+        revert();
+    }
+
+    function makeNestedPrecompileCallWhichReverts(
+        address scillaContract,
+        string memory transitionName,
+        address arg1,
+        uint128 arg2,
+        string memory fieldName
+    ) public {
+        uint128 beforeWrite = readMapUint128(scillaContract, fieldName, arg1);
+        require(beforeWrite == 0, "Value must be 0");
+
+        (bool ok, ) = address(this).call(
+            abi.encodeWithSelector(
+                this.callScillaCheckChangeRevert.selector,
+                scillaContract,
+                transitionName,
+                arg1,
+                arg2,
+                fieldName
+            )
+        );
+
+        require(!ok, "This call must fail!");
     }
 }

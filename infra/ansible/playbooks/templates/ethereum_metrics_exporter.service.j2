@@ -1,0 +1,13 @@
+[Unit]
+Description=Stats agent app
+
+[Service]
+Type=forking
+ExecStart=/usr/local/bin/ethereum_metrics_exporter.sh start
+ExecStop=/usr/local/bin/ethereum_metrics_exporter.sh stop
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target 

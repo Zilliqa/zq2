@@ -46,6 +46,19 @@ use crate::{
     },
 };
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum ExecType {
+    Call,
+    Estimate,
+    Transact,
+}
+
+#[derive(Clone, Copy)]
+pub struct ExtraOpts {
+    pub(crate) disable_eip3607: bool,
+    pub(crate) exec_type: ExecType,
+}
+
 type ScillaResultAndState = (ScillaResult, HashMap<Address, PendingAccount>);
 
 /// Data returned after applying a [Transaction] to [State].
@@ -324,19 +337,19 @@ impl Database for PendingState {
     type Error = DatabaseError;
 
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        (&self.pre_state).basic_ref(address)
+        self.pre_state.basic_ref(address, &self.fork)
     }
 
     fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {
-        (&self.pre_state).code_by_hash_ref(code_hash)
+        self.pre_state.code_by_hash_ref(code_hash)
     }
 
     fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
-        (&self.pre_state).storage_ref(address, index)
+        self.pre_state.storage_ref(address, index)
     }
 
     fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {
-        (&self.pre_state).block_hash_ref(number)
+        self.pre_state.block_hash_ref(number)
     }
 }
 
@@ -344,52 +357,43 @@ impl DatabaseRef for PendingState {
     type Error = DatabaseError;
 
     fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        (&self.pre_state).basic_ref(address)
+        self.pre_state.basic_ref(address, &self.fork)
     }
 
     fn code_by_hash_ref(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
-        (&self.pre_state).code_by_hash_ref(code_hash)
+        self.pre_state.code_by_hash_ref(code_hash)
     }
 
     fn storage_ref(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
-        (&self.pre_state).storage_ref(address, index)
+        self.pre_state.storage_ref(address, index)
     }
 
     fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
-        (&self.pre_state).block_hash_ref(number)
+        self.pre_state.block_hash_ref(number)
     }
 }
 
-impl Database for &State {
-    type Error = DatabaseError;
-
-    fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        self.basic_ref(address)
-    }
-
-    fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {
-        self.code_by_hash_ref(code_hash)
-    }
-
-    fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
-        self.storage_ref(address, index)
-    }
-
-    fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {
-        self.block_hash_ref(number)
-    }
-}
-
-impl DatabaseRef for &State {
-    type Error = DatabaseError;
-
-    fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+impl State {
+    fn basic_ref(
+        &self,
+        address: Address,
+        fork: &Fork,
+    ) -> Result<Option<AccountInfo>, DatabaseError> {
         if !self.has_account(address)? {
             return Ok(None);
         }
 
         let account = self.get_account(address)?;
-        let code = Bytecode::new_raw(account.code.evm_code().unwrap_or_default().into());
+        let code_raw = if fork.prevent_zil_transfer_from_evm_to_scilla_contract {
+            match account.code {
+                Code::Evm(code) => code,
+                Code::Scilla { code, .. } => code.as_bytes().to_vec(),
+            }
+        } else {
+            account.code.evm_code().unwrap_or_default()
+        };
+
+        let code = Bytecode::new_raw(code_raw.into());
         let account_info = AccountInfo {
             balance: U256::from(account.balance),
             nonce: account.nonce,
@@ -400,11 +404,11 @@ impl DatabaseRef for &State {
         Ok(Some(account_info))
     }
 
-    fn code_by_hash_ref(&self, _code_hash: B256) -> Result<Bytecode, Self::Error> {
+    fn code_by_hash_ref(&self, _code_hash: B256) -> Result<Bytecode, DatabaseError> {
         unimplemented!()
     }
 
-    fn storage_ref(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
+    fn storage_ref(&self, address: Address, index: U256) -> Result<U256, DatabaseError> {
         let index = B256::new(index.to_be_bytes());
 
         let result = self.get_account_storage(address, index)?;
@@ -412,7 +416,7 @@ impl DatabaseRef for &State {
         Ok(U256::from_be_bytes(result.0))
     }
 
-    fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
+    fn block_hash_ref(&self, number: u64) -> Result<B256, DatabaseError> {
         Ok(self
             .get_canonical_block_by_number(number)?
             .map(|block| B256::new(block.hash().0))
@@ -429,6 +433,8 @@ pub struct ExternalContext<'a, I> {
     /// The caller of each call in the call-stack. This is needed because the `scilla_call` precompile needs to peek
     /// into the call-stack. This will always be non-empty and the first entry will be the transaction signer.
     pub callers: Vec<Address>,
+    pub has_evm_failed: bool,
+    pub has_called_scilla_precompile: bool,
 }
 
 impl<I: Inspector<PendingState>> GetInspector<PendingState> for ExternalContext<'_, I> {
@@ -468,6 +474,10 @@ impl State {
             inspector::noop(),
             false,
             BaseFeeCheck::Ignore,
+            ExtraOpts {
+                disable_eip3607: false,
+                exec_type: ExecType::Transact,
+            },
         )?;
 
         match result {
@@ -495,6 +505,24 @@ impl State {
         }
     }
 
+    fn failed(
+        mut result_and_state: ResultAndState,
+        env: Box<Env>,
+    ) -> Result<(ResultAndState, HashMap<Address, PendingAccount>, Box<Env>)> {
+        result_and_state.state.clear();
+        Ok((
+            ResultAndState {
+                result: ExecutionResult::Revert {
+                    gas_used: result_and_state.result.gas_used(),
+                    output: Bytes::default(),
+                },
+                state: result_and_state.state,
+            },
+            HashMap::new(),
+            env,
+        ))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn apply_transaction_evm<I: Inspector<PendingState> + ScillaInspector>(
         &self,
@@ -509,17 +537,21 @@ impl State {
         inspector: I,
         enable_inspector: bool,
         base_fee_check: BaseFeeCheck,
+        extra_opts: ExtraOpts,
     ) -> Result<(ResultAndState, HashMap<Address, PendingAccount>, Box<Env>)> {
         let mut padded_view_number = [0u8; 32];
         padded_view_number[24..].copy_from_slice(&current_block.view.to_be_bytes());
 
+        let fork = self.forks.get(current_block.number).clone();
         let external_context = ExternalContext {
             inspector,
-            fork: self.forks.get(current_block.number),
+            fork: &fork,
             enforce_transaction_failure: false,
             callers: vec![from_addr],
+            has_evm_failed: false,
+            has_called_scilla_precompile: false,
         };
-        let pending_state = PendingState::new(self.clone());
+        let pending_state = PendingState::new(self.clone(), fork.clone());
         let mut evm = Evm::builder()
             .with_db(pending_state)
             .with_block_env(BlockEnv {
@@ -542,6 +574,7 @@ impl State {
             .with_handler_cfg(HandlerCfg { spec_id: SPEC_ID })
             .append_handler_register(scilla_call_handle_register)
             .modify_cfg_env(|c| {
+                c.disable_eip3607 = extra_opts.disable_eip3607;
                 c.chain_id = self.chain_id.eth;
                 c.disable_base_fee = match base_fee_check {
                     BaseFeeCheck::Validate => false,
@@ -576,7 +609,7 @@ impl State {
         }
         let mut evm = evm.build();
 
-        let mut result_and_state = evm.transact()?;
+        let result_and_state = evm.transact()?;
         let mut ctx_with_handler = evm.into_context_with_handler_cfg();
 
         // If the scilla precompile failed for whitelisted zq1 contract we mark the entire transaction as failed
@@ -585,18 +618,22 @@ impl State {
             .external
             .enforce_transaction_failure
         {
-            result_and_state.state.clear();
-            return Ok((
-                ResultAndState {
-                    result: ExecutionResult::Revert {
-                        gas_used: result_and_state.result.gas_used(),
-                        output: Bytes::default(),
-                    },
-                    state: result_and_state.state,
-                },
-                HashMap::new(),
-                ctx_with_handler.context.evm.inner.env,
-            ));
+            return Self::failed(result_and_state, ctx_with_handler.context.evm.inner.env);
+        }
+
+        // If any of EVM (calls, creates, ...) failed and there was a call to whitelisted scilla address with interop precompile
+        // then report entire transaction as failed
+        let evm_exec_failure_causes_scilla_precompile_to_fail = self
+            .forks
+            .get(current_block.number)
+            .evm_exec_failure_causes_scilla_precompile_to_fail;
+        let ctx = &ctx_with_handler.context.external;
+        if evm_exec_failure_causes_scilla_precompile_to_fail
+            && ctx.has_evm_failed
+            && ctx.has_called_scilla_precompile
+            && extra_opts.exec_type == ExecType::Transact
+        {
+            return Self::failed(result_and_state, ctx_with_handler.context.evm.inner.env);
         }
 
         Ok((
@@ -627,7 +664,9 @@ impl State {
         current_block: BlockHeader,
         inspector: impl ScillaInspector,
     ) -> Result<ScillaResultAndState> {
-        let mut state = PendingState::new(self.try_clone()?);
+        let fork = self.forks.get(current_block.number).clone();
+
+        let mut state = PendingState::new(self.try_clone()?, fork.clone());
 
         // Issue 1509 - for Scilla transitions, follow the legacy ZQ1 behaviour of deducting a small amount
         // of gas for the invocation and the rest of the gas once the txn has run.
@@ -653,7 +692,7 @@ impl State {
                 current_block,
                 inspector,
                 &self.scilla_ext_libs_path,
-                self.forks.get(current_block.number),
+                &fork,
             )
         } else {
             scilla_call(
@@ -667,31 +706,39 @@ impl State {
                 txn.data,
                 inspector,
                 &self.scilla_ext_libs_path,
-                self.forks.get(current_block.number),
+                &fork,
                 current_block.number,
             )
         }?;
 
         let actual_gas_charged =
             total_scilla_gas_price(ScillaGas::from(result.gas_used), gas_price);
-        let to_charge = actual_gas_charged.checked_sub(&deposit);
-        trace!("scilla_txn: actual_gas_used {actual_gas_charged} to_charge = {to_charge:?}");
-        if let Some(extra_charge) = to_charge {
-            // Deduct the remaining gas.
-            // If we fail, Zilliqa 1 deducts nothing at all, and neither do we.
-            if let Some(result) =
-                new_state.deduct_from_account(from_addr, extra_charge, EvmGas(0))?
-            {
-                trace!("scilla_txn: cannot deduct remaining gas - txn failed");
-                let mut failed_state = PendingState::new(self.try_clone()?);
-                return Ok((result, failed_state.finalize()));
-            }
-        }
-        // If the txn doesn't fail, increment the nonce.
         let from = new_state.load_account(from_addr)?;
         from.account.nonce += 1;
         from.mark_touch();
 
+        // If txn is successful deduct extra fee and keep balance changes intact
+        if !fork.scilla_failed_txn_correct_balance_deduction || result.success {
+            let to_charge = actual_gas_charged.checked_sub(&deposit);
+            trace!("scilla_txn: actual_gas_used {actual_gas_charged} to_charge = {to_charge:?}");
+            if let Some(extra_charge) = to_charge {
+                // Deduct the remaining gas.
+                // If we fail, Zilliqa 1 deducts nothing at all, and neither do we.
+                if let Some(result) =
+                    new_state.deduct_from_account(from_addr, extra_charge, EvmGas(0))?
+                {
+                    trace!("scilla_txn: cannot deduct remaining gas - txn failed");
+                    let mut failed_state = PendingState::new(self.try_clone()?, fork.clone());
+                    return Ok((result, failed_state.finalize()));
+                }
+            }
+        } else {
+            // If txn has failed - make sure only fee is deducted from sender account
+            let original_acc = self.get_account(from_addr)?;
+            from.account.balance = original_acc
+                .balance
+                .saturating_sub(actual_gas_charged.get());
+        }
         trace!("scilla_txn completed successfully");
         Ok((result, new_state.finalize()))
     }
@@ -730,6 +777,7 @@ impl State {
                     .ok_or(anyhow!("from account not found"))?;
 
                 let mut storage = self.get_account_trie(from_addr)?;
+
                 let account = Account {
                     nonce: from_account.account.nonce,
                     balance: from_account.account.balance,
@@ -758,6 +806,10 @@ impl State {
                         BaseFeeCheck::Ignore
                     } else {
                         BaseFeeCheck::Validate
+                    },
+                    ExtraOpts {
+                        disable_eip3607: false,
+                        exec_type: ExecType::Transact,
                     },
                 )?;
 
@@ -903,22 +955,34 @@ impl State {
             // `account.info.code` might be `None`, even though we always return `Some` for the account code in our
             // [DatabaseRef] implementation. However, this is only the case for empty code, so we handle this case
             // separately.
-            let code = if account.info.code_hash == KECCAK_EMPTY {
-                vec![]
+            let mut code = if account.info.code_hash == KECCAK_EMPTY {
+                Code::Evm(vec![])
             } else {
-                account
-                    .info
-                    .code
-                    .as_ref()
-                    .expect("code_by_hash is not used")
-                    .original_bytes()
-                    .to_vec()
+                Code::Evm(
+                    account
+                        .info
+                        .code
+                        .as_ref()
+                        .expect("code_by_hash is not used")
+                        .original_bytes()
+                        .to_vec(),
+                )
             };
+
+            let fork = self.forks.get(current_block_number).clone();
+            if fork.scilla_fix_contract_code_removal_on_evm_tx {
+                // if contract is Scilla then fetch Code to include in Account update
+                let mut pending_state = PendingState::new(self.try_clone()?, fork);
+                let zq2_account = pending_state.load_account(address)?;
+                if zq2_account.account.code.is_scilla() {
+                    code = zq2_account.account.code.clone()
+                }
+            }
 
             let account = Account {
                 nonce: account.info.nonce,
                 balance: account.info.balance.try_into()?,
-                code: Code::Evm(code),
+                code,
                 storage_root: storage.root_hash()?,
             };
             trace!(?address, ?account, "update account");
@@ -1160,6 +1224,10 @@ impl State {
                 inspector::noop(),
                 false,
                 BaseFeeCheck::Validate,
+                ExtraOpts {
+                    disable_eip3607: true,
+                    exec_type: ExecType::Estimate,
+                },
             )?;
 
             match result {
@@ -1197,6 +1265,10 @@ impl State {
             inspector::noop(),
             false,
             BaseFeeCheck::Validate,
+            ExtraOpts {
+                disable_eip3607: true,
+                exec_type: ExecType::Estimate,
+            },
         )?;
 
         let gas_used = result.gas_used();
@@ -1226,6 +1298,10 @@ impl State {
             inspector::noop(),
             false,
             BaseFeeCheck::Ignore,
+            ExtraOpts {
+                disable_eip3607: true,
+                exec_type: ExecType::Call,
+            },
         )?;
 
         Ok(result)
@@ -1253,6 +1329,10 @@ impl State {
             inspector::noop(),
             false,
             BaseFeeCheck::Ignore,
+            ExtraOpts {
+                disable_eip3607: false,
+                exec_type: ExecType::Transact,
+            },
         )?;
         self.apply_delta_evm(&state, current_block.number)?;
 
@@ -1270,13 +1350,14 @@ pub fn zil_contract_address(sender: Address, nonce: u64) -> Address {
 }
 
 /// The account state during the execution of a Scilla transaction. Changes to the original state are kept in memory.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PendingState {
     pub pre_state: State,
     pub new_state: HashMap<Address, PendingAccount>,
     // Read-only copy of the current cached EVM state. Only `Some` when this Scilla call is made by the `scilla_call`
     // precompile.
     pub evm_state: Option<JournaledState>,
+    pub fork: Fork,
 }
 
 /// Private helper function for `PendingState::load_account`. The only difference is that the fields of `PendingState`
@@ -1326,11 +1407,12 @@ fn load_account<'a>(
 }
 
 impl PendingState {
-    pub fn new(state: State) -> Self {
+    pub fn new(state: State, fork: Fork) -> Self {
         PendingState {
             pre_state: state,
             new_state: HashMap::new(),
             evm_state: None,
+            fork,
         }
     }
 
@@ -2024,7 +2106,7 @@ pub fn scilla_call(
             )?;
             inspector.call(sender, to_addr, amount.get(), depth);
 
-            let output = match output {
+            let mut output = match output {
                 Ok(o) => o,
                 Err(e) => {
                     warn!(?e, "transaction failed");
@@ -2067,6 +2149,13 @@ pub fn scilla_call(
 
             transitions.reserve(output.messages.len());
             call_stack.reserve(output.messages.len());
+
+            // Ensure the order is preserved and transitions are dispatched in the same order
+            // as they were emitted from contract
+            if fork.scilla_transition_proper_order {
+                output.messages.reverse();
+            }
+
             for message in output.messages {
                 transitions.push(ScillaTransition {
                     from: to_addr,

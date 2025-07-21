@@ -3,7 +3,7 @@ version: "3"
 services:
   node0:
     depends_on:
-      - node3 
+      - node3
     environment:
       RUST_BACKTRACE: 1
       RUST_LOG: zilliqa=info
@@ -86,14 +86,14 @@ services:
   faucet:
     depends_on:
       - node0
-    image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa/eth-spout:v1.3.72
+    image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa/eth-spout:v1.3.84
     environment:
-      RPC_URL: http://node0:4201
+      RPC_URL: http://198.51.100.101:4201
       NATIVE_TOKEN_SYMBOL: ZIL
       PRIVATE_KEY: 65d7f4da9bedc8fb79cbf6722342960bbdfb9759bc0d9e3fb4989e831ccbc227
       ETH_AMOUNT: 100
-      EXPLORER_URL: http://localhost:5200
-      MINIMUM_SECONDS_BETWEEN_REQUESTS: 60
+      EXPLORER_URL: http://localhost:5100
+      MINIMUM_SECONDS_BETWEEN_REQUESTS: 0
       BECH32_HRP: zil
     ports:
       - "5200:80"
@@ -107,7 +107,7 @@ networks:
   localnet:
     driver: bridge
     driver_opts:
-      com.docker.network.bridge.gateway_mode_ipv4: "routed"    
+      com.docker.network.bridge.gateway_mode_ipv4: "routed"
     ipam:
       config:
         - subnet: 198.51.100.0/24

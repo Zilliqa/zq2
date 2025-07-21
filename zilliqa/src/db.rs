@@ -28,15 +28,15 @@ use crate::{
     message::{AggregateQc, Block, BlockHeader, QuorumCertificate},
     state::Account,
     time::SystemTime,
-    transaction::{EvmGas, Log, SignedTransaction, TransactionReceipt},
+    transaction::{EvmGas, Log, SignedTransaction, TransactionReceipt, VerifiedTransaction},
 };
 
 macro_rules! sqlify_with_bincode {
     ($type: ty) => {
         impl ToSql for $type {
             fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
-                let data = bincode::serialize(self)
-                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(e))?;
+                let data = bincode::serde::encode_to_vec(self, bincode::config::legacy())
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
                 Ok(ToSqlOutput::from(data))
             }
         }
@@ -45,7 +45,11 @@ macro_rules! sqlify_with_bincode {
                 value: rusqlite::types::ValueRef<'_>,
             ) -> rusqlite::types::FromSqlResult<Self> {
                 let blob = value.as_blob()?;
-                bincode::deserialize(blob).map_err(|e| FromSqlError::Other(e))
+                Ok(
+                    bincode::serde::decode_from_slice(blob, bincode::config::legacy())
+                        .map_err(|e| FromSqlError::Other(Box::new(e)))?
+                        .0,
+                )
             }
         }
     };
@@ -217,7 +221,7 @@ pub struct BlockAndReceipts {
 pub struct BlockAndReceiptsAndTransactions {
     pub block: Block,
     pub receipts: Vec<TransactionReceipt>,
-    pub transactions: Vec<SignedTransaction>,
+    pub transactions: Vec<VerifiedTransaction>,
 }
 
 const CHECKPOINT_HEADER_BYTES: [u8; 8] = *b"ZILCHKPT";
@@ -470,6 +474,39 @@ impl Db {
             )?;
         }
 
+        if version < 4 {
+            connection.execute_batch(
+                "
+                BEGIN;
+
+                INSERT INTO schema_version VALUES (4);
+
+                CREATE TABLE IF NOT EXISTS aux_table (key TEXT NOT NULL PRIMARY KEY, value BLOB NOT NULL) WITHOUT ROWID;
+
+                COMMIT;
+            ",
+            )?;
+        }
+
+        Ok(())
+    }
+
+    pub fn get_value_from_aux_table(&self, key: &str) -> Result<Option<Vec<u8>>> {
+        Ok(self
+            .db
+            .lock()
+            .unwrap()
+            .prepare_cached("SELECT value FROM aux_table WHERE key = ?1")?
+            .query_row([key], |row| row.get(0))
+            .optional()?)
+    }
+
+    pub fn insert_value_to_aux_table(&self, key: &str, value: Vec<u8>) -> Result<()> {
+        self.db
+            .lock()
+            .unwrap()
+            .prepare_cached("INSERT OR REPLACE INTO aux_table (key, value) VALUES (?1, ?2)")?
+            .execute(rusqlite::params![key, value])?;
         Ok(())
     }
 
@@ -548,7 +585,8 @@ impl Db {
         reader.read_exact(&mut block_len_buf)?;
         let mut block_ser = vec![0u8; usize::try_from(u64::from_be_bytes(block_len_buf))?];
         reader.read_exact(&mut block_ser)?;
-        let block: Block = bincode::deserialize(&block_ser)?;
+        let block: Block =
+            bincode::serde::decode_from_slice(&block_ser, bincode::config::legacy())?.0;
         if block.hash() != *hash {
             return Err(anyhow!("Checkpoint does not match trusted hash"));
         }
@@ -559,13 +597,15 @@ impl Db {
         let mut transactions_ser =
             vec![0u8; usize::try_from(u64::from_be_bytes(transactions_len_buf))?];
         reader.read_exact(&mut transactions_ser)?;
-        let transactions: Vec<SignedTransaction> = bincode::deserialize(&transactions_ser)?;
+        let transactions =
+            bincode::serde::decode_from_slice(&transactions_ser, bincode::config::legacy())?.0;
 
         let mut parent_len_buf = [0u8; std::mem::size_of::<u64>()];
         reader.read_exact(&mut parent_len_buf)?;
         let mut parent_ser = vec![0u8; usize::try_from(u64::from_be_bytes(parent_len_buf))?];
         reader.read_exact(&mut parent_ser)?;
-        let parent: Block = bincode::deserialize(&parent_ser)?;
+        let parent: Block =
+            bincode::serde::decode_from_slice(&parent_ser, bincode::config::legacy())?.0;
         if block.parent_hash() != parent.hash() {
             return Err(anyhow!(
                 "Invalid checkpoint file: parent's blockhash does not correspond to checkpoint block"
@@ -675,8 +715,12 @@ impl Db {
                 processed_storage_items += 1;
             }
 
-            let account_trie_root =
-                bincode::deserialize::<Account>(&serialised_account)?.storage_root;
+            let account_trie_root = bincode::serde::decode_from_slice::<Account, _>(
+                &serialised_account,
+                bincode::config::legacy(),
+            )?
+            .0
+            .storage_root;
             if account_trie.root_hash()?.as_slice() != account_trie_root {
                 return Err(anyhow!(
                     "Invalid checkpoint file: account trie root hash mismatch: calculated {}, checkpoint file contained {}",
@@ -890,14 +934,21 @@ impl Db {
             .collect::<Result<Vec<_>, _>>()?)
     }
 
-    pub fn get_transaction(&self, txn_hash: &Hash) -> Result<Option<SignedTransaction>> {
-        Ok(self
-            .db
-            .lock()
-            .unwrap()
-            .prepare_cached("SELECT data FROM transactions WHERE tx_hash = ?1")?
-            .query_row([txn_hash], |row| row.get(0))
-            .optional()?)
+    pub fn get_transaction(&self, txn_hash: &Hash) -> Result<Option<VerifiedTransaction>> {
+        Ok(
+            match self
+                .db
+                .lock()
+                .unwrap()
+                .prepare_cached("SELECT data FROM transactions WHERE tx_hash = ?1")?
+                .query_row([txn_hash], |row| row.get(0))
+                .optional()?
+                .map(|x: SignedTransaction| x.verify_bypass())
+            {
+                Some(x) => Some(x?),
+                None => None,
+            },
+        )
     }
 
     pub fn contains_transaction(&self, hash: &Hash) -> Result<bool> {
@@ -915,17 +966,17 @@ impl Db {
         &self,
         sqlite_tx: &Connection,
         hash: &Hash,
-        tx: &SignedTransaction,
+        tx: &VerifiedTransaction,
     ) -> Result<()> {
         sqlite_tx
             .prepare_cached("INSERT OR IGNORE INTO transactions (tx_hash, data) VALUES (?1, ?2)")?
-            .execute((hash, tx))?;
+            .execute((hash, tx.tx.clone()))?;
         Ok(())
     }
 
     /// Insert a transaction whose hash was precalculated, to save a call to calculate_hash() if it
     /// is already known
-    pub fn insert_transaction(&self, hash: &Hash, tx: &SignedTransaction) -> Result<()> {
+    pub fn insert_transaction(&self, hash: &Hash, tx: &VerifiedTransaction) -> Result<()> {
         self.insert_transaction_with_db_tx(&self.db.lock().unwrap(), hash, tx)
     }
 
@@ -997,6 +1048,13 @@ impl Db {
             .unwrap()
             .prepare_cached("DELETE FROM blocks WHERE block_hash = ?1")?
             .execute([block.header.hash])?;
+        Ok(())
+    }
+
+    /// Triggers a DB vacuum
+    pub fn vacuum(&self) -> Result<()> {
+        let db = self.db.lock().unwrap();
+        db.execute("VACUUM", [])?;
         Ok(())
     }
 
@@ -1195,7 +1253,7 @@ impl Db {
 
         let receipts = self.db.lock().unwrap().prepare_cached("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1 ORDER BY tx_index ASC")?.query_map([block.header.hash], Self::make_receipt)?.collect::<Result<Vec<_>, _>>()?;
 
-        let transactions: Vec<SignedTransaction> = self
+        let transactions: Vec<VerifiedTransaction> = self
             .db
             .lock()
             .unwrap()
@@ -1204,7 +1262,8 @@ impl Db {
             )?
             .query_map([block.header.hash], |row| row.get(0))?
             .map(|x|x.unwrap())
-            .collect_vec();
+            .map(|x: SignedTransaction| x.verify_bypass())
+            .collect::<Result<Vec<_>, _>>()?;
 
         let transaction_hashes = receipts.iter().map(|x| x.tx_hash).collect();
         block.transactions = transaction_hashes;
@@ -1341,17 +1400,17 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
     writer.write_all(b"\n")?;
 
     // write the block...
-    let block_ser = &bincode::serialize(&block)?;
+    let block_ser = &bincode::serde::encode_to_vec(block, bincode::config::legacy())?;
     writer.write_all(&u64::try_from(block_ser.len())?.to_be_bytes())?;
     writer.write_all(block_ser)?;
 
     // write transactions
-    let transactions_ser = &bincode::serialize(&transactions)?;
+    let transactions_ser = &bincode::serde::encode_to_vec(transactions, bincode::config::legacy())?;
     writer.write_all(&u64::try_from(transactions_ser.len())?.to_be_bytes())?;
     writer.write_all(transactions_ser)?;
 
     // and its parent, to keep the qc tracked
-    let parent_ser = &bincode::serialize(&parent)?;
+    let parent_ser = &bincode::serde::encode_to_vec(parent, bincode::config::legacy())?;
     writer.write_all(&u64::try_from(parent_ser.len())?.to_be_bytes())?;
     writer.write_all(parent_ser)?;
 
@@ -1370,8 +1429,14 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
         writer.write_all(&serialised_account)?;
 
         // now write the entire account storage map
-        let account_storage = account_storage
-            .at_root(bincode::deserialize::<Account>(&serialised_account)?.storage_root);
+        let account_storage = account_storage.at_root(
+            bincode::serde::decode_from_slice::<Account, _>(
+                &serialised_account,
+                bincode::config::legacy(),
+            )?
+            .0
+            .storage_root,
+        );
         let mut account_storage_buf = vec![];
         for (storage_key, storage_val) in account_storage.iter() {
             account_storage_buf.extend_from_slice(&u64::try_from(storage_key.len())?.to_be_bytes());
@@ -1532,6 +1597,30 @@ mod tests {
     use crate::{crypto::SecretKey, state::State};
 
     #[test]
+    fn bincode1_bincode2_compatibility() {
+        #[derive(Serialize)]
+        struct Testdata {
+            a: QuorumCertificate,
+            b: BlsSignature,
+            c: VecLogSqlable,
+            d: MapScillaErrorSqlable,
+        }
+
+        let data = Testdata {
+            a: QuorumCertificate::genesis(),
+            b: BlsSignature::identity(),
+            c: VecLogSqlable(Vec::new()),
+            d: MapScillaErrorSqlable(BTreeMap::new()),
+        };
+
+        let bincode1 = bincode_v1::serialize(&data).unwrap(); // v1.3.3
+        let bincode2 = bincode::serde::encode_to_vec(&data, bincode::config::legacy()).unwrap(); // v2.0 compatibility
+        let bincode0 = bincode::serde::encode_to_vec(&data, bincode::config::standard()).unwrap(); // v2.0 new standard
+        assert_ne!(bincode1, bincode0);
+        assert_eq!(bincode1, bincode2);
+    }
+
+    #[test]
     fn query_planner_stability_guarantee() {
         let base_path = tempdir().unwrap();
         let base_path = base_path.path();
@@ -1626,7 +1715,7 @@ mod tests {
             root_trie
                 .insert(
                     &State::account_key(account_address.into()).0,
-                    &bincode::serialize(&account).unwrap(),
+                    &bincode::serde::encode_to_vec(&account, bincode::config::legacy()).unwrap(),
                 )
                 .unwrap();
         }

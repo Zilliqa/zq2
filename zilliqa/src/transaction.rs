@@ -50,7 +50,7 @@ use crate::{
 /// Result<Result<String>>, which would be confusing.
 /// The argument is a human-readable error message which can be returned to the
 /// user to indicate the problem with the transaction.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum ValidationOutcome {
     Success,
     /// Transaction input size exceeds configured limit - (size, limit)
@@ -71,6 +71,12 @@ pub enum ValidationOutcome {
     NonceTooLow(u64, u64),
     /// Unrecognised type - not invocation, creation or transfer
     UnknownTransactionType,
+    /// Global transaction count exceeded
+    GlobalTransactionCountExceeded,
+    /// Transaction counter exceeded for a sender
+    TransactionCountExceededForSender,
+    /// Total nunber of sender slots exceeded
+    TotalNumberOfSlotsExceeded,
 }
 
 impl ValidationOutcome {
@@ -116,6 +122,15 @@ impl ValidationOutcome {
             }
             Self::UnknownTransactionType => {
                 "Txn is not transfer, contract creation or contract invocation".to_string()
+            }
+            Self::GlobalTransactionCountExceeded => {
+                "Global number of transactions stored in the mempool has been exceeded!".to_string()
+            }
+            Self::TransactionCountExceededForSender => {
+                "Transactions count kept per user has been exceeded!".to_string()
+            }
+            Self::TotalNumberOfSlotsExceeded => {
+                "Total number of slots for all senders has been exceeded".to_string()
             }
         }
     }
@@ -382,6 +397,14 @@ impl SignedTransaction {
     }
 
     pub fn verify(self) -> Result<VerifiedTransaction> {
+        self.verify_inner(false)
+    }
+
+    pub fn verify_bypass(self) -> Result<VerifiedTransaction> {
+        self.verify_inner(true)
+    }
+
+    fn verify_inner(self, force: bool) -> Result<VerifiedTransaction> {
         let (tx, signer, hash) = match self {
             SignedTransaction::Legacy { tx, sig } => {
                 let signed = tx.into_signed(sig);
@@ -404,7 +427,10 @@ impl SignedTransaction {
             SignedTransaction::Zilliqa { tx, key, sig } => {
                 let txn_data = encode_zilliqa_transaction(&tx, key);
 
-                schnorr::verify(&txn_data, key, sig).ok_or_else(|| anyhow!("invalid signature"))?;
+                if !force {
+                    schnorr::verify(&txn_data, key, sig)
+                        .ok_or_else(|| anyhow!("invalid signature"))?;
+                }
 
                 let hashed = Sha256::digest(key.to_encoded_point(true).as_bytes());
                 let (_, bytes): (GenericArray<u8, U12>, GenericArray<u8, U20>) = hashed.split();
@@ -883,6 +909,18 @@ impl ZilAmount {
         } else {
             None
         }
+    }
+
+    // In ZIL, rounded down to the nearest ZIL unit.
+    pub fn to_zils(self) -> u128 {
+        self.0 / 10u128.pow(12)
+    }
+
+    // In ZIL, as a string representation of the exact float amount
+    pub fn to_float_string(self) -> String {
+        let integer_part = self.0 / 10u128.pow(12);
+        let fractional_part = self.0 % 10u128.pow(12);
+        format!("{}.{}", integer_part, fractional_part)
     }
 }
 

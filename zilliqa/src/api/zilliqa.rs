@@ -1162,54 +1162,69 @@ fn extract_transaction_bodies(block: &Block, node: &Node) -> Result<Vec<Transact
             epoch_num: block.number().to_string(),
             success: receipt.success,
         };
-        let (version, to_addr, sender_pub_key, signature, _code, _data) = match tx.tx {
-            SignedTransaction::Zilliqa { tx, sig, key } => (
-                ((tx.chain_id as u32) << 16) | 1,
-                tx.to_addr,
-                key.to_encoded_point(true).as_bytes().to_hex(),
-                <[u8; 64]>::from(sig.to_bytes()).to_hex(),
-                (!tx.code.is_empty()).then_some(tx.code),
-                (!tx.data.is_empty()).then_some(tx.data),
-            ),
-            SignedTransaction::Legacy { tx, sig } => (
-                ((tx.chain_id.unwrap_or_default() as u32) << 16) | 2,
-                tx.to.to().copied().unwrap_or_default(),
-                sig.recover_from_prehash(&tx.signature_hash())?
-                    .to_sec1_bytes()
-                    .to_hex(),
-                sig.as_bytes().to_hex(),
-                tx.to.is_create().then(|| hex::encode(&tx.input)),
-                tx.to.is_call().then(|| hex::encode(&tx.input)),
-            ),
-            SignedTransaction::Eip2930 { tx, sig } => (
-                ((tx.chain_id as u32) << 16) | 3,
-                tx.to.to().copied().unwrap_or_default(),
-                sig.recover_from_prehash(&tx.signature_hash())?
-                    .to_sec1_bytes()
-                    .to_hex(),
-                sig.as_bytes().to_hex(),
-                tx.to.is_create().then(|| hex::encode(&tx.input)),
-                tx.to.is_call().then(|| hex::encode(&tx.input)),
-            ),
-            SignedTransaction::Eip1559 { tx, sig } => (
-                ((tx.chain_id as u32) << 16) | 4,
-                tx.to.to().copied().unwrap_or_default(),
-                sig.recover_from_prehash(&tx.signature_hash())?
-                    .to_sec1_bytes()
-                    .to_hex(),
-                sig.as_bytes().to_hex(),
-                tx.to.is_create().then(|| hex::encode(&tx.input)),
-                tx.to.is_call().then(|| hex::encode(&tx.input)),
-            ),
-            SignedTransaction::Intershard { tx, .. } => (
-                ((tx.chain_id as u32) << 16) | 20,
-                tx.to_addr.unwrap_or_default(),
-                String::new(),
-                String::new(),
-                tx.to_addr.is_none().then(|| hex::encode(&tx.payload)),
-                tx.to_addr.is_some().then(|| hex::encode(&tx.payload)),
-            ),
-        };
+        let (version, to_addr, sender_pub_key, signature, code, data, event_logs, transitions) =
+            match tx.tx {
+                SignedTransaction::Zilliqa { tx, sig, key } => {
+                    let is_create = !tx.code.is_empty();
+                    let is_call = !tx.data.is_empty();
+                    (
+                        ((tx.chain_id as u32) << 16) | 1,
+                        tx.to_addr,
+                        key.to_encoded_point(true).as_bytes().to_hex(),
+                        <[u8; 64]>::from(sig.to_bytes()).to_hex(),
+                        is_create.then_some(tx.code),
+                        is_call.then_some(tx.data),
+                        is_call.then(|| receipt.logs.clone()),
+                        is_call.then(|| receipt.transitions.clone()),
+                    )
+                }
+                SignedTransaction::Legacy { tx, sig } => (
+                    ((tx.chain_id.unwrap_or_default() as u32) << 16) | 2,
+                    tx.to.to().copied().unwrap_or_default(),
+                    sig.recover_from_prehash(&tx.signature_hash())?
+                        .to_sec1_bytes()
+                        .to_hex(),
+                    sig.as_bytes().to_hex(),
+                    tx.to.is_create().then(|| hex::encode(&tx.input)),
+                    tx.to.is_call().then(|| hex::encode(&tx.input)),
+                    tx.to.is_call().then(|| receipt.logs.clone()),
+                    tx.to.is_call().then(|| receipt.transitions.clone()),
+                ),
+                SignedTransaction::Eip2930 { tx, sig } => (
+                    ((tx.chain_id as u32) << 16) | 3,
+                    tx.to.to().copied().unwrap_or_default(),
+                    sig.recover_from_prehash(&tx.signature_hash())?
+                        .to_sec1_bytes()
+                        .to_hex(),
+                    sig.as_bytes().to_hex(),
+                    tx.to.is_create().then(|| hex::encode(&tx.input)),
+                    tx.to.is_call().then(|| hex::encode(&tx.input)),
+                    tx.to.is_call().then(|| receipt.logs.clone()),
+                    tx.to.is_call().then(|| receipt.transitions.clone()),
+                ),
+                SignedTransaction::Eip1559 { tx, sig } => (
+                    ((tx.chain_id as u32) << 16) | 4,
+                    tx.to.to().copied().unwrap_or_default(),
+                    sig.recover_from_prehash(&tx.signature_hash())?
+                        .to_sec1_bytes()
+                        .to_hex(),
+                    sig.as_bytes().to_hex(),
+                    tx.to.is_create().then(|| hex::encode(&tx.input)),
+                    tx.to.is_call().then(|| hex::encode(&tx.input)),
+                    tx.to.is_call().then(|| receipt.logs.clone()),
+                    tx.to.is_call().then(|| receipt.transitions.clone()),
+                ),
+                SignedTransaction::Intershard { tx, .. } => (
+                    ((tx.chain_id as u32) << 16) | 20,
+                    tx.to_addr.unwrap_or_default(),
+                    String::new(),
+                    String::new(),
+                    tx.to_addr.is_none().then(|| hex::encode(&tx.payload)),
+                    tx.to_addr.is_some().then(|| hex::encode(&tx.payload)),
+                    None, // Not a CONTRACT_CALL
+                    None, // Not a CONTRACT_CALL
+                ),
+            };
         let body = TransactionBody {
             id: tx.hash.to_string(),
             amount: amount.to_string(),
@@ -1221,6 +1236,10 @@ fn extract_transaction_bodies(block: &Block, node: &Node) -> Result<Vec<Transact
             signature,
             to_addr: to_addr.to_string(),
             version: version.to_string(),
+            code,
+            data,
+            event_logs,
+            transitions,
         };
         transactions.push(body);
     }
@@ -1370,13 +1389,11 @@ fn get_num_txns_ds_epoch(_params: Params, node: &Arc<RwLock<Node>>) -> Result<St
     Ok(num_txns_epoch.to_string())
 }
 
-// GetTotalCoinSupply
-fn get_total_coin_supply(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
-    Ok(get_total_coin_supply_as_int(params, node)?.to_string())
-}
-
-// GetTotalCoinSupplyAsInt
-fn get_total_coin_supply_as_int(_params: Params, node: &Arc<RwLock<Node>>) -> Result<ZilAmount> {
+// GetTotalCoinSupplyAsZil
+fn get_total_coin_supply_as_zil_amount(
+    _params: Params,
+    node: &Arc<RwLock<Node>>,
+) -> Result<ZilAmount> {
     let node = node.read();
     let finalized_block_number = node.get_finalized_block_number()?;
     let null_address_balance = node
@@ -1388,6 +1405,16 @@ fn get_total_coin_supply_as_int(_params: Params, node: &Arc<RwLock<Node>>) -> Re
         .balance;
     let native_supply = node.config.consensus.total_native_token_supply.0;
     Ok(ZilAmount::from_amount(native_supply - null_address_balance))
+}
+
+// GetTotalCoinSupply
+fn get_total_coin_supply(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
+    Ok(get_total_coin_supply_as_zil_amount(params, node)?.to_float_string())
+}
+
+// GetTotalCoinSupplyAsInt
+fn get_total_coin_supply_as_int(params: Params, node: &Arc<RwLock<Node>>) -> Result<u128> {
+    Ok(get_total_coin_supply_as_zil_amount(params, node)?.to_zils())
 }
 
 // GetMinerInfo
@@ -1583,17 +1610,10 @@ fn get_transaction_status(
         TransactionState::Error
     } else {
         match &block {
-            Some(block) => {
-                let newest_finalized_block =
-                    node.resolve_block_number(BlockNumberOrTag::Finalized)?;
-                if newest_finalized_block.is_some()
-                    && block.number() >= newest_finalized_block.unwrap().number()
-                {
-                    TransactionState::Finalized
-                } else {
-                    TransactionState::Pending
-                }
-            }
+            Some(block) => match node.resolve_block_number(BlockNumberOrTag::Finalized)? {
+                Some(x) if x.number() >= block.number() => TransactionState::Finalized,
+                _ => TransactionState::Pending,
+            },
             None => match node.consensus.get_pending_or_queued(&transaction)? {
                 Some(PendingOrQueued::Pending) => TransactionState::Pending,
                 Some(PendingOrQueued::Queued) => TransactionState::Queued,

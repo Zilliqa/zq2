@@ -395,6 +395,15 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
         prev_handle(ctx, inputs)
     });
 
+    // Create result handler
+    let prev_handle = handler.execution.insert_create_outcome.clone();
+    handler.execution.insert_create_outcome = Arc::new(move |ctx, frame, outcome| {
+        if outcome.result.is_error() || outcome.result.is_revert() {
+            ctx.external.has_evm_failed = true;
+        }
+        prev_handle(ctx, frame, outcome)
+    });
+
     // EOF create handler
     let prev_handle = handler.execution.eofcreate.clone();
     handler.execution.eofcreate = Arc::new(move |ctx, inputs| {
@@ -408,6 +417,15 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
         ctx.external.callers[ctx.evm.journaled_state.depth] = inputs.caller;
 
         prev_handle(ctx, inputs)
+    });
+
+    // EOF result handler
+    let prev_handle = handler.execution.insert_eofcreate_outcome.clone();
+    handler.execution.insert_eofcreate_outcome = Arc::new(move |ctx, frame, outcome| {
+        if outcome.result.is_error() || outcome.result.is_revert() {
+            ctx.external.has_evm_failed = true;
+        }
+        prev_handle(ctx, frame, outcome)
     });
 
     // Call handler
@@ -432,6 +450,9 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
             .fork
             .scilla_call_gas_exempt_addrs
             .contains(&inputs.caller);
+
+        // Record access of scilla precompile
+        ctx.external.has_called_scilla_precompile = true;
 
         // The behaviour is different for contracts having 21k gas and/or deployed with zq1
         // 1. If gas == 21k and gas_exempt -> allow it to run with gas_left()
@@ -492,6 +513,15 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
             result,
             inputs.return_memory_offset.clone(),
         ))
+    });
+
+    // Call result handler
+    let prev_handle = handler.execution.insert_call_outcome.clone();
+    handler.execution.insert_call_outcome = Arc::new(move |ctx, frame, memory, outcome| {
+        if outcome.result.is_error() || outcome.result.is_revert() {
+            ctx.external.has_evm_failed = true;
+        }
+        prev_handle(ctx, frame, memory, outcome)
     });
 }
 
@@ -583,13 +613,30 @@ fn scilla_call_precompile<I: ScillaInspector>(
 
     let message = serde_json::json!({"_tag": transition.name, "params": params });
 
-    let empty_state = PendingState::new(evmctx.db.pre_state.clone());
+    let empty_state = PendingState::new(evmctx.db.pre_state.clone(), external_context.fork.clone());
     // Temporarily move the `PendingState` out of `evmctx`, replacing it with an empty state.
     let mut state = std::mem::replace(&mut evmctx.db, empty_state);
     let depth = evmctx.journaled_state.depth;
     if external_context.fork.scilla_call_respects_evm_state_changes {
         state.evm_state = Some(evmctx.journaled_state.clone());
     }
+
+    // 1. if evm_exec_failure_causes_scilla_precompile_to_fail == true then we take converted value
+    // 2. if evm_exec_failure_causes_scilla_precompile_to_fail == false and evm_to_scilla_value_transfer_zero == true -> we return 0
+    // 3. else we take converted value
+    let effective_value = {
+        match (
+            external_context
+                .fork
+                .evm_exec_failure_causes_scilla_precompile_to_fail,
+            external_context.fork.evm_to_scilla_value_transfer_zero,
+        ) {
+            (true, _) => ZilAmount::from_amount(input.transfer_value().unwrap_or_default().to()),
+            (false, true) => ZilAmount::from_amount(0),
+            _ => ZilAmount::from_amount(input.transfer_value().unwrap_or_default().to()),
+        }
+    };
+
     let scilla = evmctx.db.pre_state.scilla();
     let Ok((result, mut state)) = scilla_call(
         state,
@@ -617,7 +664,7 @@ fn scilla_call_precompile<I: ScillaInspector>(
             EvmGas(gas_limit - required_gas).into()
         },
         address,
-        ZilAmount::from_amount(input.transfer_value().unwrap_or_default().to()),
+        effective_value,
         serde_json::to_string(&message).unwrap(),
         &mut external_context.inspector,
         &scilla_ext_libs_path_default(),
