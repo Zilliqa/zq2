@@ -1,6 +1,6 @@
 ---
 - name: Install and configure Stats Agent
-  hosts: role_api:role_bootstrap:role_validator
+  hosts: role_api:role_bootstrap:role_validator:private_api_gzil
   become: true
   tags:
     - install
