@@ -193,6 +193,8 @@ impl Chain {
                 json!({ "at_height": 9489500, "evm_exec_failure_causes_scilla_precompile_to_fail": true }),
                 // estimated: 2025-07-14T12.00.00Z
                 json!({ "at_height": 9780700, "revert_restore_xsgd_contract": true, "scilla_fix_contract_code_removal_on_evm_tx": true}),
+                // estimated: 2025-07-21T12.00.00Z
+                json!({ "at_height": 10109366, "prevent_zil_transfer_from_evm_to_scilla_contract": true}),
             ]),
             Chain::Zq2Mainnet => Some(vec![
                 json!({ "at_height": 4770088, "executable_blocks": true }),
@@ -227,6 +229,8 @@ impl Chain {
                 json!({ "at_height": 5528557, "scilla_failed_txn_correct_balance_deduction": true, "scilla_transition_proper_order": true, "evm_to_scilla_value_transfer_zero": true, "restore_xsgd_contract": true }),
                 // estimated: 2025-07-14T12.00.00Z
                 json!({ "at_height": 5910029, "evm_exec_failure_causes_scilla_precompile_to_fail": true, "scilla_fix_contract_code_removal_on_evm_tx": true}),
+                // estimated: 2025-07-21T12.00.00Z
+                json!({ "at_height": 6283082, "prevent_zil_transfer_from_evm_to_scilla_contract": true, "restore_ignite_wallet_contracts": true}),
             ]),
             _ => None,
         }
