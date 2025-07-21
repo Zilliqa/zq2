@@ -153,7 +153,7 @@ impl Sync {
     // Do not overflow libp2p::request-response::cbor::codec::RESPONSE_SIZE_MAXIMUM = 10MB (default)
     const RESPONSE_SIZE_THRESHOLD: usize = 8 * 1024 * 1024;
     // periodic vacuum interval
-    const VACUUM_INTERVAL: u64 = 604800; // 'weekly'
+    const VACUUM_INTERVAL: u64 = 300; // 'weekly'
 
     pub fn new(
         config: &NodeConfig,
