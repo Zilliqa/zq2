@@ -7,9 +7,8 @@ use alloy::{
     eips::{BlockId, BlockNumberOrTag, RpcBlockHash},
     primitives::{Address, B256, U64, U256},
     rpc::types::{
-        FilteredParams,
+        FeeHistory, FilteredParams,
         pubsub::{self, SubscriptionKind},
-        FeeHistory,
     },
 };
 use anyhow::{Result, anyhow};
