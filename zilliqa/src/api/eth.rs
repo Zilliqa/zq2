@@ -9,7 +9,6 @@ use alloy::{
     rpc::types::{
         FeeHistory, FilteredParams,
         pubsub::{self, SubscriptionKind},
-        FeeHistory,
     },
 };
 use anyhow::{Result, anyhow};
