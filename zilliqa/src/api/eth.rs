@@ -1058,17 +1058,36 @@ fn blob_base_fee(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
 
 /// eth_feeHistory
 /// Returns the collection of historical gas information
-fn fee_history(params: Params, _node: &Arc<RwLock<Node>>) -> Result<eth::FeeHistory> {
+fn fee_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<eth::FeeHistory> {
     let mut params = params.sequence();
     let block_count: u64 = params.next()?;
     let newest_block: BlockNumberOrTag = params.next()?;
     let _reward_percentiles: Option<Vec<f64>> = params.optional_next()?;
     expect_end_of_params(&mut params, 2, 3)?;
 
+    let node = node.read();
+
+    let newest_block_number = newest_block.as_number().unwrap();
+    if block_count > newest_block_number {
+        return Err(anyhow!("block_count is greater than newest_block"));
+    }
+
+    let oldest_block = newest_block_number - block_count + 1;
     let fee_history = eth::FeeHistory {
-        oldest_block: newest_block.as_number().unwrap() - block_count + 1,
+        oldest_block,
         base_fee_per_gas: vec!["0x0".to_string(); block_count as usize],
-        gas_used_ratio: 0,
+        gas_used_ratio: (oldest_block..=newest_block_number)
+            .map(|block_number| {
+                let block = node
+                    .get_block(BlockNumberOrTag::Number(block_number))?
+                    .ok_or_else(|| anyhow!("block not found"))?;
+                let gas_limit = block.gas_limit().0 as f64;
+                if gas_limit == 0.0 {
+                    return Err(anyhow!("gas limit is zero"));
+                }
+                Ok((block.gas_used().0 as f64) / gas_limit)
+            })
+            .collect::<Result<Vec<_>>>()?,
         base_fee_per_blob_gas: vec!["0x0".to_string(); block_count as usize],
         blob_gas_used_ratio: vec![0; block_count as usize],
     };
