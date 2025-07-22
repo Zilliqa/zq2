@@ -247,7 +247,7 @@ async fn handle_forking_correctly(mut network: Network) {
 async fn zero_account_per_block_balance_updates(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
-    // Check inital account values
+    // Check initial account values
     let block_height = wallet.get_block_number().await.unwrap();
     assert_eq!(block_height, U64::from(0));
 
@@ -268,7 +268,7 @@ async fn zero_account_per_block_balance_updates(mut network: Network) {
         .unwrap();
     assert_eq!(genesis_account_expected_balance, genesis_account_balance);
 
-    // Total intial stake spread across 4 validators
+    // Total initial stake spread across 4 validators
     let genesis_deposits = network
         .get_node(0)
         .config
