@@ -2055,13 +2055,18 @@ pub fn scilla_call(
             // The `to_addr` is a Scilla contract, so we are going to invoke the Scilla interpreter.
 
             let Some(g) = gas.checked_sub(constants::SCILLA_INVOKE_RUNNER) else {
+                let gas_used: EvmGas = if fork.scilla_failed_txn_correct_gas_fee_charged {
+                    gas_limit.into()
+                } else {
+                    (gas_limit - gas).into()
+                };
                 warn!("not enough gas to invoke scilla runner");
                 return Ok((
                     ScillaResult {
                         success: false,
                         contract_address: None,
                         logs: vec![],
-                        gas_used: (gas_limit - gas).into(),
+                        gas_used,
                         transitions: vec![],
                         accepted: Some(false),
                         errors: [(depth, vec![ScillaError::GasNotSufficient])]
