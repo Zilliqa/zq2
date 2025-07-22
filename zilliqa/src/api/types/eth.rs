@@ -517,7 +517,7 @@ pub struct FeeHistory {
     #[serde(serialize_with = "hex")]
     pub oldest_block: u64,
     pub base_fee_per_gas: Vec<String>,
-    pub gas_used_ratio: u64,
+    pub gas_used_ratio: Vec<f64>,
     pub base_fee_per_blob_gas: Vec<String>,
     pub blob_gas_used_ratio: Vec<u8>,
 }
