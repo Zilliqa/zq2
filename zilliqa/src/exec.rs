@@ -2263,8 +2263,7 @@ pub fn scilla_call(
 
             let gas_used = if fork.scilla_failed_txn_correct_gas_fee_charged {
                 gas.into()
-            }
-            else {
+            } else {
                 EvmGas(0)
             };
 
