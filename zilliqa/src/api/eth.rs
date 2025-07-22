@@ -1009,8 +1009,22 @@ fn blob_base_fee(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
 
 /// eth_feeHistory
 /// Returns the collection of historical gas information
-fn fee_history(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
-    Err(anyhow!("API method eth_feeHistory is not implemented yet"))
+fn fee_history(params: Params, _node: &Arc<RwLock<Node>>) -> Result<eth::FeeHistory> {
+    let mut params = params.sequence();
+    let block_count: u64 = params.next()?;
+    let newest_block: BlockNumberOrTag = params.next()?;
+    let _reward_percentiles: Option<Vec<f64>> = params.optional_next()?;
+    expect_end_of_params(&mut params, 2, 3)?;
+
+    let fee_history = eth::FeeHistory {
+        oldest_block: newest_block.as_number().unwrap() - block_count + 1,
+        base_fee_per_gas: vec!["0x0".to_string(); block_count as usize],
+        gas_used_ratio: 0,
+        base_fee_per_blob_gas: vec!["0x0".to_string(); block_count as usize],
+        blob_gas_used_ratio: vec![0; block_count as usize],
+    };
+
+    Ok(fee_history)
 }
 
 /// eth_getAccount
