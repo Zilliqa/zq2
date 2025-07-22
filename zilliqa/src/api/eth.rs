@@ -13,7 +13,7 @@ use alloy::{
 };
 use anyhow::{Result, anyhow};
 use http::Extensions;
-use itertools::{Either, Itertools};
+use itertools::Either;
 use jsonrpsee::{
     PendingSubscriptionSink, RpcModule, SubscriptionMessage,
     core::StringError,
@@ -38,6 +38,7 @@ use super::{
 use crate::{
     api::{types::eth::GetAccountResult, zilliqa::ZilAddress},
     cfg::EnabledApi,
+    constants::BASE_FEE_PER_GAS,
     crypto::Hash,
     error::ensure_success,
     exec::zil_contract_address,
@@ -1009,7 +1010,7 @@ fn blob_base_fee(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
 
 /// eth_feeHistory
 /// Returns the collection of historical gas information
-fn fee_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<eth::FeeHistory> {
+fn fee_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<FeeHistory> {
     let mut params = params.sequence();
     let block_count: String = params.next()?;
     let block_count = if let Some(block_count) = block_count.strip_prefix("0x") {
@@ -1062,7 +1063,7 @@ fn fee_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<eth::FeeHisto
                         let tx = node
                             .get_transaction_by_hash(*tx_hash)?
                             .ok_or_else(|| anyhow!("transaction not found: {}", tx_hash))?;
-                        Ok(tx.tx.effective_gas_price(block.header.base_fee_per_gas))
+                        Ok(tx.tx.effective_gas_price(BASE_FEE_PER_GAS))
                     })
                     .collect::<Result<Vec<_>>>()?;
 

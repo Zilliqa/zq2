@@ -41,8 +41,6 @@ pub struct Block {
     timestamp: u64,
     transaction_count: usize,
     uncles: Vec<B256>,
-    #[serde(serialize_with = "hex")]
-    base_fee_per_gas: u64,
 }
 
 #[derive(Clone, Serialize)]
@@ -113,7 +111,6 @@ impl Block {
                 .as_secs(),
             transaction_count: block.transactions.len(),
             uncles: vec![],
-            base_fee_per_gas: 0,
         }
     }
 }
