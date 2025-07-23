@@ -671,14 +671,18 @@ impl State {
         // Issue 1509 - for Scilla transitions, follow the legacy ZQ1 behaviour of deducting a small amount
         // of gas for the invocation and the rest of the gas once the txn has run.
 
-        // let gas_limit = txn.gas_limit;
         let gas_price = txn.gas_price;
 
         let deposit_gas = txn.get_deposit_gas()?;
         let deposit = total_scilla_gas_price(deposit_gas, gas_price);
         trace!("scilla_txn: gas_price {gas_price} deposit_gas {deposit_gas} deposit {deposit}");
 
-        if let Some(result) = state.deduct_from_account(from_addr, deposit, EvmGas(0))? {
+        let gas_used: EvmGas = if fork.scilla_failed_txn_correct_gas_fee_charged {
+            deposit_gas.into()
+        } else {
+            EvmGas(0)
+        };
+        if let Some(result) = state.deduct_from_account(from_addr, deposit, gas_used)? {
             trace!("scilla_txn: Could not deduct deposit");
             return Ok((result, state.finalize()));
         }
@@ -724,8 +728,13 @@ impl State {
             if let Some(extra_charge) = to_charge {
                 // Deduct the remaining gas.
                 // If we fail, Zilliqa 1 deducts nothing at all, and neither do we.
+                let gas_used: EvmGas = if fork.scilla_failed_txn_correct_gas_fee_charged {
+                    result.gas_used
+                } else {
+                    EvmGas(0)
+                };
                 if let Some(result) =
-                    new_state.deduct_from_account(from_addr, extra_charge, EvmGas(0))?
+                    new_state.deduct_from_account(from_addr, extra_charge, gas_used)?
                 {
                     trace!("scilla_txn: cannot deduct remaining gas - txn failed");
                     let mut failed_state = PendingState::new(self.try_clone()?, fork.clone());
@@ -1793,7 +1802,13 @@ fn scilla_create(
         return Err(anyhow!("contract creation without init data"));
     }
 
-    if let Some(result) = state.deduct_from_account(from_addr, txn.amount, EvmGas(0))? {
+    let gas_used: EvmGas = if fork.scilla_failed_txn_correct_gas_fee_charged {
+        txn.gas_limit.into()
+    } else {
+        EvmGas(0)
+    };
+
+    if let Some(result) = state.deduct_from_account(from_addr, txn.amount, gas_used)? {
         return Ok((result, state));
     }
 
@@ -1825,12 +1840,17 @@ fn scilla_create(
 
     let Some(gas) = gas.checked_sub(constants::SCILLA_INVOKE_CHECKER) else {
         warn!("not enough gas to invoke scilla checker");
+        let gas_used: EvmGas = if fork.scilla_failed_txn_correct_gas_fee_charged {
+            txn.gas_limit.into()
+        } else {
+            (txn.gas_limit - gas).into()
+        };
         return Ok((
             ScillaResult {
                 success: false,
                 contract_address: Some(contract_address),
                 logs: vec![],
-                gas_used: (txn.gas_limit - gas).into(),
+                gas_used,
                 transitions: vec![],
                 accepted: Some(false),
                 errors: [(0, vec![ScillaError::GasNotSufficient])]
@@ -1910,12 +1930,17 @@ fn scilla_create(
 
     let Some(gas) = gas.checked_sub(constants::SCILLA_INVOKE_RUNNER) else {
         warn!("not enough gas to invoke scilla runner");
+        let gas_used: EvmGas = if fork.scilla_failed_txn_correct_gas_fee_charged {
+            txn.gas_limit.into()
+        } else {
+            (txn.gas_limit - gas).into()
+        };
         return Ok((
             ScillaResult {
                 success: false,
                 contract_address: Some(contract_address),
                 logs: vec![],
-                gas_used: (txn.gas_limit - gas).into(),
+                gas_used,
                 transitions: vec![],
                 accepted: Some(false),
                 errors: [(0, vec![ScillaError::GasNotSufficient])]
@@ -2055,13 +2080,18 @@ pub fn scilla_call(
             // The `to_addr` is a Scilla contract, so we are going to invoke the Scilla interpreter.
 
             let Some(g) = gas.checked_sub(constants::SCILLA_INVOKE_RUNNER) else {
+                let gas_used: EvmGas = if fork.scilla_failed_txn_correct_gas_fee_charged {
+                    gas_limit.into()
+                } else {
+                    (gas_limit - gas).into()
+                };
                 warn!("not enough gas to invoke scilla runner");
                 return Ok((
                     ScillaResult {
                         success: false,
                         contract_address: None,
                         logs: vec![],
-                        gas_used: (gas_limit - gas).into(),
+                        gas_used,
                         transitions: vec![],
                         accepted: Some(false),
                         errors: [(depth, vec![ScillaError::GasNotSufficient])]
@@ -2134,7 +2164,13 @@ pub fn scilla_call(
             gas = gas.min(output.gas_remaining);
 
             if output.accepted {
-                if let Some(result) = new_state.deduct_from_account(sender, amount, EvmGas(0))? {
+                let gas_used: EvmGas = if fork.scilla_failed_txn_correct_gas_fee_charged {
+                    (gas_limit - gas).into()
+                } else {
+                    EvmGas(0)
+                };
+
+                if let Some(result) = new_state.deduct_from_account(sender, amount, gas_used)? {
                     return Ok((result, new_state));
                 }
 
@@ -2197,12 +2233,17 @@ pub fn scilla_call(
             // The `to_addr` is an EOA.
             let Some(g) = gas.checked_sub(constants::SCILLA_TRANSFER) else {
                 warn!("not enough gas to make transfer");
+                let gas_used: EvmGas = if fork.scilla_failed_txn_correct_gas_fee_charged {
+                    gas_limit.into()
+                } else {
+                    (gas_limit - gas).into()
+                };
                 return Ok((
                     ScillaResult {
                         success: false,
                         contract_address: None,
                         logs: vec![],
-                        gas_used: (gas_limit - gas).into(),
+                        gas_used,
                         transitions: vec![],
                         accepted: Some(false),
                         errors: [(0, vec![ScillaError::GasNotSufficient])]
@@ -2220,8 +2261,14 @@ pub fn scilla_call(
                 false => from_addr,
             };
 
+            let gas_used = if fork.scilla_failed_txn_correct_gas_fee_charged {
+                gas.into()
+            } else {
+                EvmGas(0)
+            };
+
             if let Some(result) =
-                current_state.deduct_from_account(deduct_funds_from, amount, EvmGas(0))?
+                current_state.deduct_from_account(deduct_funds_from, amount, gas_used)?
             {
                 return Ok((result, current_state));
             }
