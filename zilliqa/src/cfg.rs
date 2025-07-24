@@ -632,6 +632,7 @@ pub struct Fork {
     pub scilla_fix_contract_code_removal_on_evm_tx: bool,
     pub restore_ignite_wallet_contracts: bool,
     pub prevent_zil_transfer_from_evm_to_scilla_contract: bool,
+    pub scilla_failed_txn_correct_gas_fee_charged: bool,
 }
 
 pub enum ForkName {
@@ -755,6 +756,8 @@ pub struct ForkDelta {
     pub restore_ignite_wallet_contracts: Option<bool>,
     /// If true, zil transfers from evm to scilla contracts are prohibited
     pub prevent_zil_transfer_from_evm_to_scilla_contract: Option<bool>,
+    /// If true, failed scilla transfers report proper gas usage
+    pub scilla_failed_txn_correct_gas_fee_charged: Option<bool>,
 }
 
 impl Fork {
@@ -843,6 +846,9 @@ impl Fork {
             prevent_zil_transfer_from_evm_to_scilla_contract: delta
                 .prevent_zil_transfer_from_evm_to_scilla_contract
                 .unwrap_or(self.prevent_zil_transfer_from_evm_to_scilla_contract),
+            scilla_failed_txn_correct_gas_fee_charged: delta
+                .scilla_failed_txn_correct_gas_fee_charged
+                .unwrap_or(self.scilla_failed_txn_correct_gas_fee_charged),
         }
     }
 }
@@ -938,6 +944,7 @@ pub fn genesis_fork_default() -> Fork {
         scilla_fix_contract_code_removal_on_evm_tx: true,
         restore_ignite_wallet_contracts: true,
         prevent_zil_transfer_from_evm_to_scilla_contract: true,
+        scilla_failed_txn_correct_gas_fee_charged: true,
     }
 }
 
@@ -1085,6 +1092,7 @@ mod tests {
                 scilla_fix_contract_code_removal_on_evm_tx: None,
                 restore_ignite_wallet_contracts: None,
                 prevent_zil_transfer_from_evm_to_scilla_contract: None,
+                scilla_failed_txn_correct_gas_fee_charged: None,
             }],
             ..Default::default()
         };
@@ -1135,6 +1143,7 @@ mod tests {
                     scilla_fix_contract_code_removal_on_evm_tx: None,
                     restore_ignite_wallet_contracts: None,
                     prevent_zil_transfer_from_evm_to_scilla_contract: None,
+                    scilla_failed_txn_correct_gas_fee_charged: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1165,6 +1174,7 @@ mod tests {
                     scilla_fix_contract_code_removal_on_evm_tx: None,
                     restore_ignite_wallet_contracts: None,
                     prevent_zil_transfer_from_evm_to_scilla_contract: None,
+                    scilla_failed_txn_correct_gas_fee_charged: None,
                 },
             ],
             ..Default::default()
@@ -1229,6 +1239,7 @@ mod tests {
                     scilla_fix_contract_code_removal_on_evm_tx: None,
                     restore_ignite_wallet_contracts: None,
                     prevent_zil_transfer_from_evm_to_scilla_contract: None,
+                    scilla_failed_txn_correct_gas_fee_charged: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1259,6 +1270,7 @@ mod tests {
                     scilla_fix_contract_code_removal_on_evm_tx: None,
                     restore_ignite_wallet_contracts: None,
                     prevent_zil_transfer_from_evm_to_scilla_contract: None,
+                    scilla_failed_txn_correct_gas_fee_charged: None,
                 },
             ],
             ..Default::default()
@@ -1314,6 +1326,7 @@ mod tests {
                 scilla_fix_contract_code_removal_on_evm_tx: true,
                 restore_ignite_wallet_contracts: true,
                 prevent_zil_transfer_from_evm_to_scilla_contract: true,
+                scilla_failed_txn_correct_gas_fee_charged: true,
             },
             forks: vec![],
             ..Default::default()
@@ -1357,6 +1370,7 @@ mod tests {
                     scilla_fix_contract_code_removal_on_evm_tx: None,
                     restore_ignite_wallet_contracts: None,
                     prevent_zil_transfer_from_evm_to_scilla_contract: None,
+                    scilla_failed_txn_correct_gas_fee_charged: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1387,6 +1401,7 @@ mod tests {
                     scilla_fix_contract_code_removal_on_evm_tx: None,
                     restore_ignite_wallet_contracts: None,
                     prevent_zil_transfer_from_evm_to_scilla_contract: None,
+                    scilla_failed_txn_correct_gas_fee_charged: None,
                 },
             ],
             ..Default::default()
