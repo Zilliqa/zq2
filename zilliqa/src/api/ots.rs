@@ -12,8 +12,8 @@ use serde_json::{Value, json};
 
 use super::{
     eth::{
-        get_block_transaction_receipts_inner, get_transaction_inner,
-        get_transaction_receipt_inner_slow,
+        get_transaction_inner, get_transaction_receipt_inner_slow,
+        old_get_block_transaction_receipts_inner,
     },
     types::ots::{self, Operation, TraceEntry},
 };
@@ -114,7 +114,7 @@ fn get_block_transactions(
     let start = usize::min(page_number * page_size, block.transactions.len());
     let end = usize::min((page_number + 1) * page_size, block.transactions.len());
 
-    let receipts = get_block_transaction_receipts_inner(&node, block_number)?;
+    let receipts = old_get_block_transaction_receipts_inner(&node, block_number)?;
     let transactions = block.transactions[start..end]
         .iter()
         .map(|hash| get_transaction_inner(*hash, &node))

@@ -36,32 +36,25 @@ pub fn check_and_build_ots_indices(db: Arc<Db>, last_view: u64) -> Result<()> {
         let now = SystemTime::now();
 
         for view in (0..=last_view).rev() {
-            let Ok(Some(block)) = db.get_block_by_view(view) else {
+            let Ok(Some(brt)) =
+                db.get_block_and_receipts_and_transactions(crate::db::BlockFilter::View(view))
+            else {
                 continue;
             };
 
-            for txn_hash in block.transactions {
+            for txn in brt.transactions {
                 let mut addresses = Vec::with_capacity(64);
-
-                let Ok(Some(txn)) = db.get_transaction(&txn_hash) else {
-                    continue;
-                };
 
                 addresses.push(txn.signer);
 
-                let txn = txn.tx.into_transaction();
-                if let Some(dest) = txn.to_addr() {
+                if let Some(dest) = txn.tx.into_transaction().to_addr() {
                     addresses.push(dest);
                 }
 
-                let Ok(block_receipts) = db.get_transaction_receipts_in_block(&block.header.hash)
-                else {
-                    continue;
-                };
-
-                let Some(receipt) = block_receipts
+                let Some(receipt) = brt
+                    .receipts
                     .iter()
-                    .find(|receipt| receipt.tx_hash == txn_hash)
+                    .find(|receipt| receipt.tx_hash == txn.hash)
                 else {
                     continue;
                 };
@@ -78,7 +71,7 @@ pub fn check_and_build_ots_indices(db: Arc<Db>, last_view: u64) -> Result<()> {
                 }
 
                 for address in addresses {
-                    let _ = db.add_touched_address(address, txn_hash);
+                    let _ = db.add_touched_address(address, txn.hash);
                 }
                 // Give some breath to db before proceeding with next transaction
                 sleep(Duration::from_millis(5)).await;

@@ -19,6 +19,7 @@ use tracing::debug;
 use zilliqa::{
     api::types::zil::GetTxResponse,
     schnorr,
+    transaction::{EvmGas, ScillaGas},
     zq1_proto::{Code, Data, Nonce, ProtoTransactionCoreInfo},
 };
 
@@ -4445,4 +4446,62 @@ async fn evm_tx_to_scilla_contract_should_fail(mut network: Network) {
     let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
     assert_eq!(receipt.status.unwrap().as_u64(), 0u64);
     assert_eq!(receipt.cumulative_gas_used.as_u64(), 21000);
+}
+
+#[zilliqa_macros::test(restrict_concurrency)]
+async fn failed_scilla_to_scilla_transfers_proper_fee(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
+
+    let code = scilla_test_contract_code();
+    let data = scilla_test_contract_data(address);
+    let contract_address =
+        deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data, 0_u128).await;
+
+    let initial_balance = wallet.get_balance(address, None).await.unwrap().as_u128();
+
+    let gas_price_str: String = wallet
+        .provider()
+        .request("GetMinimumGasPrice", ())
+        .await
+        .unwrap();
+
+    let gas_price: u128 = u128::from_str(&gas_price_str).unwrap();
+    let gas_limit: ScillaGas = EvmGas(21000).into();
+
+    let amount_to_transfer = 10 * 10u128.pow(12);
+
+    let response = issue_create_transaction(
+        &wallet,
+        &secret_key.public_key(),
+        gas_price,
+        &mut network,
+        &secret_key,
+        2,
+        ToAddr::Address(contract_address),
+        amount_to_transfer,
+        gas_limit.0,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let txn_hash: H256 = response["TranID"].as_str().unwrap().parse().unwrap();
+    network.run_until_receipt(&wallet, txn_hash, 200).await;
+
+    let eth_receipt = wallet
+        .get_transaction_receipt(txn_hash)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(eth_receipt.status.unwrap().as_u32(), 0);
+    assert_eq!(eth_receipt.cumulative_gas_used.as_u64(), 21000);
+
+    let transaction_fee: u128 =
+        (eth_receipt.cumulative_gas_used * eth_receipt.effective_gas_price.unwrap()).as_u128();
+
+    let balance_after_failed_call = wallet.get_balance(address, None).await.unwrap().as_u128();
+
+    assert_eq!(balance_after_failed_call, initial_balance - transaction_fee);
 }

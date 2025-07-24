@@ -174,12 +174,54 @@ impl FromSql for EvmGas {
     }
 }
 
-enum BlockFilter {
+pub enum BlockFilter {
     Hash(Hash),
     View(u64),
     Height(u64),
     MaxHeight,
     MaxCanonicalByHeight,
+    Finalized,
+    HighQC,
+}
+
+impl From<Hash> for BlockFilter {
+    fn from(hash: Hash) -> Self {
+        BlockFilter::Hash(hash)
+    }
+}
+
+impl From<&Hash> for BlockFilter {
+    fn from(hash: &Hash) -> Self {
+        BlockFilter::Hash(*hash)
+    }
+}
+
+impl From<alloy::eips::BlockNumberOrTag> for BlockFilter {
+    fn from(x: alloy::eips::BlockNumberOrTag) -> Self {
+        match x {
+            alloy::eips::BlockNumberOrTag::Latest => BlockFilter::MaxCanonicalByHeight,
+            alloy::eips::BlockNumberOrTag::Finalized => BlockFilter::Finalized,
+            alloy::eips::BlockNumberOrTag::Safe => BlockFilter::HighQC,
+            alloy::eips::BlockNumberOrTag::Earliest => BlockFilter::Height(0),
+            alloy::eips::BlockNumberOrTag::Pending => {
+                panic!("Pending block cannot be retrieved from db by definition")
+            }
+            alloy::eips::BlockNumberOrTag::Number(x) => BlockFilter::Height(x),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct BlockAndReceipts {
+    pub block: Block,
+    pub receipts: Vec<TransactionReceipt>,
+}
+
+#[derive(Clone)]
+pub struct BlockAndReceiptsAndTransactions {
+    pub block: Block,
+    pub receipts: Vec<TransactionReceipt>,
+    pub transactions: Vec<VerifiedTransaction>,
 }
 
 const CHECKPOINT_HEADER_BYTES: [u8; 8] = *b"ZILCHKPT";
@@ -574,7 +616,7 @@ impl Db {
             || self.get_highest_canonical_block_number()?.is_some()
         {
             // If checkpointed block already exists then assume checkpoint load already complete. Return None
-            if self.get_block_by_hash(&block.hash())?.is_some() {
+            if self.get_block(block.hash().into())?.is_some() {
                 return Ok(None);
             }
             // This may not be strictly necessary, as in theory old values will, at worst, be orphaned
@@ -584,7 +626,7 @@ impl Db {
             // unexpected and unwanted behaviour. Thus we currently forbid loading a checkpoint in
             // a node that already contains previous state, until (and unless) there's ever a
             // usecase for going through the effort to support it and ensure it works as expected.
-            if let Some(db_block) = self.get_block_by_hash(&parent.hash())? {
+            if let Some(db_block) = self.get_block(parent.hash().into())? {
                 if db_block.parent_hash() != parent.parent_hash() {
                     return Err(anyhow!(
                         "Inconsistent checkpoint file: block loaded from checkpoint and block stored in database with same hash have differing parent hashes"
@@ -819,10 +861,6 @@ impl Db {
                 })
             })
             .optional()?)
-    }
-
-    pub fn get_highest_canonical_block(&self) -> Result<Option<Block>> {
-        self.get_block(BlockFilter::MaxCanonicalByHeight)
     }
 
     pub fn set_high_qc_with_db_tx(
@@ -1081,7 +1119,7 @@ impl Db {
         Ok(rows)
     }
 
-    fn get_transactionless_block(&self, filter: BlockFilter) -> Result<Option<Block>> {
+    pub fn get_transactionless_block(&self, filter: BlockFilter) -> Result<Option<Block>> {
         fn make_block(row: &Row) -> rusqlite::Result<Block> {
             Ok(Block {
                 header: BlockHeader {
@@ -1101,35 +1139,63 @@ impl Db {
                 transactions: vec![],
             })
         }
-        macro_rules! query_block {
-            ($cond: tt $(, $key:tt)*) => {
-                self.db.lock().unwrap().prepare_cached(concat!("SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE ", $cond),)?.query_row([$($key),*], make_block).optional()?
-            };
-        }
         // Remember to add to `query_planner_stability_guarantee()` test below
         Ok(match filter {
             BlockFilter::Hash(hash) => {
-                query_block!("block_hash = ?1", hash)
+                self.db.lock().unwrap().prepare_cached(concat!(
+                    "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
+                    "WHERE block_hash = ?1"
+                ),)?.query_row([hash], make_block).optional()?
             }
             BlockFilter::View(view) => {
-                query_block!("view = ?1", view)
+                self.db.lock().unwrap().prepare_cached(concat!(
+                    "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
+                    "WHERE view = ?1"
+                ),)?.query_row([view], make_block).optional()?
             }
             BlockFilter::Height(height) => {
-                query_block!("height = ?1 AND is_canonical = TRUE", height)
+                self.db.lock().unwrap().prepare_cached(concat!(
+                    "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
+                    "WHERE height = ?1 AND is_canonical = TRUE"
+                ),)?.query_row([height], make_block).optional()?
             }
             // Compound SQL queries below, due to - https://github.com/Zilliqa/zq2/issues/2629
             BlockFilter::MaxCanonicalByHeight => {
-                query_block!(
-                    "is_canonical = true AND height = (SELECT MAX(height) FROM blocks WHERE is_canonical = TRUE)"
-                )
+                self.db.lock().unwrap().prepare_cached(concat!(
+                    "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
+                    "WHERE is_canonical = true AND height = (SELECT MAX(height) FROM blocks WHERE is_canonical = TRUE)"
+                ),)?.query_row([], make_block).optional()?
             }
             BlockFilter::MaxHeight => {
-                query_block!("height = (SELECT MAX(height) FROM blocks) LIMIT 1")
+                self.db.lock().unwrap().prepare_cached(concat!(
+                    "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
+                    "WHERE height = (SELECT MAX(height) FROM blocks) LIMIT 1"
+                ),)?.query_row([], make_block).optional()?
             }
+            BlockFilter::Finalized => {
+                if let Some(result) = self.db.lock().unwrap().prepare_cached(concat!(
+                    "SELECT block_hash, blocks.view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
+                    "INNER JOIN tip_info ON blocks.view = tip_info.finalized_view"
+                ),)?.query_row([], make_block).optional()? {
+                    Some(result)
+                }else{
+                    self.get_transactionless_block(BlockFilter::Height(0))?
+                }
+            },
+            BlockFilter::HighQC => {
+                if let Some(high_qc) = self.get_high_qc()?{
+                    self.db.lock().unwrap().prepare_cached(concat!(
+                        "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
+                        "WHERE block_hash = ?1"
+                    ),)?.query_row([high_qc.block_hash], make_block).optional()?
+                }else {
+                    self.get_transactionless_block(BlockFilter::Height(0))?
+                }
+            },
         })
     }
 
-    fn get_block(&self, filter: BlockFilter) -> Result<Option<Block>> {
+    pub fn get_block(&self, filter: BlockFilter) -> Result<Option<Block>> {
         let Some(mut block) = self.get_transactionless_block(filter)? else {
             return Ok(None);
         };
@@ -1152,20 +1218,63 @@ impl Db {
         Ok(Some(block))
     }
 
-    pub fn get_block_by_hash(&self, block_hash: &Hash) -> Result<Option<Block>> {
-        self.get_block(BlockFilter::Hash(*block_hash))
+    pub fn get_block_and_receipts(&self, filter: BlockFilter) -> Result<Option<BlockAndReceipts>> {
+        let Some(mut block) = self.get_transactionless_block(filter)? else {
+            return Ok(None);
+        };
+        if self.executable_blocks_height.is_some()
+            && block.header.number < self.executable_blocks_height.unwrap()
+        {
+            debug!("fetched ZQ1 block so setting state root hash to zeros");
+            block.header.state_root_hash = Hash::ZERO;
+        }
+
+        let receipts = self.db.lock().unwrap().prepare_cached("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1 ORDER BY tx_index ASC")?.query_map([block.header.hash], Self::make_receipt)?.collect::<Result<Vec<_>, _>>()?;
+
+        let transaction_hashes = receipts.iter().map(|x| x.tx_hash).collect();
+        block.transactions = transaction_hashes;
+
+        Ok(Some(BlockAndReceipts { block, receipts }))
     }
 
-    pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
-        self.get_block(BlockFilter::View(view))
-    }
+    pub fn get_block_and_receipts_and_transactions(
+        &self,
+        filter: BlockFilter,
+    ) -> Result<Option<BlockAndReceiptsAndTransactions>> {
+        let Some(mut block) = self.get_transactionless_block(filter)? else {
+            return Ok(None);
+        };
+        if self.executable_blocks_height.is_some()
+            && block.header.number < self.executable_blocks_height.unwrap()
+        {
+            debug!("fetched ZQ1 block so setting state root hash to zeros");
+            block.header.state_root_hash = Hash::ZERO;
+        }
 
-    pub fn get_canonical_block_by_number(&self, number: u64) -> Result<Option<Block>> {
-        self.get_block(BlockFilter::Height(number))
-    }
+        let receipts = self.db.lock().unwrap().prepare_cached("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1 ORDER BY tx_index ASC")?.query_map([block.header.hash], Self::make_receipt)?.collect::<Result<Vec<_>, _>>()?;
 
-    pub fn get_highest_recorded_block(&self) -> Result<Option<Block>> {
-        self.get_block(BlockFilter::MaxHeight)
+        let transactions: Vec<VerifiedTransaction> = self
+            .db
+            .lock()
+            .unwrap()
+            .prepare_cached(
+                "SELECT data FROM transactions INNER JOIN receipts ON transactions.tx_hash = receipts.tx_hash WHERE receipts.block_hash = ?1",
+            )?
+            .query_map([block.header.hash], |row| row.get(0))?
+            .map(|x|x.unwrap())
+            .map(|x: SignedTransaction| x.verify_bypass())
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let transaction_hashes = receipts.iter().map(|x| x.tx_hash).collect();
+        block.transactions = transaction_hashes;
+
+        assert_eq!(receipts.len(), transactions.len());
+
+        Ok(Some(BlockAndReceiptsAndTransactions {
+            block,
+            receipts,
+            transactions,
+        }))
     }
 
     pub fn contains_block(&self, block_hash: &Hash) -> Result<bool> {
@@ -1235,10 +1344,6 @@ impl Db {
 
     pub fn insert_transaction_receipt(&self, receipt: TransactionReceipt) -> Result<()> {
         self.insert_transaction_receipt_with_db_tx(&self.db.lock().unwrap(), receipt)
-    }
-
-    pub fn get_transaction_receipt(&self, txn_hash: &Hash) -> Result<Option<TransactionReceipt>> {
-        Ok(self.db.lock().unwrap().prepare_cached("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE tx_hash = ?1",)?.query_row( [txn_hash], Self::make_receipt).optional()?)
     }
 
     pub fn get_transaction_receipts_in_block(
@@ -1554,6 +1659,8 @@ mod tests {
             "SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1 ORDER BY tx_index",
             "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE is_canonical = true AND height = (SELECT MAX(height) FROM blocks WHERE is_canonical = TRUE)",
             "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE height = (SELECT MAX(height) FROM blocks) LIMIT 1",
+            // "SELECT block_hash, blocks.view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks INNER JOIN tip_info ON blocks.view = tip_info.finalized_view", // tip_info is one record so scanning is fine
+            "SELECT data FROM transactions INNER JOIN receipts ON transactions.tx_hash = receipts.tx_hash WHERE receipts.block_hash = ?1",
             // TODO: Add more queries
         ];
 
