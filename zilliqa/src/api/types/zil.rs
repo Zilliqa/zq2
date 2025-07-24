@@ -248,7 +248,11 @@ pub struct EventLog {
 pub struct GetTxResponseReceipt {
     pub accepted: bool,
     #[serde(with = "num_as_str")]
-    pub cumulative_gas: ScillaGas,
+    pub gas_used: ScillaGas,
+    #[serde(with = "num_as_str")]
+    pub cumulative_gas_used: ScillaGas,
+    #[serde(with = "num_as_str")]
+    pub cumulative_gas: ScillaGas, // deprecated
     #[serde(with = "num_as_str")]
     pub epoch_num: u64,
     pub transitions: Vec<Transition>,
@@ -331,7 +335,9 @@ impl GetTxResponse {
             amount,
             signature,
             receipt: GetTxResponseReceipt {
-                cumulative_gas: receipt.cumulative_gas_used.into(),
+                gas_used: receipt.gas_used.into(),
+                cumulative_gas_used: receipt.cumulative_gas_used.into(),
+                cumulative_gas: receipt.gas_used.into(), // for historic reasons, deprecated field
                 epoch_num: block_number,
                 transitions: receipt
                     .transitions

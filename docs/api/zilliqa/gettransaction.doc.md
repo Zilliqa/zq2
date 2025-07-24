@@ -23,7 +23,9 @@ Querying for non-existent transactions or transactions that have not yet been mi
 | `amount` | Number as string | The value of the transaction. This amount is always returned in units of Qa (10^-12 ZILs). For Zilliqa transactions, this means we return the exact amount that was passed into `CreateTransaction`. For Ethereum transactions, the true amount is truncated from 18 digits to 12.
 | `signature` | Hex string with `0x` | The transaction signature. Zilliqa signatures are 64 bytes, consisting of `r` followed by `s`. Ethereum signatures are 65 bytes, consisting of `r`, followed by `s`, followed by the `v` value in 'Electrum' notation. Intershard transactions have no signature, so contain an empty string here.
 | `receipt.accepted` | Optional boolean | If the transaction was a Zilliqa transaction and was a call to a Scilla contract, whether the called contract accepted the ZIL sent to it. |
-| `receipt.cumulative_gas` | Number as string | The gas used by this transactions and all transactions in the same block that preceded it. This amount is always returned in units of Scilla gas. Internally, gas is tracked in units of EVM gas. When the true amount is not an exact multiple of the EVM to Scilla gas exchange rate, this value will be rounded. |
+| `receipt.cumulative_gas_used` | Number as string | The gas used by this transactions and all transactions in the same block that preceded it. This amount is always returned in units of Scilla gas. Internally, gas is tracked in units of EVM gas. When the true amount is not an exact multiple of the EVM to Scilla gas exchange rate, this value will be rounded. |
+| `receipt.gas_used` | Number as string | The gas used by this transaction. This amount is always returned in units of Scilla gas. Internally, gas is tracked in units of EVM gas. When the true amount is not an exact multiple of the EVM to Scilla gas exchange rate, this value will be rounded. |
+| `receipt.cumulative_gas` | Number as string | Deprecated. The gas used by this transaction only, for backwards compatibility. This amount is always returned in units of Scilla gas. Internally, gas is tracked in units of EVM gas. When the true amount is not an exact multiple of the EVM to Scilla gas exchange rate, this value will be rounded. |
 | `receipt.epoch_num` | Number as string | The number of the block in which this transaction was mined. |
 | `receipt.event_logs` | Optional array | If the transaction was a Zilliqa transaction, the logs from any Scilla contracts that were executed. EVM logs are not included. |
 | `receipt.errors` | Optional map | If the transaction was a Zilliqa transaction, a map of error codes produced by Scilla contracts, indexed by their call depth. |
@@ -98,7 +100,7 @@ func GetTransaction() {
 # Response
 
 ```json
-// Note: If the transaction is a for payment.
+// Note: If the transaction is a payment preceeded by two other payments in the block.
 {
   "id": "1",
   "jsonrpc": "2.0",
@@ -109,7 +111,9 @@ func GetTransaction() {
     "gasPrice": "1000000000",
     "nonce": "1",
     "receipt": {
-      "cumulative_gas": "1",
+      "cumulative_gas": "50",
+      "cumulative_gas_used": "150",
+      "gas_used": "50",
       "epoch_num": "589763",
       "success": true
     },
@@ -136,6 +140,8 @@ func GetTransaction() {
     "nonce": "9",
     "receipt": {
       "cumulative_gas": "10481",
+      "cumulative_gas_used": "10481",
+      "gas_used": "10481",
       "epoch_num": "586524",
       "success": true
     },
@@ -162,6 +168,8 @@ func GetTransaction() {
     "receipt": {
       "accepted": true,
       "cumulative_gas": "878",
+      "cumulative_gas_used": "878",
+      "gas_used": "878",
       "epoch_num": "589742",
       "success": true,
       "transitions": [
@@ -199,6 +207,8 @@ func GetTransaction() {
     "nonce": "8260",
     "receipt": {
       "cumulative_gas": "1220",
+      "cumulative_gas_used": "1220",
+      "gas_used": "1220",
       "epoch_num": "588004",
       "errors": {
         "0": [7]
