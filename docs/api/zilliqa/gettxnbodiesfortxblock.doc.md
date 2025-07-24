@@ -10,6 +10,8 @@ txn,get,bodies,tx,block,transaction
 
 Returns the validated transactions (in verbose form) included within a specified final transaction block.
 
+The `cumulative_gas` field is deprecated.
+
 # Curl
 
 ```shell
@@ -75,6 +77,8 @@ func GetTxnBodiesForTxBlock() {
       "nonce": "1",
       "receipt": {
         "cumulative_gas": "1",
+        "cumulative_gas_used": "1",
+        "gas_used": "1",
         "epoch_num": "2",
         "success": true
       },
@@ -91,6 +95,8 @@ func GetTxnBodiesForTxBlock() {
       "nonce": "2",
       "receipt": {
         "cumulative_gas": "1",
+        "cumulative_gas_used": "1",
+        "gas_used": "1",
         "epoch_num": "2",
         "success": true
       },
@@ -111,4 +117,3 @@ func GetTxnBodiesForTxBlock() {
 | `jsonrpc` | string | Required | `"2.0"`                                            |
 | `method`  | string | Required | `"GetTxnBodiesForTxBlock"`                         |
 | `params`  | string | Required | Specifed TX block number to return. Example: `"2"` |
-

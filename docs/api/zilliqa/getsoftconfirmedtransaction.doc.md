@@ -10,6 +10,8 @@ transaction,soft,get,confirmed
 
 Returns the details of a specified Transaction.
 
+The `cumulative_gas` field is deprecated.
+
 # Curl
 
 ```shell
@@ -35,6 +37,8 @@ curl -d '{
     "nonce": "1",
     "receipt": {
       "cumulative_gas": "1",
+      "cumulative_gas_used": "1",
+      "gas_used": "1",
       "epoch_num": "589763",
       "success": true
     },
