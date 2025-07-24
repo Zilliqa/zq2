@@ -17,7 +17,7 @@ use crate::{
     api::types::eth::{SyncingMeta, SyncingStruct},
     cfg::NodeConfig,
     crypto::Hash,
-    db::Db,
+    db::{BlockFilter, Db},
     message::{
         Block, BlockHeader, BlockRequest, BlockResponse, BlockTransactionsReceipts,
         ExternalMessage, InjectedProposal, Proposal, RequestBlocksByHash, RequestBlocksByHeight,
@@ -423,7 +423,7 @@ impl Sync {
                 let last = range.start().saturating_sub(1);
                 let hash = self
                     .db
-                    .get_canonical_block_by_number(*range.start())?
+                    .get_block(BlockFilter::Height(*range.start()))?
                     .expect("must exist")
                     .header
                     .qc
@@ -473,7 +473,7 @@ impl Sync {
                 return Ok(number);
             }
             // remove canonical block and transactions
-            if let Some(block) = self.db.get_canonical_block_by_number(number)? {
+            if let Some(block) = self.db.get_block(BlockFilter::Height(number))? {
                 trace!(number = %block.number(), hash=%block.hash(), "sync::Prune");
                 self.db.prune_block(&block, true)?;
             }
@@ -497,7 +497,7 @@ impl Sync {
         // Only inject recent proposals - https://github.com/Zilliqa/zq2/issues/2520
         let highest_block = self
             .db
-            .get_highest_recorded_block()?
+            .get_block(BlockFilter::MaxHeight)?
             .expect("db is not empty");
 
         // drain, filter and sort cached-blocks.
@@ -562,12 +562,12 @@ impl Sync {
 
     /// Convenience function to convert a block to a proposal (add full txs)
     /// Should only be used for syncing history, not for consensus messages regarding new blocks.
-    fn block_to_proposal(&self, block: Block) -> Proposal {
+    fn brt_to_proposal(&self, brt: crate::db::BlockAndReceiptsAndTransactions) -> Proposal {
+        let block = brt.block;
         // since block must be valid, unwrap(s) are safe
-        let txs = block
+        let txs = brt
             .transactions
-            .iter()
-            .map(|hash| self.db.get_transaction(hash).unwrap().unwrap())
+            .into_iter()
             // handle verification on the client-side
             .map(|tx| (tx.tx, tx.hash))
             .collect_vec();
@@ -636,18 +636,26 @@ impl Sync {
         let mut size = 0;
         // return as much as possible
         while started_at.elapsed().as_millis() < Self::PRUNE_TIMEOUT_MS {
-            // grab the block
-            let Some(block) = self.db.get_block_by_hash(&hash)? else {
-                break; // that's all we have!
+            let Some(brt) = self
+                .db
+                .get_block_and_receipts_and_transactions(hash.into())?
+            else {
+                break;
             };
+            let block = brt.block;
             let number = block.number();
-            // and the receipts
-            let receipts = self.db.get_transaction_receipts_in_block(&hash)?;
+            let receipts = brt.receipts;
+            let transactions: HashMap<Hash, crate::transaction::SignedTransaction> = brt
+                .transactions
+                .into_iter()
+                .map(|tx| (tx.hash, tx.tx))
+                .collect();
+
             let transaction_receipts = receipts
                 .into_iter()
                 .map(|r| {
-                    let txn = self.db.get_transaction(&r.tx_hash).unwrap().unwrap();
-                    (txn.tx, r)
+                    let txn = transactions.get(&r.tx_hash).unwrap();
+                    (txn.clone(), r)
                 })
                 .collect_vec();
             hash = block.parent_hash();
@@ -875,15 +883,20 @@ impl Sync {
             if cbor_size > Self::RESPONSE_SIZE_THRESHOLD {
                 break; // response size limit reached
             }
-            let Some(block) = self.db.get_block_by_hash(&hash)? else {
-                break; // that's all we have!
+            let Some(brt) = self
+                .db
+                .get_block_and_receipts_and_transactions(hash.into())?
+            else {
+                break;
             };
-            if block.number() < self.zq2_floor_height {
+
+            if brt.block.number() < self.zq2_floor_height {
                 // do not active sync ZQ1 blocks
                 warn!("sync::MultiBlockRequest : skipping ZQ1");
                 break;
             }
-            let proposal = self.block_to_proposal(block);
+
+            let proposal = self.brt_to_proposal(brt);
             let encoded_size = self.size_cache.get(&hash).cloned().unwrap_or_else(|| {
                 cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024), &proposal)
                     .unwrap()
@@ -892,7 +905,6 @@ impl Sync {
             cbor_size = cbor_size.saturating_add(encoded_size);
             proposals.push(proposal);
         }
-
         let message = ExternalMessage::MultiBlockResponse(proposals);
         Ok(message)
     }
@@ -1001,13 +1013,16 @@ impl Sync {
         }
 
         // Must have at least 1 block, genesis/checkpoint
-        let block = self.db.get_highest_canonical_block()?.unwrap();
+        let brt = self
+            .db
+            .get_block_and_receipts_and_transactions(BlockFilter::MaxCanonicalByHeight)?
+            .unwrap();
 
-        info!(%from, number = %block.number(), "sync::BlockRequest : received");
+        info!(%from, number = %brt.block.number(), "sync::BlockRequest : received");
 
         // send cached response
         if let Some(prop) = self.cache_probe_response.as_ref() {
-            if prop.hash() == block.hash() {
+            if prop.hash() == brt.block.hash() {
                 return Ok(ExternalMessage::BlockResponse(BlockResponse {
                     proposals: vec![prop.clone()],
                     from_view: u64::MAX,
@@ -1017,7 +1032,7 @@ impl Sync {
         };
 
         // Construct the proposal
-        let prop = self.block_to_proposal(block);
+        let prop = self.brt_to_proposal(brt);
         self.cache_probe_response = Some(prop.clone());
         let message = ExternalMessage::BlockResponse(BlockResponse {
             proposals: vec![prop],
@@ -1241,16 +1256,21 @@ impl Sync {
         let batch_size = Self::MAX_BATCH_SIZE
             .min(request.to_height.saturating_sub(request.from_height) as usize);
         let mut metas = Vec::with_capacity(batch_size);
-        let Some(block) = self.db.get_canonical_block_by_number(request.to_height)? else {
+        let Some(block) = self.db.get_block(BlockFilter::Height(request.to_height))? else {
             warn!("sync::MetadataRequest : missing");
             return Ok(ExternalMessage::SyncBlockHeaders(vec![]));
         };
 
         let mut hash = block.hash();
         while metas.len() <= batch_size {
-            let Some(block) = self.db.get_block_by_hash(&hash)? else {
+            let Some(brt) = self
+                .db
+                .get_block_and_receipts_and_transactions(hash.into())?
+            else {
                 break; // that's all we have!
             };
+            let header = brt.block.header;
+            let parent_hash = brt.block.parent_hash();
 
             let encoded_size = self.size_cache.get(&hash).cloned().unwrap_or_else(|| {
                 // pseudo-LRU approximation
@@ -1259,7 +1279,7 @@ impl Sync {
                     self.size_cache.retain(|_, _| rng.gen_bool(0.99));
                 }
                 // A large block can cause a node to get stuck syncing since no node can respond to the request in time.
-                let proposal = self.block_to_proposal(block.clone());
+                let proposal = self.brt_to_proposal(brt);
                 let encoded_size =
                     cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024), &proposal)
                         .unwrap()
@@ -1270,12 +1290,12 @@ impl Sync {
 
             // insert the sync size
             metas.push(SyncBlockHeader {
-                header: block.header,
+                header,
                 size_estimate: encoded_size,
             });
-            hash = block.parent_hash();
+            hash = parent_hash;
 
-            if block.number().saturating_sub(1) < self.zq2_floor_height {
+            if header.number.saturating_sub(1) < self.zq2_floor_height {
                 warn!("sync::MetadataRequest : skipping ZQ1");
                 break;
             }

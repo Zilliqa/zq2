@@ -1,6 +1,6 @@
 //! The Ethereum API, as documented at <https://ethereum.org/en/developers/docs/apis/json-rpc>.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use alloy::{
     consensus::{TxEip1559, TxEip2930, TxLegacy, transaction::RlpEcdsaDecodableTx},
@@ -46,7 +46,7 @@ use crate::{
     pool::TxAddResult,
     state::Code,
     time::SystemTime,
-    transaction::{EvmGas, Log, SignedTransaction},
+    transaction::{EvmGas, Log, SignedTransaction, VerifiedTransaction},
 };
 
 pub fn rpc_module(
@@ -281,7 +281,90 @@ fn get_balance(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
         .to_hex())
 }
 
-pub fn get_block_transaction_receipts_inner(
+pub fn brt_to_eth_receipts(
+    btr: crate::db::BlockAndReceiptsAndTransactions,
+) -> Vec<eth::TransactionReceipt> {
+    let block = btr.block;
+
+    let base_receipts = btr.receipts;
+    let transactions: HashMap<Hash, VerifiedTransaction> =
+        btr.transactions.into_iter().map(|x| (x.hash, x)).collect();
+
+    let mut log_index = 0;
+    let mut receipts = Vec::new();
+
+    for (transaction_index, receipt_retrieved) in base_receipts.iter().enumerate() {
+        let transaction = transactions.get(&receipt_retrieved.tx_hash).unwrap();
+
+        // Required workaround for incorrectly converted nonces for zq1 scilla transactions
+        let contract_address = match &transaction.tx {
+            SignedTransaction::Zilliqa { tx, .. } => {
+                if tx.to_addr.is_zero() && receipt_retrieved.success {
+                    Some(zil_contract_address(
+                        transaction.signer,
+                        transaction.tx.nonce().unwrap(),
+                    ))
+                } else {
+                    receipt_retrieved.contract_address
+                }
+            }
+            _ => receipt_retrieved.contract_address,
+        };
+
+        let mut logs_bloom = [0; 256];
+
+        let mut logs = Vec::new();
+        for log in receipt_retrieved.logs.iter() {
+            let log = match log {
+                Log::Evm(log) => log.clone(),
+                Log::Scilla(log) => log.clone().into_evm(),
+            };
+            let log = eth::Log::new(
+                log,
+                log_index,
+                transaction_index,
+                receipt_retrieved.tx_hash,
+                block.number(),
+                block.hash(),
+            );
+            log_index += 1;
+            log.bloom(&mut logs_bloom);
+            logs.push(log);
+        }
+
+        let from = transaction.signer;
+        let v = transaction.tx.sig_v();
+        let r = transaction.tx.sig_r();
+        let s = transaction.tx.sig_s();
+        let transaction = transaction.tx.clone().into_transaction();
+
+        let receipt = eth::TransactionReceipt {
+            transaction_hash: (receipt_retrieved.tx_hash).into(),
+            transaction_index: transaction_index as u64,
+            block_hash: block.hash().into(),
+            block_number: block.number(),
+            from,
+            to: transaction.to_addr(),
+            cumulative_gas_used: receipt_retrieved.cumulative_gas_used,
+            effective_gas_price: transaction.max_fee_per_gas(),
+            gas_used: receipt_retrieved.gas_used,
+            contract_address,
+            logs,
+            logs_bloom,
+            ty: 0,
+            status: receipt_retrieved.success,
+            v,
+            r,
+            s,
+        };
+
+        receipts.push(receipt);
+    }
+
+    receipts
+}
+
+pub fn old_get_block_transaction_receipts_inner(
     node: &RwLockReadGuard<Node>,
     block_id: impl Into<BlockId>,
 ) -> Result<Vec<eth::TransactionReceipt>> {
@@ -324,8 +407,6 @@ pub fn get_block_transaction_receipts_inner(
             _ => receipt_retrieved.contract_address,
         };
 
-        let mut logs_bloom = [0; 256];
-
         let mut logs = Vec::new();
         for log in receipt_retrieved.logs.iter() {
             let log = match log {
@@ -341,7 +422,6 @@ pub fn get_block_transaction_receipts_inner(
                 block.hash(),
             );
             log_index += 1;
-            log.bloom(&mut logs_bloom);
             logs.push(log);
         }
 
@@ -363,7 +443,7 @@ pub fn get_block_transaction_receipts_inner(
             gas_used: receipt_retrieved.gas_used,
             contract_address,
             logs,
-            logs_bloom,
+            logs_bloom: [0; 256],
             ty: 0,
             status: receipt_retrieved.success,
             v,
@@ -383,7 +463,7 @@ pub fn get_transaction_receipt_inner_slow(
     block_id: impl Into<BlockId>,
     txn_hash: Hash,
 ) -> Result<Option<eth::TransactionReceipt>> {
-    let receipts = get_block_transaction_receipts_inner(node, block_id)?;
+    let receipts = old_get_block_transaction_receipts_inner(node, block_id)?;
     Ok(receipts
         .into_iter()
         .find(|r| r.transaction_hash == txn_hash.as_bytes()))
@@ -393,7 +473,7 @@ fn get_block_receipts(params: Params, node: &Arc<RwLock<Node>>) -> Result<Vec<Tr
     let block_id: BlockId = params.one()?;
     let node = node.read();
 
-    get_block_transaction_receipts_inner(&node, block_id)
+    old_get_block_transaction_receipts_inner(&node, block_id)
 }
 
 fn get_code(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
@@ -474,11 +554,7 @@ fn get_block_by_number(params: Params, node: &Arc<RwLock<Node>>) -> Result<Optio
     let full: bool = params.next()?;
     expect_end_of_params(&mut params, 2, 2)?;
 
-    let node = node.read();
-    let block = node.get_block(block_number)?;
-    let block = block.map(|b| convert_block(&node, &b, full)).transpose()?;
-
-    Ok(block)
+    get_eth_block(node, block_number.into(), full)
 }
 
 fn get_block_by_hash(params: Params, node: &Arc<RwLock<Node>>) -> Result<Option<eth::Block>> {
@@ -487,61 +563,36 @@ fn get_block_by_hash(params: Params, node: &Arc<RwLock<Node>>) -> Result<Option<
     let full: bool = params.next()?;
     expect_end_of_params(&mut params, 2, 2)?;
 
+    get_eth_block(node, crate::db::BlockFilter::Hash(hash.into()), full)
+}
+
+pub fn get_eth_block(
+    node: &Arc<RwLock<Node>>,
+    block_id: crate::db::BlockFilter,
+    full: bool,
+) -> Result<Option<eth::Block>> {
     let node = node.read();
-    let block = node
-        .get_block(hash)?
-        .map(|b| convert_block(&node, &b, full))
-        .transpose()?;
+    let brt = match node
+        .consensus
+        .db
+        .get_block_and_receipts_and_transactions(block_id)?
+    {
+        Some(btr) => btr,
+        None => return Ok(None),
+    };
 
-    Ok(block)
-}
-
-pub fn get_block_logs_bloom(node: &RwLockReadGuard<Node>, block: &Block) -> Result<[u8; 256]> {
-    let mut logs_bloom = [0; 256];
-    let receipts = get_block_transaction_receipts_inner(node, block.header.hash)?;
-    for txn_receipt in receipts {
-        // Ideally we'd implement a full blown bloom filter type but this'll do for now
-        txn_receipt.logs.iter().for_each(|log| {
-            log.bloom(&mut logs_bloom);
-        });
-    }
-    Ok(logs_bloom)
-}
-
-fn convert_block(node: &RwLockReadGuard<Node>, block: &Block, full: bool) -> Result<eth::Block> {
-    let logs_bloom = get_block_logs_bloom(node, block)?;
-    if !full {
-        let miner = node.get_proposer_reward_address(block.header)?;
-        let block_gas_limit = block.gas_limit();
-        Ok(eth::Block::from_block(
-            block,
-            miner.unwrap_or_default(),
-            block_gas_limit,
-            logs_bloom,
-        ))
-    } else {
-        let transactions = block
+    let miner = node.get_proposer_reward_address(brt.block.header)?;
+    let block_gas_limit = brt.block.gas_limit();
+    let mut result = eth::Block::from_block(&brt.block, miner.unwrap_or_default(), block_gas_limit);
+    if full {
+        result.transactions = brt
             .transactions
             .iter()
-            .map(|h| {
-                get_transaction_inner(*h, node)?
-                    .ok_or_else(|| anyhow!("missing transaction: {}", h))
-            })
-            .map(|t| Ok(HashOrTransaction::Transaction(t?)))
-            .collect::<Result<_>>()?;
-        let miner = node.get_proposer_reward_address(block.header)?;
-        let block_gas_limit = block.gas_limit();
-        let block = eth::Block::from_block(
-            block,
-            miner.unwrap_or_default(),
-            block_gas_limit,
-            logs_bloom,
-        );
-        Ok(eth::Block {
-            transactions,
-            ..block
-        })
+            .map(|x| eth::Transaction::new(x.clone(), Some(brt.block.clone())))
+            .map(HashOrTransaction::Transaction)
+            .collect();
     }
+    Ok(Some(result))
 }
 
 fn get_block_transaction_count_by_hash(
@@ -870,19 +921,17 @@ async fn subscribe(
 
             while let Ok(header) = new_blocks.recv().await {
                 let node_lock = node.read();
-                let miner = node_lock.get_proposer_reward_address(header)?;
-                let block_gas_limit = node_lock.config.consensus.eth_block_gas_limit;
                 let block = node_lock
-                    .get_block(header.hash)?
-                    .ok_or_else(|| anyhow!("missing block"))?;
-                let logs_bloom = get_block_logs_bloom(&node_lock, &block)?;
+                    .consensus
+                    .db
+                    .get_transactionless_block(header.hash.into())?
+                    .ok_or("Block not found")?;
+                let miner = node_lock.get_proposer_reward_address(block.header)?;
                 std::mem::drop(node_lock);
-                let header = eth::Header::from_header(
-                    header,
-                    miner.unwrap_or_default(),
-                    block_gas_limit,
-                    logs_bloom,
-                );
+                let block_gas_limit = block.gas_limit();
+                let eth_block =
+                    eth::Block::from_block(&block, miner.unwrap_or_default(), block_gas_limit);
+                let header = eth_block.header;
                 let _ = sink.send(SubscriptionMessage::from_json(&header)?).await;
             }
         }
@@ -907,7 +956,7 @@ async fn subscribe(
 
                 // We track log index plus one because we have to increment before we use the log index, and log indexes are 0-based.
                 let mut log_index_plus_one: i64 =
-                    get_block_transaction_receipts_inner(&node_lock, receipt.block_hash)?
+                    old_get_block_transaction_receipts_inner(&node_lock, receipt.block_hash)?
                         .iter()
                         .take_while(|x| x.transaction_index < receipt.index)
                         .map(|x| x.logs.len())
