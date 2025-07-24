@@ -18,7 +18,7 @@ otterscan_image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-publ
 spout_image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/eth-spout:main
 stats_dashboard_image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zilstats-server:v0.1.0
 stats_agent_image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zilstats-agent:v0.1.0
-ethereum_metrics_exporter_image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/ethereum-metrics-exporter:v0.1.0
+ethereum_metrics_exporter_image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/ethereum-metrics-exporter:v0.2.0
 process_exporter_image: ncabatoff/process-exporter:0.8.1
 node_exporter_image: prom/node-exporter:v1.9.0
 
