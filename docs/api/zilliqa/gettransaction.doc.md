@@ -100,7 +100,7 @@ func GetTransaction() {
 # Response
 
 ```json
-// Note: If the transaction is a for payment.
+// Note: If the transaction is a payment preceeded by two other payments in the block.
 {
   "id": "1",
   "jsonrpc": "2.0",
@@ -111,9 +111,9 @@ func GetTransaction() {
     "gasPrice": "1000000000",
     "nonce": "1",
     "receipt": {
-      "cumulative_gas": "1",
-      "cumulative_gas_used": "1",
-      "gas_used": "1",
+      "cumulative_gas": "50",
+      "cumulative_gas_used": "150",
+      "gas_used": "50",
       "epoch_num": "589763",
       "success": true
     },

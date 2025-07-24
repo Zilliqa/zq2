@@ -56,9 +56,9 @@ curl -d '{
         "gasPrice": "2000000000",
         "nonce": "96538",
         "receipt": {
-          "cumulative_gas": "1",
-          "cumulative_gas_used": "1",
-          "gas_used": "1",
+          "cumulative_gas": "50",
+          "cumulative_gas_used": "50",
+          "gas_used": "50",
           "epoch_num": "1002353",
           "success": true
         },
@@ -74,9 +74,9 @@ curl -d '{
         "gasPrice": "2000000000",
         "nonce": "98068",
         "receipt": {
-          "cumulative_gas": "1",
-          "cumulative_gas_used": "1",
-          "gas_used": "1",
+          "cumulative_gas": "50",
+          "cumulative_gas_used": "150",
+          "gas_used": "50",
           "epoch_num": "1002353",
           "success": true
         },

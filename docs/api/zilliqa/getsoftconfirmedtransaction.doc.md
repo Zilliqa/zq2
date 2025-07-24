@@ -36,9 +36,9 @@ curl -d '{
     "gasPrice": "1000000000",
     "nonce": "1",
     "receipt": {
-      "cumulative_gas": "1",
-      "cumulative_gas_used": "1",
-      "gas_used": "1",
+      "cumulative_gas": "150",
+      "cumulative_gas_used": "50",
+      "gas_used": "50",
       "epoch_num": "589763",
       "success": true
     },
