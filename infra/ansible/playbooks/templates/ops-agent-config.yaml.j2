@@ -51,7 +51,7 @@ metrics:
               - source_labels: [__name__]
                 regex: 'namedprocess_namegroup_cpu_seconds_total|namedprocess_namegroup_memory_bytes'
                 action: keep
-{% if ethereum_metrics_exporter_image is defined and ethereum_metrics_exporter_image != "" %}
+{% if 'role_apps' in group_names and ethereum_metrics_exporter_image is defined and ethereum_metrics_exporter_image != "" %}
           - job_name: 'ethereum_metrics_exporter'
             scrape_interval: 30s
             static_configs:
