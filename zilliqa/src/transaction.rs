@@ -664,7 +664,7 @@ impl Transaction {
             Transaction::Legacy(TxLegacy { chain_id, .. }) => *chain_id,
             Transaction::Eip2930(TxEip2930 { chain_id, .. }) => Some(*chain_id),
             Transaction::Eip1559(TxEip1559 { chain_id, .. }) => Some(*chain_id),
-            Transaction::Zilliqa(TxZilliqa { .. }) => Some(0x8001),
+            Transaction::Zilliqa(TxZilliqa { chain_id, .. }) => Some(*chain_id as u64 + 0x8000),
             Transaction::Intershard(TxIntershard { chain_id, .. }) => Some(*chain_id),
         }
     }
