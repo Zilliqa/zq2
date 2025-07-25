@@ -1494,6 +1494,8 @@ async fn deploy_contract_with_args<T: Tokenize>(
     if value > 0 {
         deployer.tx.set_value(value);
     }
+    // For eip1559 txs ethers-middleware sets these fee values to < gas_price which causes a failure.
+    deployer.tx.set_gas_price(4_761_904_800_000u128);
 
     let abi = deployer.abi().clone();
     {

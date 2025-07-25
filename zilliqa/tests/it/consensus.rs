@@ -3,7 +3,10 @@ use std::collections::HashSet;
 use alloy::eips::BlockId;
 use ethers::{
     providers::Middleware,
-    types::{TransactionRequest, U64},
+    types::{
+        Eip1559TransactionRequest, Eip2930TransactionRequest, TransactionRequest, U64,
+        transaction::{eip2718::TypedTransaction, eip2930::AccessList},
+    },
 };
 use primitive_types::{H160, H256, U256};
 use tracing::*;
@@ -338,56 +341,72 @@ async fn gas_fees_should_be_transferred_to_zero_account(mut network: Network) {
     let provider = wallet.provider();
 
     network.run_until_block(&wallet, 1.into(), 50).await;
-    let hash = wallet
-        .send_transaction(TransactionRequest::pay(wallet.address(), 10), None)
-        .await
-        .unwrap()
-        .tx_hash();
-    network.run_until_receipt(&wallet, hash, 200).await;
-
-    let receipt = provider
-        .get_transaction_receipt(hash)
-        .await
-        .unwrap()
-        .unwrap();
-    let block = wallet
-        .get_block(receipt.block_number.unwrap())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(block.transactions.len(), 1);
-
-    let mut total_rewards = U256::zero();
-    let stakers = get_stakers(&wallet).await;
-    for staker in stakers {
-        let reward_address = get_reward_address(&wallet, &staker).await;
-        let reward_address_balance_before = wallet
-            .get_balance(reward_address, Some((block.number.unwrap() - 1).into()))
-            .await
-            .unwrap();
-        let reward_address_balance_after = wallet
-            .get_balance(reward_address, Some(block.number.unwrap().into()))
-            .await
-            .unwrap();
-
-        total_rewards += reward_address_balance_after - reward_address_balance_before;
+    let tx_legacy: TypedTransaction = TransactionRequest::pay(wallet.address(), 10).into();
+    let gas_price = network.get_node(0).get_gas_price();
+    let tx_eip1559: TypedTransaction = Eip1559TransactionRequest {
+        to: Some(wallet.address().into()),
+        value: Some(10.into()),
+        max_fee_per_gas: Some(gas_price.into()),
+        max_priority_fee_per_gas: Some(gas_price.into()),
+        ..Default::default()
     }
+    .into();
+    let tx_eip2930: TypedTransaction = Eip2930TransactionRequest::new(
+        TransactionRequest::pay(wallet.address(), 10),
+        AccessList(vec![]),
+    )
+    .into();
 
-    let zero_account = H160::zero();
-    let zero_account_balance_before = wallet
-        .get_balance(zero_account, Some((block.number.unwrap() - 1).into()))
-        .await
-        .unwrap();
-    let zero_account_balance_after = wallet
-        .get_balance(zero_account, Some(block.number.unwrap().into()))
-        .await
-        .unwrap();
+    for tx_request in [tx_legacy, tx_eip1559, tx_eip2930] {
+        let tx = wallet.send_transaction(tx_request, None).await.unwrap();
+        let hash = tx.tx_hash();
+        network.run_until_receipt(&wallet, hash, 200).await;
 
-    assert_eq!(
-        zero_account_balance_after,
-        zero_account_balance_before - total_rewards
-            + (receipt.gas_used.unwrap() * receipt.effective_gas_price.unwrap())
-    );
+        let receipt = provider
+            .get_transaction_receipt(hash)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(receipt.gas_used.unwrap(), 21000.into());
+        assert_eq!(receipt.effective_gas_price.unwrap(), gas_price.into());
+        let block = wallet
+            .get_block(receipt.block_number.unwrap())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(block.transactions.len(), 1);
+
+        let mut total_rewards = U256::zero();
+        let stakers = get_stakers(&wallet).await;
+        for staker in stakers {
+            let reward_address = get_reward_address(&wallet, &staker).await;
+            let reward_address_balance_before = wallet
+                .get_balance(reward_address, Some((block.number.unwrap() - 1).into()))
+                .await
+                .unwrap();
+            let reward_address_balance_after = wallet
+                .get_balance(reward_address, Some(block.number.unwrap().into()))
+                .await
+                .unwrap();
+
+            total_rewards += reward_address_balance_after - reward_address_balance_before;
+        }
+
+        let zero_account = H160::zero();
+        let zero_account_balance_before = wallet
+            .get_balance(zero_account, Some((block.number.unwrap() - 1).into()))
+            .await
+            .unwrap();
+        let zero_account_balance_after = wallet
+            .get_balance(zero_account, Some(block.number.unwrap().into()))
+            .await
+            .unwrap();
+        assert_eq!(
+            zero_account_balance_after,
+            zero_account_balance_before - total_rewards
+                + (receipt.gas_used.unwrap() * receipt.effective_gas_price.unwrap())
+        );
+    }
 }
 
 // Test transaction pool state consistency during consensus operations
