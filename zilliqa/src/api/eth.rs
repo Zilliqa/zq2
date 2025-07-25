@@ -1068,7 +1068,7 @@ fn fee_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<FeeHistory> {
         block_count.parse::<u64>()?
     };
 
-    let block_count = block_count.min(1024);
+    let mut block_count = block_count.min(1024);
 
     if block_count == 0 {
         return Ok(FeeHistory::default());
@@ -1094,7 +1094,8 @@ fn fee_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<FeeHistory> {
         .number();
 
     if newest_block_number < block_count {
-        return Err(anyhow!("block_count is greater than newest_block"));
+        warn!("block_count is greater than newest_block");
+        block_count = newest_block_number;
     }
 
     let oldest_block = newest_block_number - block_count + 1;
