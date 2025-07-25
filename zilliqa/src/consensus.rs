@@ -50,7 +50,9 @@ use crate::{
     },
     sync::{Sync, SyncPeers},
     time::SystemTime,
-    transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
+    transaction::{
+        EvmGas, SignedTransaction, TransactionReceipt, ValidationOutcome, VerifiedTransaction,
+    },
 };
 
 #[derive(Clone, Debug, Serialize)]
@@ -2062,10 +2064,11 @@ impl Consensus {
         let validation_result = txn.tx.validate(
             &early_account,
             self.config.consensus.eth_block_gas_limit,
+            self.config.consensus.gas_price.0,
             eth_chain_id,
         )?;
         if !validation_result.is_ok() {
-            debug!(
+            warn!(
                 "Unable to validate txn with hash: {:?}, from: {:?}, nonce: {:?} : {:?}",
                 txn.hash,
                 txn.signer,
@@ -3090,6 +3093,8 @@ impl Consensus {
         pool.update_with_state(&self.state);
         let mut verified_txns = Vec::new();
 
+        let fork = self.state.forks.get(block.header.number);
+
         // We re-inject any missing Intershard transactions (or really, any missing
         // transactions) from our mempool. If any txs are unavailable in both the
         // message or locally, the proposal cannot be applied
@@ -3097,14 +3102,40 @@ impl Consensus {
             // Prefer to insert verified txn from pool. This is faster.
             let txn = match pool.get_transaction(tx_hash) {
                 Some(txn) => txn.clone(),
-                _ => match transactions
-                    .get(idx)
-                    .map(|sig_tx| sig_tx.clone().verify())
-                    .transpose()?
-                {
-                    // Otherwise, recover txn from proposal. This is slower.
-                    Some(txn) if txn.hash == *tx_hash => txn,
-                    _ => {
+                _ => match transactions.get(idx) {
+                    Some(sig_txn) => {
+                        let Ok(verified) = sig_txn.clone().verify() else {
+                            warn!("Unable to verify included transaction in given block!");
+                            return Ok(());
+                        };
+                        if verified.hash != *tx_hash {
+                            warn!(
+                                "Computed txn hash doesn't match the hash provided in the given block!"
+                            );
+                            return Ok(());
+                        }
+
+                        if fork.check_minimum_gas_price {
+                            let Ok(acc) = self.state.get_account(verified.signer) else {
+                                warn!(
+                                    "Sender doesn't exist in recovered transaction from given block!"
+                                );
+                                return Ok(());
+                            };
+
+                            let Ok(ValidationOutcome::Success) = sig_txn.validate(
+                                &acc,
+                                self.config.consensus.eth_block_gas_limit,
+                                self.config.consensus.gas_price.0,
+                                self.config.eth_chain_id,
+                            ) else {
+                                warn!("Transaction recovered from given block failed to validate!");
+                                return Ok(());
+                            };
+                        }
+                        verified
+                    }
+                    None => {
                         warn!(
                             "Proposal {} at view {} referenced a transaction {} that was neither included in the broadcast nor found locally - cannot apply block",
                             block.hash(),

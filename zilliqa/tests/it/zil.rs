@@ -529,17 +529,29 @@ async fn create_transaction(mut network: Network) {
 
     let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
 
+    let initial_balance = wallet.get_balance(address, None).await.unwrap().as_u128();
+
+    let initial_balance_zil: Value = wallet
+        .provider()
+        .request("GetBalance", [address])
+        .await
+        .unwrap();
+    let initial_balance_zil =
+        u128::from_str(initial_balance_zil["balance"].as_str().unwrap()).unwrap();
+
+    let amount = 111_111_111_111_111u128;
+
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
-    send_transaction(
+    let (_, txn_response) = send_transaction(
         &mut network,
         &wallet,
         &secret_key,
         1,
         ToAddr::Address(to_addr),
-        200u128 * 10u128.pow(12),
-        50_000,
+        amount,
+        50,
         None,
         None,
     )
@@ -559,7 +571,41 @@ async fn create_transaction(mut network: Network) {
         .request("GetBalance", [to_addr])
         .await
         .unwrap();
-    assert_eq!(response["balance"].as_str().unwrap(), "200000000000000");
+    assert_eq!(response["balance"].as_str().unwrap(), "111111111111111");
+
+    let txn_hash: H256 = txn_response["ID"].as_str().unwrap().parse().unwrap();
+
+    let eth_receipt = wallet
+        .get_transaction_receipt(txn_hash)
+        .await
+        .unwrap()
+        .unwrap();
+
+    // Check by eth receipt
+    let transaction_fee: u128 =
+        (eth_receipt.cumulative_gas_used * eth_receipt.effective_gas_price.unwrap()).as_u128();
+
+    let balance_after = wallet.get_balance(address, None).await.unwrap().as_u128();
+
+    assert_eq!(
+        balance_after,
+        initial_balance - transaction_fee - amount * 10u128.pow(6)
+    );
+
+    // check by zil api
+    let balance_after: Value = wallet
+        .provider()
+        .request("GetBalance", [address])
+        .await
+        .unwrap();
+    let balance_after = u128::from_str(balance_after["balance"].as_str().unwrap()).unwrap();
+
+    let gas_price: u128 = txn_response["gasPrice"].as_str().unwrap().parse().unwrap();
+    let gas_limit: u128 = txn_response["gasLimit"].as_str().unwrap().parse().unwrap();
+    assert_eq!(
+        balance_after,
+        initial_balance_zil - gas_price * gas_limit - amount
+    );
 }
 
 #[zilliqa_macros::test]

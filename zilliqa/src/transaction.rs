@@ -37,7 +37,7 @@ use crate::{
         ZIL_NORMAL_TXN_GAS,
     },
     crypto::{self, Hash},
-    exec::{ScillaError, ScillaException, ScillaTransition},
+    exec::{BLESSED_TRANSACTIONS, ScillaError, ScillaException, ScillaTransition},
     schnorr,
     scilla::ParamValue,
     serde_util::vec_param_value,
@@ -77,6 +77,8 @@ pub enum ValidationOutcome {
     TransactionCountExceededForSender,
     /// Total nunber of sender slots exceeded
     TotalNumberOfSlotsExceeded,
+    /// Gas price is too low
+    GasPriceTooLow,
 }
 
 impl ValidationOutcome {
@@ -132,6 +134,7 @@ impl ValidationOutcome {
             Self::TotalNumberOfSlotsExceeded => {
                 "Total number of slots for all senders has been exceeded".to_string()
             }
+            Self::GasPriceTooLow => "Provided gas price is too low".to_string(),
         }
     }
 }
@@ -488,11 +491,18 @@ impl SignedTransaction {
         &self,
         account: &Account,
         block_gas_limit: EvmGas,
+        min_gas_price: u128,
         eth_chain_id: u64,
     ) -> Result<ValidationOutcome> {
+        let hash = self.calculate_hash();
+        let blessed = BLESSED_TRANSACTIONS.iter().any(|elem| elem.hash == hash);
+        if blessed {
+            return Ok(ValidationOutcome::Success);
+        }
         let result = ValidationOutcome::Success
             .and_then(|| self.validate_input_size())?
             .and_then(|| self.validate_gas_limit(block_gas_limit))?
+            .and_then(|| self.validate_gas_price(min_gas_price))?
             .and_then(|| self.validate_chain_id(eth_chain_id))?
             .and_then(|| self.validate_sender_account(account))?;
         Ok(result)
@@ -604,10 +614,18 @@ impl SignedTransaction {
         Ok(ValidationOutcome::Success)
     }
 
+    fn validate_gas_price(&self, min_gas_price: u128) -> Result<ValidationOutcome> {
+        let gas_price = self.gas_price_per_evm_gas();
+        if gas_price < min_gas_price {
+            return Ok(ValidationOutcome::GasPriceTooLow);
+        }
+        Ok(ValidationOutcome::Success)
+    }
+
     fn validate_sender_account(&self, account: &Account) -> Result<ValidationOutcome> {
         let txn_cost = self.maximum_validation_cost()?;
         if txn_cost > account.balance {
-            warn!("Insufficient funds");
+            warn!("Insufficient funds for acc: {:?}", account);
             return Ok(ValidationOutcome::InsufficientFunds(
                 txn_cost,
                 account.balance,
