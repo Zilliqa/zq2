@@ -536,7 +536,8 @@ async fn create_transaction(mut network: Network) {
         .request("GetBalance", [address])
         .await
         .unwrap();
-    let initial_balance_zil = u128::from_str(initial_balance_zil["balance"].as_str().unwrap()).unwrap();
+    let initial_balance_zil =
+        u128::from_str(initial_balance_zil["balance"].as_str().unwrap()).unwrap();
 
     let amount = 111_111_111_111_111u128;
 
@@ -586,7 +587,10 @@ async fn create_transaction(mut network: Network) {
 
     let balance_after = wallet.get_balance(address, None).await.unwrap().as_u128();
 
-    assert_eq!(balance_after, initial_balance - transaction_fee - amount * 10u128.pow(6));
+    assert_eq!(
+        balance_after,
+        initial_balance - transaction_fee - amount * 10u128.pow(6)
+    );
 
     // check by zil api
     let balance_after: Value = wallet
@@ -598,7 +602,10 @@ async fn create_transaction(mut network: Network) {
 
     let gas_price: u128 = txn_response["gasPrice"].as_str().unwrap().parse().unwrap();
     let gas_limit: u128 = txn_response["gasLimit"].as_str().unwrap().parse().unwrap();
-    assert_eq!(balance_after, initial_balance_zil - gas_price * gas_limit - amount);
+    assert_eq!(
+        balance_after,
+        initial_balance_zil - gas_price * gas_limit - amount
+    );
 }
 
 #[zilliqa_macros::test]
