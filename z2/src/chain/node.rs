@@ -1,14 +1,17 @@
 use std::{
     collections::BTreeMap,
     fmt,
-    process::{Command, Output},
+    process::{Child, Command, Output, Stdio},
     str::FromStr,
+    thread::sleep,
+    time::Duration,
 };
 
 use anyhow::{Ok, Result, anyhow};
 use clap::ValueEnum;
 use cliclack::MultiProgress;
 use colored::Colorize;
+use rand::Rng;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -246,7 +249,7 @@ impl Machine {
         method: &str,
         params: &Option<String>,
         timeout: usize,
-        port: NodePort,
+        port: u64,
     ) -> Result<String> {
         let body = format!(
             "{{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"method\":\"{}\",\"params\":{}}}",
@@ -254,15 +257,22 @@ impl Machine {
             params.clone().unwrap_or("[]".to_string()),
         );
 
-        let output = {
-            let inner_command = format!(
-                r#"curl --max-time {} -X POST -H 'content-type: application/json' -H 'accept:application/json,*/*;q=0.5' -d '{}' http://localhost:{}"#,
+        let url = format!("http://localhost:{}", port);
+        let output = std::process::Command::new("curl")
+            .args([
+                "--max-time",
                 &timeout.to_string(),
+                "-X",
+                "POST",
+                "-H",
+                "content-type: application/json",
+                "-H",
+                "accept:application/json,*/*;q=0.5",
+                "-d",
                 &body,
-                port.value()
-            );
-            self.run(&inner_command, false)?
-        };
+                &url,
+            ])
+            .output()?;
 
         if !output.status.success() {
             return Err(anyhow!(
@@ -276,12 +286,12 @@ impl Machine {
         Ok(std::str::from_utf8(&output.stdout)?.trim().to_owned())
     }
 
-    pub async fn get_block_number(&self, timeout: usize) -> Result<u64> {
+    pub async fn get_block_number(&self, timeout: usize, port: u64) -> Result<u64> {
         let response: Value = serde_json::from_str(&self.get_rpc_response(
             "eth_blockNumber",
             &None,
             timeout,
-            NodePort::Default,
+            port,
         )?)?;
         let block_number = response
             .get("result")
@@ -294,12 +304,12 @@ impl Machine {
         Ok(u64::from_str_radix(block_number, 16)?)
     }
 
-    pub async fn get_consensus_info(&self, timeout: usize) -> Result<Value> {
+    pub async fn get_consensus_info(&self, timeout: usize, port: u64) -> Result<Value> {
         let response: Value = serde_json::from_str(&self.get_rpc_response(
             "admin_consensusInfo",
             &None,
             timeout,
-            NodePort::Admin,
+            port,
         )?)?;
 
         let response = response
@@ -307,6 +317,59 @@ impl Machine {
             .ok_or_else(|| anyhow!("response has no result"))?;
 
         Ok(response.to_owned())
+    }
+
+    pub fn find_available_port(&self) -> Option<u16> {
+        let mut rng = rand::thread_rng();
+        let min_port = 5000u16;
+        let max_port = 8000u16;
+        for _ in 0..20 {
+            let port = rng.gen_range(min_port..=max_port);
+            if self.port_is_available(port) {
+                return Some(port);
+            }
+        }
+        // Fallback: sequential search
+        (min_port..=max_port).find(|&port| self.port_is_available(port))
+    }
+
+    fn port_is_available(&self, port: u16) -> bool {
+        std::net::TcpStream::connect(("127.0.0.1", port)).is_err()
+    }
+
+    pub fn open_tunnel(&self, port: u16, remote_port: u64) -> Option<Child> {
+        Command::new("gcloud")
+            .args([
+                "compute",
+                "start-iap-tunnel",
+                &self.name,
+                &remote_port.to_string(),
+                "--project",
+                &self.project_id,
+                "--zone",
+                &self.zone,
+                "--local-host-port",
+                &format!("localhost:{}", port),
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .ok()
+    }
+
+    pub fn wait_for_port(&self, port: u16, max_retries: u32) -> bool {
+        for _ in 0..max_retries {
+            if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+                return true;
+            }
+            sleep(Duration::from_millis(500));
+        }
+        false
+    }
+
+    pub fn close_tunnel(&self, child: &mut Child) {
+        let _ = child.kill();
+        let _ = child.wait();
     }
 }
 
@@ -374,7 +437,7 @@ impl fmt::Display for HighQc {
 pub struct ChainNode {
     chain: ChainInstance,
     pub role: NodeRole,
-    machine: Machine,
+    pub machine: Machine,
     eth_chain_id: u64,
 }
 
@@ -1092,6 +1155,7 @@ impl ChainNode {
         &self,
         multi_progress: &indicatif::MultiProgress,
         follow: bool,
+        port: u64,
     ) -> Result<()> {
         const BAR_SIZE: u64 = 40;
         const INTERVAL_IN_SEC: u64 = 5;
@@ -1111,7 +1175,7 @@ impl ChainNode {
 
         let block_number = self
             .machine
-            .get_block_number(INTERVAL_IN_SEC as usize)
+            .get_block_number(INTERVAL_IN_SEC as usize, port)
             .await
             .ok();
 
@@ -1132,7 +1196,7 @@ impl ChainNode {
 
                 let response = self
                     .machine
-                    .get_block_number(INTERVAL_IN_SEC as usize)
+                    .get_block_number(INTERVAL_IN_SEC as usize, port)
                     .await
                     .ok();
 
@@ -1175,6 +1239,7 @@ impl ChainNode {
         &self,
         multi_progress: &indicatif::MultiProgress,
         follow: bool,
+        port: u64,
     ) -> Result<()> {
         const BAR_SIZE: u64 = 40;
         const INTERVAL_IN_SEC: u64 = 5;
@@ -1195,7 +1260,7 @@ impl ChainNode {
 
         let response = self
             .machine
-            .get_consensus_info(INTERVAL_IN_SEC as usize)
+            .get_consensus_info(INTERVAL_IN_SEC as usize, port)
             .await
             .ok();
 
@@ -1216,7 +1281,7 @@ impl ChainNode {
 
                 let response = self
                     .machine
-                    .get_consensus_info(INTERVAL_IN_SEC as usize)
+                    .get_consensus_info(INTERVAL_IN_SEC as usize, port)
                     .await
                     .ok();
 
