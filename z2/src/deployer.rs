@@ -698,9 +698,41 @@ pub async fn run_rpc_call(
         let current_method = method.to_owned();
         let current_params = params.to_owned();
         let permit = semaphore.clone().acquire_owned().await?;
+        let machine_name = machine.name.clone();
+        let remote_port = current_port.value();
         let future = task::spawn(async move {
-            let result =
-                machine.get_rpc_response(&current_method, &current_params, timeout, current_port);
+            let local_port = machine.find_available_port().unwrap_or(6000);
+            let tunnel = machine.open_tunnel(local_port, remote_port);
+            if tunnel.is_none() {
+                drop(permit);
+                return (
+                    machine,
+                    Err(anyhow::anyhow!(
+                        "Failed to open tunnel for {}",
+                        machine_name
+                    )),
+                );
+            }
+            let mut tunnel = tunnel.unwrap();
+            if !machine.wait_for_port(local_port, 20) {
+                machine.close_tunnel(&mut tunnel);
+                drop(permit);
+                return (
+                    machine,
+                    Err(anyhow::anyhow!(
+                        "Tunnel did not become ready for {}",
+                        machine_name
+                    )),
+                );
+            }
+            // Now call get_rpc_response, which will use curl to localhost:local_port
+            let result = machine.get_rpc_response(
+                &current_method,
+                &current_params,
+                timeout,
+                local_port as u64,
+            );
+            machine.close_tunnel(&mut tunnel);
             drop(permit); // Release the permit when the task is done
             (machine, result)
         });
@@ -1084,12 +1116,42 @@ pub async fn run_monitor(
         let permit = semaphore.clone().acquire_owned().await?;
         let mp = multi_progress.to_owned();
         let future = task::spawn(async move {
+            let machine = node.machine.clone();
+            let machine_name = machine.name.clone();
+            let local_port = machine.find_available_port().unwrap_or(6000);
+            let tunnel = machine.open_tunnel(local_port, NodePort::Admin.value());
+            if tunnel.is_none() {
+                drop(permit);
+                return (
+                    machine,
+                    Err(anyhow::anyhow!(
+                        "Failed to open tunnel for {}",
+                        machine_name
+                    )),
+                );
+            }
+            let mut tunnel = tunnel.unwrap();
+            if !machine.wait_for_port(local_port, 20) {
+                machine.close_tunnel(&mut tunnel);
+                drop(permit);
+                return (
+                    machine,
+                    Err(anyhow::anyhow!(
+                        "Tunnel did not become ready for {}",
+                        machine_name
+                    )),
+                );
+            }
             let result = match metric {
-                Metrics::BlockNumber => node.get_block_number(&mp, follow).await,
-                Metrics::ConsensusInfo => node.get_consensus_info(&mp, follow).await,
+                Metrics::BlockNumber => node.get_block_number(&mp, follow, local_port as u64).await,
+                Metrics::ConsensusInfo => {
+                    node.get_consensus_info(&mp, follow, local_port as u64)
+                        .await
+                }
             };
+            machine.close_tunnel(&mut tunnel);
             drop(permit); // Release the permit when the task is done
-            (node, result)
+            (machine, result)
         });
         futures.push(future);
     }
@@ -1100,8 +1162,8 @@ pub async fn run_monitor(
 
     for result in results {
         if let (node, Err(err)) = result? {
-            println!("Node {} failed with error: {}", node.name(), err);
-            failures.push(node.name());
+            println!("Node {} failed with error: {}", node.name, err);
+            failures.push(node.name);
         }
     }
 
