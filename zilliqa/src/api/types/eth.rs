@@ -159,7 +159,6 @@ pub struct Header {
     pub mix_hash: B256,
     #[serde(serialize_with = "hex")]
     pub logs_bloom: [u8; 256],
-    pub base_fee_per_gas: u128,
 }
 
 impl Header {
@@ -505,18 +504,6 @@ pub struct GetAccountResult {
     pub balance: u128,
     pub code_hash: B256,
     pub storage_root: B256,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FeeHistory {
-    #[serde(serialize_with = "hex")]
-    pub oldest_block: u64,
-    pub reward: Option<Vec<Vec<String>>>,
-    pub base_fee_per_gas: Vec<String>,
-    pub gas_used_ratio: Vec<f64>,
-    pub base_fee_per_blob_gas: Vec<String>,
-    pub blob_gas_used_ratio: Vec<u8>,
 }
 
 #[cfg(test)]

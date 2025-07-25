@@ -75,3 +75,8 @@ pub const TIME_TO_ALLOW_PROPOSAL_BROADCAST: Duration = Duration::from_millis(100
 
 // Exponentional backoff timeout increases by this multiple for each view missed
 pub const EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER: f32 = 1.25f32;
+
+// Since we do not support base fee in blocks we set:
+// base_fee: 0
+// priority fee_per_gas: gas_price
+pub const BASE_FEE_PER_GAS: u128 = 0;
