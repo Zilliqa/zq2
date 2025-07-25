@@ -1,15 +1,8 @@
 if [[ "$SHELL" == *"zsh"* ]] ; then
-   echo "Running on $SHELL ..."
-   BASEDIR=$(dirname "$0")/../
+    echo "Running on $SHELL ..."
+    BASEDIR=$(dirname "$0")/../
 else
     BASEDIR=$(dirname "$BASH_SOURCE")/../
 fi
 REALPATH=$(realpath "$BASEDIR")
-export PATH=$REALPATH/scripts:$PATH
-
-# Load zurl functionality
-if [[ -f "$REALPATH/infra/scripts/zurl.sh" ]]; then
-    source "$REALPATH/infra/scripts/zurl.sh"
-else
-    echo "Warning: zurl.sh not found at $REALPATH/infra/scripts/zurl.sh"
-fi
+export PATH=$REALPATH/scripts:$REALPATH/infra/scripts:$PATH
