@@ -131,6 +131,7 @@ impl Chain {
                 "restore_ignite_wallet_contracts": false,
                 "prevent_zil_transfer_from_evm_to_scilla_contract": false,
                 "scilla_failed_txn_correct_gas_fee_charged": false,
+                "check_minimum_gas_price": false,
             })),
             Chain::Zq2Mainnet => Some(json!({
                 "at_height": 0,
@@ -162,6 +163,7 @@ impl Chain {
                 "restore_ignite_wallet_contracts": false,
                 "prevent_zil_transfer_from_evm_to_scilla_contract": false,
                 "scilla_failed_txn_correct_gas_fee_charged": false,
+                "check_minimum_gas_price": false
             })),
             _ => None,
         }
@@ -198,7 +200,7 @@ impl Chain {
                 // estimated: 2025-07-21T12.00.00Z
                 json!({ "at_height": 10109366, "prevent_zil_transfer_from_evm_to_scilla_contract": true}),
                 // estimated: 2025-07-28T12.00.00Z
-                json!({ "at_height": 10854709, "scilla_failed_txn_correct_gas_fee_charged": true}),
+                json!({ "at_height": 10854709, "scilla_failed_txn_correct_gas_fee_charged": true, "check_minimum_gas_price": true}),
             ]),
             Chain::Zq2Mainnet => Some(vec![
                 json!({ "at_height": 4770088, "executable_blocks": true }),
@@ -236,7 +238,7 @@ impl Chain {
                 // estimated: 2025-07-21T12.00.00Z
                 json!({ "at_height": 6283082, "prevent_zil_transfer_from_evm_to_scilla_contract": true, "restore_ignite_wallet_contracts": true}),
                 // estimated: 2025-07-29T12.00.00Z
-                json!({ "at_height": 6771996, "scilla_failed_txn_correct_gas_fee_charged": true}),
+                json!({ "at_height": 6771996, "scilla_failed_txn_correct_gas_fee_charged": true, "check_minimum_gas_price": true}),
             ]),
             _ => None,
         }

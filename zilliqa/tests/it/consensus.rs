@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use alloy::eips::BlockId;
 use ethers::{
     providers::Middleware,
@@ -405,7 +407,7 @@ async fn test_transaction_pool_state_consistency_during_consensus(mut network: N
             to: Some(H160::random().into()),
             value: Some(U256::from(10)),
             gas: Some(U256::from(21000)),
-            gas_price: Some(U256::from(1000000000)), // 1 gwei
+            gas_price: Some(U256::from(4_761_904_800_000u128)), // 1 gwei
             nonce: Some(U256::from(nonce)),
             ..Default::default()
         };
@@ -423,7 +425,7 @@ async fn test_transaction_pool_state_consistency_during_consensus(mut network: N
             to: Some(H160::random().into()),
             value: Some(U256::from(10)),
             gas: Some(U256::from(21000)),
-            gas_price: Some(U256::from(1000000000)),
+            gas_price: Some(U256::from(4_761_904_800_000u128)),
             nonce: Some(U256::from(nonce)),
             ..Default::default()
         };
@@ -463,6 +465,7 @@ async fn test_rapid_transaction_submission_during_block_production(mut network: 
     // Submit many transactions rapidly
     let mut submitted_hashes = Vec::new();
 
+    let mut current_block = 1;
     // Rapid submission while blocks are being produced
     for batch in 0..5 {
         // Submit a batch of transactions
@@ -472,7 +475,7 @@ async fn test_rapid_transaction_submission_during_block_production(mut network: 
                 to: Some(H160::random().into()),
                 value: Some(U256::from(10)),
                 gas: Some(U256::from(21000)),
-                gas_price: Some(U256::from(1000000000 + i)), // Vary gas price
+                gas_price: Some(U256::from(4_761_904_800_000u128 + batch * 3 + i)), // Vary gas price
                 nonce: Some(U256::from(nonce)),
                 ..Default::default()
             };
@@ -482,14 +485,19 @@ async fn test_rapid_transaction_submission_during_block_production(mut network: 
         }
 
         // Allow some processing time between batches
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        network
+            .run_until_block(&wallet, current_block.into(), 50)
+            .await;
+        current_block += 1;
     }
 
     // Let the network process all transactions
-    network.run_until_block(&wallet, 8.into(), 300).await;
+    network
+        .run_until_block(&wallet, (current_block + 5).into(), 300)
+        .await;
 
     // Check transaction pool state consistency
-    let mut total_processed = 0;
+    let mut total_processed = HashSet::new();
     let mut total_pending = 0;
 
     for index in network.nodes.iter().map(|x| x.index) {
@@ -504,8 +512,7 @@ async fn test_rapid_transaction_submission_during_block_production(mut network: 
                 .unwrap()
                 .is_some()
             {
-                total_processed += 1;
-                break; // Only count once across all nodes
+                total_processed.insert(hash);
             }
         }
     }
@@ -513,9 +520,9 @@ async fn test_rapid_transaction_submission_during_block_production(mut network: 
     // Most transactions should have been processed or be pending
     let total_submitted = submitted_hashes.len();
     assert!(
-        total_processed + total_pending as usize >= total_submitted / 2,
+        total_processed.len() + total_pending as usize >= total_submitted / 2,
         "Too many transactions lost: processed={}, pending={}, submitted={}",
-        total_processed,
+        total_processed.len(),
         total_pending,
         total_submitted
     );
@@ -536,7 +543,7 @@ async fn test_transaction_replacement_during_consensus(mut network: Network) {
                 to: Some(H160::random().into()),
                 value: Some(U256::from(100)),
                 gas: Some(U256::from(21000)),
-                gas_price: Some(U256::from(1000000000)), // 1 gwei
+                gas_price: Some(U256::from(4_761_904_800_000u128)), // 1 gwei
                 nonce: Some(U256::from(0)),
                 ..Default::default()
             },
@@ -555,8 +562,8 @@ async fn test_transaction_replacement_during_consensus(mut network: Network) {
                 to: Some(H160::random().into()),
                 value: Some(U256::from(200)),
                 gas: Some(U256::from(21000)),
-                gas_price: Some(U256::from(2000000000)), // 2 gwei
-                nonce: Some(U256::from(0)),              // Same nonce
+                gas_price: Some(U256::from(4_761_904_800_000u128 * 2)), // 2 gwei
+                nonce: Some(U256::from(0)),                             // Same nonce
                 ..Default::default()
             },
             None,
@@ -570,7 +577,7 @@ async fn test_transaction_replacement_during_consensus(mut network: Network) {
             to: Some(H160::random().into()),
             value: Some(U256::from(10)),
             gas: Some(U256::from(21000)),
-            gas_price: Some(U256::from(1500000000)),
+            gas_price: Some(U256::from(7_161_904_800_000u128)),
             nonce: Some(U256::from(nonce)),
             ..Default::default()
         };
@@ -638,7 +645,7 @@ async fn test_transaction_pool_during_network_partition(mut network: Network) {
             to: Some(H160::random().into()),
             value: Some(U256::from(10)),
             gas: Some(U256::from(21000)),
-            gas_price: Some(U256::from(1000000000)),
+            gas_price: Some(U256::from(4_761_904_800_000u128)),
             nonce: Some(U256::from(nonce)),
             ..Default::default()
         };
@@ -658,7 +665,7 @@ async fn test_transaction_pool_during_network_partition(mut network: Network) {
             to: Some(H160::random().into()),
             value: Some(U256::from(10)),
             gas: Some(U256::from(21000)),
-            gas_price: Some(U256::from(1000000000)),
+            gas_price: Some(U256::from(4_761_904_800_000u128)),
             nonce: Some(U256::from(nonce)),
             ..Default::default()
         };

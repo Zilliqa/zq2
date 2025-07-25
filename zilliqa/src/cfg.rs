@@ -633,6 +633,7 @@ pub struct Fork {
     pub restore_ignite_wallet_contracts: bool,
     pub prevent_zil_transfer_from_evm_to_scilla_contract: bool,
     pub scilla_failed_txn_correct_gas_fee_charged: bool,
+    pub check_minimum_gas_price: bool,
 }
 
 pub enum ForkName {
@@ -758,6 +759,8 @@ pub struct ForkDelta {
     pub prevent_zil_transfer_from_evm_to_scilla_contract: Option<bool>,
     /// If true, failed scilla transfers report proper gas usage
     pub scilla_failed_txn_correct_gas_fee_charged: Option<bool>,
+    /// if true, there's a check if transaction uses at least minimum gas price
+    pub check_minimum_gas_price: Option<bool>,
 }
 
 impl Fork {
@@ -849,6 +852,9 @@ impl Fork {
             scilla_failed_txn_correct_gas_fee_charged: delta
                 .scilla_failed_txn_correct_gas_fee_charged
                 .unwrap_or(self.scilla_failed_txn_correct_gas_fee_charged),
+            check_minimum_gas_price: delta
+                .check_minimum_gas_price
+                .unwrap_or(self.check_minimum_gas_price),
         }
     }
 }
@@ -945,6 +951,7 @@ pub fn genesis_fork_default() -> Fork {
         restore_ignite_wallet_contracts: true,
         prevent_zil_transfer_from_evm_to_scilla_contract: true,
         scilla_failed_txn_correct_gas_fee_charged: true,
+        check_minimum_gas_price: true,
     }
 }
 
@@ -1093,6 +1100,7 @@ mod tests {
                 restore_ignite_wallet_contracts: None,
                 prevent_zil_transfer_from_evm_to_scilla_contract: None,
                 scilla_failed_txn_correct_gas_fee_charged: None,
+                check_minimum_gas_price: None,
             }],
             ..Default::default()
         };
@@ -1144,6 +1152,7 @@ mod tests {
                     restore_ignite_wallet_contracts: None,
                     prevent_zil_transfer_from_evm_to_scilla_contract: None,
                     scilla_failed_txn_correct_gas_fee_charged: None,
+                    check_minimum_gas_price: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1175,6 +1184,7 @@ mod tests {
                     restore_ignite_wallet_contracts: None,
                     prevent_zil_transfer_from_evm_to_scilla_contract: None,
                     scilla_failed_txn_correct_gas_fee_charged: None,
+                    check_minimum_gas_price: None,
                 },
             ],
             ..Default::default()
@@ -1240,6 +1250,7 @@ mod tests {
                     restore_ignite_wallet_contracts: None,
                     prevent_zil_transfer_from_evm_to_scilla_contract: None,
                     scilla_failed_txn_correct_gas_fee_charged: None,
+                    check_minimum_gas_price: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1271,6 +1282,7 @@ mod tests {
                     restore_ignite_wallet_contracts: None,
                     prevent_zil_transfer_from_evm_to_scilla_contract: None,
                     scilla_failed_txn_correct_gas_fee_charged: None,
+                    check_minimum_gas_price: None,
                 },
             ],
             ..Default::default()
@@ -1327,6 +1339,7 @@ mod tests {
                 restore_ignite_wallet_contracts: true,
                 prevent_zil_transfer_from_evm_to_scilla_contract: true,
                 scilla_failed_txn_correct_gas_fee_charged: true,
+                check_minimum_gas_price: true,
             },
             forks: vec![],
             ..Default::default()
@@ -1371,6 +1384,7 @@ mod tests {
                     restore_ignite_wallet_contracts: None,
                     prevent_zil_transfer_from_evm_to_scilla_contract: None,
                     scilla_failed_txn_correct_gas_fee_charged: None,
+                    check_minimum_gas_price: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1402,6 +1416,7 @@ mod tests {
                     restore_ignite_wallet_contracts: None,
                     prevent_zil_transfer_from_evm_to_scilla_contract: None,
                     scilla_failed_txn_correct_gas_fee_charged: None,
+                    check_minimum_gas_price: None,
                 },
             ],
             ..Default::default()
