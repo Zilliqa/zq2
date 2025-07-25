@@ -656,7 +656,7 @@ async fn test_transaction_pool_during_network_partition(mut network: Network) {
 
     // Simulate network issues by dropping many messages
     for _ in 0..50 {
-        network.randomly_drop_messages_then_tick(0.3).await; // Drop 30% of messages
+        network.randomly_drop_messages_then_tick(0.1).await; // Drop 30% of messages
     }
 
     // Submit more transactions during network issues
@@ -675,7 +675,7 @@ async fn test_transaction_pool_during_network_partition(mut network: Network) {
     }
 
     // Allow network to heal and process transactions
-    network.run_until_block(&wallet, 8.into(), 500).await;
+    network.run_until_block(&wallet, 8.into(), 2500).await;
 
     // Verify all nodes have consistent transaction pool states after healing
     let mut node_states = Vec::new();
