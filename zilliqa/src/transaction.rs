@@ -310,6 +310,23 @@ impl SignedTransaction {
         }
     }
 
+    pub fn effective_gas_price(&self, base_fee: u128) -> u128 {
+        match self {
+            SignedTransaction::Eip1559 { tx, .. } => {
+                // if the tip is greater than the max priority fee per gas, set it to the max
+                // priority fee per gas + base fee
+                let tip = tx.max_fee_per_gas.saturating_sub(base_fee);
+                if tip > tx.max_priority_fee_per_gas {
+                    tx.max_priority_fee_per_gas + base_fee
+                } else {
+                    // otherwise return the max fee per gas
+                    tx.max_fee_per_gas
+                }
+            }
+            _ => self.gas_price_per_evm_gas(),
+        }
+    }
+
     // ZilAmount / EvmGas
     // EvmGas / ScillaGas
 
@@ -707,6 +724,16 @@ impl Transaction {
             }) => *max_fee_per_gas,
             Transaction::Zilliqa(t) => t.gas_price.get() / (EVM_GAS_PER_SCILLA_GAS as u128),
             Transaction::Intershard(TxIntershard { gas_price, .. }) => *gas_price,
+        }
+    }
+
+    pub fn max_priority_fee_per_gas(&self) -> Option<u128> {
+        match self {
+            Transaction::Eip1559(TxEip1559 {
+                max_priority_fee_per_gas,
+                ..
+            }) => Some(*max_priority_fee_per_gas),
+            _ => None,
         }
     }
 

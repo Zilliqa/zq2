@@ -46,4 +46,4 @@ Given a transaction and a block number, executes a new message call immediately,
 | `id`      | string | Required | `"1"`                                              |
 | `jsonrpc` | string | Required | `"2.0"`                                            |
 | `method`  | string | Required | `"eth_call"`                                       |
-| `params`  | array  | Requred  | `[ transaction ]` or `[transaction, block_number]` |
+| `params`  | array  | Required | `[ transaction ]` or `[transaction, block_number]` |

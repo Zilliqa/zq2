@@ -62,7 +62,6 @@ pub struct ExtraOpts {
 type ScillaResultAndState = (ScillaResult, HashMap<Address, PendingAccount>);
 
 /// Data returned after applying a [Transaction] to [State].
-
 #[derive(Clone)]
 pub enum TransactionApplyResult {
     Evm(ResultAndState, Box<Env>),
@@ -466,6 +465,7 @@ impl State {
             Address::ZERO,
             None,
             0,
+            None,
             self.block_gas_limit,
             amount,
             creation_bytecode,
@@ -529,6 +529,7 @@ impl State {
         from_addr: Address,
         to_addr: Option<Address>,
         gas_price: u128,
+        max_priority_fee_per_gas: Option<u128>,
         gas_limit: EvmGas,
         amount: u128,
         payload: Vec<u8>,
@@ -591,7 +592,7 @@ impl State {
                 nonce,
                 chain_id: Some(self.chain_id.eth),
                 access_list: vec![],
-                gas_priority_fee: None,
+                gas_priority_fee: max_priority_fee_per_gas.map(U256::from),
                 blob_hashes: vec![],
                 max_fee_per_blob_gas: None,
                 authorization_list: None,
@@ -804,6 +805,7 @@ impl State {
                     from_addr,
                     txn.to_addr(),
                     txn.max_fee_per_gas(),
+                    txn.max_priority_fee_per_gas(),
                     txn.gas_limit(),
                     txn.amount(),
                     txn.payload().to_vec(),
@@ -1225,6 +1227,7 @@ impl State {
                 from_addr,
                 to_addr,
                 gas_price,
+                None,
                 EvmGas(mid),
                 value,
                 data.clone(),
@@ -1266,6 +1269,7 @@ impl State {
             from_addr,
             to_addr,
             gas_price,
+            None,
             gas,
             value,
             data.clone(),
@@ -1299,6 +1303,7 @@ impl State {
             from_addr,
             to_addr,
             0,
+            None,
             self.block_gas_limit,
             amount,
             data,
@@ -1330,6 +1335,7 @@ impl State {
             from_addr,
             to_addr,
             0,
+            None,
             self.block_gas_limit,
             amount,
             data,
