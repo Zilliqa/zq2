@@ -119,8 +119,8 @@ impl Chain {
                 "apply_scilla_delta_when_evm_succeeded" : true,
                 "scilla_deduct_funds_from_actual_sender": true,
                 "fund_accounts_from_zero_account": [],
-                "scilla_delta_maps_are_applied_correctly": true,
-                "scilla_server_unlimited_response_size": true,
+                "scilla_delta_maps_are_applied_correctly": false, // differs from default
+                "scilla_server_unlimited_response_size": false, // differs from default
                 "scilla_failed_txn_correct_balance_deduction": false,
                 "scilla_transition_proper_order": false,
                 "evm_to_scilla_value_transfer_zero": false,
