@@ -537,7 +537,7 @@ impl Sync {
                 debug!(?range, "sync::InjectRecent: skipped");
             }
         }
-        self.segments.empty_sync_metadata();
+        self.segments.empty_sync_metadata()?;
         self.state = SyncState::Phase0;
         Ok(())
     }
@@ -852,7 +852,7 @@ impl Sync {
         };
 
         // if we're done
-        if self.segments.count_sync_segments() == 0 {
+        if self.segments.count_sync_segments()? == 0 {
             self.state = SyncState::Phase3;
         }
 
@@ -1153,7 +1153,7 @@ impl Sync {
                 );
                 // Unless, it is the first segment, where it will restart the entire sync.
                 // https://github.com/Zilliqa/zq2/issues/2416
-                if self.segments.count_sync_segments() <= 1 {
+                if self.segments.count_sync_segments()? <= 1 {
                     self.state = SyncState::Phase3; // flush, drop all segments, and restart
                     self.p1_response.clear();
                     for p in self.in_flight.drain(..) {
@@ -1185,7 +1185,7 @@ impl Sync {
         if !segment.is_empty() {
             // Record segment landmark/marker
             self.segments
-                .push_sync_segment(&segment_peer, segment.first().unwrap().header.hash);
+                .push_sync_segment(&segment_peer, segment.first().unwrap().header.hash)?;
             let segment_last = segment.last().cloned().unwrap().header;
 
             // Dynamic sub-segments - https://github.com/Zilliqa/zq2/issues/2312
@@ -1194,7 +1194,7 @@ impl Sync {
                 .into_iter()
                 .rev() // Computed in ascending order, so that landmarks always top the segment.
                 .filter(|&sb| {
-                    self.segments.insert_sync_metadata(&sb.header); // record all metadata
+                    self.segments.insert_sync_metadata(&sb.header).unwrap(); // record all metadata
                     block_size = block_size.saturating_add(sb.size_estimate);
                     trace!(total=%block_size, "sync::DoMetadataResponse : response");
                     if block_size > Self::RESPONSE_SIZE_THRESHOLD {
@@ -1207,7 +1207,8 @@ impl Sync {
                 .collect_vec();
             while let Some(SyncBlockHeader { header, .. }) = sub_segments.pop() {
                 // segment markers are inserted in descending order, which is the order in the stack.
-                self.segments.push_sync_segment(&segment_peer, header.hash);
+                self.segments
+                    .push_sync_segment(&segment_peer, header.hash)?;
             }
 
             // Record the oldest block in the segment
@@ -1836,8 +1837,8 @@ impl SyncSegments {
     }
 
     /// Returns the number of stored sync segments
-    fn count_sync_segments(&self) -> usize {
-        self.markers.len()
+    fn count_sync_segments(&self) -> Result<usize> {
+        Ok(self.markers.len())
     }
 
     /// Pop the stack, for active-sync from marker (inclusive)
@@ -1869,7 +1870,7 @@ impl SyncSegments {
     }
 
     /// Pushes a particular segment into the stack/queue.
-    fn push_sync_segment(&mut self, peer: &PeerInfo, hash: Hash) {
+    fn push_sync_segment(&mut self, peer: &PeerInfo, hash: Hash) -> Result<()> {
         // do not double-push
         let last = self
             .markers
@@ -1881,21 +1882,24 @@ impl SyncSegments {
                 peer: peer.peer_id.clone(),
             });
         }
+        Ok(())
     }
 
     /// Bulk inserts a bunch of metadata.
-    fn insert_sync_metadata(&mut self, meta: &BlockHeader) {
+    fn insert_sync_metadata(&mut self, meta: &BlockHeader) -> Result<()> {
         let header = SyncHeader {
             number: meta.number,
             parent: meta.qc.block_hash,
         };
         self.headers.insert(meta.hash, header);
+        Ok(())
     }
 
     /// Empty the metadata table.
-    fn empty_sync_metadata(&mut self) {
+    fn empty_sync_metadata(&mut self) -> Result<()> {
         self.markers.clear();
         self.headers.clear();
+        Ok(())
     }
 }
 
