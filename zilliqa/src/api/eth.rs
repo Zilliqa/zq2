@@ -1092,7 +1092,6 @@ fn fee_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<FeeHistory> {
         .resolve_block_number(newest_block)?
         .ok_or_else(|| anyhow!("block not found"))?
         .number();
-
     if newest_block_number < block_count {
         warn!("block_count is greater than newest_block");
         block_count = newest_block_number;
@@ -1120,6 +1119,9 @@ fn fee_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<FeeHistory> {
                 effective_gas_prices.sort_unstable();
 
                 let fees_len = effective_gas_prices.len() as f64;
+                if fees_len == 0.0 {
+                    effective_gas_prices.push(*node.config.consensus.gas_price);
+                }
 
                 reward_percentiles
                     .iter()
@@ -1144,14 +1146,15 @@ fn fee_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<FeeHistory> {
         })
         .collect::<Result<(Vec<Vec<_>>, Vec<_>)>>()?;
 
-    Ok(FeeHistory {
+    let res = FeeHistory {
         oldest_block,
         reward: reward_percentiles.map(|_| reward),
         gas_used_ratio,
         base_fee_per_gas: vec![0; (block_count + 1) as usize],
         base_fee_per_blob_gas: vec![0; (block_count + 1) as usize],
         blob_gas_used_ratio: vec![0.0; block_count as usize],
-    })
+    };
+    Ok(res)
 }
 
 /// eth_getAccount
