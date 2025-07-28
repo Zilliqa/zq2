@@ -1853,6 +1853,7 @@ impl SyncSegments {
     }
 
     /// Pop the stack, for active-sync from marker (inclusive)
+    #[allow(clippy::type_complexity)]
     fn pop_last_sync_segment(
         &mut self,
     ) -> Result<Option<(Vec<Hash>, PeerInfo, BlockHeader, RangeInclusive<u64>)>> {
@@ -1909,7 +1910,7 @@ impl SyncSegments {
             if hash != marker.hash {
                 let marker = SyncMarker {
                     hash,
-                    peer: peer.peer_id.clone(),
+                    peer: peer.peer_id,
                 };
                 let marker = cbor4ii::serde::to_vec(Vec::with_capacity(1024), &marker)?;
                 self.counter += 1;
