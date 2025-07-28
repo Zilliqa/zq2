@@ -223,7 +223,7 @@ impl Sync {
             blocks_downloaded: 0,
             active_sync_count: 0,
             p1_response: BTreeMap::new(),
-            segments: SyncSegments::default(),
+            segments: SyncSegments::new(),
             cache_probe_response: None,
             last_probe_at: Instant::now().checked_sub(Duration::from_secs(60)).unwrap(), // allow immediate sync at startup
             sync_base_height,
@@ -1809,13 +1809,32 @@ impl std::fmt::Display for SyncState {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
+struct SyncMarker {
+    hash: Hash,
+    peer: PeerId,
+}
+
+#[derive(Debug)]
+struct SyncHeader {
+    number: u64,
+    parent: Hash,
+}
+
+#[derive(Debug)]
 struct SyncSegments {
-    headers: HashMap<Hash, BlockHeader>,
-    markers: Vec<(Hash, PeerInfo)>,
+    headers: HashMap<Hash, SyncHeader>,
+    markers: Vec<SyncMarker>,
 }
 
 impl SyncSegments {
+    fn new() -> Self {
+        SyncSegments {
+            headers: HashMap::new(),
+            markers: Vec::new(),
+        }
+    }
+
     /// Returns the number of stored sync segments
     fn count_sync_segments(&self) -> usize {
         self.markers.len()
@@ -1825,18 +1844,22 @@ impl SyncSegments {
     fn pop_last_sync_segment(
         &mut self,
     ) -> Option<(Vec<Hash>, PeerInfo, BlockHeader, RangeInclusive<u64>)> {
-        let (mut hash, mut peer) = self.markers.pop()?;
+        let SyncMarker { mut hash, peer } = self.markers.pop()?;
         let mut hashes = vec![];
         let high_at = self.headers.get(&hash)?.number;
-        let high_hash = self.headers.get(&hash)?.hash;
+        let high_hash = hash;
         let mut low_at = 0;
         while let Some(header) = self.headers.remove(&hash) {
             low_at = header.number;
-            hashes.push(header.hash);
-            hash = header.qc.block_hash;
+            hashes.push(hash);
+            hash = header.parent;
         }
-        peer.last_used = Instant::now();
-        peer.score = u32::MAX;
+
+        let peer = PeerInfo {
+            last_used: Instant::now(),
+            score: u32::MAX,
+            peer_id: peer,
+        };
 
         let mut faux_marker = BlockHeader::genesis(Hash::ZERO);
         faux_marker.number = high_at;
@@ -1848,15 +1871,25 @@ impl SyncSegments {
     /// Pushes a particular segment into the stack/queue.
     fn push_sync_segment(&mut self, peer: &PeerInfo, hash: Hash) {
         // do not double-push
-        let last = self.markers.last().map_or_else(|| Hash::ZERO, |(h, _)| *h);
+        let last = self
+            .markers
+            .last()
+            .map_or_else(|| Hash::ZERO, |marker| marker.hash);
         if hash != last {
-            self.markers.push((hash, peer.clone()));
+            self.markers.push(SyncMarker {
+                hash,
+                peer: peer.peer_id.clone(),
+            });
         }
     }
 
     /// Bulk inserts a bunch of metadata.
     fn insert_sync_metadata(&mut self, meta: &BlockHeader) {
-        self.headers.insert(meta.hash, *meta);
+        let header = SyncHeader {
+            number: meta.number,
+            parent: meta.qc.block_hash,
+        };
+        self.headers.insert(meta.hash, header);
     }
 
     /// Empty the metadata table.
