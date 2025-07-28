@@ -10,7 +10,6 @@ use anyhow::Result;
 use itertools::Itertools;
 use libp2p::PeerId;
 use rand::Rng;
-use rusqlite::types::{FromSql, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 use tracing::{debug, error, info, trace, warn};
 
 use crate::{
@@ -1680,7 +1679,6 @@ impl SyncPeers {
         // if the new peer is not synced, it will get downgraded to the back of heap.
         // but by placing them at the back of the 'best' pack, we get to try them out soon.
         let new_peer = PeerInfo {
-            version: PeerVer::V2, // default to V2 since >= 0.7.0
             score: peers.iter().map(|p| p.score).min().unwrap_or_default(),
             peer_id: peer,
             last_used: Instant::now(),
@@ -1748,7 +1746,6 @@ pub struct PeerInfo {
     pub score: u32,
     pub peer_id: PeerId,
     pub last_used: Instant,
-    pub version: PeerVer,
 }
 
 impl Ord for PeerInfo {
@@ -1809,36 +1806,6 @@ impl std::fmt::Display for SyncState {
             SyncState::Retry1(_) => write!(f, "retry1"),
             SyncState::Phase4(_) => write!(f, "phase4"),
         }
-    }
-}
-
-/// Peer Version
-///
-/// It identifies the form of sync algorithm that is supported by a peer. We assume that all peers are V1 at first.
-/// At the first encounter with a peer, it is probed and its response determines if it is treated as a V1/V2 peer.
-/// We have deprecated support for V1 peers. So, V1 now really means 'unknown' peer version.
-///
-/// V1 - peers that support original sync algorithm in `block_store.rs`
-/// V2 - peers that support new sync algorithm in `sync.rs`
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub enum PeerVer {
-    V1 = 1, // deprecated
-    V2 = 2,
-}
-
-impl FromSql for PeerVer {
-    fn column_result(value: ValueRef) -> FromSqlResult<Self> {
-        u32::column_result(value).map(|i| match i {
-            1 => PeerVer::V1,
-            2 => PeerVer::V2,
-            _ => todo!("invalid version"),
-        })
-    }
-}
-
-impl ToSql for PeerVer {
-    fn to_sql(&self) -> Result<ToSqlOutput, rusqlite::Error> {
-        Ok((self.clone() as u32).into())
     }
 }
 
