@@ -10,6 +10,8 @@ use anyhow::Result;
 use itertools::Itertools;
 use libp2p::PeerId;
 use rand::Rng;
+use serde::{Deserialize, Serialize};
+use tempfile::tempdir;
 use tracing::{debug, error, info, trace, warn};
 
 use crate::{
@@ -934,7 +936,7 @@ impl Sync {
 
             // If we have no chain_segments, we have nothing to do
             if let Some((request_hashes, peer_info, block, range)) =
-                self.segments.pop_last_sync_segment()
+                self.segments.pop_last_sync_segment()?
             {
                 // Checksum of the request hashes
                 let checksum = request_hashes
@@ -1810,13 +1812,13 @@ impl std::fmt::Display for SyncState {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 struct SyncMarker {
     hash: Hash,
     peer: PeerId,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 struct SyncHeader {
     number: u64,
     parent: Hash,
@@ -1824,38 +1826,67 @@ struct SyncHeader {
 
 #[derive(Debug)]
 struct SyncSegments {
-    headers: HashMap<Hash, SyncHeader>,
-    markers: Vec<SyncMarker>,
+    db: sled::Db,
+    counter: usize,
 }
 
 impl SyncSegments {
     fn new() -> Self {
-        SyncSegments {
-            headers: HashMap::new(),
-            markers: Vec::new(),
-        }
+        // forcibly insert a 0-th marker, because the code below assumes that it defaults to 0
+        let marker = SyncMarker {
+            hash: Hash::ZERO,
+            peer: PeerId::random(),
+        };
+        let marker = cbor4ii::serde::to_vec(Vec::with_capacity(1024), &marker).unwrap_or_default();
+
+        let db = sled::open(tempdir().unwrap().into_path().as_os_str()).unwrap();
+        let markers = db.open_tree("markers").unwrap();
+
+        let counter: usize = 0;
+        markers.insert(counter.to_ne_bytes(), marker).unwrap();
+        SyncSegments { counter, db }
     }
 
     /// Returns the number of stored sync segments
     fn count_sync_segments(&self) -> Result<usize> {
-        Ok(self.markers.len())
+        Ok(self.counter)
     }
 
     /// Pop the stack, for active-sync from marker (inclusive)
     fn pop_last_sync_segment(
         &mut self,
-    ) -> Option<(Vec<Hash>, PeerInfo, BlockHeader, RangeInclusive<u64>)> {
-        let SyncMarker { mut hash, peer } = self.markers.pop()?;
-        let mut hashes = vec![];
-        let high_at = self.headers.get(&hash)?.number;
+    ) -> Result<Option<(Vec<Hash>, PeerInfo, BlockHeader, RangeInclusive<u64>)>> {
+        // pop the marker
+        let markers = self.db.open_tree("markers")?;
+        let SyncMarker { mut hash, peer } =
+            if let Some(marker) = markers.remove(self.counter.to_ne_bytes())? {
+                self.counter -= 1;
+                cbor4ii::serde::from_slice::<SyncMarker>(marker.to_vec().as_slice())?
+            } else {
+                return Ok(None);
+            };
+
+        let headers = self.db.open_tree("headers")?;
+        let high_at = if let Some(header) = headers.get(hash.0)? {
+            let header = cbor4ii::serde::from_slice::<SyncHeader>(header.to_vec().as_slice())?;
+            header.number
+        } else {
+            return Ok(None);
+        };
+
         let high_hash = hash;
         let mut low_at = 0;
-        while let Some(header) = self.headers.remove(&hash) {
+
+        // retrieve the segment
+        let mut hashes = Vec::with_capacity(100);
+        while let Some(header) = headers.remove(hash.0)? {
+            let header = cbor4ii::serde::from_slice::<SyncHeader>(header.to_vec().as_slice())?;
             low_at = header.number;
             hashes.push(hash);
             hash = header.parent;
         }
 
+        // synthesise results
         let peer = PeerInfo {
             last_used: Instant::now(),
             score: u32::MAX,
@@ -1866,21 +1897,24 @@ impl SyncSegments {
         faux_marker.number = high_at;
         faux_marker.hash = high_hash;
 
-        Some((hashes, peer, faux_marker, low_at..=high_at))
+        Ok(Some((hashes, peer, faux_marker, low_at..=high_at)))
     }
 
     /// Pushes a particular segment into the stack/queue.
     fn push_sync_segment(&mut self, peer: &PeerInfo, hash: Hash) -> Result<()> {
         // do not double-push
-        let last = self
-            .markers
-            .last()
-            .map_or_else(|| Hash::ZERO, |marker| marker.hash);
-        if hash != last {
-            self.markers.push(SyncMarker {
-                hash,
-                peer: peer.peer_id.clone(),
-            });
+        let markers = self.db.open_tree("markers")?;
+        if let Some(marker) = markers.get(self.counter.to_ne_bytes())? {
+            let marker = cbor4ii::serde::from_slice::<SyncMarker>(marker.to_vec().as_slice())?;
+            if hash != marker.hash {
+                let marker = SyncMarker {
+                    hash,
+                    peer: peer.peer_id.clone(),
+                };
+                let marker = cbor4ii::serde::to_vec(Vec::with_capacity(1024), &marker)?;
+                self.counter += 1;
+                markers.insert(self.counter.to_ne_bytes(), marker)?;
+            }
         }
         Ok(())
     }
@@ -1891,14 +1925,16 @@ impl SyncSegments {
             number: meta.number,
             parent: meta.qc.block_hash,
         };
-        self.headers.insert(meta.hash, header);
+        let header = cbor4ii::serde::to_vec(Vec::with_capacity(1024), &header)?;
+        let headers = self.db.open_tree("headers")?;
+        headers.insert(meta.hash.0, header)?;
         Ok(())
     }
 
     /// Empty the metadata table.
     fn empty_sync_metadata(&mut self) -> Result<()> {
-        self.markers.clear();
-        self.headers.clear();
+        self.db.drop_tree("markers")?;
+        self.db.drop_tree("headers")?;
         Ok(())
     }
 }
