@@ -1839,7 +1839,9 @@ impl SyncSegments {
         };
         let marker = cbor4ii::serde::to_vec(Vec::with_capacity(1024), &marker).unwrap_or_default();
 
-        let db = sled::open(tempdir().unwrap().into_path().as_os_str()).unwrap();
+        let path = tempdir().unwrap();
+        tracing::info!("Sync-db {}", path.path().display());
+        let db = sled::open(path.into_path().as_os_str()).unwrap();
         let markers = db.open_tree("markers").unwrap();
 
         let counter: usize = 0;
@@ -1858,12 +1860,17 @@ impl SyncSegments {
         &mut self,
     ) -> Result<Option<(Vec<Hash>, PeerInfo, BlockHeader, RangeInclusive<u64>)>> {
         // pop the marker
+        if self.counter == 0 {
+            tracing::warn!("sync counter = 0");
+            return Ok(None);
+        }
         let markers = self.db.open_tree("markers")?;
         let SyncMarker { mut hash, peer } =
             if let Some(marker) = markers.remove(self.counter.to_ne_bytes())? {
-                self.counter -= 1;
+                self.counter -= self.counter.saturating_sub(1);
                 cbor4ii::serde::from_slice::<SyncMarker>(marker.to_vec().as_slice())?
             } else {
+                tracing::warn!("marker not found");
                 return Ok(None);
             };
 
@@ -1872,6 +1879,7 @@ impl SyncSegments {
             let header = cbor4ii::serde::from_slice::<SyncHeader>(header.to_vec().as_slice())?;
             header.number
         } else {
+            tracing::warn!("header not found");
             return Ok(None);
         };
 
@@ -1913,7 +1921,7 @@ impl SyncSegments {
                     peer: peer.peer_id,
                 };
                 let marker = cbor4ii::serde::to_vec(Vec::with_capacity(1024), &marker)?;
-                self.counter += 1;
+                self.counter = self.counter.saturating_add(1);
                 markers.insert(self.counter.to_ne_bytes(), marker)?;
             }
         }
