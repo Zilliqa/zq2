@@ -455,21 +455,19 @@ impl State {
         )?)
     }
 
-    pub fn get_proof(&self, address: Address, storage_keys: &[B256]) -> Result<Proof> {
+    pub fn get_proof(&mut self, address: Address, storage_keys: &[B256]) -> Result<Proof> {
         if !self.has_account(address)? {
             return Ok(Proof::default());
         };
 
         // get_proof() requires &mut so clone state and don't mutate the origin
-        let mut state = self.clone();
-        state.root_hash()?;
-        let account = state.get_account(address)?;
+        let account = self.get_account(address)?;
 
-        let account_proof = state
-            .accounts
+        let account_proof = self
+            .accounts.lock().unwrap()
             .get_proof(Self::account_key(address).as_slice())?;
 
-        let mut storage_trie = state.get_account_trie(address)?;
+        let mut storage_trie = self.get_account_trie(address)?;
         storage_trie.root_hash()?;
 
         let storage_proofs = {

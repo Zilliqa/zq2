@@ -1564,6 +1564,7 @@ async fn test_eth_get_proof(mut network: Network) {
     let (hash, _) = deploy_contract(
         "tests/it/contracts/Storage.sol",
         "Storage",
+        0u128,
         &wallet,
         &mut network,
     )
@@ -1576,7 +1577,7 @@ async fn test_eth_get_proof(mut network: Network) {
     let deployed_at_block = wallet.get_block(deployed_at_block).await.unwrap().unwrap();
 
     let contract_account = {
-        let node = network.nodes[0].inner.lock().unwrap();
+        let node = network.nodes[0].inner.read();
         node.consensus
             .state()
             .get_account(Address::from(contract_address.0))
@@ -1596,7 +1597,7 @@ async fn test_eth_get_proof(mut network: Network) {
         .unwrap();
 
     let storage_value = {
-        let node = network.nodes[0].inner.lock().unwrap();
+        let node = network.nodes[0].inner.read();
         node.consensus
             .state()
             .get_account_storage(
@@ -1626,7 +1627,7 @@ async fn test_eth_get_proof(mut network: Network) {
             .unwrap()
             .unwrap();
 
-        let recovered_account = bincode::deserialize::<Account>(&verify_result).unwrap();
+        let recovered_account: Account = bincode::serde::decode_from_slice(&verify_result, bincode::config::legacy()).unwrap().0;
         assert_eq!(recovered_account.balance, 0);
         assert_eq!(
             recovered_account.storage_root,

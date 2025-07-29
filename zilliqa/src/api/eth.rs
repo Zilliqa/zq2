@@ -25,7 +25,6 @@ use jsonrpsee::{
 };
 use parking_lot::{RwLock, RwLockReadGuard};
 use revm::primitives::{Bytecode, keccak256};
-use serde::Deserialize;
 use serde_json::json;
 use tracing::*;
 
@@ -913,13 +912,11 @@ fn get_proof(params: Params, node: &Arc<RwLock<Node>>) -> Result<Proof> {
     let block_id: BlockId = params.next()?;
     expect_end_of_params(&mut params, 3, 3)?;
 
-    let node = node.lock().unwrap();
-
-    let block = node.get_block(block_id)?;
+    let block = node.read().get_block(block_id)?;
 
     let block = build_errored_response_for_missing_block(block_id, block)?;
 
-    let state = node
+    let mut state = node.read()
         .consensus
         .state()
         .at_root(block.state_root_hash().into());
