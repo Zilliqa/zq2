@@ -1832,19 +1832,22 @@ struct SyncSegments {
 
 impl SyncSegments {
     fn new() -> Self {
+        let path = tempdir().unwrap();
+        tracing::info!("Sync-db {}", path.path().display());
+        let counter: usize = 0;
+
+        // the choice of SLED is purely ergonomics; any key-value store will do.
+        let db = sled::open(path.into_path().as_os_str()).unwrap();
+        let markers = db.open_tree("markers").unwrap();
+
         // forcibly insert a 0-th marker, because the code below assumes that it defaults to 0
         let marker = SyncMarker {
             hash: Hash::ZERO,
             peer: PeerId::random(),
         };
+
+        // the choice of cbor4ii is purely ergonomics; any serializer will do.
         let marker = cbor4ii::serde::to_vec(Vec::with_capacity(1024), &marker).unwrap_or_default();
-
-        let path = tempdir().unwrap();
-        tracing::info!("Sync-db {}", path.path().display());
-        let db = sled::open(path.into_path().as_os_str()).unwrap();
-        let markers = db.open_tree("markers").unwrap();
-
-        let counter: usize = 0;
         markers.insert(counter.to_ne_bytes(), marker).unwrap();
         SyncSegments { counter, db }
     }
