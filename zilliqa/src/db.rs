@@ -943,7 +943,7 @@ impl Db {
                 .prepare_cached("SELECT data FROM transactions WHERE tx_hash = ?1")?
                 .query_row([txn_hash], |row| row.get(0))
                 .optional()?
-                .map(|x: SignedTransaction| x.verify_bypass())
+                .map(|x: SignedTransaction| x.verify_bypass(*txn_hash))
             {
                 Some(x) => Some(x?),
                 None => None,
@@ -1258,11 +1258,17 @@ impl Db {
             .lock()
             .unwrap()
             .prepare_cached(
-                "SELECT data FROM transactions INNER JOIN receipts ON transactions.tx_hash = receipts.tx_hash WHERE receipts.block_hash = ?1",
+                "SELECT data, transactions.tx_hash FROM transactions INNER JOIN receipts ON transactions.tx_hash = receipts.tx_hash WHERE receipts.block_hash = ?1",
             )?
-            .query_map([block.header.hash], |row| row.get(0))?
-            .map(|x|x.unwrap())
-            .map(|x: SignedTransaction| x.verify_bypass())
+            .query_map([block.header.hash], |row| {
+                let txn: SignedTransaction = row.get(0)?;
+                let hash: Hash = row.get(1)?;
+                Ok((txn, hash))
+            })?
+            .map(|x| {
+                let (txn, hash) = x.unwrap();
+                txn.verify_bypass(hash)
+            })
             .collect::<Result<Vec<_>, _>>()?;
 
         let transaction_hashes = receipts.iter().map(|x| x.tx_hash).collect();
