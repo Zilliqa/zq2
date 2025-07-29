@@ -24,7 +24,10 @@ use alloy::{
 use anyhow::{Result, anyhow};
 use libp2p::{PeerId, request_response::OutboundFailure};
 use rand::RngCore;
-use revm::{Inspector, primitives::ExecutionResult};
+use revm::{
+    Inspector,
+    primitives::{AccessListItem, ExecutionResult},
+};
 use revm_inspectors::tracing::{
     FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig, TransactionContext,
     js::JsInspector,
@@ -949,6 +952,7 @@ impl Node {
         gas: Option<EvmGas>,
         gas_price: Option<u128>,
         value: u128,
+        access_list: Option<Vec<AccessListItem>>,
     ) -> Result<u64> {
         let block = self
             .get_block(block_number)?
@@ -966,6 +970,7 @@ impl Node {
             gas,
             gas_price,
             value,
+            access_list,
         )
     }
 

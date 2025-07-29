@@ -257,6 +257,7 @@ fn estimate_gas(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
         call_params.gas.map(|g| EvmGas(g.to())),
         call_params.gas_price.map(|g| g.to()),
         call_params.value.to(),
+        call_params.access_list,
     )?;
 
     Ok(return_value.to_hex())
