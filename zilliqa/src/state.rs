@@ -464,7 +464,9 @@ impl State {
         let account = self.get_account(address)?;
 
         let account_proof = self
-            .accounts.lock().unwrap()
+            .accounts
+            .lock()
+            .unwrap()
             .get_proof(Self::account_key(address).as_slice())?;
 
         let mut storage_trie = self.get_account_trie(address)?;

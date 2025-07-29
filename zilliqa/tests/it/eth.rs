@@ -1627,7 +1627,10 @@ async fn test_eth_get_proof(mut network: Network) {
             .unwrap()
             .unwrap();
 
-        let recovered_account: Account = bincode::serde::decode_from_slice(&verify_result, bincode::config::legacy()).unwrap().0;
+        let recovered_account: Account =
+            bincode::serde::decode_from_slice(&verify_result, bincode::config::legacy())
+                .unwrap()
+                .0;
         assert_eq!(recovered_account.balance, 0);
         assert_eq!(
             recovered_account.storage_root,

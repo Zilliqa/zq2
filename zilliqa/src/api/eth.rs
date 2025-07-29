@@ -916,7 +916,8 @@ fn get_proof(params: Params, node: &Arc<RwLock<Node>>) -> Result<Proof> {
 
     let block = build_errored_response_for_missing_block(block_id, block)?;
 
-    let mut state = node.read()
+    let mut state = node
+        .read()
         .consensus
         .state()
         .at_root(block.state_root_hash().into());
