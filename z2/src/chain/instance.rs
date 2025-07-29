@@ -1,13 +1,14 @@
-use std::{collections::BTreeMap, str::FromStr};
+use std::{collections::BTreeMap, process::Command, str::FromStr};
 
-use anyhow::{anyhow, Ok, Result};
+use anyhow::{Ok, Result, anyhow};
 use serde_json::value::Value;
 
 use super::{
-    config::NetworkConfig,
-    node::{retrieve_secret_by_role, ChainNode, Machine, NodeRole},
     Chain,
+    config::NetworkConfig,
+    node::{ChainNode, Machine, NodeRole},
 };
+use crate::{kms::KmsService, secret::Secret};
 
 #[derive(Clone, Debug)]
 pub struct ChainInstance {
@@ -22,7 +23,7 @@ impl ChainInstance {
         let chain = Chain::from_str(&config.name.clone())?;
         Ok(Self {
             config: config.clone(),
-            machines: Self::import_machines(&config.name, chain.get_project_id()?).await?,
+            machines: Self::import_machines(&config.name, chain.get_project_id()?)?,
             persistence_url: None,
             checkpoint_url: None,
         })
@@ -79,28 +80,23 @@ impl ChainInstance {
         version.to_owned()
     }
 
-    async fn import_machines(chain_name: &str, project_id: &str) -> Result<Vec<Machine>> {
+    fn import_machines(chain_name: &str, project_id: &str) -> Result<Vec<Machine>> {
         println!("Create the instance list for {chain_name}");
 
-        let output = zqutils::commands::CommandBuilder::new()
-            .silent()
-            .cmd(
-                "gcloud",
-                &[
-                    "--project",
-                    project_id,
-                    "compute",
-                    "instances",
-                    "list",
-                    "--format=json",
-                    "--filter",
-                    &format!("labels.zq2-network={chain_name}"),
-                ],
-            )
-            .run()
-            .await?;
+        let output = Command::new("gcloud")
+            .args([
+                "--project",
+                project_id,
+                "compute",
+                "instances",
+                "list",
+                "--format=json",
+                "--filter",
+                &format!("labels.zq2-network={chain_name}"),
+            ])
+            .output()?;
 
-        if !output.success {
+        if !output.status.success() {
             return Err(anyhow!("Listing {chain_name} instances failed"));
         }
 
@@ -182,16 +178,29 @@ impl ChainInstance {
         Ok(nodes)
     }
 
-    pub async fn genesis_private_key(&self) -> Result<String> {
-        let private_keys = retrieve_secret_by_role(
-            &self.config.name,
-            self.chain()?.get_project_id()?,
-            "genesis",
-        )
-        .await?;
+    pub fn genesis_private_key(&self) -> Result<String> {
+        let filter = format!(
+            "labels.zq2-network={} AND labels.role=genesis",
+            &self.config.name
+        );
+        let private_keys = Secret::get_secrets(self.chain()?.get_project_id()?, filter.as_str())?;
 
         if let Some(private_key) = private_keys.first() {
-            Ok(private_key.value().await?)
+            let value = private_key.value()?;
+
+            // Decrypt the key if KMS is enabled
+            if self.chain()?.get_enable_kms()? {
+                let decrypted_value = KmsService::decrypt(
+                    self.chain()?.get_project_id()?,
+                    &value,
+                    &format!("kms-{}", self.name()),
+                    &format!("{}-genesis", self.name()),
+                    None,
+                )?;
+                Ok(decrypted_value)
+            } else {
+                Ok(value)
+            }
         } else {
             Err(anyhow!(
                 "No secrets with role genesis found in the network {}",
@@ -200,7 +209,7 @@ impl ChainInstance {
         }
     }
 
-    pub async fn run_rpc_call(
+    pub fn run_rpc_call(
         &self,
         method: &str,
         params: &Option<String>,
@@ -213,29 +222,25 @@ impl ChainInstance {
             params.clone().unwrap_or("[]".to_string()),
         );
 
-        let args = &[
-            "--max-time",
-            &timeout.to_string(),
-            "-X",
-            "POST",
-            "-H",
-            "Content-Type:application/json",
-            "-H",
-            "accept:application/json,*/*;q=0.5",
-            "--data",
-            &body,
-            endpoint,
-        ];
-
-        let output = zqutils::commands::CommandBuilder::new()
-            .silent()
-            .cmd("curl", args)
-            .run_for_output()
-            .await?;
-        if !output.success {
+        let output = Command::new("curl")
+            .args([
+                "--max-time",
+                &timeout.to_string(),
+                "-X",
+                "POST",
+                "-H",
+                "Content-Type:application/json",
+                "-H",
+                "accept:application/json,*/*;q=0.5",
+                "--data",
+                &body,
+                &endpoint,
+            ])
+            .output()?;
+        if !output.status.success() {
             return Err(anyhow!(
-                "getting local block number failed: {:?}",
-                output.stderr
+                "getting local block number failed: {}",
+                String::from_utf8_lossy(&output.stderr)
             ));
         }
 

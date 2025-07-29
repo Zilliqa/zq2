@@ -6,15 +6,19 @@ use std::{
     convert::TryFrom,
     fmt,
     path::{Path, PathBuf},
-    sync::{atomic::AtomicUsize, Arc, Mutex},
+    sync::{
+        Arc,
+        atomic::{AtomicPtr, AtomicUsize},
+    },
 };
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
+use parking_lot::RwLock;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tera::Tera;
 use tokio::fs;
-use zilliqa::{cfg::NodeConfig, crypto::SecretKey};
+use zilliqa::{cfg::NodeConfig, crypto::SecretKey, sync::SyncPeers};
 
 const SUPPORTED_APIS_PATH_NAME: &str = "index";
 
@@ -244,13 +248,13 @@ fn insert_key(
     if idx == components.len() - 1 {
         // We're here .
         match val {
-            serde_yaml::Value::Mapping(ref mut map) => {
+            serde_yaml::Value::Mapping(map) => {
                 map.insert(
                     serde_yaml::Value::String(k.clone().to_string()),
                     serde_yaml::Value::String(value.to_string()),
                 );
             }
-            serde_yaml::Value::Sequence(ref mut seq) => {
+            serde_yaml::Value::Sequence(seq) => {
                 let mut new_map = serde_yaml::Mapping::new();
                 new_map.insert(
                     serde_yaml::Value::String(k.clone()),
@@ -266,7 +270,7 @@ fn insert_key(
     } else {
         // Not yere het.
         match val {
-            serde_yaml::Value::Mapping(ref mut map) => match map.get_mut(k) {
+            serde_yaml::Value::Mapping(map) => match map.get_mut(k) {
                 Some(ref mut seq) => {
                     insert_key(seq, components, idx + 1, value, position);
                 }
@@ -276,11 +280,11 @@ fn insert_key(
                     map.insert(serde_yaml::Value::String(k.clone()), seq);
                 }
             },
-            serde_yaml::Value::Sequence(ref mut seq) => {
+            serde_yaml::Value::Sequence(seq) => {
                 // Find the right map, if there is one, otherwise add one.
                 let mut found = false;
                 for s in seq.iter_mut() {
-                    if let serde_yaml::Value::Mapping(ref mut map) = s {
+                    if let serde_yaml::Value::Mapping(map) = s {
                         match map.get_mut(k) {
                             None => (),
                             Some(v) => {
@@ -352,10 +356,22 @@ pub fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, PageStatus
     let (s2, _) = tokio::sync::mpsc::unbounded_channel();
     let (s3, _) = tokio::sync::mpsc::unbounded_channel();
     let (s4, _) = tokio::sync::mpsc::unbounded_channel();
-    let peers = Arc::new(AtomicUsize::new(0));
+    let peers_count = Arc::new(AtomicUsize::new(0));
 
-    let my_node = Arc::new(Mutex::new(zilliqa::node::Node::new(
-        config, secret_key, s1, s2, s3, s4, peers,
+    let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
+    let sync_peers = Arc::new(SyncPeers::new(peer_id));
+    let swarm_peers = Arc::new(AtomicPtr::new(Box::into_raw(Box::new(Vec::new()))));
+
+    let my_node = Arc::new(RwLock::new(zilliqa::node::Node::new(
+        config,
+        secret_key,
+        s1,
+        s2,
+        s3,
+        s4,
+        peers_count,
+        sync_peers,
+        swarm_peers,
     )?));
     let module = zilliqa::api::rpc_module(my_node.clone(), &[]);
     for m in module.method_names() {
@@ -591,11 +607,9 @@ impl Docs {
             id_path.push(v);
         }
         id_path.push(SUPPORTED_APIS_PATH_NAME);
-        let mkdocs_filename = zqutils::utils::string_from_path(&mkdocs_path)?;
 
         context.insert("apis", &all_apis);
-        let prefixed_id = zqutils::utils::string_from_path(&id_path)?;
-        context.insert("_id", &prefixed_id);
+        context.insert("_id", &id_path);
         macros.inject_into(&mut context)?;
 
         list_tera.add_raw_template(
@@ -612,9 +626,13 @@ impl Docs {
             // Now write out...
             let contents_map = serde_yaml::from_str(&fs::read_to_string(val).await?)?;
             let base_key = self.get_base_mkdocs_key().await?;
-            let contents_map =
-                replace_first_string_element_of(&contents_map, &base_key, 0, &mkdocs_filename)
-                    .unwrap_or(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+            let contents_map = replace_first_string_element_of(
+                &contents_map,
+                &base_key,
+                0,
+                mkdocs_path.to_str().unwrap(),
+            )
+            .unwrap_or(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
             fs::write(val, &serde_yaml::to_string(&contents_map)?).await?;
         }
         Ok(all_apis)
@@ -688,7 +706,7 @@ impl Docs {
         ) -> tera::Result<tera::Value> {
             // no-op if this is not a string
             match v {
-                tera::Value::String(ref in_str) => Ok(tera::Value::String(
+                tera::Value::String(in_str) => Ok(tera::Value::String(
                     in_str
                         .split('\n')
                         .map(|x| {
@@ -707,7 +725,6 @@ impl Docs {
 
         // First, let's read the input
         let src_contents = fs::read_to_string(src).await?;
-        let src_file = zqutils::utils::string_from_path(src)?;
         let parsed = self.parse_input_sections(&src_contents).await?;
         // If there is "rest" text, complain.
         if !parsed.rest.is_empty() {
@@ -745,8 +762,7 @@ impl Docs {
 
         let Some(page_title) = parsed.sections.get("title") else {
             return Err(anyhow!(
-                "Page {0} does not contain a title section - needed to build the mkdocs index",
-                src_file
+                "Page {src:?} does not contain a title section - needed to build the mkdocs index"
             ));
         };
         let api_name = ApiMethod::JsonRpc {
@@ -798,19 +814,16 @@ impl Docs {
         id_path.push(page_title);
 
         // That is also the mkdocs id of this file.
-        let prefixed_id = zqutils::utils::string_from_path(&id_path)?;
-        final_context.insert("_id", &prefixed_id);
+        final_context.insert("_id", &id_path);
         // Because we need to indent every line in a section by exactly 4
         // spaces or tabs don't work . Grr!
         page_tera.register_filter("indent4", indent4);
         let final_page = page_tera
             .render("api", &final_context)
-            .context(format!("Whilst rendering {0:?}", src_file))?;
+            .context(format!("Whilst rendering {src:?}"))?;
 
         // OK. Now we have some data, let's write it.
         self.write_file(&final_page, &desc_path).await?;
-
-        let mkdocs_filename = zqutils::utils::string_from_path(&mkdocs_path)?;
 
         let id_components = id_path
             .iter()
@@ -818,7 +831,7 @@ impl Docs {
             .collect();
 
         Ok(GeneratedFile {
-            mkdocs_filename,
+            mkdocs_filename: mkdocs_path.into_os_string().into_string().unwrap(),
             id_components,
             api_name,
             page_status,

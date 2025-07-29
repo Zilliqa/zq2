@@ -13,11 +13,8 @@ module "persistences" {
   network_tags = []
 
   metadata = {
-    subdomain = base64encode("")
+    subdomain = base64encode(var.subdomain)
   }
-
-  node_dns_subdomain       = var.node_dns_subdomain
-  node_dns_zone_project_id = var.node_dns_zone_project_id
 
   service_account_iam = local.default_service_account_iam
 }
@@ -33,4 +30,53 @@ resource "google_compute_instance_group" "persistence" {
     name = "jsonrpc"
     port = "4201"
   }
+}
+
+################################################################################
+# PERSISTENCE BUCKET
+################################################################################
+
+resource "google_storage_bucket" "persistence" {
+  name     = join("-", compact([var.chain_name, "persistence"]))
+  project  = var.project_id
+  location = var.region
+  labels   = local.labels
+
+  force_destroy               = var.persistence_bucket_force_destroy
+  uniform_bucket_level_access = true
+  public_access_prevention    = "inherited"
+
+  versioning {
+    enabled = var.persistence_bucket_versioning
+  }
+
+  # Delete noncurrent (deleted) file versions after 7 days
+  lifecycle_rule {
+    action {
+      type = "Delete"
+    }
+    condition {
+      days_since_noncurrent_time = 7
+      send_age_if_zero           = false
+    }
+  }
+}
+
+resource "google_storage_bucket_iam_binding" "persistence_bucket_admins" {
+  bucket = google_storage_bucket.persistence.name
+  role   = "roles/storage.objectAdmin"
+  members = concat(
+    flatten([
+      [for name, instance in module.bootstraps.instances : "serviceAccount:${instance.service_account}"],
+      [for name, instance in module.validators.instances : "serviceAccount:${instance.service_account}"],
+      [for name, instance in module.apis.instances : "serviceAccount:${instance.service_account}"],
+      [for name, instance in module.checkpoints.instances : "serviceAccount:${instance.service_account}"],
+      [for name, instance in module.persistences.instances : "serviceAccount:${instance.service_account}"]
+    ]),
+    flatten([
+      for private_api in module.private_apis : [
+        for name, instance in private_api.instances : "serviceAccount:${instance.service_account}"
+      ]
+    ])
+  )
 }

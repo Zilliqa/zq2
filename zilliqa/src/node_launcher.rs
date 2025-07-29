@@ -1,12 +1,15 @@
 use std::{
     net::Ipv4Addr,
-    sync::{atomic::AtomicUsize, Arc, Mutex},
+    sync::{
+        Arc,
+        atomic::{AtomicPtr, AtomicUsize},
+    },
     time::{Duration, SystemTime},
 };
 
-use anyhow::{anyhow, Result};
-use http::{header, Method};
-use libp2p::{futures::StreamExt, PeerId};
+use anyhow::{Result, anyhow};
+use http::{Method, header};
+use libp2p::{PeerId, futures::StreamExt};
 use node::Node;
 use opentelemetry::KeyValue;
 use opentelemetry_semantic_conventions::{
@@ -15,6 +18,7 @@ use opentelemetry_semantic_conventions::{
     },
     metric::MESSAGING_PROCESS_DURATION,
 };
+use parking_lot::RwLock;
 use tokio::{
     select,
     sync::mpsc::{self, UnboundedSender},
@@ -32,12 +36,13 @@ use crate::{
     message::{ExternalMessage, InternalMessage},
     node::{self, OutgoingMessageFailure},
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
+    sync::SyncPeers,
 };
 
 pub struct NodeLauncher {
-    pub node: Arc<Mutex<Node>>,
+    pub node: Arc<RwLock<Node>>,
     pub config: NodeConfig,
-    pub broadcasts: UnboundedReceiverStream<(PeerId, ExternalMessage)>,
+    pub broadcasts: UnboundedReceiverStream<(PeerId, ExternalMessage, ResponseChannel)>,
     pub requests: UnboundedReceiverStream<(PeerId, String, ExternalMessage, ResponseChannel)>,
     pub request_failures: UnboundedReceiverStream<(PeerId, OutgoingMessageFailure)>,
     pub responses: UnboundedReceiverStream<(PeerId, ExternalMessage)>,
@@ -76,7 +81,7 @@ impl ResponseChannel {
 /// The collection of channels used to send messages to a [NodeLauncher].
 pub struct NodeInputChannels {
     /// Send broadcast messages (received via gossipsub) down this channel.
-    pub broadcasts: UnboundedSender<(PeerId, ExternalMessage)>,
+    pub broadcasts: UnboundedSender<(PeerId, ExternalMessage, ResponseChannel)>,
     /// Send direct requests down this channel. The `ResponseChannel` must be used by the receiver to respond to this
     /// request.
     pub requests: UnboundedSender<(PeerId, String, ExternalMessage, ResponseChannel)>,
@@ -96,7 +101,8 @@ impl NodeLauncher {
         local_outbound_message_sender: UnboundedSender<LocalMessageTuple>,
         request_responses_sender: UnboundedSender<(ResponseChannel, ExternalMessage)>,
         peer_num: Arc<AtomicUsize>,
-    ) -> Result<(Self, NodeInputChannels)> {
+        swarm_peers: Arc<AtomicPtr<Vec<PeerId>>>,
+    ) -> Result<(Self, NodeInputChannels, Arc<SyncPeers>)> {
         /// Helper to create a (sender, receiver) pair for a channel.
         fn sender_receiver<T>() -> (UnboundedSender<T>, UnboundedReceiverStream<T>) {
             let (sender, receiver) = mpsc::unbounded_channel();
@@ -110,6 +116,9 @@ impl NodeLauncher {
         let (local_messages_sender, local_messages_receiver) = sender_receiver();
         let (reset_timeout_sender, reset_timeout_receiver) = sender_receiver();
 
+        let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
+        let sync_peers = Arc::new(SyncPeers::new(peer_id));
+
         let node = Node::new(
             config.clone(),
             secret_key,
@@ -118,8 +127,11 @@ impl NodeLauncher {
             request_responses_sender,
             reset_timeout_sender.clone(),
             peer_num,
+            sync_peers.clone(),
+            swarm_peers.clone(),
         )?;
-        let node = Arc::new(Mutex::new(node));
+
+        let node = Arc::new(RwLock::new(node));
 
         for api_server in &config.api_servers {
             let rpc_module = api::rpc_module(Arc::clone(&node), &api_server.enabled_apis);
@@ -168,7 +180,7 @@ impl NodeLauncher {
             local_messages: local_messages_sender,
         };
 
-        Ok((launcher, input_channels))
+        Ok((launcher, input_channels, sync_peers))
     }
 
     pub async fn start_shard_node(&mut self) -> Result<()> {
@@ -176,8 +188,11 @@ impl NodeLauncher {
             return Err(anyhow!("Node already running!"));
         }
 
-        let sleep = time::sleep(Duration::from_millis(5));
-        tokio::pin!(sleep);
+        let consensus_sleep = time::sleep(Duration::from_millis(5));
+        tokio::pin!(consensus_sleep);
+
+        let mempool_sleep = time::sleep(Duration::from_millis(5));
+        tokio::pin!(mempool_sleep);
 
         self.node_launched = true;
 
@@ -185,12 +200,15 @@ impl NodeLauncher {
         let messaging_process_duration = meter
             .f64_histogram(MESSAGING_PROCESS_DURATION)
             .with_unit("s")
+            .with_boundaries(vec![
+                0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0,
+            ])
             .build();
 
         loop {
             select! {
                 message = self.broadcasts.next() => {
-                    let (source, message) = message.expect("message stream should be infinite");
+                    let (source, message, response_channel) = message.expect("message stream should be infinite");
                     let mut attributes = vec![
                         KeyValue::new(MESSAGING_OPERATION_NAME, "handle"),
                         KeyValue::new(MESSAGING_SYSTEM, "tokio_channel"),
@@ -198,7 +216,28 @@ impl NodeLauncher {
                     ];
 
                     let start = SystemTime::now();
-                    if let Err(e) = self.node.lock().unwrap().handle_broadcast(source, message) {
+                    if let ExternalMessage::BatchedTransactions(transactions) = message {
+                        let my_peer_id = self.node.write().consensus.peer_id();
+
+                        if source != my_peer_id {
+                            let mut verified = Vec::with_capacity(transactions.len());
+                            for txn in transactions {
+                                match txn.verify() {
+                                    Ok(txn) => verified.push(txn),
+                                    Err(e) => error!("Skipping transaction {e}"),
+                                }
+                            }
+                            if let Err(e)= self.node.write().handle_broadcast_transactions(verified) {
+                                error!("Failed to handle broadcast transactions {e}");
+                            }
+                        }
+                        // Try to assemble block even for the origin of this batch
+                        // // For now, we don't add new transactions to the block after initial creation
+                        // if let Err(e) = self.node.write().try_to_apply_transactions() {
+                        //     error!("Failed to try to apply transactions {e}");
+                        // }
+                    }
+                    else if let Err(e) = self.node.write().handle_broadcast(source, message, response_channel) {
                         attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));
                         error!("Failed to process broadcast message: {e}");
                     }
@@ -216,7 +255,7 @@ impl NodeLauncher {
                     ];
 
                     let start = SystemTime::now();
-                    if let Err(e) = self.node.lock().unwrap().handle_request(source, &id, message, response_channel) {
+                    if let Err(e) = self.node.write().handle_request(source, &id, message, response_channel) {
                         attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));
                         error!("Failed to process request message: {e}");
                     }
@@ -234,7 +273,7 @@ impl NodeLauncher {
                     ];
 
                     let start = SystemTime::now();
-                    if let Err(e) = self.node.lock().unwrap().handle_request_failure(source, message) {
+                    if let Err(e) = self.node.write().handle_request_failure(source, message) {
                         attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));
                         error!("Failed to process request failure message: {e}");
                     }
@@ -252,7 +291,7 @@ impl NodeLauncher {
                     ];
 
                     let start = SystemTime::now();
-                    if let Err(e) = self.node.lock().unwrap().handle_response(source, message) {
+                    if let Err(e) = self.node.write().handle_response(source, message) {
                         attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));
                         error!("Failed to process response message: {e}");
                     }
@@ -265,7 +304,7 @@ impl NodeLauncher {
                     let (_source, _message) = message.expect("message stream should be infinite");
                     todo!("Local messages will need to be handled once cross-shard messaging is implemented");
                 }
-                () = &mut sleep => {
+                () = &mut consensus_sleep => {
                     let attributes = vec![
                         KeyValue::new(MESSAGING_OPERATION_NAME, "handle"),
                         KeyValue::new(MESSAGING_SYSTEM, "tokio_channel"),
@@ -273,11 +312,11 @@ impl NodeLauncher {
                     ];
 
                     let start = SystemTime::now();
-                    // Send any missing blocks.
-                    self.node.lock().unwrap().consensus.tick().unwrap();
                     // No messages for a while, so check if consensus wants to timeout
-                    self.node.lock().unwrap().handle_timeout().unwrap();
-                    sleep.as_mut().reset(Instant::now() + Duration::from_millis(500));
+                    if let Err(e) = self.node.write().handle_timeout() {
+                        error!("Failed to handle timeout {e}");
+                    }
+                    consensus_sleep.as_mut().reset(Instant::now() + Duration::from_millis(500));
                     messaging_process_duration.record(
                         start.elapsed().map_or(0.0, |d| d.as_secs_f64()),
                         &attributes,
@@ -286,7 +325,12 @@ impl NodeLauncher {
                 r = self.reset_timeout_receiver.next() => {
                     let sleep_time = r.expect("reset timeout stream should be infinite");
                     trace!(?sleep_time, "timeout reset");
-                    sleep.as_mut().reset(Instant::now() + sleep_time);
+                    consensus_sleep.as_mut().reset(Instant::now() + sleep_time);
+                },
+
+                () = &mut mempool_sleep => {
+                    self.node.write().process_transactions_to_broadcast()?;
+                    mempool_sleep.as_mut().reset(Instant::now() + Duration::from_millis(50));
                 },
             }
         }

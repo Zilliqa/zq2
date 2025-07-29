@@ -2,6 +2,21 @@
 # API INSTANCES
 ################################################################################
 
+resource "google_compute_firewall" "allow_api_external_http" {
+  name    = "${var.chain_name}-api-allow-external-http"
+  network = local.network_name
+
+  direction     = "INGRESS"
+  source_ranges = concat(local.google_load_balancer_ip_ranges, [local.monitoring_ip_range])
+
+  target_tags = [format("%s-%s", var.chain_name, "api")]
+
+  allow {
+    protocol = "tcp"
+    ports    = ["8080"]
+  }
+}
+
 module "apis" {
   source = "./modules/node"
 
@@ -13,11 +28,8 @@ module "apis" {
   network_tags = []
 
   metadata = {
-    subdomain = base64encode("")
+    subdomain = base64encode(var.subdomain)
   }
-
-  node_dns_subdomain       = var.node_dns_subdomain
-  node_dns_zone_project_id = var.node_dns_zone_project_id
 
   service_account_iam = local.default_service_account_iam
 }
@@ -33,20 +45,10 @@ resource "google_compute_instance_group" "api" {
     name = "jsonrpc"
     port = "4201"
   }
-}
 
-resource "google_compute_firewall" "allow_api_external_http" {
-  name    = "${var.chain_name}-api-allow-external-http"
-  network = local.network_name
-
-  direction     = "INGRESS"
-  source_ranges = concat(local.google_load_balancer_ip_ranges, [local.monitoring_ip_range])
-
-  target_tags = [format("%s-%s", var.chain_name, "api")]
-
-  allow {
-    protocol = "tcp"
-    ports    = ["8080"]
+  named_port {
+    name = "health"
+    port = "8080"
   }
 }
 
@@ -76,24 +78,100 @@ resource "google_compute_backend_service" "api" {
       capacity_scaler = 1.0
     }
   }
+
+  ## Attach Cloud Armor policy to the backend service
+  security_policy = module.api_security_policies.policy.self_link
+}
+
+resource "google_compute_backend_service" "health" {
+  name                  = "${var.chain_name}-api-health-nodes"
+  health_checks         = [google_compute_health_check.api.id]
+  port_name             = "health"
+  load_balancing_scheme = "EXTERNAL_MANAGED"
+  enable_cdn            = false
+  session_affinity      = "CLIENT_IP"
+
+  dynamic "backend" {
+    for_each = var.api.detach_load_balancer ? {} : google_compute_instance_group.api
+    content {
+      group           = backend.value.self_link
+      balancing_mode  = "UTILIZATION"
+      capacity_scaler = 1.0
+    }
+  }
+
+  ## Attach Cloud Armor policy to the backend service
+  security_policy = module.health_security_policies.policy.self_link
+}
+
+resource "google_compute_url_map" "api_http_redirect" {
+  name = "${var.chain_name}-api-http-redirect"
+  
+  default_url_redirect {
+    https_redirect         = true
+    redirect_response_code = "MOVED_PERMANENTLY_DEFAULT"
+    strip_query            = false
+  }
 }
 
 resource "google_compute_url_map" "api" {
-  name            = var.chain_name
+  name            = format("%s-api", var.chain_name)
   default_service = google_compute_backend_service.api.id
+
+  host_rule {
+    hosts        = concat(["api.${var.subdomain}"], var.api.alternative_ssl_domains.api)
+    path_matcher = "api"
+  }
+
+  host_rule {
+    hosts        = concat(["health.${var.subdomain}"], var.api.alternative_ssl_domains.health)
+    path_matcher = "health"
+  }
+
+  path_matcher {
+    name            = "api"
+    default_service = google_compute_backend_service.api.id
+
+    default_route_action {
+      cors_policy {
+        allow_origins = ["*"]
+        allow_methods = ["GET", "HEAD", "POST", "OPTIONS", "PUT"]
+        allow_headers = ["Content-Type", "Access-Control-Allow-Origin", "x-goog-resumable"]
+        max_age       = 3600
+      }
+    }
+  }
+
+  path_matcher {
+    name            = "health"
+    default_service = google_compute_backend_service.health.id
+
+    default_route_action {
+      cors_policy {
+        allow_origins = ["*"]
+        allow_methods = ["GET", "HEAD", "POST", "OPTIONS", "PUT"]
+        allow_headers = ["Content-Type", "Access-Control-Allow-Origin", "x-goog-resumable"]
+        max_age       = 3600
+      }
+    }
+  }
 }
 
 resource "google_compute_managed_ssl_certificate" "api" {
   name = "${var.chain_name}-api"
 
   managed {
-    domains = ["api.${var.subdomain}"]
+    domains = concat(
+      ["api.${var.subdomain}", "health.${var.subdomain}"],
+      var.api.alternative_ssl_domains.api,
+      var.api.alternative_ssl_domains.health
+    )
   }
 }
 
 resource "google_compute_target_http_proxy" "api" {
   name    = "${var.chain_name}-target-proxy"
-  url_map = google_compute_url_map.api.id
+  url_map = google_compute_url_map.api_http_redirect.id
 }
 
 resource "google_compute_target_https_proxy" "api" {
@@ -104,6 +182,10 @@ resource "google_compute_target_https_proxy" "api" {
 
 data "google_compute_global_address" "api" {
   name = "api-${replace(var.subdomain, ".", "-")}"
+}
+
+data "google_compute_global_address" "health" {
+  name = "health-${replace(var.subdomain, ".", "-")}"
 }
 
 resource "google_compute_global_forwarding_rule" "api_http" {
@@ -122,4 +204,95 @@ resource "google_compute_global_forwarding_rule" "api_https" {
   port_range            = "443"
   target                = google_compute_target_https_proxy.api.id
   ip_address            = data.google_compute_global_address.api.address
+}
+
+resource "google_compute_global_forwarding_rule" "health_http" {
+  name                  = "${var.chain_name}-health-forwarding-rule-http"
+  ip_protocol           = "TCP"
+  load_balancing_scheme = "EXTERNAL_MANAGED"
+  port_range            = "80"
+  target                = google_compute_target_http_proxy.api.id
+  ip_address            = data.google_compute_global_address.health.address
+}
+
+resource "google_compute_global_forwarding_rule" "health_https" {
+  name                  = "${var.chain_name}-health-forwarding-rule-https"
+  ip_protocol           = "TCP"
+  load_balancing_scheme = "EXTERNAL_MANAGED"
+  port_range            = "443"
+  target                = google_compute_target_https_proxy.api.id
+  ip_address            = data.google_compute_global_address.health.address
+}
+
+module "api_security_policies" {
+  source = "./modules/google-cloud-armor"
+
+  project_id          = var.project_id
+  name                = "${var.chain_name}-api"
+  description         = "Cloud Armor security policy for the ${var.chain_name} public APIs"
+  default_rule_action = "deny(403)"
+  type                = "CLOUD_ARMOR"
+
+  security_rules = merge(
+    {
+      whitelisted_default_ip_ranges = {
+        action        = "allow"
+        priority      = 999
+        description   = "Allow whitelisted default IP address ranges"
+        src_ip_ranges = ["*"]
+      }
+    },
+    {
+      for rule_name, rule_config in var.api.allow_ip_ranges : rule_name => {
+        action        = "allow"
+        priority      = rule_config.priority
+        description   = rule_config.description
+        src_ip_ranges = rule_config.src_ip_ranges
+      }
+    }
+  )
+
+  custom_rules = merge(
+    {
+      throttle = {
+        action      = "throttle"
+        priority    = 990
+        description = "Limit requests per IP"
+        expression  = "request.method == 'POST' && !inIpRange(origin.ip, '${local.monitoring_ip_range}')"
+        rate_limit_options = {
+          enforce_on_key                       = "IP"
+          exceed_action                        = "deny(429)"
+          rate_limit_http_request_count        = var.api.rate_limit
+          rate_limit_http_request_interval_sec = 60
+        }
+      }
+    },
+    {
+      for rule_name, rule_config in var.api.allow_custom_rules : rule_name => {
+        action      = "allow"
+        priority    = rule_config.priority
+        description = rule_config.description
+        expression  = rule_config.expression
+      }
+    }
+  )
+}
+
+module "health_security_policies" {
+  source = "./modules/google-cloud-armor"
+
+  project_id          = var.project_id
+  name                = "${var.chain_name}-health"
+  description         = "Cloud Armor security policy for the ${var.chain_name} public health endpoint"
+  default_rule_action = "deny(403)"
+  type                = "CLOUD_ARMOR"
+
+  security_rules = {
+    allow_whitelisted_ip_ranges = {
+      action        = "allow"
+      priority      = 999
+      description   = "Allow whitelisted IP address ranges"
+      src_ip_ranges = [local.monitoring_ip_range]
+    }
+  }
 }

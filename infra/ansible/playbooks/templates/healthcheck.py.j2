@@ -1,0 +1,266 @@
+from datetime import datetime
+from flask import Flask, jsonify
+import requests
+from time import time
+
+app = Flask(__name__)
+
+NODE_URL = "http://localhost:4202"
+HEADERS = {"Content-Type": "application/json"}
+GCS_BUCKET = "gs://{{ chain_name }}-checkpoint"
+
+syncing_latest_block_number = 0
+syncing_latest_block_number_obtained_at = 0
+
+pace_latest_block_number = 0
+pace_latest_block_number_obtained_at = 0
+
+def get_rpc_response(method, params=[]):
+    payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+    try:
+        response = requests.post(NODE_URL, json=payload, headers=HEADERS, timeout=3)
+        response.raise_for_status()
+        response_json = response.json()
+        return response_json.get("result")
+    except requests.exceptions.RequestException as e:
+        # Handle connection errors, timeouts, and HTTP errors
+        return (f"Request error in {method}: {e}", 0)
+    except ValueError as e:
+        # Handle JSON decoding errors
+        return (f"JSON decoding error in {method}: {e}", 0)
+    except Exception as e:
+        return (f"Unexpected error in {method}: {e}", 0)
+
+def check_sync_status():
+    global syncing_latest_block_number, syncing_latest_block_number_obtained_at
+
+    # Query eth_blockNumber and eth_syncing
+    block_number_hex = get_rpc_response("eth_blockNumber")
+    sync_status = get_rpc_response("eth_syncing")
+
+    # Convert hex block number to integer
+    block_number = int(block_number_hex, 16)
+    current_time = int(time())
+    print(f"Current block: {block_number}, Last known block: {syncing_latest_block_number}")
+    
+    if block_number != syncing_latest_block_number:
+        syncing_latest_block_number = block_number
+        syncing_latest_block_number_obtained_at = current_time
+    
+    # If fully synced response is "false"
+    if isinstance(sync_status, bool) and not sync_status:
+        return jsonify({"message": f"Fully synced at block {block_number}", "code": 200})
+    
+    # If syncing response is a JSON object
+    if isinstance(sync_status, dict):
+        current_block = int(sync_status["currentBlock"], 16)
+        highest_block = int(sync_status["highestBlock"], 16)
+        
+        if current_block >= highest_block - 5:
+            return jsonify({"message": f"Node is syncing at block {block_number} but behind highest block {highest_block}", "code": 200})
+        
+        if syncing_latest_block_number_obtained_at + 60 < current_time:
+            # no blocks for 60 seconds
+            return jsonify({"error": "No blocks for more than 60 seconds", "code": 503}), 503
+        
+        return jsonify({"message": f"Syncing block {syncing_latest_block_number} since {syncing_latest_block_number_obtained_at}", "code": 404}), 404
+    
+    return jsonify({"error": "Invalid response format from eth_syncing", "code": 0}), 500
+
+def check_pace_status():
+    global pace_latest_block_number, pace_latest_block_number_obtained_at
+    
+    block_number_hex = get_rpc_response("eth_blockNumber")
+    block_number = int(block_number_hex, 16)
+    
+    current_time = time()
+    
+    delta_block_number = block_number - pace_latest_block_number
+    delta_time = current_time - pace_latest_block_number_obtained_at
+    
+    if delta_time <= 0:
+        return jsonify({"error": "Too many requests", "code": 429}), 429
+    
+    pace = (delta_block_number * 60) / delta_time
+    pace_latest_block_number = block_number
+    pace_latest_block_number_obtained_at = current_time
+    
+    if pace < 5:
+        return jsonify({
+            "status": "critical",
+            "message": "Block production is too low or stalled",
+            "blocks_produced_last_minute": int(pace),
+            "expected_blocks_per_minute": 60,
+            "latest_block": pace_latest_block_number,
+            "latest_block_timestamp": datetime.fromtimestamp(pace_latest_block_number_obtained_at).strftime('%Y-%m-%d %H:%M:%S'),
+            "code": 500
+        }), 500
+    
+    if 5 <= pace < 20:
+        return jsonify({
+            "status": "warning",
+            "message": "Block production is slower than expected",
+            "blocks_produced_last_minute": int(pace),
+            "expected_blocks_per_minute": 60,
+            "latest_block": pace_latest_block_number,
+            "latest_block_timestamp": datetime.fromtimestamp(pace_latest_block_number_obtained_at).strftime('%Y-%m-%d %H:%M:%S'),
+            "code": 400
+        }), 400
+    
+    return jsonify({
+        "status": "healthy",
+        "message": "Block production is as expected",
+        "blocks_produced_last_minute": int(pace),
+        "expected_blocks_per_minute": 60,
+        "latest_block": pace_latest_block_number,
+        "latest_block_timestamp": datetime.fromtimestamp(pace_latest_block_number_obtained_at).strftime('%Y-%m-%d %H:%M:%S'),
+        "code": 200
+    }), 200
+
+def get_latest_checkpoint_block():
+    """Get the latest checkpoint block data from GCS bucket metadata"""
+    import logging
+    import sys
+    
+    # Configure logging to stderr
+    logging.basicConfig(stream=sys.stderr, level=logging.INFO)
+    logger = logging.getLogger(__name__)
+    
+    try:
+        logger.info("FUNCTION CALLED")
+        bucket_name = GCS_BUCKET.replace("gs://", "")
+        logger.info(f"Bucket: {bucket_name}")
+        
+        # Get ONLY root-level objects using delimiter
+        list_url = f"https://storage.googleapis.com/storage/v1/b/{bucket_name}/o?delimiter=/"
+        
+        response = requests.get(list_url, timeout=10)
+        response.raise_for_status()
+        
+        data = response.json()
+        items = data.get("items", [])
+        logger.info(f"Items found: {len(items)}")
+        
+        if not items:
+            return None, "No checkpoint files found in bucket"
+        
+        # Process only .dat files
+        checkpoint_data = []
+        for item in items:
+            name = item.get("name", "")
+            logger.info(f"Item: {name}")
+            
+            if name.endswith(".dat"):
+                logger.info(f"Processing .dat file: {name}")
+                
+                # Get individual object with metadata
+                object_url = f"https://storage.googleapis.com/storage/v1/b/{bucket_name}/o/{name}"
+                
+                obj_response = requests.get(object_url, timeout=10)
+                obj_response.raise_for_status()
+                
+                obj_data = obj_response.json()
+                metadata = obj_data.get("metadata", {})
+                
+                logger.info(f"File: {name}, Metadata: {metadata}")
+                
+                # Get both metadata values
+                production_block = metadata.get("block_at_checkpoint_production")
+                upload_block = metadata.get("block_at_checkpoint_upload")
+                
+                logger.info(f"Production: {production_block}, Upload: {upload_block}")
+                
+                if production_block:
+                    try:
+                        production_block_num = int(production_block)
+                        upload_block_num = int(upload_block) if upload_block else None
+                        
+                        checkpoint_info = {
+                            "production": production_block_num,
+                            "upload": upload_block_num,
+                            "filename": name
+                        }
+                        checkpoint_data.append(checkpoint_info)
+                        logger.info(f"Added: {checkpoint_info}")
+                    except ValueError:
+                        continue
+        
+        if not checkpoint_data:
+            return None, "No valid checkpoint files with production block metadata found"
+        
+        # Return the latest checkpoint based on production block number
+        latest_checkpoint = max(checkpoint_data, key=lambda x: x["production"])
+        logger.info(f"Latest: {latest_checkpoint}")
+        return latest_checkpoint, None
+        
+    except requests.exceptions.RequestException as e:
+        return None, f"Error accessing GCS bucket: {e}"
+    except Exception as e:
+        return None, f"Unexpected error getting checkpoint: {e}"
+
+def check_checkpoint_status():
+    """Check if checkpoints are being produced within the expected timeframe"""
+    try:
+        # Get current block number
+        block_number_hex = get_rpc_response("eth_blockNumber")
+        if isinstance(block_number_hex, tuple):
+            return jsonify({
+                "error": f"Failed to get current block: {block_number_hex[0]}",
+                "code": 500
+            }), 500
+        
+        current_block = int(block_number_hex, 16)
+        
+        # Get latest checkpoint block data
+        latest_checkpoint_block, error = get_latest_checkpoint_block()
+        if error:
+            return jsonify({
+                "error": error,
+                "code": 500
+            }), 500
+        
+        # Calculate the next checkpoint block
+        processing_blocks_difference = latest_checkpoint_block["upload"] - latest_checkpoint_block["production"]
+        next_checkpoint_block = latest_checkpoint_block["upload"] + 86400 + processing_blocks_difference
+        
+        # Check if current block is higher than the expected next checkpoint block
+        if current_block > next_checkpoint_block:
+            return jsonify({
+                "status": "critical",
+                "error": "Last checkpoint has not been produced",
+                "current_block": current_block,
+                "latest_checkpoint_block_production": latest_checkpoint_block["production"],
+                "latest_checkpoint_block_upload": latest_checkpoint_block["upload"],
+                "code": 500
+            }), 500
+
+        # Return healthy status if current block is lower than the expected next checkpoint block
+        return jsonify({
+            "status": "healthy",
+            "message": "Last checkpoint has been produced correctly",
+            "current_block": current_block,
+            "latest_checkpoint_block_production": latest_checkpoint_block["production"],
+            "latest_checkpoint_block_upload": latest_checkpoint_block["upload"],
+            "code": 200
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            "error": f"Unexpected error in checkpoint check: {str(e)}",
+            "code": 500
+        }), 500
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    return check_sync_status()
+
+@app.route('/health/block', methods=['GET'])
+def block_production():
+    return check_pace_status()
+
+@app.route('/health/checkpoints', methods=['GET'])
+def checkpoints_health_check():
+    return check_checkpoint_status()
+
+if __name__ == "__main__":
+    app.run(host='0.0.0.0', port=8080, debug=False, use_reloader=False)

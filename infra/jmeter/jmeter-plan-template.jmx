@@ -1,0 +1,217 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">
+  <hashTree>
+    <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="Test Plan">
+      <elementProp name="TestPlan.user_defined_variables" elementType="Arguments" guiclass="ArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+        <collectionProp name="Arguments.arguments"/>
+      </elementProp>
+    </TestPlan>
+    <hashTree>
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="Scenario 1">
+        <stringProp name="TestPlan.comments">Virtual Users Running Scenario 1.
+Make test last 1 minute (see Scheduler)</stringProp>
+        <stringProp name="ThreadGroup.num_threads">${THREADS}</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">${RAMP_TIME}</stringProp>
+        <stringProp name="ThreadGroup.duration">${DURATION}</stringProp>
+        <longProp name="ThreadGroup.delay">0</longProp>
+        <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
+        <boolProp name="ThreadGroup.scheduler">true</boolProp>
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="Loop Controller">
+          <intProp name="LoopController.loops">-1</intProp>
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+        </elementProp>
+      </ThreadGroup>
+      <hashTree>
+        <ConfigTestElement guiclass="HttpDefaultsGui" testclass="ConfigTestElement" testname="HTTP Request Defaults">
+          <stringProp name="TestPlan.comments">Notice Timeouts:
+Read to 1s
+Connect to 300ms</stringProp>
+          <stringProp name="HTTPSampler.connect_timeout">${CONNECT_TIMEOUT}</stringProp>
+          <stringProp name="HTTPSampler.response_timeout">${RESPONSE_TIMEOUT}</stringProp>
+          <stringProp name="HTTPSampler.domain">${TARGET_HOST}</stringProp>
+          <stringProp name="HTTPSampler.port">${TARGET_PORT}</stringProp>
+          <stringProp name="HTTPSampler.protocol">${PROTOCOL}</stringProp>
+          <stringProp name="HTTPSampler.path">${TARGET_PATH}</stringProp>
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+            <collectionProp name="Arguments.arguments"/>
+          </elementProp>
+          <stringProp name="HTTPSampler.implementation">HttpClient4</stringProp>
+        </ConfigTestElement>
+        <hashTree/>
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="ZQ2 load tests">
+          <stringProp name="HTTPSampler.domain">${TARGET_HOST}</stringProp>
+          <stringProp name="HTTPSampler.port">${TARGET_PORT}</stringProp>
+          <stringProp name="HTTPSampler.protocol">${PROTOCOL}</stringProp>
+          <stringProp name="HTTPSampler.path">/</stringProp>
+          <stringProp name="HTTPSampler.method">POST</stringProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+            <collectionProp name="Arguments.arguments">
+              <elementProp name="" elementType="HTTPArgument">
+                <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                <stringProp name="Argument.value">{&quot;id&quot;:&quot;1&quot;,&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;method&quot;:&quot;${RPC_METHOD}&quot;,&quot;params&quot;:${RPC_PARAMS}}</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
+              </elementProp>
+            </collectionProp>
+          </elementProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Header Manager">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">Content-Type</stringProp>
+                <stringProp name="Header.value">application/json</stringProp>
+              </elementProp>
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>
+        </hashTree>
+        <TestAction guiclass="TestActionGui" testclass="TestAction" testname="ThinkTime1s">
+          <intProp name="ActionProcessor.action">1</intProp>
+          <intProp name="ActionProcessor.target">0</intProp>
+          <stringProp name="ActionProcessor.duration">200</stringProp>
+        </TestAction>
+        <hashTree>
+          <UniformRandomTimer guiclass="UniformRandomTimerGui" testclass="UniformRandomTimer" testname="URT" enabled="true">
+            <stringProp name="ConstantTimer.delay">0</stringProp>
+            <stringProp name="RandomTimer.range">0</stringProp>
+          </UniformRandomTimer>
+          <hashTree/>
+        </hashTree>
+        <Arguments guiclass="ArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+          <collectionProp name="Arguments.arguments">
+            <elementProp name="TARGET_HOST" elementType="Argument">
+              <stringProp name="Argument.name">TARGET_HOST</stringProp>
+              <stringProp name="Argument.value">${__P(TARGET_HOST,thegraph.zq2-protomainnet.zilliqa.com)}</stringProp>
+              <stringProp name="Argument.desc">target server domain/IP for testing</stringProp>
+              <stringProp name="Argument.metadata">=</stringProp>
+            </elementProp>
+            <elementProp name="TARGET_PORT" elementType="Argument">
+              <stringProp name="Argument.name">TARGET_PORT</stringProp>
+              <stringProp name="Argument.value">${__P(TARGET_PORT,4201)}</stringProp>
+              <stringProp name="Argument.desc">target port on TARGET_HOST for testing</stringProp>
+              <stringProp name="Argument.metadata">=</stringProp>
+            </elementProp>
+            <elementProp name="PROTOCOL" elementType="Argument">
+              <stringProp name="Argument.name">PROTOCOL</stringProp>
+              <stringProp name="Argument.value">${__P(PROTOCOL,http)}</stringProp>
+              <stringProp name="Argument.desc">Protocol of the target host</stringProp>
+              <stringProp name="Argument.metadata">=</stringProp>
+            </elementProp>
+            <elementProp name="RPC_METHOD" elementType="Argument">
+              <stringProp name="Argument.name">RPC_METHOD</stringProp>
+              <stringProp name="Argument.value">${__P(RPC_METHOD,eth_blockNumber)}</stringProp>
+              <stringProp name="Argument.metadata">=</stringProp>
+              <stringProp name="Argument.desc">RPC method</stringProp>
+            </elementProp>
+            <elementProp name="RPC_PARAMS" elementType="Argument">
+              <stringProp name="Argument.name">RPC_PARAMS</stringProp>
+              <stringProp name="Argument.value">${__P(RPC_PARAMS,[])}</stringProp>
+              <stringProp name="Argument.desc">RPC method parameters</stringProp>
+              <stringProp name="Argument.metadata">=</stringProp>
+            </elementProp>
+            <elementProp name="THREADS" elementType="Argument">
+              <stringProp name="Argument.name">THREADS</stringProp>
+              <stringProp name="Argument.value">${__P(THREADS,20)}</stringProp>
+              <stringProp name="Argument.desc">Number of concurrent threads</stringProp>
+              <stringProp name="Argument.metadata">=</stringProp>
+            </elementProp>
+            <elementProp name="RAMP_TIME" elementType="Argument">
+              <stringProp name="Argument.name">RAMP_TIME</stringProp>
+              <stringProp name="Argument.value">${__P(RAMP_TIME,10)}</stringProp>
+              <stringProp name="Argument.desc">Threads ramp up period</stringProp>
+              <stringProp name="Argument.metadata">=</stringProp>
+            </elementProp>
+            <elementProp name="DURATION" elementType="Argument">
+              <stringProp name="Argument.name">DURATION</stringProp>
+              <stringProp name="Argument.value">${__P(DURATION,60)}</stringProp>
+              <stringProp name="Argument.desc">Number of samples to run</stringProp>
+              <stringProp name="Argument.metadata">=</stringProp>
+            </elementProp>
+            <elementProp name="CONNECT_TIMEOUT" elementType="Argument">
+              <stringProp name="Argument.name">CONNECT_TIMEOUT</stringProp>
+              <stringProp name="Argument.value">${__P(CONNECT_TIMEOUT,300)}</stringProp>
+              <stringProp name="Argument.desc">Connect timeout</stringProp>
+              <stringProp name="Argument.metadata">=</stringProp>
+            </elementProp>
+            <elementProp name="RESPONSE_TIMEOUT" elementType="Argument">
+              <stringProp name="Argument.name">RESPONSE_TIMEOUT</stringProp>
+              <stringProp name="Argument.value">${__P(RESPONSE_TIMEOUT,15000)}</stringProp>
+              <stringProp name="Argument.desc">Response timeout</stringProp>
+              <stringProp name="Argument.metadata">=</stringProp>
+            </elementProp>
+            <elementProp name="RESULTS_FILE" elementType="Argument">
+              <stringProp name="Argument.name">RESULTS_FILE</stringProp>
+              <stringProp name="Argument.value">${__P(RESULTS_FILE,results.jtl)}</stringProp>
+              <stringProp name="Argument.desc">Path of the results file</stringProp>
+              <stringProp name="Argument.metadata">=</stringProp>
+            </elementProp>
+          </collectionProp>
+          <stringProp name="TestPlan.comments">Example using UDV for symbolic names test target and response to test</stringProp>
+        </Arguments>
+        <hashTree/>
+        <ConstantThroughputTimer guiclass="TestBeanGUI" testclass="ConstantThroughputTimer" testname="Constant Throughput Timer" enabled="false">
+          <intProp name="calcMode">0</intProp>
+          <doubleProp>
+            <name>throughput</name>
+            <value>60.0</value>
+            <savedValue>0.0</savedValue>
+          </doubleProp>
+        </ConstantThroughputTimer>
+        <hashTree/>
+        <PreciseThroughputTimer guiclass="TestBeanGUI" testclass="PreciseThroughputTimer" testname="Precise Throughput Timer">
+          <doubleProp>
+            <name>allowedThroughputSurplus</name>
+            <value>1.0</value>
+            <savedValue>0.0</savedValue>
+          </doubleProp>
+          <intProp name="exactLimit">10000</intProp>
+          <stringProp name="throughput">${THREADS}</stringProp>
+          <intProp name="throughputPeriod">1</intProp>
+          <stringProp name="duration">${DURATION}</stringProp>
+          <intProp name="batchSize">1</intProp>
+          <intProp name="batchThreadDelay">0</intProp>
+          <longProp name="randomSeed">0</longProp>
+        </PreciseThroughputTimer>
+        <hashTree/>
+      </hashTree>
+      <ResultCollector guiclass="ViewResultsFullVisualizer" testclass="ResultCollector" testname="Summary Report">
+        <boolProp name="ResultCollector.error_logging">false</boolProp>
+        <objProp>
+          <name>saveConfig</name>
+          <value class="SampleSaveConfiguration">
+            <time>false</time>
+            <latency>true</latency>
+            <timestamp>false</timestamp>
+            <success>false</success>
+            <label>false</label>
+            <code>true</code>
+            <message>true</message>
+            <threadName>false</threadName>
+            <dataType>false</dataType>
+            <encoding>false</encoding>
+            <assertions>true</assertions>
+            <subresults>false</subresults>
+            <responseData>true</responseData>
+            <samplerData>true</samplerData>
+            <xml>true</xml>
+            <fieldNames>false</fieldNames>
+            <responseHeaders>false</responseHeaders>
+            <requestHeaders>false</requestHeaders>
+            <responseDataOnError>false</responseDataOnError>
+            <saveAssertionResultsFailureMessage>false</saveAssertionResultsFailureMessage>
+            <assertionsResultsToSave>0</assertionsResultsToSave>
+            <url>true</url>
+            <sampleCount>true</sampleCount>
+            <connectTime>true</connectTime>
+          </value>
+        </objProp>
+        <stringProp name="TestPlan.comments">For scripting only</stringProp>
+        <stringProp name="filename">${RESULTS_FILE}</stringProp>
+      </ResultCollector>
+      <hashTree/>
+    </hashTree>
+  </hashTree>
+</jmeterTestPlan>

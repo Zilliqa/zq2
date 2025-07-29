@@ -1,18 +1,17 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+use std::{collections::HashMap, sync::Arc};
 
+use alloy::primitives::Address;
 use anyhow::Result;
-use jsonrpsee::{types::Params, RpcModule};
+use jsonrpsee::{RpcModule, types::Params};
+use parking_lot::RwLock;
 
-use super::types::eth;
+use super::types;
 use crate::{api::types::eth::Transaction, cfg::EnabledApi, node::Node};
 
 pub fn rpc_module(
-    node: Arc<Mutex<Node>>,
+    node: Arc<RwLock<Node>>,
     enabled_apis: &[EnabledApi],
-) -> RpcModule<Arc<Mutex<Node>>> {
+) -> RpcModule<Arc<RwLock<Node>>> {
     super::declare_module!(
         node,
         enabled_apis,
@@ -26,45 +25,135 @@ pub fn rpc_module(
 }
 
 /// txpool_content
-fn txpool_content(_params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<eth::TxPoolContent>> {
-    let node = node.lock().unwrap();
-    let content = node.txpool_content()?;
+fn txpool_content(
+    _params: Params,
+    node: &Arc<RwLock<Node>>,
+) -> Result<Option<types::txpool::TxPoolContent>> {
+    let mut node = node.write();
+    let content = node.txpool_content();
 
-    let mut result = eth::TxPoolContent {
+    let pending: HashMap<Address, HashMap<u64, Transaction>> = content
+        .pending
+        .into_iter()
+        .map(|(k, v)| {
+            (
+                k,
+                v.iter()
+                    .filter(|x| x.tx.nonce().is_some())
+                    .map(|x| (x.tx.nonce().unwrap(), Transaction::new(x.clone(), None)))
+                    .collect::<HashMap<u64, Transaction>>(),
+            )
+        })
+        .filter(|(_, v)| !v.is_empty())
+        .collect();
+
+    let queued: HashMap<Address, HashMap<u64, Transaction>> = content
+        .queued
+        .into_iter()
+        .map(|(k, v)| {
+            (
+                k,
+                v.iter()
+                    .filter(|x| x.tx.nonce().is_some())
+                    .map(|x| (x.tx.nonce().unwrap(), Transaction::new(x.clone(), None)))
+                    .collect::<HashMap<u64, Transaction>>(),
+            )
+        })
+        .filter(|(_, v)| !v.is_empty())
+        .collect();
+
+    let result = types::txpool::TxPoolContent { pending, queued };
+
+    Ok(Some(result))
+}
+
+/// txpool_contentFrom
+fn txpool_content_from(
+    params: Params,
+    node: &Arc<RwLock<Node>>,
+) -> Result<types::txpool::TxPoolContent> {
+    let address: super::zilliqa::ZilAddress = params.one()?;
+    let address: Address = address.into();
+    let mut node = node.write();
+    let content = node.txpool_content_from(&address);
+
+    let mut result = types::txpool::TxPoolContent {
         pending: HashMap::new(),
         queued: HashMap::new(),
     };
 
     for item in content.pending {
-        let txns = result.pending.entry(item.signer).or_default();
-        txns.insert(
-            item.tx.nonce().unwrap(),
-            Transaction::new(item.clone(), None),
-        );
+        if item.signer == address {
+            let txns = result.pending.entry(item.signer).or_default();
+            txns.insert(
+                item.tx.nonce().unwrap(),
+                Transaction::new(item.clone(), None),
+            );
+        }
     }
 
     for item in content.queued {
-        let txns = result.queued.entry(item.signer).or_default();
-        txns.insert(
-            item.tx.nonce().unwrap(),
-            Transaction::new(item.clone(), None),
-        );
+        if item.signer == address {
+            let txns = result.queued.entry(item.signer).or_default();
+            txns.insert(
+                item.tx.nonce().unwrap(),
+                Transaction::new(item.clone(), None),
+            );
+        }
     }
 
-    Ok(Some(result))
+    Ok(result)
 }
 
 /// txpool_inspect
-fn txpool_inspect(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("Endpoint not implemented yet")
-}
+fn txpool_inspect(
+    _params: Params,
+    node: &Arc<RwLock<Node>>,
+) -> Result<types::txpool::TxPoolInspect> {
+    let mut node = node.write();
+    let content = node.txpool_content();
 
-/// txpool_contentFrom
-fn txpool_content_from(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("Endpoint not implemented yet")
+    let mut result = types::txpool::TxPoolInspect {
+        pending: HashMap::new(),
+        queued: HashMap::new(),
+    };
+
+    for item in content.pending.values().flatten() {
+        let txns = result.pending.entry(item.signer).or_default();
+        let txn = Transaction::new(item.clone(), None);
+        let summary = format!(
+            "{}: {} wei + {} × {} wei",
+            txn.to.unwrap_or_default(),
+            txn.value,
+            txn.gas,
+            txn.gas_price
+        );
+        txns.insert(item.tx.nonce().unwrap(), summary);
+    }
+
+    for item in content.queued.values().flatten() {
+        let txns = result.queued.entry(item.signer).or_default();
+        let txn = Transaction::new(item.clone(), None);
+        let summary = format!(
+            "{}: {} wei + {} × {} wei",
+            txn.to.unwrap_or_default(),
+            txn.value,
+            txn.gas,
+            txn.gas_price
+        );
+        txns.insert(item.tx.nonce().unwrap(), summary);
+    }
+
+    Ok(result)
 }
 
 /// txpool_status
-fn txpool_status(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("Endpoint not implemented yet")
+fn txpool_status(_params: Params, node: &Arc<RwLock<Node>>) -> Result<types::txpool::TxPoolStatus> {
+    let mut node = node.write();
+    let content = node.txpool_status();
+
+    Ok(types::txpool::TxPoolStatus {
+        pending: content.pending,
+        queued: content.queued,
+    })
 }

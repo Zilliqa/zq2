@@ -1,14 +1,15 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use anyhow::Result;
-use jsonrpsee::{types::Params, RpcModule};
+use jsonrpsee::{RpcModule, types::Params};
+use parking_lot::RwLock;
 
 use crate::{cfg::EnabledApi, node::Node};
 
 pub fn rpc_module(
-    node: Arc<Mutex<Node>>,
+    node: Arc<RwLock<Node>>,
     enabled_apis: &[EnabledApi],
-) -> RpcModule<Arc<Mutex<Node>>> {
+) -> RpcModule<Arc<RwLock<Node>>> {
     super::declare_module!(
         node,
         enabled_apis,
@@ -21,16 +22,17 @@ pub fn rpc_module(
 }
 
 /// net_listening
-fn net_listening(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<bool> {
+fn net_listening(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<bool> {
     Ok(true)
 }
 
 /// net_peerCount
-fn net_peer_count(_: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
-    Ok("0x0".to_string())
+fn net_peer_count(_: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
+    let peer_count = node.read().get_peer_num();
+    Ok(format!("0x{:x}", peer_count))
 }
 
 /// net_version
-fn version(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
-    Ok(node.lock().unwrap().config.eth_chain_id.to_string())
+fn version(_: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
+    Ok(node.read().config.eth_chain_id.to_string())
 }

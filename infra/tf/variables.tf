@@ -22,20 +22,25 @@ variable "apps" {
     provisioning_model         = optional(string, "STANDARD")
     generate_external_ip       = optional(bool, false)
     detach_load_balancer       = optional(bool, false)
+    enable_faucet              = optional(bool, true)
     faucet_max_hourly_requests = optional(number, 1000000)
-    nodes = list(object({
+    alternative_ssl_domains    = optional(object({
+      otterscan = optional(list(string), [])
+      faucet    = optional(list(string), [])
+      stats     = optional(list(string), [])
+    }), {})
+    nodes = optional(list(object({
       count  = number
       region = optional(string)
       zone   = optional(string)
-    }))
+    })), [])
   })
-  default = {
-    nodes : [
-      {
-        count  = 1
-        region = "asia-southeast1"
-      }
-    ]
+  default = {}
+
+  # Validation for provisioning_model
+  validation {
+    condition     = var.apps.faucet_max_hourly_requests >= 1 && var.apps.faucet_max_hourly_requests <= 1000000
+    error_message = "Rate limit must be a positive integer between 1 and 1,000,000."
   }
 
   # Validation for provisioning_model
@@ -56,24 +61,38 @@ variable "apps" {
 variable "api" {
   description = "(Optional) The configuration of the api nodes"
   type = object({
-    disk_size            = optional(number, 256)
-    instance_type        = optional(string, "e2-standard-2")
-    provisioning_model   = optional(string, "STANDARD")
-    generate_external_ip = optional(bool, false)
-    detach_load_balancer = optional(bool, false)
-    nodes = list(object({
+    disk_size               = optional(number, 256)
+    instance_type           = optional(string, "e2-standard-2")
+    provisioning_model      = optional(string, "STANDARD")
+    generate_external_ip    = optional(bool, false)
+    detach_load_balancer    = optional(bool, false)
+    rate_limit              = optional(number, 1000000)
+    alternative_ssl_domains = optional(object({
+      api    = optional(list(string), [])
+      health = optional(list(string), [])
+    }), {})
+    nodes = optional(list(object({
       count  = number
       region = optional(string)
       zone   = optional(string)
-    }))
+    })), [])
+    allow_ip_ranges = optional(map(object({
+      priority      = number
+      description   = string
+      src_ip_ranges = list(string)
+    })), {})
+    allow_custom_rules = optional(map(object({
+      priority    = number
+      description = string
+      expression  = string
+    })), {})
   })
-  default = {
-    nodes : [
-      {
-        count  = 3
-        region = "asia-southeast1"
-      }
-    ]
+  default = {}
+
+  # Validation for provisioning_model
+  validation {
+    condition     = var.api.rate_limit >= 1 && var.api.rate_limit <= 1000000
+    error_message = "Rate limit must be a positive integer between 1 and 1,000,000."
   }
 
   # Validation for provisioning_model
@@ -98,20 +117,13 @@ variable "validator" {
     instance_type        = optional(string, "e2-standard-2")
     provisioning_model   = optional(string, "STANDARD")
     generate_external_ip = optional(bool, false)
-    nodes = list(object({
+    nodes = optional(list(object({
       count  = number
       region = optional(string)
       zone   = optional(string)
-    }))
+    })), [])
   })
-  default = {
-    nodes : [
-      {
-        count  = 3
-        region = "asia-southeast1"
-      }
-    ]
-  }
+  default = {}
 
   # Validation for provisioning_model
   validation {
@@ -135,21 +147,13 @@ variable "bootstrap" {
     instance_type        = optional(string, "e2-standard-2")
     provisioning_model   = optional(string, "STANDARD")
     generate_external_ip = optional(bool, true)
-    detach_load_balancer = optional(bool, false)
-    nodes = list(object({
+    nodes = optional(list(object({
       count  = number
       region = optional(string)
       zone   = optional(string)
-    }))
+    })), [])
   })
-  default = {
-    nodes : [
-      {
-        count  = 1
-        region = "asia-southeast1"
-      }
-    ]
-  }
+  default = {}
 
   # Validation for provisioning_model
   validation {
@@ -169,25 +173,22 @@ variable "bootstrap" {
 variable "checkpoint" {
   description = "(Optional) The configuration of the checkpoint nodes"
   type = object({
-    disk_size            = optional(number, 256)
-    instance_type        = optional(string, "e2-standard-2")
-    provisioning_model   = optional(string, "STANDARD")
-    generate_external_ip = optional(bool, false)
-    bucket_force_destroy = optional(bool, true)
-    nodes = list(object({
+    disk_size               = optional(number, 256)
+    instance_type           = optional(string, "e2-standard-2")
+    provisioning_model      = optional(string, "STANDARD")
+    generate_external_ip    = optional(bool, false)
+    bucket_force_destroy    = optional(bool, true)
+    bucket_versioning       = optional(bool, true)
+    alternative_ssl_domains = optional(object({
+      default = optional(list(string), [])
+    }), {})
+    nodes = optional(list(object({
       count  = number
       region = optional(string)
       zone   = optional(string)
-    }))
+    })), [])
   })
-  default = {
-    nodes : [
-      {
-        count  = 1
-        region = "asia-southeast1"
-      }
-    ]
-  }
+  default = {}
 
   # Validation for provisioning_model
   validation {
@@ -211,20 +212,13 @@ variable "persistence" {
     instance_type        = optional(string, "e2-standard-2")
     provisioning_model   = optional(string, "STANDARD")
     generate_external_ip = optional(bool, false)
-    nodes = list(object({
+    nodes = optional(list(object({
       count  = number
       region = optional(string)
       zone   = optional(string)
-    }))
+    })), [])
   })
-  default = {
-    nodes : [
-      {
-        count  = 1
-        region = "asia-southeast1"
-      }
-    ]
-  }
+  default = {}
 
   # Validation for provisioning_model
   validation {
@@ -241,54 +235,66 @@ variable "persistence" {
   }
 }
 
-variable "query" {
-  description = "(Optional) The configuration of the large query nodes"
-  type = object({
-    disk_size            = optional(number, 256)
-    instance_type        = optional(string, "e2-standard-2")
-    provisioning_model   = optional(string, "STANDARD")
-    generate_external_ip = optional(bool, false)
-    detach_load_balancer = optional(bool, false)
-    nodes = list(object({
+variable "private_api" {
+  description = "(Optional) The configuration of the private API nodes"
+  type = map(object({
+    disk_size              = optional(number, 256)
+    instance_type          = optional(string, "e2-standard-2")
+    provisioning_model     = optional(string, "STANDARD")
+    generate_external_ip   = optional(bool, false)
+    detach_load_balancer   = optional(bool, false)
+    firewall_source_ranges = optional(list(string), [])
+    dns_names              = optional(list(string), [])
+    nodes = optional(list(object({
       count  = number
       region = optional(string)
       zone   = optional(string)
-    }))
-  })
-  default = {
-    nodes : [
-      {
-        count  = 1
-        region = "asia-southeast1"
-      }
-    ]
-  }
+    })), [])
+  }))
+  default = {}
 
   # Validation for provisioning_model
   validation {
-    condition     = contains(["STANDARD", "SPOT"], var.query.provisioning_model)
-    error_message = "Provisioning model must be one of 'STANDARD' or 'SPOT'."
+    condition     = alltrue([for key, config in var.private_api : contains(["STANDARD", "SPOT"], config.provisioning_model)])
+    error_message = "Provisioning model must be one of 'STANDARD' or 'SPOT' for all private API configurations."
   }
 
   # Validation to check that both 'region' and 'zone' are not specified together
   validation {
     condition = alltrue([
-      for node in var.query.nodes : (node.region != null && node.zone == null) || (node.region == null && node.zone != null)
+      for key, config in var.private_api :
+      alltrue([
+        for node in config.nodes :
+        (node.region != null && node.zone == null) || (node.region == null && node.zone != null)
+      ])
     ])
-    error_message = "You need to specify either 'region' or 'zone' for a node."
+    error_message = "For each private API configuration, you need to specify either 'region' or 'zone' for each node, but not both."
+  }
+
+  # Validation to ensure the length of dns_names matches the sum of all node counts
+  validation {
+    condition = alltrue([
+      for name, config in var.private_api :
+      length(config.dns_names) == sum([for node in config.nodes : node.count])
+    ])
+    error_message = "The length of 'dns_names' must match the total number of nodes (sum of 'count' in 'nodes')."
+  }
+
+  # Validation to ensure the length of dns_names matches the sum of all node counts
+  validation {
+    condition = alltrue([
+      for key in keys(var.private_api) :
+      !contains(["bootstrap", "api", "validator", "apps", "checkpoint", "persistence", "private-api", "sentry"], key)
+    ])
+    error_message = "The private-api key must NOT be one of: 'bootstrap', 'api', 'validator', 'apps', 'checkpoint', 'persistence', 'private-api', 'sentry'."
   }
 }
 
-variable "node_dns_subdomain" {
-  description = "Nodes DNS zone name"
-  type        = string
+variable "jsonrpc_allowed_sources" {
+  description = "A list of CIDR blocks allowed to reach the nodes RPC port."
+  type        = list(string)
   nullable    = false
-}
-
-variable "node_dns_zone_project_id" {
-  description = "The id of the Google project that hosts the DNS zone."
-  type        = string
-  nullable    = false
+  default     = []
 }
 
 variable "subdomain" {
@@ -328,4 +334,17 @@ variable "persistence_bucket_force_destroy" {
   type        = bool
   default     = true
   nullable    = false
+}
+
+variable "persistence_bucket_versioning" {
+  description = "(Optional) Ebable the persistence bucket versioning."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
+variable "performance_tests_service_account" {
+  description = "Email of the performance tests service account"
+  type        = string
+  default     = "sa-gha-testing-001@prj-p-devops-services-tvwmrf63.iam.gserviceaccount.com"
 }

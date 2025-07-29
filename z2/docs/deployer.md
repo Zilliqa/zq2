@@ -1,678 +1,364 @@
-# z2 deployer
+# z2 deployer User Guide & Manual
 
-`z2 deployer` allows you to create a deployment configuration file for a `zq2` network, and perform a seamless and automated upgraded.
+## 1. Introduction
 
-```bash
-z2 deployer --help
-```
+`z2 deployer` is the command-line tool for deploying, managing, and maintaining Zilliqa 2 (ZQ2) networks. It automates network installation, upgrades, staking operations, configuration management, and more, making it the central tool for ZQ2 network operators and advanced users.
 
-```bash
-Group of subcommands to deploy and configure a Zilliqa 2 network
+---
 
-Usage: z2 deployer [OPTIONS] <COMMAND>
+## 2. Prerequisites & Setup
 
-Commands:
-  new                    Generate the deployer config file
-  install                Install the network defined in the deployer config file
-  upgrade                Update the network defined in the deployer config file
-  get-config-file        Generate in output the validator config file to join the network
-  get-deposit-commands   Generate in output the commands to deposit stake amount to all the validators
-  deposit                Deposit the stake amounts to all the validators
-  rpc                    Run RPC calls over the internal network nodes
-  ssh                    Run command over SSH in the internal network nodes
-  backup                 Backup a node data dir in the persistence bucket
-  restore                Restore a node data dir from a backup in the persistence bucket
-  reset                  Reset a network stopping all the nodes and cleaning the /data folder
-  restart                Restart a network stopping all the nodes and starting the service again
-  monitor                Show the network nodes specified metrics
-  api                    Perform operation over the network API nodes
-  generate-private-keys  Generate the node private keys. --force to replace if already existing
-  generate-genesis-key   Generate the genesis key. --force to replace if already existing
-  help                   Print this message or the help of the given subcommand(s)
+- **GCP Access:** Ensure you have access to the Zilliqa GCP landing zone and the required permissions for your target network.
+- **Authentication:**
+  - Log in to GCP: `gcloud auth login --update-adc`
+  - Set up any required environment variables (see your team's onboarding guide).
+- **Install z2 CLI:**
+  - Build from source or download the latest release as per your platform.
+- **Dependencies:**
+  - Docker (for node management)
+  - gsutil (for interacting with Google Cloud Storage)
 
-Options:
-  -v, --verbose...  Increase logging verbosity
-  -q, --quiet...    Decrease logging verbosity
-  -h, --help        Print help
-```
+---
 
-## To use it:
+## 3. Deployer Configuration File
 
-- Log in to Zilliqa GCP landing zone: `gcloud auth login --update-adc`
+### 3.1 Structure
 
-## Create a new deployer upgrader configuration file
+The deployer configuration file defines the network topology, node roles, versions, and other deployment parameters. It must be written in **YAML** format.
 
-The generated configuration file will be named: `zq2`-`<network-name>`.yaml
-```bash
-z2 deployer new --help
-```
+**Key fields:**
+- `name`: Name of the network (e.g., `zq2-testnet`)
+- `eth_chain_id`: Ethereum-compatible chain ID
+- `roles`: List of node roles (e.g., `validator`, `api`, `bootstrap`)
+- `versions`: Mapping of component names to versions/tags
 
-```bash
-Generate the deployer config file
-
-Usage: z2 deployer new [OPTIONS]
-
-Options:
-      --network-name <NETWORK_NAME>
-          ZQ2 network name
-
-      --eth-chain-id <ETH_CHAIN_ID>
-          ZQ2 EVM chain ID
-
-      --roles <ROLES>
-          Virtual Machine roles
-
-          Possible values:
-          - bootstrap:   Virtual machine bootstrap
-          - validator:   Virtual machine validator
-          - api:         Virtual machine api
-          - apps:        Virtual machine apps
-          - checkpoint:  Virtual machine checkpoint
-          - persistence: Virtual machine persistence
-          - query:       Virtual machine query
-          - sentry:      Virtual machine sentry
-
-  -v, --verbose...
-          Increase logging verbosity
-
-  -q, --quiet...
-          Decrease logging verbosity
-
-  -h, --help
-          Print help (see a summary with '-h')
-```
-
-### Usage example
-
-#### Scenario 1
-
-Generate the deployer configuration file to upgrade the validator nodes of the `zq2-prototestnet` with chain ID `33333` and running on a GCP project named `gcp-tests`.
+### 3.2 Example
 
 ```yaml
-Network name: `zq2-prototestnet`
-Project Id: `gcp-tests`
-Roles: validators
-```
-
-```bash
-z2 deployer new --network-name zq2-prototestnet --eth-chain-id 33333 --roles validator
-```
-
-Output: `zq2-prototestnet.yaml`
-
-```yaml
-name: zq2-prototestnet
-eth_chain_id: 33333
+name: zq2-testnet
+eth_chain_id: 33103
 roles:
-- validator
+  - bootstrap
+  - validator
+  - api
+  - apps
+  - checkpoint
+  - persistence
+  - private-api
 versions:
-  zq2: 5522b056
-  ```
-
-#### Scenario 2
-
-Generate the deployer configuration file for upgrade the app node of the `zq2-prototestnet` with chain ID `33333` and running on a GCP project named `gcp-tests`.
-
-```yaml
-Network name: zq2-prototestnet
-Eth Chain ID: 33333
-Project ID: gcp-tests
-Roles: apps
+  zq2: v0.10.0
 ```
 
+> **Note:** This is a minimal example. Your actual config may include additional fields for advanced setups. Refer to your team's templates or onboarding documentation for full examples.
+
+### 3.3 How to Create and Validate
+- Start from a template provided by your team or the Zilliqa repo.
+- Edit with your preferred YAML editor.
+- Validate with `yamllint` or similar tools to avoid syntax errors.
+- Store securely and version-control your config files.
+
+---
+
+## 4. Subcommands Reference
+
+Each subcommand manages a specific aspect of the network. All commands accept `-v/--verbose` and `-q/--quiet` for logging control.
+
+### 4.1 install
+**Purpose:** Install the network as defined in the deployer config file.
+
+**Usage:**
 ```bash
-z2 deployer new --network-name zq2-prototestnet --eth-chain-id 33333 --roles apps
+z2 deployer install [OPTIONS] <CONFIG_FILE>
 ```
+**Options:**
+- `--select` — interactively select nodes
+- `--max-parallel <N>` — number of nodes to process in parallel (default: 50)
+- `--persistence-url <URL>` — gsutil URI for persistence file
+- `--checkpoint-url <URL>` — gsutil URI for checkpoint file (validators only)
 
-Output: `zq2-prototestnet.yaml`
-
-```yaml
-name: zq2-prototestnet
-eth_chain_id: 33333
-roles:
-- apps
-versions:
-  spout: v1.3.72
-  otterscan: latest
-```
-
-#### Scenario 3
-
-Generate the deployer configuration file for upgrade both validators and app nodes of the `zq2-prototestnet` with chain ID `33333` and running on a GCP project named `gcp-tests`.
-
-```yaml
-Network name: zq2-prototestnet
-Eth Chain ID: 33333
-Project ID: gcp-tests
-Roles: apps,validator
-```
-
+**Example:**
 ```bash
-z2 deployer new --network-name zq2-prototestnet --eth-chain-id 33333 --roles apps,validator
+z2 deployer install --max-parallel 10 --persistence-url gs://my-bucket/persistence.tar zq2-testnet.yaml
 ```
 
-Output: `zq2-prototestnet.yaml`
+### 4.2 upgrade
+**Purpose:** Upgrade the network to new versions as defined in the config file.
 
-```yaml
-name: zq2-prototestnet
-eth_chain_id: 33333
-roles:
-- validator
-- apps
-versions:
-  zq2: fbee9ec5
-  spout: v1.3.72
-  otterscan: latest
-```
-
-By default, the `z2 deployer new` will generate a configuration file with the current Github release.
-If there are no release available the value are defaulted to the 8 characters of the latest commit SHA in the `main` branch.
-
->Note: Make sure to provide the correct values when the defaults are not suitable.
-
-
-## Upgrade the network
-
+**Usage:**
 ```bash
-z2 deployer upgrade --help
+z2 deployer upgrade [OPTIONS] <CONFIG_FILE>
 ```
+**Options:**
+- `--select` — interactively select nodes
+- `--max-parallel <N>` — number of nodes to process in parallel (default: 1)
 
+**Example:**
 ```bash
-Update the network defined in the deployer config file
-
-Usage: z2 deployer upgrade [OPTIONS] [CONFIG_FILE]
-
-Arguments:
-  [CONFIG_FILE]  The network deployer config file
-
-Options:
-      --select                       Enable nodes selection
-      --max-parallel <MAX_PARALLEL>  Define the number of nodes to process in parallel. Default: 1
-  -v, --verbose...                   Increase logging verbosity
-  -q, --quiet...                     Decrease logging verbosity
-  -h, --help                         Print help
+z2 deployer upgrade zq2-testnet.yaml
 ```
 
-### Usage example
+### 4.3 get-config-file
+**Purpose:** Generate a node configuration file for joining the network.
 
-#### Scenario - Upgrade all the nodes
-
-Upgrade to a new version the `zq2-prototestnet` nodes
-
-```yaml
-Network name: zq2-prototestnet
-Configuration file: zq2-prototestnet.yaml
-```
-
+**Usage:**
 ```bash
-z2 deployer upgrade zq2-prototestnet.yaml
+z2 deployer get-config-file [OPTIONS] <CONFIG_FILE>
 ```
+**Options:**
+- `--role <ROLE>` — node role (default: validator)
+- `--out <PATH>` — output file path
 
-#### Scenario - Upgrade only selected nodes
-
-Upgrade to a new version the `zq2-prototestnet` validators
-
-```yaml
-Network name: zq2-prototestnet
-Configuration file: zq2-prototestnet.yaml
-```
-
+**Example:**
 ```bash
-z2 deployer upgrade --select zq2-prototestnet.yaml
+z2 deployer get-config-file --role api --out ./z2/resources/chain-specs/zq2-testnet-api.toml zq2-testnet.yaml
 ```
 
-## Install the network
+### 4.4 get-deposit-commands
+**Purpose:** Output the commands needed to deposit stake for all validators.
 
+**Usage:**
 ```bash
-z2 deployer install --help
+z2 deployer get-deposit-commands [OPTIONS] <CONFIG_FILE>
 ```
+**Options:**
+- `--select` — interactively select nodes
 
+**Example:**
 ```bash
-Install the network defined in the deployer config file
-
-Usage: z2 deployer install [OPTIONS] [CONFIG_FILE]
-
-Arguments:
-  [CONFIG_FILE]  The network deployer config file
-
-Options:
-      --select
-          Enable nodes selection
-      --max-parallel <MAX_PARALLEL>
-          Define the number of nodes to process in parallel. Default: 50
-      --persistence-url <PERSISTENCE_URL>
-          gsutil URI of the persistence file. Ie. gs://my-bucket/my-folder
-      --checkpoint-url <CHECKPOINT_URL>
-          gsutil URI of the checkpoint file. Ie. gs://my-bucket/my-file. By enabling this option the install will be performed only on the validator nodes
-  -v, --verbose...
-          Increase logging verbosity
-  -q, --quiet...
-          Decrease logging verbosity
-  -h, --help
-          Print help
+z2 deployer get-deposit-commands zq2-testnet.yaml
 ```
 
-> Same as `upgrade` subcommand, but skipping the check if the nodes are receiving new blocks
+### 4.5 deposit
+**Purpose:** Deposit stake for all internal validators.
 
-## Retrieve the commands to deposit stake amount to all the validators
-
+**Usage:**
 ```bash
-z2 deployer get-deposit-commands --help
+z2 deployer deposit [OPTIONS] <CONFIG_FILE>
 ```
+**Options:**
+- `--select` — interactively select nodes
 
+**Example:**
 ```bash
-Generate in output the commands to deposit stake amount to all the validators
-
-Usage: z2 deployer get-deposit-commands [OPTIONS] [CONFIG_FILE]
-
-Arguments:
-  [CONFIG_FILE]  The network deployer config file
-
-Options:
-      --select      Enable nodes selection
-  -v, --verbose...  Increase logging verbosity
-  -q, --quiet...    Decrease logging verbosity
-  -h, --help        Print help
+z2 deployer deposit zq2-testnet.yaml
 ```
 
-### Usage example
+### 4.6 deposit-top-up
+**Purpose:** Top up stake for validators.
 
-#### Scenario
-
-Retrieve the commands to deposit the stake amounts to the `zq2-prototestnet` validators
-
-```yaml
-Network name: zq2-prototestnet
-Configuration file: zq2-prototestnet.yaml
-```
-
+**Usage:**
 ```bash
-z2 deployer get-deposit-commands zq2-prototestnet.yaml
+z2 deployer deposit-top-up --amount <AMOUNT> [OPTIONS] <CONFIG_FILE>
 ```
+**Options:**
+- `--select` — interactively select nodes
+- `--amount <AMOUNT>` — amount in ZILs (required)
 
-## Deposit the stake amounts to all the validators
-
+**Example:**
 ```bash
-z2 deployer deposit --help
+z2 deployer deposit-top-up --amount 10 zq2-testnet.yaml
 ```
 
+### 4.7 unstake
+**Purpose:** Unstake funds for validators.
+
+**Usage:**
 ```bash
-Deposit the stake amounts to all the validators
-
-Usage: z2 deployer deposit [OPTIONS] [CONFIG_FILE]
-
-Arguments:
-  [CONFIG_FILE]  The network deployer config file
-
-Options:
-      --select      Enable nodes selection
-  -v, --verbose...  Increase logging verbosity
-  -q, --quiet...    Decrease logging verbosity
-  -h, --help        Print help
+z2 deployer unstake --amount <AMOUNT> [OPTIONS] <CONFIG_FILE>
 ```
+**Options:**
+- `--select` — interactively select nodes
+- `--amount <AMOUNT>` — amount in ZILs (required)
 
-### Usage example
-
-#### Scenario
-
-Deposit the stake amounts to the `zq2-prototestnet` validators
-
-```yaml
-Network name: zq2-prototestnet
-Configuration file: zq2-prototestnet.yaml
-```
-
+**Example:**
 ```bash
-z2 deployer deposit zq2-prototestnet.yaml
+z2 deployer unstake --amount 10 zq2-testnet.yaml
 ```
 
-## Run RPC calls over all the nodes
+### 4.8 withdraw
+**Purpose:** Withdraw unstaked funds for validators.
 
+**Usage:**
 ```bash
-z2 deployer rpc --help
+z2 deployer withdraw [OPTIONS] <CONFIG_FILE>
 ```
+**Options:**
+- `--select` — interactively select nodes
 
+**Example:**
 ```bash
-Run RPC calls over the internal network nodes
-
-Usage: z2 deployer rpc [OPTIONS] --method <METHOD> <CONFIG_FILE>
-
-Arguments:
-  <CONFIG_FILE>  The network deployer config file
-
-Options:
-      --timeout <TIMEOUT>  Specifies the maximum time (in seconds) allowed for the entire request. Default: 30
-  -m, --method <METHOD>    Method to run
-  -p, --params <PARAMS>    List of parameters for the method. ie "[\"string_value\",true]"
-      --select             Enable nodes selection
-      --port <PORT>        The port where to run the rpc call on [possible values: default, admin]
-  -v, --verbose...         Increase logging verbosity
-  -q, --quiet...           Decrease logging verbosity
-  -h, --help               Print help
+z2 deployer withdraw zq2-testnet.yaml
 ```
 
-### Usage example
+### 4.9 stakers
+**Purpose:** Show network stake and future stake information.
 
-#### Scenario
-
-Get the current block height in the `zq2-prototestnet` nodes
-
-```yaml
-Network name: zq2-prototestnet
-Configuration file: zq2-prototestnet.yaml
-```
-
+**Usage:**
 ```bash
-z2 deployer rpc -m eth_blockNumber zq2-prototestnet.yaml
+z2 deployer stakers <CONFIG_FILE>
 ```
-
-## Run SSH commands over all the nodes
-
+**Example:**
 ```bash
-z2 deployer ssh --help
+z2 deployer stakers zq2-testnet.yaml
 ```
 
+### 4.10 rpc
+**Purpose:** Run RPC calls on internal network nodes.
+
+**Usage:**
 ```bash
-Run command over SSH in the internal network nodes
-
-Usage: z2 deployer ssh [OPTIONS] <CONFIG_FILE> [COMMAND]...
-
-Arguments:
-  <CONFIG_FILE>  The network deployer config file
-  [COMMAND]...   Method to run
-
-Options:
-      --select      Enable nodes selection
-  -v, --verbose...  Increase logging verbosity
-  -q, --quiet...    Decrease logging verbosity
-  -h, --help        Print help
+z2 deployer rpc [OPTIONS] --method <METHOD> <CONFIG_FILE>
 ```
+**Options:**
+- `--timeout <SECONDS>` — request timeout (default: 30)
+- `-m, --method <METHOD>` — RPC method to call (required)
+- `--params <PARAMS>` — parameters as JSON string
+- `--select` — interactively select nodes
+- `-p, --port <PORT>` — port to use (`default`, `admin`)
 
-### Usage example
-
-#### Scenario
-
-Start the zilliqa service in the `zq2-prototestnet` nodes
-
-```yaml
-Network name: zq2-prototestnet
-Configuration file: zq2-prototestnet.yaml
-```
-
+**Example:**
 ```bash
-z2 deployer ssh zq2-prototestnet.yaml -- "sudo systemctl start zilliqa.service"
+z2 deployer rpc -m eth_blockNumber zq2-testnet.yaml
 ```
 
-## Generate in output the config file to join the network
+### 4.11 ssh
+**Purpose:** Run SSH commands on internal network nodes.
 
+**Usage:**
 ```bash
-z2 deployer get-config-file --help
+z2 deployer ssh [OPTIONS] <CONFIG_FILE> [COMMAND]...
 ```
+**Options:**
+- `--select` — interactively select nodes
 
+**Example:**
 ```bash
-Generate in output the validator config file to join the network
-
-Usage: z2 deployer get-config-file [OPTIONS] [CONFIG_FILE]
-
-Arguments:
-  [CONFIG_FILE]
-          The network deployer config file
-
-Options:
-      --role <ROLE>
-          Node role. Default: validator
-
-          Possible values:
-          - bootstrap:   Virtual machine bootstrap
-          - validator:   Virtual machine validator
-          - api:         Virtual machine api
-          - apps:        Virtual machine apps
-          - checkpoint:  Virtual machine checkpoint
-          - persistence: Virtual machine persistence
-          - query:       Virtual machine query
-          - sentry:      Virtual machine sentry
-
-  -v, --verbose...
-          Increase logging verbosity
-
-  -q, --quiet...
-          Decrease logging verbosity
-
-  -h, --help
-          Print help (see a summary with '-h')
+z2 deployer ssh zq2-testnet.yaml -- "sudo systemctl restart zilliqa.service"
 ```
 
-### Usage example
+### 4.12 backup
+**Purpose:** Backup a node's data directory to the persistence bucket.
 
-#### Scenario
-
-Get the config file for a node role `api` in the `zq2-prototestnet` nodes
-
-```yaml
-Network name: zq2-prototestnet
-Configuration file: zq2-prototestnet.yaml
-```
-
+**Usage:**
 ```bash
-z2 deployer get-config-file --role api zq2-prototestnet.yaml
+z2 deployer backup [OPTIONS] <CONFIG_FILE>
 ```
+**Options:**
+- `-n, --name <NAME>` — backup folder or zip file name
+- `--zip` — create a zip file
 
-## Backup a node data dir
-
+**Example:**
 ```bash
-z2 deployer backup --help
+z2 deployer backup --name backup-20240704 --zip zq2-testnet.yaml
 ```
 
+### 4.13 restore
+**Purpose:** Restore a node's data directory from a backup.
+
+**Usage:**
 ```bash
-Backup a node data dir in the persistence bucket
-
-Usage: z2 deployer backup [OPTIONS] [CONFIG_FILE]
-
-Arguments:
-  [CONFIG_FILE]  The network deployer config file
-
-Options:
-  -n, --name <NAME>  The name of the backup folder. If zip is specified, it represents the name of the zip file
-      --zip          If specified, create a zip file containing the backup
-  -v, --verbose...   Increase logging verbosity
-  -q, --quiet...     Decrease logging verbosity
-  -h, --help         Print help
+z2 deployer restore [OPTIONS] <CONFIG_FILE>
 ```
+**Options:**
+- `-n, --name <NAME>` — backup folder or zip file name
+- `--zip` — restore from zip file
+- `--no-restart` — do not restart service after restore
+- `--max-parallel <N>` — number of nodes to process in parallel (default: 50)
 
-### Usage example
-
-#### Scenario
-
-```yaml
-Network name: zq2-prototestnet
-Configuration file: zq2-prototestnet.yaml
-```
-
+**Example:**
 ```bash
-z2 deployer backup --file /tmp/data.zip zq2-prototestnet.yaml
+z2 deployer restore --name backup-20240704 --zip zq2-testnet.yaml
 ```
 
-## Restore a node's data dir from a backup
+### 4.14 reset
+**Purpose:** Stop all nodes and clean their `/data` folders.
 
+**Usage:**
 ```bash
-z2 deployer restore --help
+z2 deployer reset [OPTIONS] <CONFIG_FILE>
 ```
+**Options:**
+- `--select` — interactively select nodes
 
+**Example:**
 ```bash
-Restore a node data dir from a backup in the persistence bucket
-
-Usage: z2 deployer restore [OPTIONS] [CONFIG_FILE]
-
-Arguments:
-  [CONFIG_FILE]  The network deployer config file
-
-Options:
-  -n, --name <NAME>                  The name of the backup folder. If zip is specified, it represents the name of the zip file
-      --zip                          If specified, restore the persistence from a zip file
-      --max-parallel <MAX_PARALLEL>  Define the number of nodes to process in parallel. Default: 50
-  -v, --verbose...                   Increase logging verbosity
-  -q, --quiet...                     Decrease logging verbosity
-  -h, --help                         Print help
+z2 deployer reset zq2-testnet.yaml
 ```
 
-### Usage example
+### 4.15 restart
+**Purpose:** Restart all nodes in the network.
 
-#### Scenario
-
-```yaml
-Network name: zq2-prototestnet
-Configuration file: zq2-prototestnet.yaml
-```
-
+**Usage:**
 ```bash
-z2 deployer restore --file /tmp/data.zip zq2-prototestnet.yaml
+z2 deployer restart [OPTIONS] <CONFIG_FILE>
 ```
+**Options:**
+- `--select` — interactively select nodes
 
-## Reset network nodes
-
+**Example:**
 ```bash
-z2 deployer reset --help
+z2 deployer restart zq2-testnet.yaml
 ```
 
+### 4.16 monitor
+**Purpose:** Monitor network node metrics (e.g., block number, consensus info).
+
+**Usage:**
 ```bash
-Reset a network stopping all the nodes and cleaning the /data folder
-
-Usage: z2 deployer reset [OPTIONS] [CONFIG_FILE]
-
-Arguments:
-  [CONFIG_FILE]  The network deployer config file
-
-Options:
-      --select      Enable nodes selection
-  -v, --verbose...  Increase logging verbosity
-  -q, --quiet...    Decrease logging verbosity
-  -h, --help        Print help
+z2 deployer monitor [OPTIONS] <CONFIG_FILE>
 ```
+**Options:**
+- `--metric <METRIC>` — metric to display (`block-number`, `consensus-info`)
+- `--select` — interactively select nodes
+- `--follow` — watch for changes
 
-### Usage example
-
-#### Scenario
-
-```yaml
-Network name: zq2-prototestnet
-Configuration file: zq2-prototestnet.yaml
-```
-
+**Example:**
 ```bash
-z2 deployer reset zq2-prototestnet.yaml
+z2 deployer monitor --metric block-number --follow zq2-testnet.yaml
 ```
 
-## Restart network nodes
+---
 
-```bash
-z2 deployer restart --help
-```
+## 5. Common Workflows
 
-```bash
-Restart a network stopping all the nodes and starting the service again
+- **Install a new network:**
+  1. Prepare your YAML config file.
+  2. Run `z2 deployer install <config.yaml>`
+  3. Use `z2 deployer get-config-file` to generate node configs for joining.
+- **Upgrade an existing network:**
+  1. Update the `versions` in your config file.
+  2. Run `z2 deployer upgrade <config.yaml>`
+- **Stake management:**
+  - Use `deposit`, `deposit-top-up`, `unstake`, and `withdraw` as needed.
+- **Backup and restore:**
+  - Use `backup` before upgrades or maintenance.
+  - Use `restore` to recover from issues.
 
-Usage: z2 deployer restart [OPTIONS] [CONFIG_FILE]
+---
 
-Arguments:
-  [CONFIG_FILE]  The network deployer config file
+## 6. Troubleshooting & FAQ
 
-Options:
-      --select      Enable nodes selection
-  -v, --verbose...  Increase logging verbosity
-  -q, --quiet...    Decrease logging verbosity
-  -h, --help        Print help
-```
+- **Q: My config file isn't recognized.**
+  - A: Ensure it is valid YAML and matches the expected structure.
+- **Q: A node fails during install/upgrade.**
+  - A: Check logs with increased verbosity (`-v`). Use `--select` to retry specific nodes.
+- **Q: How do I know which nodes are affected?**
+  - A: Use `--select` for interactive selection, or check the output summary.
+- **Q: Can I use TOML for deployer configs?**
+  - A: **No.** Deployer configs must be YAML. TOML is used for chain specs only.
 
-### Usage example
+---
 
-#### Scenario
+## 7. Best Practices & Tips
 
-```yaml
-Network name: zq2-prototestnet
-Configuration file: zq2-prototestnet.yaml
-```
+- Always version-control your deployer YAML configs.
+- Use `--select` for granular control during upgrades or troubleshooting.
+- Regularly backup node data before major changes.
+- Validate YAML files before use.
+- Keep your CLI and dependencies up to date.
+- Review logs with `-v` or `-vv` for detailed troubleshooting.
+- Use the `monitor` subcommand to keep track of network health.
 
-```bash
-z2 deployer restart zq2-prototestnet.yaml
-```
+---
 
-## Perform operations over the API nodes
-
-```bash
-z2 deployer api --help
-```
-
-```bash
-Perform operation over the network API nodes
-
-Usage: z2 deployer api [OPTIONS] --operation <OPERATION> [CONFIG_FILE]
-
-Arguments:
-  [CONFIG_FILE]  The network deployer config file
-
-Options:
-  -o, --operation <OPERATION>  The operation to perform over the API nodes [possible values: attach, detach]
-  -v, --verbose...             Increase logging verbosity
-  -q, --quiet...               Decrease logging verbosity
-  -h, --help                   Print help
-```
-
-### Usage example
-
-#### Scenario detach an API node from the load balancer
-
-```yaml
-Network name: zq2-prototestnet
-Configuration file: zq2-prototestnet.yaml
-```
-
-```bash
-z2 deployer api -o detach zq2-prototestnet.yaml
-```
-
-#### Scenario attach an API node to the load balancer
-
-```yaml
-Network name: zq2-prototestnet
-Configuration file: zq2-prototestnet.yaml
-```
-
-```bash
-z2 deployer api -o attach zq2-prototestnet.yaml
-```
-
-## Monitor the network nodes specified metrics
-
-```bash
-z2 deployer monitor --help
-```
-
-```bash
-Monitor the network nodes specified metrics
-
-Usage: z2 deployer monitor [OPTIONS] [CONFIG_FILE]
-
-Arguments:
-  [CONFIG_FILE]  The network deployer config file
-
-Options:
-      --metric <METRIC>  The metric to display. Default: block-number [possible values: block-number, consensus-info]
-      --select           Enable nodes selection
-      --follow           After showing the metrics, watch for changes
-  -v, --verbose...       Increase logging verbosity
-  -q, --quiet...         Decrease logging verbosity
-  -h, --help             Print help
-```
-
-### Usage example
-
-#### Monitor the nodes blocknumber
-
-```yaml
-Network name: zq2-prototestnet
-Configuration file: zq2-prototestnet.yaml
-```
-
-```bash
-z2 deployer monitor --metric block-number --follow zq2-prototestnet.yaml
-```
+For further help, consult your team's onboarding documentation or reach out to the Zilliqa core team.

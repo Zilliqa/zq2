@@ -2,29 +2,32 @@
 
 use std::{
     collections::HashMap,
-    iter,
-    sync::{atomic::AtomicUsize, Arc},
+    sync::{
+        Arc,
+        atomic::{AtomicPtr, AtomicUsize},
+    },
     time::Duration,
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use cfg_if::cfg_if;
+use itertools::Itertools;
 use libp2p::{
-    autonat,
+    PeerId, StreamProtocol, Swarm, autonat,
     futures::StreamExt,
-    gossipsub::{self, IdentTopic, MessageAuthenticity, TopicHash},
+    gossipsub::{self, IdentTopic, MessageAcceptance, MessageAuthenticity, TopicHash},
     identify,
     kad::{self, store::MemoryStore},
     multiaddr::{Multiaddr, Protocol},
     noise,
     request_response::{self, OutboundFailure, ProtocolSupport},
     swarm::{NetworkBehaviour, SwarmEvent},
-    tcp, yamux, PeerId, StreamProtocol, Swarm,
+    tcp, yamux,
 };
 use tokio::{
     select,
     signal::{self, unix::SignalKind},
-    sync::mpsc::{self, error::SendError, UnboundedSender},
+    sync::mpsc::{self, UnboundedSender, error::SendError},
     task::JoinSet,
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -34,10 +37,18 @@ use crate::{
     cfg::{Config, ConsensusConfig, NodeConfig},
     crypto::SecretKey,
     db,
-    message::{ExternalMessage, InternalMessage},
+    message::{ExternalMessage, GossipSubTopic, InternalMessage},
     node::{OutgoingMessageFailure, RequestId},
     node_launcher::{NodeInputChannels, NodeLauncher, ResponseChannel},
+    sync::SyncPeers,
 };
+
+/// Validator topic is for broadcasts which only apply to validators.
+///
+/// - Broadcasts are so sent to the public topic (Proposal)
+/// - Direct messages are not sent to any topic (Vote, NewView)
+/// - Re-sending of NewView is sent to the Validator-only topic
+static VALIDATOR_TOPIC_SUFFIX: &str = "-validator";
 
 /// Messages are a tuple of the destination shard ID and the actual message.
 type DirectMessage = (u64, ExternalMessage);
@@ -61,7 +72,8 @@ pub type OutboundMessageTuple = (Option<(PeerId, RequestId)>, u64, ExternalMessa
 pub type LocalMessageTuple = (u64, u64, InternalMessage);
 
 pub struct P2pNode {
-    shard_nodes: HashMap<TopicHash, NodeInputChannels>,
+    shard_peers: HashMap<u64, Arc<SyncPeers>>,
+    shard_nodes: HashMap<u64, NodeInputChannels>,
     shard_threads: JoinSet<Result<()>>,
     task_threads: JoinSet<Result<()>>,
     secret_key: SecretKey,
@@ -81,6 +93,9 @@ pub struct P2pNode {
     pending_requests: HashMap<request_response::OutboundRequestId, (u64, RequestId)>,
     // Count of current peers for API
     peer_num: Arc<AtomicUsize>,
+    swarm_peers: Arc<AtomicPtr<Vec<PeerId>>>,
+    kad_protocol: StreamProtocol,
+    protocol_version: String,
 }
 
 impl P2pNode {
@@ -98,6 +113,10 @@ impl P2pNode {
         let peer_id = PeerId::from(key_pair.public());
         info!(%peer_id);
 
+        let protocol_version = format!("{}/1.0.0", config.network);
+        let kad_protocol =
+            StreamProtocol::try_from_owned(format!("/{}/kad/1.0.0", config.network))?;
+
         let swarm = libp2p::SwarmBuilder::with_existing_identity(key_pair)
             .with_tokio()
             .with_tcp(
@@ -109,31 +128,45 @@ impl P2pNode {
             .with_behaviour(|key_pair| {
                 Ok(Behaviour {
                     request_response: request_response::cbor::Behaviour::new(
-                        iter::once((StreamProtocol::new("/zq2-message/1"), ProtocolSupport::Full)),
-                        Default::default(),
+                        vec![(
+                            StreamProtocol::try_from_owned(format!(
+                                "/{}/req-resp/1.0.0",
+                                config.network
+                            ))?,
+                            ProtocolSupport::Full,
+                        )],
+                        request_response::Config::default()
+                            // This is a temporary patch to prevent long-running Scilla executions causing nodes to Timeout - https://github.com/Zilliqa/zq2/issues/2667
+                            .with_request_timeout(Duration::from_secs(60)),
                     ),
                     gossipsub: gossipsub::Behaviour::new(
                         MessageAuthenticity::Signed(key_pair.clone()),
                         gossipsub::ConfigBuilder::default()
-                            // 1MB is sufficient to accommodate proposal with 4000 simple transfers (block gas limit)
-                            .max_transmit_size(1024 * 1024)
+                            // 2MB is sufficient to accommodate proposal with 4000 simple transfers (block gas limit)
+                            .max_transmit_size(1024 * 1024 * 2)
                             // Increase the duplicate cache time to reduce the likelihood of delayed messages being
                             // mistakenly re-propagated and flooding the network.
-                            .duplicate_cache_time(Duration::from_secs(300))
+                            .duplicate_cache_time(Duration::from_secs(3600))
+                            // Increase the queue duration to reduce the likelihood of dropped messages.
+                            // https://github.com/Zilliqa/zq2/issues/2823
+                            .publish_queue_duration(Duration::from_secs(60))
+                            .forward_queue_duration(Duration::from_secs(30)) // might be helpful too
+                            .validate_messages() // manual forwarding is required
                             .build()
                             .map_err(|e| anyhow!(e))?,
                     )
                     .map_err(|e| anyhow!(e))?,
                     autonat_client: autonat::v2::client::Behaviour::default(),
                     autonat_server: autonat::v2::server::Behaviour::default(),
-                    kademlia: kad::Behaviour::new(peer_id, MemoryStore::new(peer_id)),
-                    // FIXME: This is a hack.
-                    // By exposing the listen addresses, the nodes are able to get the correct remote ip/port to connect to.
-                    // Otherwise, when running locally in docker, the nodes connect to each other via the gateway acting as a NAT router.
-                    // So, the nodes are unable to see each other directly and remain isolated, defeating kademlia and autonat.
+                    kademlia: kad::Behaviour::with_config(
+                        peer_id,
+                        MemoryStore::new(peer_id),
+                        kad::Config::new(kad_protocol.clone()),
+                    ),
                     identify: identify::Behaviour::new(
-                        identify::Config::new("zilliqa/1.0.0".into(), key_pair.public())
-                            .with_hide_listen_addrs(!cfg!(debug_assertions)),
+                        identify::Config::new(protocol_version.clone(), key_pair.public())
+                            .with_hide_listen_addrs(true)
+                            .with_push_listen_addr_updates(true),
                     ),
                 })
             })?
@@ -142,11 +175,12 @@ impl P2pNode {
             // meaning the connection is immediately closed before the protocol can use it. libp2p may change the
             // default in the future to 10 seconds too (https://github.com/libp2p/rust-libp2p/pull/4967).
             .with_swarm_config(|config| {
-                config.with_idle_connection_timeout(Duration::from_secs(10))
+                config.with_idle_connection_timeout(Duration::from_secs(60))
             })
             .build();
 
         Ok(Self {
+            shard_peers: HashMap::new(),
             shard_nodes: HashMap::new(),
             peer_id,
             secret_key,
@@ -162,11 +196,30 @@ impl P2pNode {
             request_responses_receiver,
             pending_requests: HashMap::new(),
             peer_num: Arc::new(AtomicUsize::new(0)),
+            swarm_peers: Arc::new(AtomicPtr::new(Box::into_raw(Box::new(vec![])))),
+            kad_protocol,
+            protocol_version,
         })
     }
 
-    pub fn shard_id_to_topic(shard_id: u64) -> IdentTopic {
-        IdentTopic::new(shard_id.to_string())
+    pub fn shard_id_to_topic(shard_id: u64, message: Option<&ExternalMessage>) -> IdentTopic {
+        match message {
+            Some(ExternalMessage::NewView(_)) => Self::validator_topic(shard_id),
+            _ => IdentTopic::new(shard_id.to_string()),
+        }
+    }
+
+    pub fn shard_id_from_topic_hash(topic_hash: &TopicHash) -> Result<u64> {
+        Ok(topic_hash
+            .clone()
+            .into_string()
+            .split("-")
+            .collect::<Vec<_>>()[0]
+            .parse::<u64>()?)
+    }
+
+    pub fn validator_topic(shard_id: u64) -> IdentTopic {
+        IdentTopic::new(shard_id.to_string() + VALIDATOR_TOPIC_SUFFIX)
     }
 
     /// Temporary method until light nodes are implemented, which will allow
@@ -188,24 +241,34 @@ impl P2pNode {
     }
 
     pub async fn add_shard_node(&mut self, config: NodeConfig) -> Result<()> {
-        let topic = Self::shard_id_to_topic(config.eth_chain_id);
-        if self.shard_nodes.contains_key(&topic.hash()) {
+        let shard_id = config.eth_chain_id;
+        if self.shard_nodes.contains_key(&shard_id) {
             info!("LaunchShard message received for a shard we're already running. Ignoring...");
             return Ok(());
         }
-        let (mut node, input_channels) = NodeLauncher::new(
+        let (mut node, input_channels, peers) = NodeLauncher::new(
             self.secret_key,
             config,
             self.outbound_message_sender.clone(),
             self.local_message_sender.clone(),
             self.request_responses_sender.clone(),
             self.peer_num.clone(),
+            self.swarm_peers.clone(),
         )
         .await?;
-        self.shard_nodes.insert(topic.hash(), input_channels);
+        self.shard_peers.insert(shard_id, peers);
+        self.shard_nodes.insert(shard_id, input_channels);
         self.shard_threads
             .spawn(async move { node.start_shard_node().await });
-        self.swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
+        self.swarm
+            .behaviour_mut()
+            .gossipsub
+            .subscribe(&Self::shard_id_to_topic(shard_id, None))?;
+        // subscribe to validator topic by default. Unsubscribe later if we find that we are not in the committee
+        self.swarm
+            .behaviour_mut()
+            .gossipsub
+            .subscribe(&Self::validator_topic(shard_id))?;
         Ok(())
     }
 
@@ -214,7 +277,10 @@ impl P2pNode {
         topic_hash: &TopicHash,
         sender: impl FnOnce(&NodeInputChannels) -> Result<(), SendError<T>>,
     ) -> Result<()> {
-        let Some(channels) = self.shard_nodes.get(topic_hash) else {
+        let Some(channels) = self
+            .shard_nodes
+            .get(&Self::shard_id_from_topic_hash(topic_hash)?)
+        else {
             warn!(?topic_hash, "message received for unknown shard or topic");
             return Ok(());
         };
@@ -232,10 +298,10 @@ impl P2pNode {
             self.swarm.add_external_address(external_address.clone());
         }
 
-        if let Some((peer, address)) = &self.config.bootstrap_address {
-            if self.swarm.local_peer_id() != peer {
-                self.swarm.dial(address.clone())?;
-                self.swarm.add_peer_address(*peer, address.clone());
+        // if we are a bootstrap, add our external address, which allows us to switch to kademlia SERVER mode.
+        for (peer, address) in &self.config.bootstrap_address.0 {
+            if self.swarm.local_peer_id() == peer {
+                self.swarm.add_external_address(address.clone());
             }
         }
 
@@ -247,22 +313,50 @@ impl P2pNode {
                     let event = event.expect("swarm stream should be infinite");
                     debug!(?event, "swarm event");
                     match event {
+                        SwarmEvent::ConnectionClosed{..} |
+                        SwarmEvent::ConnectionEstablished{..} => {
+                            // update peers when new peer connects/disconnects
+                            let new_peers = Box::into_raw(Box::new(self.swarm.connected_peers().cloned().collect_vec()));
+                            let old_ptr = self.swarm_peers.swap(new_peers, std::sync::atomic::Ordering::Relaxed);
+                            unsafe {
+                                let _ = Box::from_raw(old_ptr); // previous vec will be dropped here
+                            }
+                        }
+                        // only dial after we have a listen address, to reuse port
                         SwarmEvent::NewListenAddr { address, .. } => {
                             info!(%address, "P2P swarm listening on");
-                        }
-                        SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { peer_id, info: identify::Info{ listen_addrs, observed_addr, protocols, .. }, .. })) => {
-                            self.swarm.add_external_address(observed_addr);
-                            if protocols.iter().any(|p| *p == kad::PROTOCOL_NAME) {
-                                for addr in listen_addrs {
-                                    self.swarm.add_peer_address(peer_id, addr);
+                            for (peer, address) in &self.config.bootstrap_address.0 {
+                                if self.swarm.local_peer_id() != peer {
+                                    self.swarm.dial(address.clone())?;
                                 }
                             }
                         }
-                        SwarmEvent::NewExternalAddrOfPeer { peer_id, address } => {
-                            self.swarm
-                                .behaviour_mut()
-                                .kademlia
-                                .add_address(&peer_id, address.clone());
+                        // this is necessary - https://docs.rs/libp2p-kad/latest/libp2p_kad/#important-discrepancies
+                        SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { peer_id, info, .. })) => {
+                            // only add peer, if it is on the same application protocol
+                            let is_match = info.protocol_version == self.protocol_version;
+                            // will only be true if peer is publicly reachable i.e. SERVER mode.
+                            let is_kad = info.protocols.iter().any(|p| *p == self.kad_protocol);
+
+                            for addr in info.listen_addrs {
+                                if is_match {
+                                    self.swarm.add_peer_address(peer_id, addr.clone());
+                                }
+                                if is_kad {
+                                    self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
+                                }
+                            }
+                        }
+                        // Add/Remove peers to/from the shard peer list used in syncing.
+                        SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id, topic })) => {
+                            if let Some(peers) = self.shard_peers.get(&Self::shard_id_from_topic_hash(&topic)?) {
+                                peers.add_peer(peer_id);
+                            }
+                        }
+                        SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Unsubscribed { peer_id, topic })) => {
+                            if let Some(peers) = self.shard_peers.get(&Self::shard_id_from_topic_hash(&topic)?) {
+                                peers.remove_peer(peer_id);
+                            }
                         }
                         SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message{
                             message_id: msg_id,
@@ -273,7 +367,7 @@ impl P2pNode {
                             }, ..
                         })) => {
                             let source = source.expect("message should have a source");
-                            let message = match cbor4ii::serde::from_slice::<ExternalMessage>(&data) {
+                            let external_message = match cbor4ii::serde::from_slice::<ExternalMessage>(&data) {
                                 Ok(m) => m,
                                 Err(e) => {
                                     let data = hex::encode(&data);
@@ -282,30 +376,45 @@ impl P2pNode {
                                 }
                             };
                             let to = self.peer_id;
-                            debug!(%source, %to, %message, "broadcast recieved");
+                            debug!(%source, %to, %external_message, %topic_hash, "broadcast received");
 
-                            // Route broadcasts to speed-up Proposal processing, with faux request-id
-                            match message {
+                            match external_message {
+                                ExternalMessage::BatchedTransactions(_) | ExternalMessage::NewView(_) => {
+                                    self.swarm.behaviour_mut().gossipsub.report_message_validation_result(&msg_id, &source, MessageAcceptance::Accept); // forward
+                                    self.send_to(&topic_hash, |c| c.broadcasts.send((source, external_message, ResponseChannel::Local)))?;
+                                },
+                                // Route broadcasts to speed-up Proposal processing, with faux request-id
                                 ExternalMessage::Proposal(_) => {
-                                    self.send_to(&topic_hash, |c| c.requests.send((source, msg_id.to_string(), message, ResponseChannel::Local)))?;
-                                }
+                                    self.swarm.behaviour_mut().gossipsub.report_message_validation_result(&msg_id, &source, MessageAcceptance::Accept); // forward
+                                    self.send_to(&topic_hash, |c| c.requests.send((source, msg_id.to_string(), external_message, ResponseChannel::Local)))?;
+                                },
+                                // Drop invalid libp2p gossips
                                 _ => {
-                                    self.send_to(&topic_hash, |c| c.broadcasts.send((source, message)))?;
+                                    self.swarm.behaviour_mut().gossipsub.report_message_validation_result(&msg_id, &source, MessageAcceptance::Reject); // drop and punish
+                                    error!(%source, %to, %external_message, %topic_hash, "unhandled libp2p broadcast");
                                 }
                             }
                         }
-
-                        SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::Message { message, peer: _source })) => {
+                        SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::Message { message, peer: _source, .. })) => {
                             match message {
                                 request_response::Message::Request { request, channel: _channel, request_id: _request_id, .. } => {
                                     let to = self.peer_id;
                                     let (shard_id, _external_message) = request;
                                     debug!(source = %_source, %to, external_message = %_external_message, request_id = %_request_id, "message received");
-                                    let _topic = Self::shard_id_to_topic(shard_id);
+                                    let _topic = Self::shard_id_to_topic(shard_id, None);
                                     let _id = format!("{}", _request_id);
                                     cfg_if! {
                                         if #[cfg(not(feature = "fake_response_channel"))] {
-                                            self.send_to(&_topic.hash(), |c| c.requests.send((_source, _id, _external_message, ResponseChannel::Remote(_channel))))?;
+                                            match _external_message {
+                                                ExternalMessage::MetaDataRequest(_)
+                                                | ExternalMessage::MultiBlockRequest(_)
+                                                | ExternalMessage::BlockRequest(_)
+                                                | ExternalMessage::PassiveSyncRequest(_) => self
+                                                    .send_to(&_topic.hash(), |c| c.broadcasts.send((_source, _external_message, ResponseChannel::Remote(_channel))))?,
+                                                ExternalMessage::Vote(_)
+                                                | ExternalMessage::NewView(_) => self.send_to(&_topic.hash(), |c| c.requests.send((_source, _id, _external_message, ResponseChannel::Remote(_channel))))?,
+                                                _ => error!(source = %_source, %to, external_message = %_external_message, request_id = %_request_id, "unhandled libp2p request"),
+                                            }
                                         } else {
                                             panic!("fake_response_channel is enabled and you are trying to use a real libp2p network");
                                         }
@@ -313,14 +422,14 @@ impl P2pNode {
                                 }
                                 request_response::Message::Response { request_id, response } => {
                                     if let Some((shard_id, _)) = self.pending_requests.remove(&request_id) {
-                                        self.send_to(&Self::shard_id_to_topic(shard_id).hash(), |c| c.responses.send((_source, response)))?;
+                                        self.send_to(&Self::shard_id_to_topic(shard_id, None).hash(), |c| c.responses.send((_source, response)))?;
                                     } else {
                                         return Err(anyhow!("response to request with no id"));
                                     }
                                 }
                             }
                         }
-                        SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::OutboundFailure { peer, request_id, error })) => {
+                        SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::OutboundFailure { peer, request_id, error, .. })) => {
                             if let OutboundFailure::DialFailure = error {
                                 // We failed to send a message to a peer. The likely reason is that we don't know their
                                 // address. Someone else in the network must know it, because we learnt their peer ID.
@@ -328,10 +437,9 @@ impl P2pNode {
                                 let _ = self.swarm.behaviour_mut().kademlia.bootstrap();
                             }
 
-
                             if let Some((shard_id, request_id)) = self.pending_requests.remove(&request_id) {
                                 let error = OutgoingMessageFailure { peer, request_id, error };
-                                self.send_to(&Self::shard_id_to_topic(shard_id).hash(), |c| c.request_failures.send((peer, error)))?;
+                                self.send_to(&Self::shard_id_to_topic(shard_id, None).hash(), |c| c.request_failures.send((peer, error)))?;
                             } else {
                                 return Err(anyhow!("request without id failed"));
                             }
@@ -352,10 +460,22 @@ impl P2pNode {
                             self.add_shard_node(shard_config.clone()).await?;
                         },
                         InternalMessage::LaunchLink(_) | InternalMessage::IntershardCall(_) => {
-                            self.send_to(&Self::shard_id_to_topic(destination).hash(), |c| c.local_messages.send((source, message)))?;
+                            self.send_to(&Self::shard_id_to_topic(destination, None).hash(), |c| c.local_messages.send((source, message)))?;
                         }
                         InternalMessage::ExportBlockCheckpoint(block, transactions, parent, trie_storage, path) => {
                             self.task_threads.spawn(async move { db::checkpoint_block_with_state(&block, &transactions, &parent, trie_storage, source, path) });
+                        }
+                        InternalMessage::SubscribeToGossipSubTopic(topic) => {
+                            debug!("subscribing to topic {:?}", topic);
+                            if let GossipSubTopic::Validator(shard_id) = topic {
+                                self.swarm.behaviour_mut().gossipsub.subscribe(&Self::validator_topic(shard_id))?;
+                            }
+                        }
+                        InternalMessage::UnsubscribeFromGossipSubTopic(topic) => {
+                            debug!("unsubscribing from topic {:?}", topic);
+                            if let GossipSubTopic::Validator(shard_id) = topic {
+                                self.swarm.behaviour_mut().gossipsub.unsubscribe(&Self::validator_topic(shard_id));
+                            }
                         }
                     }
                 },
@@ -376,7 +496,7 @@ impl P2pNode {
                     let data = cbor4ii::serde::to_vec(Vec::new(), &message).unwrap();
                     let from = self.peer_id;
 
-                    let topic = Self::shard_id_to_topic(shard_id);
+                    let topic = Self::shard_id_to_topic(shard_id, Some(&message));
 
                     match dest {
                         Some((dest, request_id)) => {
@@ -390,33 +510,9 @@ impl P2pNode {
                             }
                         },
                         None => {
-                            debug!(%from, %message, "broadcasting");
-                            match self.swarm.behaviour_mut().gossipsub.publish(topic.hash(), data)  {
-                                // Also route broadcasts to ourselves, with a faux request-id.
-                                Ok(msg_id) => {
-                                    match message {
-                                        ExternalMessage::Proposal(_) => {
-                                            self.send_to(&topic.hash(), |c| c.requests.send((from, msg_id.to_string(), message, ResponseChannel::Local)))?;
-                                        }
-                                        _ => {
-                                            self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message)))?;
-                                        }
-                                    }
-                                },
-                                // still publish to self, even if no other peers.
-                                Err(gossipsub::PublishError::InsufficientPeers) => {
-                                    match message {
-                                        ExternalMessage::Proposal(_) => {
-                                            self.send_to(&topic.hash(), |c| c.requests.send((from, "(faux-id)".to_string(), message, ResponseChannel::Local)))?;
-                                        }
-                                        _ => {
-                                            self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message)))?;
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    trace!(%e, "failed to publish message");
-                                }
+                            debug!(%from, %message, %topic, "broadcasting");
+                            if let Err(e) = self.swarm.behaviour_mut().gossipsub.publish(topic.hash(), data.clone()) {
+                                trace!(%e, "failed to publish message")
                             }
                         },
                     }
@@ -436,10 +532,18 @@ impl P2pNode {
                 }
                 _ = terminate.recv() => {
                     self.shard_threads.shutdown().await;
+                    unsafe {
+                        let _ = Box::from_raw(self.swarm_peers.load(std::sync::atomic::Ordering::Relaxed));
+                        // previous vec will be dropped here
+                    }
                     break;
                 },
                 _ = signal::ctrl_c() => {
                     self.shard_threads.shutdown().await;
+                    unsafe {
+                        let _ = Box::from_raw(self.swarm_peers.load(std::sync::atomic::Ordering::Relaxed));
+                        // previous vec will be dropped here
+                    }
                     break;
                 },
             }

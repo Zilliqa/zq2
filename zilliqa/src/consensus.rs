@@ -1,51 +1,64 @@
 use std::{
-    cell::RefCell,
+    cell::LazyCell,
     collections::{BTreeMap, HashMap},
     error::Error,
     fmt::Display,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
-use alloy::primitives::{Address, BlockNumber, U256};
-use anyhow::{anyhow, Context, Result};
+use alloy::primitives::{Address, U256};
+use anyhow::{Context, Result, anyhow};
 use bitvec::{bitarr, order::Msb0};
+use dashmap::DashMap;
 use eth_trie::{EthTrie, MemoryDB, Trie};
 use itertools::Itertools;
+use k256::pkcs8::der::DateTime;
 use libp2p::PeerId;
-use once_cell::sync::Lazy;
+use opentelemetry::KeyValue;
+use parking_lot::{Mutex, RwLock, RwLockWriteGuard};
 use revm::Inspector;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::*;
 
 use crate::{
-    block_store::BlockStore,
-    blockhooks,
-    cfg::{ConsensusConfig, NodeConfig},
-    constants::TIME_TO_ALLOW_PROPOSAL_BROADCAST,
-    contracts,
-    crypto::{verify_messages, BlsSignature, Hash, NodePublicKey, SecretKey},
-    db::{self, Db},
+    api::types::eth::SyncingStruct,
+    aux, blockhooks,
+    cfg::{ConsensusConfig, ForkName, NodeConfig},
+    constants::{EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, TIME_TO_ALLOW_PROPOSAL_BROADCAST},
+    crypto::{BlsSignature, Hash, NodePublicKey, SecretKey, verify_messages},
+    db::{self, BlockFilter, Db},
     exec::{PendingState, TransactionApplyResult},
     inspector::{self, ScillaInspector, TouchedAddressInspector},
     message::{
         AggregateQc, BitArray, BitSlice, Block, BlockHeader, BlockRef, BlockStrategy,
-        ExternalMessage, InternalMessage, NewView, ProcessProposal, Proposal, QuorumCertificate,
-        Vote, MAX_COMMITTEE_SIZE,
+        ExternalMessage, GossipSubTopic, InternalMessage, MAX_COMMITTEE_SIZE, NewView, Proposal,
+        QuorumCertificate, Vote,
     },
-    node::{MessageSender, NetworkMessage, OutgoingMessageFailure},
-    pool::{TransactionPool, TxAddResult, TxPoolContent},
-    range_map::RangeMap,
-    state::State,
+    node::{MessageSender, NetworkMessage},
+    pool::{
+        PendingOrQueued, TransactionPool, TxAddResult, TxPoolContent, TxPoolContentFrom,
+        TxPoolStatus,
+    },
+    state::{Code, State},
+    static_hardfork_data::{
+        XSGD_CODE, XSGD_MAINNET_ADDR, build_ignite_wallet_addr_scilla_code_map,
+    },
+    sync::{Sync, SyncPeers},
     time::SystemTime,
-    transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
+    transaction::{
+        EvmGas, SignedTransaction, TransactionReceipt, ValidationOutcome, VerifiedTransaction,
+    },
 };
 
-#[derive(Debug)]
-struct NewViewVote {
+#[derive(Clone, Debug, Serialize)]
+pub struct NewViewVote {
     signatures: Vec<BlsSignature>,
-    cosigned: BitArray,
+    pub cosigned: BitArray,
     cosigned_weight: u128,
     qcs: BTreeMap<usize, QuorumCertificate>,
 }
@@ -99,13 +112,23 @@ impl From<Hash> for MissingBlockError {
     }
 }
 
-type BlockVotes = (Vec<BlsSignature>, BitArray, u128, bool);
+#[derive(Debug, Clone, Serialize)]
+pub struct BlockVotes {
+    pub signatures: Vec<BlsSignature>,
+    pub cosigned: BitArray,
+    pub cosigned_weight: u128,
+    pub supermajority_reached: bool,
+}
 
-#[derive(Debug)]
-struct CachedLeader {
-    block_number: u64,
-    view: u64,
-    next_leader: Validator,
+impl Default for BlockVotes {
+    fn default() -> BlockVotes {
+        BlockVotes {
+            signatures: Vec::new(),
+            cosigned: bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE],
+            cosigned_weight: 0,
+            supermajority_reached: false,
+        }
+    }
 }
 
 type EarlyProposal = (
@@ -113,7 +136,42 @@ type EarlyProposal = (
     Vec<VerifiedTransaction>,
     EthTrie<MemoryDB>,
     EthTrie<MemoryDB>,
+    u128, // Cumulative gas fee which will be sent to ZERO account
 );
+
+#[derive(Debug)]
+struct ReceiptsCache {
+    hash: Hash,
+    receipts: HashMap<Hash, (TransactionReceipt, Vec<Address>)>,
+}
+
+impl Default for ReceiptsCache {
+    fn default() -> Self {
+        Self {
+            hash: Hash::ZERO,
+            receipts: Default::default(),
+        }
+    }
+}
+
+impl ReceiptsCache {
+    fn insert(&mut self, hash: Hash, receipt: TransactionReceipt, touched_addresses: Vec<Address>) {
+        self.receipts.insert(hash, (receipt, touched_addresses));
+    }
+
+    fn set_hash(&mut self, hash: Hash) {
+        self.hash = hash;
+    }
+
+    fn remove(&mut self, hash: &Hash) -> Option<(TransactionReceipt, Vec<Address>)> {
+        self.receipts.remove(hash)
+    }
+
+    fn clear(&mut self) {
+        self.hash = Hash::ZERO;
+        self.receipts.clear();
+    }
+}
 
 /// The consensus algorithm is pipelined fast-hotstuff, as given in this paper: https://arxiv.org/pdf/2010.11454.pdf
 ///
@@ -139,7 +197,7 @@ type EarlyProposal = (
 /// - In this case, the view will time out with no leader successfully proposing a block.
 /// - From this point forward, block view =/= block number
 /// - The view will increment on all or some nodes. The timeout for view increments doubles each time,
-///    which guarantees all nodes eventually are on the same view
+///   which guarantees all nodes eventually are on the same view
 /// - Nodes send a NewView message, which is a signature over the view, and their highQC
 /// - This is collected to form an aggQC
 /// - This aggQC is used to propose a block
@@ -151,48 +209,54 @@ pub struct Consensus {
     config: NodeConfig,
     message_sender: MessageSender,
     reset_timeout: UnboundedSender<Duration>,
-    pub block_store: BlockStore,
-    latest_leader_cache: RefCell<Option<CachedLeader>>,
-    votes: BTreeMap<Hash, BlockVotes>,
+    pub sync: Sync,
+    pub votes: DashMap<Hash, BlockVotes>,
     /// Votes for a block we don't have stored. They are retained in case we receive the block later.
     // TODO(#719): Consider how to limit the size of this.
-    buffered_votes: BTreeMap<Hash, Vec<Vote>>,
-    new_views: BTreeMap<u64, NewViewVote>,
-    new_view_message_cache: Option<NetworkMessage>,
+    pub buffered_votes: DashMap<Hash, Vec<(PeerId, Vote)>>,
+    pub new_views: DashMap<u64, NewViewVote>,
+    network_message_cache: Option<NetworkMessage>,
     pub high_qc: QuorumCertificate,
     /// The account store.
     state: State,
     /// The persistence database
-    db: Arc<Db>,
-    /// Receipts cache
-    receipts_cache: HashMap<Hash, (TransactionReceipt, Vec<Address>)>,
-    receipts_cache_hash: Hash,
+    pub db: Arc<Db>,
+    receipts_cache: Mutex<ReceiptsCache>,
     /// Actions that act on newly created blocks
-    transaction_pool: TransactionPool,
+    pub transaction_pool: RwLock<TransactionPool>,
     /// Pending proposal. Gets created as soon as we become aware that we are leader for this view.
-    early_proposal: Option<EarlyProposal>,
+    early_proposal: RwLock<Option<EarlyProposal>>,
     /// Flag indicating that block broadcasting should be postponed at least until block_time is reached
-    create_next_block_on_timeout: bool,
+    create_next_block_on_timeout: AtomicBool,
     /// Timestamp of most recent view change
-    view_updated_at: SystemTime,
+    view_updated_at: RwLock<SystemTime>,
     pub new_blocks: broadcast::Sender<BlockHeader>,
     pub new_receipts: broadcast::Sender<(TransactionReceipt, usize)>,
     pub new_transactions: broadcast::Sender<VerifiedTransaction>,
     pub new_transaction_hashes: broadcast::Sender<Hash>,
+    /// Used for testing and test network recovery
+    force_view: Option<(u64, DateTime)>,
+    /// Mark if this node is in the committee at it's current head block height
+    in_committee: bool,
 }
 
 impl Consensus {
+    // determined empirically
+    const PROP_SIZE_THRESHOLD: usize = 921 * 1024; // 90% of 1MB
+    // view buffer size limit
+    const VIEW_BUFFER_THRESHOLD: usize = 1000;
+
     pub fn new(
         secret_key: SecretKey,
         config: NodeConfig,
         message_sender: MessageSender,
         reset_timeout: UnboundedSender<Duration>,
         db: Arc<Db>,
+        peers: Arc<SyncPeers>,
     ) -> Result<Self> {
         trace!(
             "Opening database in {:?} for shard {}",
-            config.data_dir,
-            config.eth_chain_id
+            config.data_dir, config.eth_chain_id
         );
 
         // Start chain from checkpoint. Load data file and initialise data in tables
@@ -206,18 +270,16 @@ impl Consensus {
             )?;
         }
 
-        // It is important to create the `BlockStore` after the checkpoint has been loaded into the DB. The
-        // `BlockStore` pre-loads and caches information about the currently stored blocks.
-        let block_store = BlockStore::new(&config, db.clone(), message_sender.clone())?;
-
         let latest_block = db
             .get_finalized_view()?
-            .map(|view| {
-                block_store
-                    .get_block_by_view(view)?
-                    .ok_or_else(|| anyhow!("no header found at view {view}"))
+            .and_then(|view| {
+                db.get_block_hash_by_view(view)
+                    .expect("no header found at view {view}")
             })
-            .transpose()?;
+            .and_then(|hash| {
+                db.get_block(hash.into())
+                    .expect("no block found for hash {hash}")
+            });
 
         let mut state = if let Some(latest_block) = &latest_block {
             trace!("Loading state from latest block");
@@ -225,16 +287,12 @@ impl Consensus {
                 db.state_trie()?,
                 latest_block.state_root_hash().into(),
                 config.clone(),
-                block_store.clone_read_only(),
+                db.clone(),
             )
         } else {
             trace!("Constructing new state from genesis");
-            State::new_with_genesis(
-                db.state_trie()?,
-                config.clone(),
-                block_store.clone_read_only(),
-            )?
-        };
+            State::new_with_genesis(db.state_trie()?, config.clone(), db.clone())
+        }?;
 
         let (latest_block, latest_block_view) = match latest_block {
             Some(l) => (Some(l.clone()), l.view()),
@@ -244,18 +302,17 @@ impl Consensus {
             }
         };
 
-        let (start_view, finalized_view, high_qc) = {
+        let (start_view, high_qc) = {
             match db.get_high_qc()? {
                 Some(qc) => {
-                    let high_block = block_store
-                        .get_block(qc.block_hash)?
+                    let high_block = db
+                        .get_block(qc.block_hash.into())?
                         .ok_or_else(|| anyhow!("missing block that high QC points to!"))?;
-
-                    let finalized_number = db
+                    let finalized_view = db
                         .get_finalized_view()?
                         .ok_or_else(|| anyhow!("missing latest finalized view!"))?;
                     let finalized_block = db
-                        .get_block_by_view(finalized_number)?
+                        .get_block(BlockFilter::View(finalized_view))?
                         .ok_or_else(|| anyhow!("missing finalized block!"))?;
 
                     // If latest view was written to disk then always start from there. Otherwise start from (highest out of high block and finalised block) + 1
@@ -269,11 +326,11 @@ impl Consensus {
                     trace!(
                         "recovery: high_block view {0}, finalized_number {1}, start_view {2}",
                         high_block.view(),
-                        finalized_number,
+                        finalized_view,
                         start_view
                     );
 
-                    if finalized_number > high_block.view() {
+                    if finalized_view > high_block.view() {
                         // We know of a finalized view higher than the view in finalized_number; start there.
                         state.set_to_root(finalized_block.header.state_root_hash.into());
                     } else {
@@ -281,73 +338,59 @@ impl Consensus {
                         state.set_to_root(high_block.header.state_root_hash.into());
                     }
 
-                    // If we have newer blocks, erase them
-                    // @todo .. more elegantly :-)
-                    loop {
-                        let highest_block_number = db
-                            .get_highest_canonical_block_number()?
-                            .ok_or_else(|| anyhow!("can't find highest block num in database!"))?;
-
-                        let head_block = block_store
-                            .get_canonical_block_by_number(highest_block_number)?
-                            .ok_or_else(|| anyhow!("missing head block!"))?;
-                        trace!(
-                            "recovery: highest_block_number {highest_block_number} view {0}",
-                            head_block.view()
-                        );
-
-                        if head_block.view() > high_block.view()
-                            && head_block.view() > finalized_number
-                        {
-                            trace!("recovery: stored block {0} reverted", highest_block_number);
-                            db.remove_transactions_executed_in_block(&head_block.hash())?;
-                            db.remove_block(&head_block)?;
-                        } else {
-                            break;
-                        }
-                    }
-
                     info!(
                         "During recovery, starting consensus at view {}, finalised view {}",
-                        start_view, finalized_number
+                        start_view, finalized_view
                     );
-                    (start_view, finalized_number, qc)
+                    (start_view, qc)
                 }
                 None => {
                     let start_view = 1;
                     let finalized_view = 0;
-                    (start_view, finalized_view, QuorumCertificate::genesis())
+                    // We always mark view 1 as voted even though we haven't voted yet, because we can only send a
+                    // `Vote` for the genesis block. We can never send `NewView(1)`.
+                    db.set_view(start_view, true)?;
+                    db.set_finalized_view(finalized_view)?;
+                    (start_view, QuorumCertificate::genesis())
                 }
             }
         };
 
+        let sync = Sync::new(
+            &config,
+            db.clone(),
+            &latest_block,
+            message_sender.clone(),
+            peers.clone(),
+        )?;
+
+        let enable_ots_indices = config.enable_ots_indices;
+
         let mut consensus = Consensus {
             secret_key,
             config,
-            block_store,
-            latest_leader_cache: RefCell::new(None),
+            sync,
             message_sender,
             reset_timeout,
-            votes: BTreeMap::new(),
-            buffered_votes: BTreeMap::new(),
-            new_views: BTreeMap::new(),
-            new_view_message_cache: None,
+            votes: DashMap::new(),
+            buffered_votes: DashMap::new(),
+            new_views: DashMap::new(),
+            network_message_cache: None,
             high_qc,
             state,
-            db,
-            receipts_cache: HashMap::new(),
-            receipts_cache_hash: Hash::ZERO,
+            db: db.clone(),
+            receipts_cache: Default::default(),
             transaction_pool: Default::default(),
-            early_proposal: None,
-            create_next_block_on_timeout: false,
-            view_updated_at: SystemTime::now(),
+            early_proposal: Default::default(),
+            create_next_block_on_timeout: AtomicBool::new(false),
+            view_updated_at: RwLock::new(SystemTime::now()),
             new_blocks: broadcast::Sender::new(4),
             new_receipts: broadcast::Sender::new(128),
             new_transactions: broadcast::Sender::new(128),
             new_transaction_hashes: broadcast::Sender::new(128),
+            force_view: None,
+            in_committee: true,
         };
-        consensus.db.set_view(start_view)?;
-        consensus.set_finalized_view(finalized_view)?;
 
         // If we're at genesis, add the genesis block and return
         if latest_block_view == 0 {
@@ -361,6 +404,8 @@ impl Consensus {
             // treat genesis as finalized
             consensus.set_finalized_view(latest_block_view)?;
             return Ok(consensus);
+        } else if enable_ots_indices {
+            aux::check_and_build_ots_indices(db, latest_block_view)?;
         }
 
         // If we started from a checkpoint, execute the checkpointed block now
@@ -391,47 +436,25 @@ impl Consensus {
                     view_diff,
                     min_view_since_high_qc_updated
                 );
-                consensus.db.set_view(min_view_since_high_qc_updated)?;
+                consensus
+                    .db
+                    .set_view(min_view_since_high_qc_updated, false)?;
             }
+        }
 
-            // Remind block_store of our peers and request any potentially missing blocks
-            let high_block = consensus
-                .block_store
-                .get_block(high_qc.block_hash)?
-                .ok_or_else(|| anyhow!("missing block that high QC points to!"))?;
-
-            let executed_block = BlockHeader {
-                number: high_block.header.number + 1,
-                ..Default::default()
-            };
-            let state_at = consensus.state.at_root(high_block.state_root_hash().into());
-
-            // Grab last seen committee's peerIds in case others also went offline
-            let committee = state_at.get_stakers(executed_block)?;
-            let recent_peer_ids: Vec<_> = committee
-                .iter()
-                .filter(|&&peer_public_key| peer_public_key != consensus.public_key())
-                .filter_map(|&peer_public_key| {
-                    state_at.get_peer_id(peer_public_key).unwrap_or(None)
-                })
-                .collect();
-
-            consensus
-                .block_store
-                .set_peers_and_view(high_block.view(), &recent_peer_ids)?;
-            // It is likley that we missed the most recent proposal. Request it now
-            consensus
-                .block_store
-                .request_blocks(&RangeMap::from_closed_interval(
-                    high_block.view(),
-                    high_block.view() + 1,
-                ))?;
+        // Set self.network_message_cache incase the network is stuck
+        if consensus.db.get_voted_in_view()? {
+            let block = consensus.head_block();
+            if let Some(leader) = consensus.leader_at_block(&block, consensus.get_view()?) {
+                consensus.build_vote(leader.peer_id, consensus.vote_from_block(&block));
+            }
+        } else {
+            consensus.build_new_view()?;
         }
 
         Ok(consensus)
     }
 
-    /// Build NewView message for this view
     fn build_new_view(&mut self) -> Result<NetworkMessage> {
         let view = self.get_view()?;
         let block = self.get_block(&self.high_qc.block_hash)?.ok_or_else(|| {
@@ -448,8 +471,14 @@ impl Consensus {
             ))),
         );
 
-        self.new_view_message_cache = Some(new_view_message.clone());
+        self.network_message_cache = Some(new_view_message.clone());
         Ok(new_view_message)
+    }
+
+    fn build_vote(&mut self, peer_id: PeerId, vote: Vote) -> NetworkMessage {
+        let network_msg = (Some(peer_id), ExternalMessage::Vote(Box::new(vote)));
+        self.network_message_cache = Some(network_msg.clone());
+        network_msg
     }
 
     pub fn public_key(&self) -> NodePublicKey {
@@ -458,16 +487,27 @@ impl Consensus {
 
     pub fn head_block(&self) -> Block {
         let highest_block_number = self
-            .block_store
+            .db
             .get_highest_canonical_block_number()
             .unwrap()
             .unwrap();
-        self.block_store
-            .get_canonical_block_by_number(highest_block_number)
+        self.db
+            .get_block(BlockFilter::Height(highest_block_number))
             .unwrap()
             .unwrap()
     }
 
+    pub fn get_highest_canonical_block_number(&self) -> u64 {
+        self.db
+            .get_highest_canonical_block_number()
+            .unwrap()
+            .unwrap()
+    }
+
+    /// Function is called when the node has no other work to do. Check if:
+    ///     - Block should be proposed if we are leader
+    ///     - View should be timed out because no proposal received in time
+    ///     - Current view's NewView or Vote should be re-published
     pub fn timeout(&mut self) -> Result<Option<NetworkMessage>> {
         let view = self.get_view()?;
         // We never want to timeout while on view 1
@@ -484,13 +524,15 @@ impl Consensus {
             let stakers = self.state.get_stakers(next_block_header)?;
             // If we're in the genesis committee, vote again.
             if stakers.iter().any(|v| *v == self.public_key()) {
-                info!("timeout in view: {:?}, we will vote for block rather than incrementing view, block hash: {}", view, block.hash());
+                info!(
+                    "timeout in view: {:?}, we will vote for block rather than incrementing view, block hash: {}",
+                    view,
+                    block.hash()
+                );
                 let leader = self.leader_at_block(&block, view).unwrap();
                 let vote = self.vote_from_block(&block);
-                return Ok(Some((
-                    Some(leader.peer_id),
-                    ExternalMessage::Vote(Box::new(vote)),
-                )));
+                let network_msg = self.build_vote(leader.peer_id, vote);
+                return Ok(Some(network_msg));
             } else {
                 info!(
                     "We are on view: {:?} but we are not a validator, so we are waiting.",
@@ -510,19 +552,26 @@ impl Consensus {
             milliseconds_since_last_view_change,
             exponential_backoff_timeout,
             milliseconds_remaining_of_block_time,
-            "timeout reached create_next_block_on_timeout: {}",
+            "timeout reached create_next_block_on_timeout: {:?}",
             self.create_next_block_on_timeout
         );
 
-        if self.create_next_block_on_timeout {
+        if self.create_next_block_on_timeout.load(Ordering::SeqCst) {
             // Check if enough time elapsed to propose block
             if milliseconds_remaining_of_block_time == 0 {
-                if let Ok(Some((block, transactions))) = self.propose_new_block() {
-                    self.create_next_block_on_timeout = false;
-                    return Ok(Some((
-                        None,
-                        ExternalMessage::Proposal(Proposal::from_parts(block, transactions)),
-                    )));
+                match self.propose_new_block(None) {
+                    Ok(Some(network_message)) => {
+                        self.create_next_block_on_timeout
+                            .store(false, Ordering::SeqCst);
+                        return Ok(Some(network_message));
+                    }
+                    Ok(None) => {
+                        error!("Failed to finalise block proposal.");
+                        self.create_next_block_on_timeout
+                            .store(false, Ordering::SeqCst);
+                        self.early_proposal_clear()?;
+                    }
+                    Err(e) => error!("Failed to finalise proposal: {e}"),
                 };
             } else {
                 self.reset_timeout
@@ -536,35 +585,48 @@ impl Consensus {
         if milliseconds_since_last_view_change < exponential_backoff_timeout {
             trace!(
                 "Not proceeding with view change. Current view: {} - time since last: {}, timeout requires: {}",
-                view,
-                milliseconds_since_last_view_change,
-                exponential_backoff_timeout
+                view, milliseconds_since_last_view_change, exponential_backoff_timeout
             );
 
             // Resend NewView message for this view if timeout period is a multiple of consensus_timeout
             if (milliseconds_since_last_view_change
                 > self.config.consensus.consensus_timeout.as_millis() as u64)
+                && !self.config.consensus.new_view_broadcast_interval.is_zero()
                 && (Duration::from_millis(milliseconds_since_last_view_change).as_secs()
-                    % self.config.consensus.consensus_timeout.as_secs())
+                    % self.config.consensus.new_view_broadcast_interval.as_secs())
                     == 0
             {
-                if let Some((_, ExternalMessage::NewView(new_view))) =
-                    self.new_view_message_cache.as_ref()
-                {
-                    if new_view.view == self.get_view()? {
-                        // When re-sending new view messages we broadcast them, rather than only sending them to the
-                        // view leader. This speeds up network recovery when many nodes have different high QCs.
-                        return Ok(Some((None, ExternalMessage::NewView(new_view.clone()))));
+                match self.network_message_cache.clone() {
+                    Some((_, ExternalMessage::NewView(new_view))) => {
+                        // If new_view message is not for this view then it must be outdated
+                        if new_view.view == self.get_view()? {
+                            // When re-sending new view messages we broadcast them, rather than only sending them to the
+                            // view leader. This speeds up network recovery when many nodes have different high QCs.
+                            self.new_view(self.peer_id(), *new_view.clone())?;
+                            return Ok(Some((None, ExternalMessage::NewView(new_view))));
+                        }
                     }
-                    // If new_view message is not for this view then it must be outdated
-                    self.new_view_message_cache = None;
+                    Some((peer, ExternalMessage::Vote(vote))) => {
+                        if vote.view + 1 == self.get_view()? {
+                            return Ok(Some((peer, ExternalMessage::Vote(vote))));
+                        }
+                    }
+                    _ => {}
                 }
             }
 
             return Ok(None);
         }
 
-        trace!("Considering view change: view: {} time since: {} timeout: {} last known view: {} last hash: {}", view, milliseconds_since_last_view_change, exponential_backoff_timeout, self.high_qc.view, self.head_block().hash());
+        trace!(
+            "Considering view change: view: {} time since: {} timeout: {} last known view: {}, last height: {}, last hash: {}",
+            view,
+            milliseconds_since_last_view_change,
+            exponential_backoff_timeout,
+            self.high_qc.view,
+            self.head_block().number(),
+            self.head_block().hash()
+        );
 
         let block = self.get_block(&self.high_qc.block_hash)?.ok_or_else(|| {
             anyhow!("missing block corresponding to our high qc - this should never happen")
@@ -594,15 +656,16 @@ impl Consensus {
             view, next_view, next_exponential_backoff_timeout
         );
 
-        self.set_view(next_view)?;
+        self.set_view(next_view, false)?;
         let new_view = self.build_new_view()?;
         Ok(Some(new_view))
     }
 
     /// All values returned in milliseconds
     pub fn get_consensus_timeout_params(&self) -> Result<(u64, u64, u64)> {
+        let view = self.get_view()?;
         let milliseconds_since_last_view_change = SystemTime::now()
-            .duration_since(self.view_updated_at)
+            .duration_since(*self.view_updated_at.read())
             .unwrap_or_default();
         let mut milliseconds_remaining_of_block_time = self
             .config
@@ -616,10 +679,23 @@ impl Consensus {
                 .saturating_sub(TIME_TO_ALLOW_PROPOSAL_BROADCAST);
         }
 
+        let mut exponential_backoff_timeout = self.exponential_backoff_timeout(view);
+
+        // Override exponential_backoff_timeout in forced set view scenario
+        match self.force_view {
+            Some((forced_view, timeout_instant)) if view == forced_view => {
+                exponential_backoff_timeout = SystemTime::from(timeout_instant)
+                    .duration_since(SystemTime::now())?
+                    .saturating_sub(milliseconds_since_last_view_change)
+                    .as_millis() as u64;
+            }
+            _ => {}
+        }
+
         Ok((
             milliseconds_since_last_view_change.as_millis() as u64,
             milliseconds_remaining_of_block_time.as_millis() as u64,
-            self.exponential_backoff_timeout(self.get_view()?),
+            exponential_backoff_timeout,
         ))
     }
 
@@ -627,30 +703,38 @@ impl Consensus {
         self.secret_key.to_libp2p_keypair().public().to_peer_id()
     }
 
+    /// Validate and process a fully formed proposal
     pub fn proposal(
         &mut self,
         from: PeerId,
         proposal: Proposal,
         during_sync: bool,
     ) -> Result<Option<NetworkMessage>> {
+        if self.sync.am_syncing()? && !during_sync {
+            debug!("skipping block proposal, we are currently syncing");
+            return Ok(None);
+        }
+
         self.cleanup_votes()?;
+
         let (block, transactions) = proposal.into_parts();
         let head_block = self.head_block();
         let mut view = self.get_view()?;
 
-        trace!(
+        info!(
             block_view = block.view(),
             block_number = block.number(),
+            txns = transactions.len(),
             "handling block proposal {}",
             block.hash()
         );
 
-        if self.block_store.contains_block(&block.hash())? {
+        if self.db.contains_block(&block.hash())? {
             trace!("ignoring block proposal, block store contains this block already");
             return Ok(None);
         }
 
-        if block.view() <= head_block.header.view {
+        if !during_sync && block.view() <= head_block.header.view {
             warn!(
                 "Rejecting block - view not greater than our current head block! {} vs {}",
                 block.view(),
@@ -671,29 +755,9 @@ impl Consensus {
             return Ok(None);
         }
 
-        match self.check_block(&block, during_sync) {
-            Ok(()) => {}
-            Err((e, temporary)) => {
-                // If this block could become valid in the future, buffer it.
-                if temporary {
-                    self.block_store.buffer_proposal(
-                        from,
-                        Proposal::from_parts_with_hashes(
-                            block,
-                            transactions
-                                .into_iter()
-                                .map(|tx| {
-                                    let hash = tx.calculate_hash();
-                                    (tx, hash)
-                                })
-                                .collect(),
-                        ),
-                    )?;
-                } else {
-                    warn!(?e, "invalid block proposal received!");
-                }
-                return Ok(None);
-            }
+        if let Err(e) = self.check_block(&block, during_sync) {
+            warn!(?e, "invalid block proposal received!");
+            return Ok(None);
         }
 
         self.update_high_qc_and_view(block.agg.is_some(), block.header.qc)?;
@@ -716,19 +780,6 @@ impl Consensus {
                     block.view(),
                     view
                 );
-                self.block_store.buffer_proposal(
-                    from,
-                    Proposal::from_parts_with_hashes(
-                        block,
-                        transactions
-                            .into_iter()
-                            .map(|tx| {
-                                let hash = tx.calculate_hash();
-                                (tx, hash)
-                            })
-                            .collect(),
-                    ),
-                )?;
                 return Ok(None);
             }
 
@@ -752,7 +803,12 @@ impl Consensus {
 
             // Must make sure state root hash is set to the parent's state root hash before applying transactions
             if self.state.root_hash()? != parent.state_root_hash() {
-                warn!("state root hash prior to block execution mismatch, expected: {:?}, actual: {:?}, head: {:?}", parent.state_root_hash(), self.state.root_hash()?, head_block);
+                warn!(
+                    "state root hash prior to block execution mismatch, expected: {:?}, actual: {:?}, head: {:?}",
+                    parent.state_root_hash(),
+                    self.state.root_hash()?,
+                    head_block
+                );
                 self.state.set_to_root(parent.state_root_hash().into());
             }
             let stakers: Vec<_> = self.state.get_stakers(block.header)?;
@@ -764,29 +820,28 @@ impl Consensus {
 
             if view != proposal_view + 1 {
                 view = proposal_view + 1;
-                self.set_view(view)?;
+                // We will send a vote in this view.
+                self.set_view(view, true)?;
                 debug!("*** setting view to proposal view... view is now {}", view);
             }
 
-            if let Some(buffered_votes) = self.buffered_votes.remove(&block.hash()) {
+            if let Some((_, buffered_votes)) = self.buffered_votes.remove(&block.hash()) {
                 // If we've buffered votes for this block, process them now.
                 let count = buffered_votes.len();
-                for (i, vote) in buffered_votes.into_iter().enumerate() {
+                for (i, (from, vote)) in buffered_votes.into_iter().enumerate() {
                     trace!("applying buffered vote {} of {count}", i + 1);
-                    if let Some((block, transactions)) = self.vote(vote)? {
+                    if let Some(network_message) = self.vote(from, vote)? {
                         // If we reached the supermajority while processing this vote, send the next block proposal.
                         // Further votes are ignored (including our own).
                         // TODO(#720): We should prioritise our own vote.
                         trace!("supermajority reached, sending next proposal");
-                        return Ok(Some((
-                            None,
-                            ExternalMessage::Proposal(Proposal::from_parts(block, transactions)),
-                        )));
+                        return Ok(Some(network_message));
                     }
                     // A bit hacky: processing of our buffered votes may have resulted in an early_proposal be created and awaiting empty block timeout for broadcast. In this case we must return now
-                    if self.create_next_block_on_timeout
-                        && self.early_proposal.is_some()
-                        && self.early_proposal.as_ref().unwrap().0.view() == proposal_view + 1
+                    let early_proposal = self.early_proposal.read();
+                    if self.create_next_block_on_timeout.load(Ordering::SeqCst)
+                        && early_proposal.is_some()
+                        && early_proposal.as_ref().unwrap().0.view() == proposal_view + 1
                     {
                         trace!("supermajority reached, early proposal awaiting broadcast");
                         return Ok(None);
@@ -805,45 +860,35 @@ impl Consensus {
             let stakers = self.state.get_stakers(next_block_header)?;
 
             if !stakers.iter().any(|v| *v == self.public_key()) {
+                self.in_committee(false)?;
                 debug!(
                     "can't vote for block proposal, we aren't in the committee of length {:?}",
                     stakers.len()
                 );
                 return Ok(None);
             } else {
+                self.in_committee(true)?;
                 let vote = self.vote_from_block(&block);
                 let next_leader = self.leader_at_block(&block, view);
 
-                if self.create_next_block_on_timeout {
+                if self.create_next_block_on_timeout.load(Ordering::SeqCst) {
                     warn!("Create block on timeout set. Clearing");
-                    self.create_next_block_on_timeout = false;
+                    self.create_next_block_on_timeout
+                        .store(false, Ordering::SeqCst);
                 }
-                if self.early_proposal.is_some() {
-                    let (_, txns, _, _) = self.early_proposal.take().unwrap();
-                    for txn in txns.into_iter().rev() {
-                        self.transaction_pool.insert_ready_transaction(txn)?;
-                    }
-                    warn!("Early proposal exists but we are not leader. Clearing proposal");
-                    self.early_proposal = None;
-                }
+
+                // Clear early_proposal in case it exists.
+                self.early_proposal_clear()?;
 
                 let Some(next_leader) = next_leader else {
                     warn!("Next leader is currently not reachable, has it joined committee yet?");
                     return Ok(None);
                 };
 
-                self.latest_leader_cache.replace(Some(CachedLeader {
-                    block_number: block.number(),
-                    view,
-                    next_leader,
-                }));
-
                 if !during_sync {
                     trace!(proposal_view, ?next_leader, "voting for block");
-                    return Ok(Some((
-                        Some(next_leader.peer_id),
-                        ExternalMessage::Vote(Box::new(vote)),
-                    )));
+                    let network_message = self.build_vote(next_leader.peer_id, vote);
+                    return Ok(Some(network_message));
                 }
             }
         } else {
@@ -853,7 +898,7 @@ impl Consensus {
         Ok(None)
     }
 
-    /// Apply the rewards at the tail-end of the Proposal.
+    /// For a given State apply a Proposal's rewards. Must be performed at the tail-end of the Proposal's processing.
     /// Note that the algorithm below is mentioned in cfg.rs - if you change the way
     /// rewards are calculated, please change the comments in the configuration structure there.
     fn apply_rewards_late_at(
@@ -864,6 +909,14 @@ impl Consensus {
         proposer: NodePublicKey,
         block: &Block,
     ) -> Result<()> {
+        let earned_reward = LazyCell::new(|| {
+            let meter = opentelemetry::global::meter("zilliqa");
+            meter
+                .f64_counter("validator_earned_reward")
+                .with_unit("ZIL")
+                .build()
+        });
+
         debug!("apply late rewards in view {}", block.view());
         let rewards_per_block: u128 = *config.rewards_per_hour / config.blocks_per_hour as u128;
 
@@ -872,7 +925,6 @@ impl Consensus {
 
         let proposer_address = parent_state.get_reward_address(proposer)?;
 
-        let mut total_cosigner_stake = 0;
         let cosigner_stake: Vec<_> = committee
             .iter()
             .enumerate()
@@ -884,10 +936,14 @@ impl Consensus {
                     .unwrap()
                     .unwrap()
                     .get();
-                total_cosigner_stake += stake;
                 (reward_address, stake)
             })
             .collect();
+
+        let total_cosigner_stake = cosigner_stake.iter().fold(0, |sum, c| sum + c.1);
+        if total_cosigner_stake == 0 {
+            return Err(anyhow!("total stake is 0"));
+        }
 
         // Track total awards given out. This may be different to rewards_per_block because we round down on division when we split the rewards
         let mut total_rewards_issued = 0;
@@ -903,6 +959,12 @@ impl Consensus {
                 Ok(())
             })?;
             total_rewards_issued += reward;
+
+            let attributes = [
+                KeyValue::new("address", format!("{proposer_address:?}")),
+                KeyValue::new("role", "proposer"),
+            ];
+            earned_reward.add((reward as f64) / 1e18, &attributes);
         }
 
         // Reward the committee
@@ -919,6 +981,12 @@ impl Consensus {
                     Ok(())
                 })?;
                 total_rewards_issued += reward;
+
+                let attributes = [
+                    KeyValue::new("address", format!("{cosigner:?}")),
+                    KeyValue::new("role", "cosigner"),
+                ];
+                earned_reward.add((reward as f64) / 1e18, &attributes);
             }
         }
 
@@ -934,17 +1002,7 @@ impl Consensus {
         Ok(())
     }
 
-    pub fn apply_transaction<I: Inspector<PendingState> + ScillaInspector>(
-        &mut self,
-        txn: VerifiedTransaction,
-        current_block: BlockHeader,
-        inspector: I,
-        enable_inspector: bool,
-    ) -> Result<Option<TransactionApplyResult>> {
-        let state = &mut self.state;
-        Self::apply_transaction_at(state, txn, current_block, inspector, enable_inspector)
-    }
-
+    /// For a given State apply the given transaction
     pub fn apply_transaction_at<I: Inspector<PendingState> + ScillaInspector>(
         state: &mut State,
         txn: VerifiedTransaction,
@@ -971,15 +1029,35 @@ impl Consensus {
         Ok(Some(result))
     }
 
-    pub fn txpool_content(&self) -> Result<TxPoolContent> {
-        self.transaction_pool.preview_content(&self.state)
+    pub fn txpool_content(&mut self) -> TxPoolContent {
+        let pool = self.transaction_pool.read();
+        pool.preview_content()
     }
 
-    pub fn pending_transaction_count(&self, account: Address) -> u64 {
-        let current_nonce = self.state.must_get_account(account).nonce;
+    pub fn txpool_content_from(&mut self, address: &Address) -> TxPoolContentFrom {
+        let pool = self.transaction_pool.read();
+        pool.preview_content_from(address)
+    }
 
-        self.transaction_pool
-            .pending_transaction_count(account, current_nonce)
+    pub fn txpool_status(&mut self) -> TxPoolStatus {
+        let pool = self.transaction_pool.read();
+        pool.preview_status()
+    }
+
+    pub fn get_pending_or_queued(
+        &self,
+        txn: &VerifiedTransaction,
+    ) -> Result<Option<PendingOrQueued>> {
+        let pool = self.transaction_pool.read();
+        pool.get_pending_or_queued(txn)
+    }
+
+    /// This is total transactions for the account, including both executed and pending
+    pub fn pending_transaction_count(&self, account_address: Address) -> u64 {
+        let account_data = self.state.must_get_account(account_address);
+        let current_nonce = account_data.nonce;
+        let pool = self.transaction_pool.read();
+        current_nonce + pool.account_pending_transaction_count(&account_address)
     }
 
     pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
@@ -991,28 +1069,29 @@ impl Consensus {
     }
 
     /// Clear up anything in memory that is no longer required. This is to avoid memory leaks.
-    pub fn cleanup_votes(&mut self) -> Result<()> {
+    pub fn cleanup_votes(&self) -> Result<()> {
         // Wrt votes, we only care about votes on hashes for the current view or higher
-        let keys_to_process: Vec<_> = self.votes.keys().copied().collect();
-
-        for key in keys_to_process {
-            if let Ok(Some(block)) = self.get_block(&key) {
+        let finalized_view = self.get_finalized_view()?;
+        self.votes.retain(|key, _| {
+            if let Ok(Some(block)) = self.get_block(key) {
                 // Remove votes for blocks that have been finalized. However, note that the block hashes which are keys
                 // into `self.votes` are the parent hash of the (potential) block that is being voted on. Therefore, we
                 // subtract one in this condition to ensure there is no chance of removing votes for blocks that still
                 // have a chance of being mined. It is possible this is unnecessary, since `self.finalized_view` is
                 // already at least 2 views behind the head of the chain, but keeping one extra vote in memory doesn't
                 // cost much and does make us more confident that we won't dispose of valid votes.
-                if block.view() < self.get_finalized_view()?.saturating_sub(1) {
+                if block.view() < finalized_view.saturating_sub(1) {
                     trace!(block_view = %block.view(), block_hash = %key, "cleaning vote");
-                    self.votes.remove(&key);
+                    return false;
                 }
             } else {
                 warn!("Missing block for vote (this shouldn't happen), removing from memory");
                 trace!(block_hash = %key, "cleaning vote");
-                self.votes.remove(&key);
+                return false;
             }
-        }
+
+            true
+        });
 
         // Wrt new views, we only care about new views for the current view or higher
         let view = self.get_view()?;
@@ -1020,15 +1099,22 @@ impl Consensus {
         Ok(())
     }
 
-    pub fn vote(&mut self, vote: Vote) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
+    /// Process a Vote message
+    pub fn vote(&self, peer_id: PeerId, vote: Vote) -> Result<Option<NetworkMessage>> {
         let block_hash = vote.block_hash;
         let block_view = vote.view;
         let current_view = self.get_view()?;
-        trace!(block_view, current_view, %block_hash, "handling vote");
+        info!(block_view, current_view, %block_hash, "handling vote from: {:?}", peer_id);
 
-        // if the vote is too old and does not count anymore
+        // if the vote is too old; or too new
         if block_view + 1 < current_view {
             trace!("vote is too old");
+            return Ok(None);
+        } else if block_view > current_view + 500 {
+            // when stuck in exponential backoff, +500 is effectively forever;
+            // when active syncing at ~30 blk/s, means that we're > 3 views behind.
+            // in either case, that vote is quite meaningless at this point and can be ignored.
+            trace!("vote is too early");
             return Ok(None);
         }
 
@@ -1040,14 +1126,26 @@ impl Consensus {
 
         // Retrieve the actual block this vote is for.
         let Some(block) = self.get_block(&block_hash)? else {
-            trace!("vote for unknown block, buffering");
+            // We try to limit the size of the buffered votes to prevent memory exhaustion.
+            // If the buffered votes exceed the threshold, we purge as many stale votes as possible.
+            // While this is not guaranteed to reduce the size of the buffered votes, it is a best-effort attempt.
+            if self.buffered_votes.len() > Self::VIEW_BUFFER_THRESHOLD {
+                self.buffered_votes.retain(|_hash, votes| {
+                    // purge stale votes
+                    votes.first().map(|(_p, v)| v.view + 1).unwrap_or_default() >= current_view
+                });
+            }
             // If we don't have the block yet, we buffer the vote in case we recieve the block later. Note that we
             // don't know the leader of this view without the block, so we may be storing this unnecessarily, however
             // non-malicious nodes should only have sent us this vote if they thought we were the leader.
-            self.buffered_votes
-                .entry(block_hash)
-                .or_default()
-                .push(vote);
+            let mut buf = self.buffered_votes.entry(block_hash).or_default();
+            if buf.len() < MAX_COMMITTEE_SIZE {
+                // we only ever need 2/3 of the committee, so it should not exceed this number.
+                trace!("vote for unknown block, buffering");
+                buf.push((peer_id, vote));
+            } else {
+                error!(%peer_id, view=%block_view, "vote for unknown block, dropping");
+            }
             return Ok(None);
         };
 
@@ -1076,78 +1174,63 @@ impl Consensus {
         let Some((index, _)) = committee
             .iter()
             .enumerate()
-            .find(|(_, &v)| v == vote.public_key)
+            .find(|&(_, &v)| v == vote.public_key)
         else {
             warn!("Skipping vote outside of committee");
             return Ok(None);
         };
 
-        let (mut signatures, mut cosigned, mut cosigned_weight, mut supermajority_reached) =
-            self.votes.get(&block_hash).cloned().unwrap_or_else(|| {
-                (
-                    Vec::new(),
-                    bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE],
-                    0,
-                    false,
-                )
-            });
+        let mut votes = self.votes.entry(block_hash).or_default();
 
-        if supermajority_reached {
-            trace!(
-                "(vote) supermajority already reached in this round {}",
+        if votes.supermajority_reached {
+            info!(
+                "(vote) supermajority already reached in this view {}",
                 current_view
             );
             return Ok(None);
         }
 
         // if the vote is new, store it
-        if !cosigned[index] {
-            signatures.push(vote.signature());
-            cosigned.set(index, true);
+        if !votes.cosigned[index] {
+            votes.signatures.push(vote.signature());
+            votes.cosigned.set(index, true);
             // Update state to root pointed by voted block (in meantime it might have changed!)
-            self.state.set_to_root(block.state_root_hash().into());
-            let Some(weight) = self.state.get_stake(vote.public_key, executed_block)? else {
+            let state = self.state.at_root(block.state_root_hash().into());
+            let Some(weight) = state.get_stake(vote.public_key, executed_block)? else {
                 return Err(anyhow!("vote from validator without stake"));
             };
-            cosigned_weight += weight.get();
+            votes.cosigned_weight += weight.get();
 
             let total_weight = self.total_weight(&committee, executed_block);
-            supermajority_reached = cosigned_weight * 3 > total_weight * 2;
+            votes.supermajority_reached = votes.cosigned_weight * 3 > total_weight * 2;
 
             trace!(
-                cosigned_weight,
-                supermajority_reached,
+                cosigned_weight = votes.cosigned_weight,
+                supermajority_reached = votes.supermajority_reached,
                 total_weight,
                 current_view,
                 vote_view = block_view + 1,
                 "storing vote"
             );
-            self.votes.insert(
-                block_hash,
-                (
-                    signatures.clone(),
-                    cosigned,
-                    cosigned_weight,
-                    supermajority_reached,
-                ),
-            );
             // if we are already in the round in which the vote counts and have reached supermajority
-            if supermajority_reached {
-                // We propose new block immediately if there's something in mempool or it's the first view
+            if votes.supermajority_reached {
+                // We propose new block immediately if it is the first view
                 // Otherwise the block will be proposed on timeout
                 if current_view == 1 {
-                    return self.propose_new_block();
+                    return self.propose_new_block(Some(&votes));
                 }
 
                 self.early_proposal_assemble_at(None)?;
 
-                return self.ready_for_block_proposal();
+                // It is possible that we have collected votes for a forked block. Do not propose in that case.
+                let early_proposal = self.early_proposal.read();
+                if let Some((block, _, _, _, _)) = early_proposal.as_ref() {
+                    if block.parent_hash() == block_hash {
+                        std::mem::drop(early_proposal);
+                        return self.ready_for_block_proposal(Some(&votes));
+                    }
+                }
             }
-        } else {
-            self.votes.insert(
-                block_hash,
-                (signatures, cosigned, cosigned_weight, supermajority_reached),
-            );
         }
 
         // Either way assemble early proposal now if it doesnt already exist
@@ -1156,19 +1239,22 @@ impl Consensus {
         Ok(None)
     }
 
-    /// Finalise the early Proposal.
+    /// Finalise self.early_proposal.
     /// This should only run after majority QC or aggQC are available.
     /// It applies the rewards and produces the final Proposal.
-    fn early_proposal_finish_at(&mut self, mut proposal: Block) -> Result<Option<Block>> {
+    fn early_proposal_finish_at(
+        &self,
+        mut proposal: Block,
+        cumulative_gas_fee: u128,
+        votes: Option<&BlockVotes>,
+    ) -> Result<Option<Block>> {
         // Retrieve parent block data
         let parent_block = self
             .get_block(&proposal.parent_hash())?
             .context("missing parent block")?;
         let parent_block_hash = parent_block.hash();
 
-        let mut state = self.state.clone();
-        let previous_state_root_hash = state.root_hash()?;
-        state.set_to_root(proposal.state_root_hash().into());
+        let mut state = self.state.at_root(proposal.state_root_hash().into());
 
         // Compute the majority QC. If aggQC exists then QC is already set to correct value.
         let (final_qc, committee) = match proposal.agg {
@@ -1178,60 +1264,45 @@ impl Consensus {
             }
             None => {
                 // Check for majority
-                let Some((signatures, cosigned, _, supermajority_reached)) =
-                    self.votes.get(&parent_block_hash)
-                else {
-                    warn!("tried to finalise a proposal without any votes");
-                    return Ok(None);
+                let votes = match votes {
+                    Some(v) => v,
+                    None => match self.votes.get(&parent_block_hash) {
+                        Some(v) => &v.clone(),
+                        None => {
+                            warn!("tried to finalise a proposal without any votes");
+                            return Ok(None);
+                        }
+                    },
                 };
-                if !supermajority_reached {
+                if !votes.supermajority_reached {
                     warn!("tried to finalise a proposal without majority");
                     return Ok(None);
                 };
                 // Retrieve the previous leader and committee - for rewards
-                let committee = state
+                let committee = self
+                    .state
                     .at_root(parent_block.state_root_hash().into())
                     .get_stakers(proposal.header)?;
                 (
                     self.qc_from_bits(
                         parent_block_hash,
-                        signatures,
-                        *cosigned,
+                        &votes.signatures,
+                        votes.cosigned,
                         parent_block.view(),
                     ),
                     committee,
                 )
             }
         };
-
-        let proposer = self
-            .leader_at_block(&parent_block, proposal.view())
-            .context("missing parent block leader")?
-            .public_key;
-        // Apply the rewards when exiting the round
         proposal.header.qc = final_qc;
-        Self::apply_rewards_late_at(
-            &parent_block,
+
+        self.apply_proposal_to_state(
             &mut state,
-            &self.config.consensus,
-            &committee,
-            proposer, // Last leader
             &proposal,
+            &parent_block,
+            &committee,
+            cumulative_gas_fee,
         )?;
-
-        // ZIP-9: Sink gas to zero account
-        state.mutate_account(Address::ZERO, |a| {
-            a.balance = a
-                .balance
-                .checked_add(proposal.gas_used().0 as u128)
-                .ok_or(anyhow!("Overflow occured in zero account balance"))?;
-            Ok(())
-        })?;
-
-        if self.block_is_first_in_epoch(proposal.header.number) {
-            // Update state with any contract upgrades for this block
-            self.contract_upgrade_apply_state_change(&mut state, proposal.header)?;
-        }
 
         // Finalise the proposal with final QC and state.
         let proposal = Block::from_qc(
@@ -1250,44 +1321,24 @@ impl Consensus {
             proposal.header.gas_used,
             proposal.header.gas_limit,
         );
-        self.receipts_cache_hash = proposal.header.receipts_root_hash;
-
-        // Restore the state to previous
-        state.set_to_root(previous_state_root_hash.into());
-        self.state = state;
+        self.receipts_cache
+            .lock()
+            .set_hash(proposal.header.receipts_root_hash);
 
         // Return the final proposal
         Ok(Some(proposal))
     }
 
-    /// If there are any contract updates to be done then apply them to the state passed in
-    fn contract_upgrade_apply_state_change(
-        &mut self,
-        state: &mut State,
-        block_header: BlockHeader,
-    ) -> Result<()> {
-        if let Some(deposit_v3_deploy_height) = self
-            .config
-            .consensus
-            .contract_upgrade_block_heights
-            .deposit_v3
-        {
-            if deposit_v3_deploy_height == block_header.number {
-                let deposit_v3_contract =
-                    Lazy::<contracts::Contract>::force(&contracts::deposit_v3::CONTRACT);
-                state.upgrade_deposit_contract(block_header, deposit_v3_contract)?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Assembles the Proposal block early.
+    /// Assemble self.early_proposal.
     /// This is performed before the majority QC is available.
     /// It does all the needed work but with a dummy QC.
-    fn early_proposal_assemble_at(&mut self, agg: Option<AggregateQc>) -> Result<()> {
+    fn early_proposal_assemble_at(&self, agg: Option<AggregateQc>) -> Result<()> {
         let view = self.get_view()?;
-        if self.early_proposal.is_some() && self.early_proposal.as_ref().unwrap().0.view() == view {
-            return Ok(());
+        {
+            let early_proposal = self.early_proposal.read();
+            if early_proposal.is_some() && early_proposal.as_ref().unwrap().0.view() == view {
+                return Ok(());
+            }
         }
 
         let (qc, parent) = match agg {
@@ -1326,23 +1377,23 @@ impl Consensus {
         };
 
         debug!(
-            "assemble early proposal {} in view {}",
-            executed_block_header.number, executed_block_header.view
+            "assemble early proposal view {} block number {}",
+            executed_block_header.view, executed_block_header.number
         );
 
         // Ensure sane state
-        if self.state.root_hash()? != parent.state_root_hash() {
+        let mut state = self.state.clone();
+        if state.root_hash()? != parent.state_root_hash() {
             warn!(
                 "state root hash mismatch, expected: {:?}, actual: {:?}",
                 parent.state_root_hash(),
-                self.state.root_hash()?
+                state.root_hash()?
             );
         }
 
         // Clear internal receipt cache.
         // Since this is a speed enhancement, we're ignoring scenarios where the receipts cache may hold receipts for more than one proposal.
-        self.receipts_cache.clear();
-        self.receipts_cache_hash = Hash::ZERO;
+        self.receipts_cache.lock().clear();
 
         // Internal states
         let mut receipts_trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
@@ -1369,48 +1420,64 @@ impl Consensus {
             executed_block_header.gas_limit,
         );
 
-        self.early_proposal = Some((proposal, applied_txs, transactions_trie, receipts_trie));
-        self.early_proposal_apply_transactions()?;
-
+        let mut early_proposal = self.early_proposal.write();
+        *early_proposal = Some((proposal, applied_txs, transactions_trie, receipts_trie, 0));
+        self.early_proposal_apply_transactions(self.transaction_pool.write(), early_proposal)?;
         Ok(())
     }
 
     /// Updates self.early_proposal data (proposal, applied_transactions, transactions_trie, receipts_trie) to include any transactions in the mempool
-    fn early_proposal_apply_transactions(&mut self) -> Result<()> {
-        if self.early_proposal.is_none() {
+    fn early_proposal_apply_transactions(
+        &self,
+        mut pool: RwLockWriteGuard<TransactionPool>,
+        mut early_proposal: RwLockWriteGuard<Option<EarlyProposal>>,
+    ) -> Result<()> {
+        if early_proposal.is_none() {
             error!("could not apply transactions to early_proposal because it does not exist");
             return Ok(());
         }
 
         let mut state = self.state.clone();
-        let previous_state_root_hash = state.root_hash()?;
 
-        let proposal = self.early_proposal.as_ref().unwrap().0.clone();
+        let proposal = early_proposal.as_ref().unwrap().0.clone();
 
         // Use state root hash of current early proposal
         state.set_to_root(proposal.state_root_hash().into());
         // Internal states
+        let mut threshold_size = Self::PROP_SIZE_THRESHOLD;
         let mut gas_left = proposal.header.gas_limit - proposal.header.gas_used;
         let mut tx_index_in_block = proposal.transactions.len();
 
+        // update the pool with the current state
+        pool.update_with_state(&state);
+
         // Assemble new block with whatever is in the mempool
-        while let Some(tx) = self.transaction_pool.best_transaction(&state)? {
+        while let Some(tx) = pool.pop_best_if(|txn| {
             // First - check if we have time left to process txns and give enough time for block propagation
             let (_, milliseconds_remaining_of_block_time, _) =
-                self.get_consensus_timeout_params()?;
+                self.get_consensus_timeout_params().unwrap();
 
             if milliseconds_remaining_of_block_time == 0 {
                 debug!(
-                    "stopped adding txs to block {} because block time is reached",
+                    "stopped adding txs to block number {} because block time is reached",
                     proposal.header.number,
                 );
-                break;
+                return false;
             }
 
-            if gas_left < tx.tx.gas_limit() {
-                debug!(?gas_left, gas_limit = ?tx.tx.gas_limit(), "block out of space");
-                break;
+            if gas_left < txn.tx.gas_limit() {
+                debug!(?gas_left, gas_limit = ?txn.tx.gas_limit(), "block out of space");
+                return false;
             }
+
+            if txn.encoded_size() > threshold_size {
+                debug!("ran out of size");
+                return false;
+            }
+
+            true
+        }) {
+            let tx = tx.clone();
 
             // Apply specific txn
             let mut inspector = TouchedAddressInspector::default();
@@ -1421,29 +1488,31 @@ impl Consensus {
                 &mut inspector,
                 self.config.enable_ots_indices,
             )?;
+            // Update the pool with the new state
+            pool.update_with_state(&state);
 
             // Skip transactions whose execution resulted in an error and drop them.
             let Some(result) = result else {
                 warn!("Dropping failed transaction: {:?}", tx.hash);
-                self.transaction_pool.mark_executed(&tx.clone());
                 continue;
             };
+
+            // Reduce balance size threshold
+            threshold_size -= tx.encoded_size();
 
             // Reduce remaining gas in this block
             gas_left = gas_left
                 .checked_sub(result.gas_used())
                 .ok_or_else(|| anyhow!("gas_used > gas_limit"))?;
 
-            // Clone itself before invalidating the reference
-            let tx = tx.clone();
-            // Do necessary work to assemble the transaction
-            self.transaction_pool.mark_executed(&tx);
+            let gas_fee = result.gas_used().0 as u128 * tx.tx.gas_price_per_evm_gas();
 
             // Grab and update early_proposal data in own scope to avoid multiple mutable references to self
             {
-                let (proposal, applied_txs, transactions_trie, receipts_trie) =
-                    self.early_proposal.as_mut().unwrap();
+                let (proposal, applied_txs, transactions_trie, receipts_trie, cumulative_gas_fee) =
+                    early_proposal.as_mut().unwrap();
 
+                *cumulative_gas_fee += gas_fee;
                 transactions_trie.insert(tx.hash.as_bytes(), tx.hash.as_bytes())?;
 
                 let receipt = Self::create_txn_receipt(
@@ -1454,30 +1523,37 @@ impl Consensus {
                 );
 
                 let receipt_hash = receipt.compute_hash();
-                debug!("During assembly in view: {}, transaction with hash: {:?} produced receipt: {:?}, receipt hash: {:?}", proposal.header.view, tx.hash, receipt, receipt_hash);
+                debug!(
+                    "During assembly in view: {}, transaction with hash: {:?} produced receipt: {:?}, receipt hash: {:?}",
+                    proposal.header.view, tx.hash, receipt, receipt_hash
+                );
                 receipts_trie.insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())?;
 
                 // Forwarding cache
                 let addresses = inspector.touched.into_iter().collect_vec();
-                self.receipts_cache.insert(tx.hash, (receipt, addresses));
+                self.receipts_cache
+                    .lock()
+                    .insert(tx.hash, receipt, addresses);
 
                 tx_index_in_block += 1;
                 applied_txs.push(tx);
             }
         }
-        let (_, applied_txs, _, _) = self.early_proposal.as_ref().unwrap();
+        std::mem::drop(pool);
+
+        let (_, applied_txs, _, _, _) = early_proposal.as_ref().unwrap();
         self.db.with_sqlite_tx(|sqlite_tx| {
             for tx in applied_txs {
                 self.db
-                    .insert_transaction_with_db_tx(sqlite_tx, &tx.hash, &tx.tx)?;
+                    .insert_transaction_with_db_tx(sqlite_tx, &tx.hash, tx)?;
             }
             Ok(())
         })?;
 
         // Grab and update early_proposal data in own scope to avoid multiple mutable references to Self
         {
-            let (proposal, applied_txs, transactions_trie, receipts_trie) =
-                self.early_proposal.as_mut().unwrap();
+            let (proposal, applied_txs, transactions_trie, receipts_trie, _) =
+                early_proposal.as_mut().unwrap();
 
             let applied_transaction_hashes = applied_txs.iter().map(|tx| tx.hash).collect_vec();
             trace!(
@@ -1494,28 +1570,43 @@ impl Consensus {
             proposal.header.gas_used = proposal.header.gas_limit - gas_left;
         }
 
-        // Restore the state to previous
-        state.set_to_root(previous_state_root_hash.into());
-        self.state = state;
-
         // as a future improvement, process the proposal before broadcasting it
         Ok(())
     }
 
-    /// Called when consensus will accept our early_block.
+    /// Clear early_proposal and add it's transactions back to pool.
+    /// This function should be called only when something has gone wrong.
+    fn early_proposal_clear(&self) -> Result<()> {
+        if let Some((_, txns, _, _, _)) = self.early_proposal.write().take() {
+            let mut pool = self.transaction_pool.write();
+            pool.update_with_state(&self.state);
+            for txn in txns.into_iter().rev() {
+                let account = self.state.get_account(txn.signer)?;
+                let _added = pool.insert_transaction_forced(txn, &account, false);
+            }
+            warn!("early_proposal cleared. This is a consequence of some incorrect behaviour.");
+        }
+        Ok(())
+    }
+
+    /// Called when node has become leader and is ready to publish a Proposal.
     /// Either propose now or set timeout to allow for txs to come in.
-    fn ready_for_block_proposal(&mut self) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
+    fn ready_for_block_proposal(
+        &self,
+        votes: Option<&BlockVotes>,
+    ) -> Result<Option<NetworkMessage>> {
         // Check if there's enough time to wait on a timeout and then propagate an empty block in the network before other participants trigger NewView
         let (milliseconds_since_last_view_change, milliseconds_remaining_of_block_time, _) =
             self.get_consensus_timeout_params()?;
 
         if milliseconds_remaining_of_block_time == 0 {
-            return self.propose_new_block();
+            return self.propose_new_block(votes);
         }
 
         // Reset the timeout and wake up again once it has been at least `block_time` since
         // the last view change. At this point we should be ready to produce a new block.
-        self.create_next_block_on_timeout = true;
+        self.create_next_block_on_timeout
+            .store(true, Ordering::SeqCst);
         self.reset_timeout.send(
             self.config
                 .consensus
@@ -1529,7 +1620,8 @@ impl Consensus {
 
         Ok(None)
     }
-    /// Assembles a Pending block.
+
+    /// Assembles a Pending block: the block which the node _would_ propose if they were leader.
     fn assemble_pending_block_at(&self, state: &mut State) -> Result<Option<Block>> {
         // Start with highest canonical block
         let num = self
@@ -1546,18 +1638,11 @@ impl Consensus {
             .get_block(&early_qc.block_hash)?
             .context("missing parent block")?;
 
-        // Ensure sane state
-        let previous_state_root_hash = state.root_hash()?;
-        if previous_state_root_hash != block.state_root_hash() {
-            warn!(
-                "state root hash mismatch, expected: {:?}, actual: {:?}",
-                block.state_root_hash(),
-                previous_state_root_hash
-            );
-            state.set_to_root(block.state_root_hash().into());
-        }
+        // Set state to that of parent
+        state.set_to_root(block.state_root_hash().into());
 
         // Internal states
+        let mut threshold_size = Self::PROP_SIZE_THRESHOLD;
         let mut gas_left = self.config.consensus.eth_block_gas_limit;
         let mut receipts_trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
         let mut transactions_trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
@@ -1574,23 +1659,32 @@ impl Consensus {
             ..BlockHeader::default()
         };
 
-        // Retrieve a list of pending transactions
-        let pending = self.transaction_pool.pending_transactions(state)?;
+        // Clone the pool
+        // This isn't perfect performance-wise, but it does mean that we aren't dealing with transactions that don't fit into the block
+        let mut cloned_pool = self.transaction_pool.read().clone();
+        cloned_pool.update_with_state(state);
 
-        for txn in pending.into_iter() {
-            // First - check for time
+        while let Some(txn) = cloned_pool.pop_best_if(|txn| {
+            // First - check if we have time left to process txns and give enough time for block propagation
             let (_, milliseconds_remaining_of_block_time, _) =
-                self.get_consensus_timeout_params()?;
+                self.get_consensus_timeout_params().unwrap();
 
             if milliseconds_remaining_of_block_time == 0 {
-                break;
+                return false;
             }
 
             if gas_left < txn.tx.gas_limit() {
                 debug!(?gas_left, gas_limit = ?txn.tx.gas_limit(), "block out of space");
-                break;
+                return false;
             }
 
+            if txn.encoded_size() > threshold_size {
+                debug!("ran out of size");
+                return false;
+            }
+
+            true
+        }) {
             // Apply specific txn
             let result = Self::apply_transaction_at(
                 state,
@@ -1599,7 +1693,7 @@ impl Consensus {
                 inspector::noop(),
                 false,
             )?;
-            self.db.insert_transaction(&txn.hash, &txn.tx)?;
+            self.db.insert_transaction(&txn.hash, &txn)?;
 
             // Skip transactions whose execution resulted in an error
             let Some(result) = result else {
@@ -1610,6 +1704,9 @@ impl Consensus {
             gas_left = gas_left
                 .checked_sub(result.gas_used())
                 .ok_or_else(|| anyhow!("gas_used > gas_limit"))?;
+
+            // Reduce balance size threshold
+            threshold_size -= txn.encoded_size();
 
             // Do necessary work to assemble the transaction
             transactions_trie.insert(txn.hash.as_bytes(), txn.hash.as_bytes())?;
@@ -1647,12 +1744,14 @@ impl Consensus {
         Ok(Some(proposal))
     }
 
-    /// Produces the Proposal block.
+    /// Produces the Proposal block by taking and finalising early_proposal.
     /// It must return a final Proposal with correct QC, regardless of whether it is empty or not.
-    fn propose_new_block(&mut self) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
+    fn propose_new_block(&self, votes: Option<&BlockVotes>) -> Result<Option<NetworkMessage>> {
         // We expect early_proposal to exist already but try create incase it doesn't
         self.early_proposal_assemble_at(None)?;
-        let (pending_block, applied_txs, _, _) = self.early_proposal.take().unwrap(); // safe to unwrap due to check above
+        let mut early_proposal = self.early_proposal.write();
+        let (pending_block, applied_txs, _, _, cumulative_gas_fee) = early_proposal.take().unwrap(); // safe to unwrap due to check above
+        std::mem::drop(early_proposal);
 
         // intershard transactions are not meant to be broadcast
         let (mut broadcasted_transactions, opaque_transactions): (Vec<_>, Vec<_>) = applied_txs
@@ -1663,44 +1762,70 @@ impl Consensus {
         // them into the pool - this is because upon broadcasting the proposal, we will
         // have to re-execute it ourselves (in order to vote on it) and thus will
         // need those transactions again
-        for tx in opaque_transactions {
-            let account_nonce = self.state.get_account(tx.signer)?.nonce;
-            self.transaction_pool.insert_transaction(tx, account_nonce);
+        {
+            let mut pool = self.transaction_pool.write();
+            for tx in opaque_transactions {
+                let account = self.state.get_account(tx.signer)?;
+                pool.update_with_account(&tx.signer, &account);
+                pool.insert_transaction(tx, &account, true);
+            }
         }
 
         // finalise the proposal
-        let Some(final_block) = self.early_proposal_finish_at(pending_block)? else {
+        let Some(final_block) =
+            self.early_proposal_finish_at(pending_block, cumulative_gas_fee, votes)?
+        else {
             // Do not Propose.
             // Recover the proposed transactions into the pool.
+            let mut pool = self.transaction_pool.write();
             while let Some(txn) = broadcasted_transactions.pop() {
-                self.transaction_pool.insert_ready_transaction(txn)?;
+                let account = self.state.get_account(txn.signer)?;
+                pool.update_with_account(&txn.signer, &account);
+                let added = pool.insert_transaction(txn, &account, false);
+                assert!(added.was_added())
             }
             return Ok(None);
         };
 
         info!(proposal_hash = ?final_block.hash(), ?final_block.header.view, ?final_block.header.number, txns = final_block.transactions.len(), "######### proposing block");
 
-        Ok(Some((final_block, broadcasted_transactions)))
+        Ok(Some((
+            None,
+            ExternalMessage::Proposal(Proposal::from_parts(final_block, broadcasted_transactions)),
+        )))
     }
 
-    /// Insert transaction and add to early_proposal if possible.
-    pub fn handle_new_transaction(&mut self, txn: SignedTransaction) -> Result<TxAddResult> {
-        let Ok(verified) = txn.verify() else {
-            return Ok(TxAddResult::CannotVerifySignature);
-        };
-        let inserted = self.new_transaction(verified)?;
-        if inserted.was_added()
-            && self.create_next_block_on_timeout
-            && self.early_proposal.is_some()
-            && self.transaction_pool.has_txn_ready()
-        {
-            trace!(
-                "add transaction to early proposal {}",
-                self.early_proposal.as_ref().unwrap().0.header.view
-            );
-            self.early_proposal_apply_transactions()?;
+    /// Insert transaction and add to transaction pool.
+    pub fn handle_new_transactions(
+        &self,
+        verified_transactions: Vec<VerifiedTransaction>,
+        from_broadcast: bool,
+    ) -> Result<Vec<TxAddResult>> {
+        let mut inserted = Vec::with_capacity(verified_transactions.len());
+        let mut pool = self.transaction_pool.write();
+        for txn in verified_transactions {
+            info!(?txn, "seen new txn");
+            inserted.push(self.new_transaction(txn, from_broadcast, &mut pool)?);
         }
         Ok(inserted)
+    }
+
+    pub fn try_early_proposal_after_txn_batch(&self) -> Result<()> {
+        if self.create_next_block_on_timeout.load(Ordering::SeqCst) {
+            let early_proposal = self.early_proposal.write();
+            if early_proposal.is_some() {
+                let pool = self.transaction_pool.write();
+                if pool.has_txn_ready() {
+                    trace!(
+                        "add transaction to early proposal {}",
+                        early_proposal.as_ref().unwrap().0.header.view
+                    );
+
+                    self.early_proposal_apply_transactions(pool, early_proposal)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Provides a preview of the early proposal.
@@ -1714,14 +1839,14 @@ impl Consensus {
         Ok(Some(pending_block))
     }
 
-    fn are_we_leader_for_view(&mut self, parent_hash: Hash, view: u64) -> bool {
+    fn are_we_leader_for_view(&self, parent_hash: Hash, view: u64) -> bool {
         match self.leader_for_view(parent_hash, view) {
             Some(leader) => leader == self.public_key(),
             None => false,
         }
     }
 
-    fn leader_for_view(&mut self, parent_hash: Hash, view: u64) -> Option<NodePublicKey> {
+    fn leader_for_view(&self, parent_hash: Hash, view: u64) -> Option<NodePublicKey> {
         if let Ok(Some(parent)) = self.get_block(&parent_hash) {
             let leader = self.leader_at_block(&parent, view).unwrap();
             Some(leader.public_key)
@@ -1741,7 +1866,8 @@ impl Consensus {
 
     fn committee_for_hash(&self, parent_hash: Hash) -> Result<Vec<NodePublicKey>> {
         let Ok(Some(parent)) = self.get_block(&parent_hash) else {
-            return Err(anyhow!("parent block not found: {:?}", parent_hash));
+            // tracing::error!("parent block not found: {:?}", parent_hash);
+            return Ok(Vec::new()); // return an empty vector instead of Err for graceful app-level error-handling
         };
 
         let parent_root_hash = parent.state_root_hash();
@@ -1757,11 +1883,18 @@ impl Consensus {
         Ok(committee)
     }
 
-    pub fn new_view(
-        &mut self,
-        new_view: NewView,
-    ) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
-        trace!("Received new view for height: {:?}", new_view.view);
+    /// Process a NewView message
+    pub fn new_view(&mut self, from: PeerId, new_view: NewView) -> Result<Option<NetworkMessage>> {
+        info!(
+            "Received new view for view: {:?} from: {:?}",
+            new_view.view, from
+        );
+
+        if self.get_block(&new_view.qc.block_hash)?.is_none() {
+            trace!("high_qc block does not exist for NewView. Attempting to fetch block via sync");
+            self.sync.sync_from_probe()?;
+            return Ok(None);
+        }
 
         // Get the committee for the qc hash (should be highest?) for this view
         let committee: Vec<_> = self.committee_for_hash(new_view.qc.block_hash)?;
@@ -1769,9 +1902,14 @@ impl Consensus {
         let Some((index, public_key)) = committee
             .iter()
             .enumerate()
-            .find(|(_, &public_key)| public_key == new_view.public_key)
+            .find(|&(_, &public_key)| public_key == new_view.public_key)
         else {
-            debug!("ignoring new view from unknown node (buffer?) - committee size is : {:?} hash is: {:?} high hash is: {:?}", committee.len(), new_view.qc.block_hash, self.high_qc.block_hash);
+            debug!(
+                "ignoring new view from unknown node (buffer?) - committee size is : {:?} hash is: {:?} high hash is: {:?}",
+                committee.len(),
+                new_view.qc.block_hash,
+                self.high_qc.block_hash
+            );
             return Ok(None);
         };
 
@@ -1779,6 +1917,18 @@ impl Consensus {
 
         // Update our high QC and view, even if we are not the leader of this view.
         self.update_high_qc_and_view(false, new_view.qc)?;
+
+        let mut current_view = self.get_view()?;
+        // if the vote is too old and does not count anymore
+        if new_view.view < current_view {
+            trace!(
+                new_view.view,
+                "Received a NewView which is too old for us, discarding. Our view is: {} and new_view is: {}",
+                current_view,
+                new_view.view
+            );
+            return Ok(None);
+        }
 
         // The leader for this view should be chosen according to the parent of the highest QC
         // What happens when there are multiple QCs with different parents?
@@ -1788,27 +1938,15 @@ impl Consensus {
             return Ok(None);
         }
 
-        let mut current_view = self.get_view()?;
-        // if the vote is too old and does not count anymore
-        if new_view.view < current_view {
-            trace!(new_view.view, "Received a vote which is too old for us, discarding. Our view is: {} and new_view is: {}", current_view, new_view.view);
-            return Ok(None);
-        }
-
-        let NewViewVote {
-            mut signatures,
-            mut cosigned,
-            mut cosigned_weight,
-            mut qcs,
-        } = self
-            .new_views
-            .remove(&new_view.view)
-            .unwrap_or_else(|| NewViewVote {
-                signatures: Vec::new(),
-                cosigned: bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE],
-                cosigned_weight: 0,
-                qcs: BTreeMap::new(),
-            });
+        let mut new_view_vote =
+            self.new_views
+                .entry(new_view.view)
+                .or_insert_with(|| NewViewVote {
+                    signatures: Vec::new(),
+                    cosigned: bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE],
+                    cosigned_weight: 0,
+                    qcs: BTreeMap::new(),
+                });
 
         let Ok(Some(parent)) = self.get_block(&new_view.qc.block_hash) else {
             return Err(anyhow!(
@@ -1824,9 +1962,9 @@ impl Consensus {
         let mut supermajority = false;
 
         // if the vote is new, store it
-        if !cosigned[index] {
-            cosigned.set(index, true);
-            signatures.push(new_view.signature);
+        if !new_view_vote.cosigned[index] {
+            new_view_vote.cosigned.set(index, true);
+            new_view_vote.signatures.push(new_view.signature);
 
             let Ok(Some(parent)) = self.get_block(&new_view.qc.block_hash) else {
                 return Err(anyhow!(
@@ -1839,16 +1977,17 @@ impl Consensus {
             let Some(weight) = self.state.get_stake(new_view.public_key, executed_block)? else {
                 return Err(anyhow!("vote from validator without stake"));
             };
-            cosigned_weight += weight.get();
-            qcs.insert(index, new_view.qc);
+            new_view_vote.cosigned_weight += weight.get();
+            new_view_vote.qcs.insert(index, new_view.qc);
 
-            supermajority = cosigned_weight * 3 > self.total_weight(&committee, executed_block) * 2;
+            supermajority = new_view_vote.cosigned_weight * 3
+                > self.total_weight(&committee, executed_block) * 2;
 
-            let num_signers = signatures.len();
+            let num_signers = new_view_vote.signatures.len();
 
             trace!(
                 num_signers,
-                cosigned_weight,
+                cosigned_weight = new_view_vote.cosigned_weight,
                 supermajority,
                 current_view,
                 new_view.view,
@@ -1861,16 +2000,20 @@ impl Consensus {
                         new_view.view
                     );
                     current_view = new_view.view;
-                    self.set_view(current_view)?;
+                    self.set_view(current_view, false)?;
                 }
 
                 // if we are already in the round in which the vote counts and have reached supermajority we can propose a block
                 if new_view.view == current_view {
                     // todo: the aggregate qc is an aggregated signature on the qcs, view and validator index which can be batch verified
-                    let agg =
-                        self.aggregate_qc_from_indexes(new_view.view, qcs, &signatures, cosigned)?;
+                    let agg = self.aggregate_qc_from_indexes(
+                        new_view.view,
+                        &new_view_vote.qcs,
+                        &new_view_vote.signatures,
+                        new_view_vote.cosigned,
+                    )?;
 
-                    trace!(
+                    info!(
                         view = current_view,
                         "######### creating proposal block from new view"
                     );
@@ -1879,23 +2022,16 @@ impl Consensus {
                     self.early_proposal_assemble_at(Some(agg))?;
 
                     // as a future improvement, process the proposal before broadcasting it
-                    return self.ready_for_block_proposal();
+                    return self.ready_for_block_proposal(None);
 
                     // we don't want to keep the collected votes if we proposed a new block
                     // we should remove the collected votes if we couldn't reach supermajority within the view
                 }
             }
         }
-        if !supermajority {
-            self.new_views.insert(
-                new_view.view,
-                NewViewVote {
-                    signatures,
-                    cosigned,
-                    cosigned_weight,
-                    qcs,
-                },
-            );
+        if supermajority {
+            // Cleanup
+            self.new_views.remove(&new_view.view);
         }
 
         Ok(None)
@@ -1903,15 +2039,20 @@ impl Consensus {
 
     /// Returns (flag, outcome).
     /// flag is true if the transaction was newly added to the pool - ie. if it validated correctly and has not been seen before.
-    pub fn new_transaction(&mut self, txn: VerifiedTransaction) -> Result<TxAddResult> {
+    pub fn new_transaction(
+        &self,
+        txn: VerifiedTransaction,
+        from_broadcast: bool,
+        pool: &mut RwLockWriteGuard<TransactionPool>,
+    ) -> Result<TxAddResult> {
         if self.db.contains_transaction(&txn.hash)? {
             debug!("Transaction {:?} already in mempool", txn.hash);
             return Ok(TxAddResult::Duplicate(txn.hash));
         }
 
         // Perform insertion under early state, if available
-        let early_account = match self.early_proposal.as_ref() {
-            Some((block, _, _, _)) => {
+        let early_account = match self.early_proposal.read().as_ref() {
+            Some((block, _, _, _, _)) => {
                 let state = self.state.at_root(block.state_root_hash().into());
                 state.get_account(txn.signer)?
             }
@@ -1923,10 +2064,11 @@ impl Consensus {
         let validation_result = txn.tx.validate(
             &early_account,
             self.config.consensus.eth_block_gas_limit,
+            self.config.consensus.gas_price.0,
             eth_chain_id,
         )?;
         if !validation_result.is_ok() {
-            debug!(
+            warn!(
                 "Unable to validate txn with hash: {:?}, from: {:?}, nonce: {:?} : {:?}",
                 txn.hash,
                 txn.signer,
@@ -1938,33 +2080,23 @@ impl Consensus {
 
         let txn_hash = txn.hash;
 
-        let insert_result = self
-            .transaction_pool
-            .insert_transaction(txn, early_account.nonce);
+        let insert_result = pool.insert_transaction(txn.clone(), &early_account, from_broadcast);
         if insert_result.was_added() {
             let _ = self.new_transaction_hashes.send(txn_hash);
 
-            // Avoid cloning the transaction aren't any subscriptions to send it to.
+            // Avoid cloning the transaction if there aren't any subscriptions to send it to.
             if self.new_transactions.receiver_count() != 0 {
-                // Clone the transaction from the pool, because we moved it in.
-                let txn = self
-                    .transaction_pool
-                    .get_transaction(txn_hash)
-                    .ok_or_else(|| anyhow!("transaction we just added is missing"))?
-                    .clone();
-                let _ = self.new_transactions.send(txn);
+                let _ = self.new_transactions.send(txn.clone());
             }
         }
         Ok(insert_result)
     }
 
     pub fn get_transaction_by_hash(&self, hash: Hash) -> Result<Option<VerifiedTransaction>> {
-        Ok(self
-            .db
-            .get_transaction(&hash)?
-            .map(|tx| tx.verify())
-            .transpose()?
-            .or_else(|| self.transaction_pool.get_transaction(hash).cloned()))
+        Ok(match self.db.get_transaction(&hash)? {
+            Some(tx) => Some(tx),
+            None => self.transaction_pool.read().get_transaction(&hash).cloned(),
+        })
     }
 
     pub fn get_transaction_receipt(&self, hash: &Hash) -> Result<Option<TransactionReceipt>> {
@@ -1983,7 +2115,7 @@ impl Consensus {
         new_high_qc: QuorumCertificate,
     ) -> Result<()> {
         let view = self.get_view()?;
-        let Some(new_high_qc_block) = self.block_store.get_block(new_high_qc.block_hash)? else {
+        let Some(new_high_qc_block) = self.db.get_block(new_high_qc.block_hash.into())? else {
             // We don't set high_qc to a qc if we don't have its block.
             warn!("Recieved potential high QC but didn't have the corresponding block");
             return Ok(());
@@ -1992,7 +2124,9 @@ impl Consensus {
         let new_high_qc_view = new_high_qc_block.view();
 
         if self.high_qc.block_hash == Hash::ZERO {
-            trace!("received high qc, self high_qc is currently uninitialized, setting to the new one.");
+            trace!(
+                "received high qc, self high_qc is currently uninitialized, setting to the new one."
+            );
             self.db.set_high_qc(new_high_qc)?;
             self.high_qc = new_high_qc;
         } else {
@@ -2013,7 +2147,7 @@ impl Consensus {
                 self.db.set_high_qc(new_high_qc)?;
                 self.high_qc = new_high_qc;
                 if new_high_qc_view >= view {
-                    self.set_view(new_high_qc_view + 1)?;
+                    self.set_view(new_high_qc_view + 1, false)?;
                 }
             }
         }
@@ -2024,7 +2158,7 @@ impl Consensus {
     fn aggregate_qc_from_indexes(
         &self,
         view: u64,
-        qcs: BTreeMap<usize, QuorumCertificate>,
+        qcs: &BTreeMap<usize, QuorumCertificate>,
         signatures: &[BlsSignature],
         cosigned: BitArray,
     ) -> Result<AggregateQc> {
@@ -2060,7 +2194,11 @@ impl Consensus {
         let mut current = block.clone();
         while current.view() > ancestor.view() {
             let Some(next) = self.get_block(&current.parent_hash())? else {
-                warn!("Missing block when traversing to find ancestor! Current parent hash: {:?} {:?}", current.parent_hash(), current);
+                warn!(
+                    "Missing block when traversing to find ancestor! Current parent hash: {:?} {:?}",
+                    current.parent_hash(),
+                    current
+                );
                 return Err(MissingBlockError::from(current.parent_hash()).into());
             };
             current = next;
@@ -2189,7 +2327,7 @@ impl Consensus {
             if let Some(checkpoint_path) = self.db.get_checkpoint_dir()? {
                 let parent = self
                     .db
-                    .get_block_by_hash(&block.parent_hash())?
+                    .get_block(block.parent_hash().into())?
                     .ok_or(anyhow!(
                         "Trying to checkpoint block, but we don't have its parent"
                     ))?;
@@ -2202,7 +2340,7 @@ impl Consensus {
                             txn_hash,
                             parent.hash()
                         ))?;
-                        Ok::<_, anyhow::Error>(tx)
+                        Ok::<_, anyhow::Error>(tx.tx)
                     })
                     .collect::<Result<Vec<SignedTransaction>>>()?;
 
@@ -2223,13 +2361,13 @@ impl Consensus {
 
     /// Trigger a checkpoint, for debugging.
     /// Returns (file_name, block_hash). At some time after you call this function, hopefully a checkpoint will end up in the file
-    pub fn checkpoint_at(&mut self, block_number: u64) -> Result<(String, String)> {
+    pub fn checkpoint_at(&self, block_number: u64) -> Result<(String, String)> {
         let block = self
             .get_canonical_block_by_number(block_number)?
             .ok_or(anyhow!("No such block number {block_number}"))?;
         let parent = self
             .db
-            .get_block_by_hash(&block.parent_hash())?
+            .get_block(block.parent_hash().into())?
             .ok_or(anyhow!(
                 "Trying to checkpoint block, but we don't have its parent"
             ))?;
@@ -2242,7 +2380,7 @@ impl Consensus {
                     txn_hash,
                     parent.hash()
                 ))?;
-                Ok::<_, anyhow::Error>(tx)
+                Ok::<_, anyhow::Error>(tx.tx)
             })
             .collect::<Result<Vec<SignedTransaction>>>()?;
         let checkpoint_dir = self
@@ -2264,46 +2402,43 @@ impl Consensus {
 
     /// Check the validity of a block. Returns `Err(_, true)` if this block could become valid in the future and
     /// `Err(_, false)` if this block could never be valid.
-    fn check_block(&self, block: &Block, during_sync: bool) -> Result<(), (anyhow::Error, bool)> {
-        block.verify_hash().map_err(|e| (e, false))?;
+    fn check_block(&self, block: &Block, during_sync: bool) -> Result<()> {
+        block.verify_hash()?;
 
         if block.view() == 0 {
             // We only check a block if we receive it from an external source. We obviously already have the genesis
             // block, so we aren't ever expecting to receive it.
-            return Err((anyhow!("tried to check genesis block"), false));
+            return Err(anyhow!("tried to check genesis block"));
         }
 
-        let Some(parent) = self
-            .get_block(&block.parent_hash())
-            .map_err(|e| (e, false))?
-        else {
+        let Some(parent) = self.get_block(&block.parent_hash())? else {
             warn!(
-                "Missing parent block while trying to check validity of block {}",
+                "Missing parent block while trying to check validity of block number {}",
                 block.number()
             );
-            return Err((MissingBlockError::from(block.parent_hash()).into(), true));
+            return Err(MissingBlockError::from(block.parent_hash()).into());
         };
 
-        let finalized_view = self.get_finalized_view().map_err(|e| (e, false))?;
-        let Some(finalized_block) = self
-            .get_block_by_view(finalized_view)
-            .map_err(|e| (e, false))?
-        else {
-            return Err((MissingBlockError::from(finalized_view).into(), false));
+        let finalized_view = self.get_finalized_view()?;
+        let Some(finalized_block) = self.get_block_by_view(finalized_view)? else {
+            return Err(MissingBlockError::from(finalized_view).into());
         };
         if block.view() < finalized_block.view() {
-            return Err((
-                anyhow!(
-                    "block is too old: view is {} but we have finalized {}",
-                    block.view(),
-                    finalized_block.view()
-                ),
-                false,
+            return Err(anyhow!(
+                "block is too old: view is {} but we have finalized {}",
+                block.view(),
+                finalized_block.view()
             ));
         }
 
         // Derive the proposer from the block's view
-        let proposer = self.leader_at_block(&parent, block.view()).unwrap();
+        let Some(proposer) = self.leader_at_block(&parent, block.view()) else {
+            return Err(anyhow!(
+                "Failed to find leader. Block number {}, Parent number {}",
+                block.number(),
+                parent.number(),
+            ));
+        };
 
         // Verify the proposer's signature on the block
         let verified = proposer
@@ -2313,12 +2448,16 @@ impl Consensus {
         let committee = self
             .state
             .at_root(parent.state_root_hash().into())
-            .get_stakers(block.header)
-            .map_err(|e| (e, false))?;
+            .get_stakers(block.header)?;
 
         if verified.is_err() {
             info!(?block, "Unable to verify block = ");
-            return Err((anyhow!("invalid block signature found! block hash: {:?} block view: {:?} committee len {:?}", block.hash(), block.view(), committee.len()), false));
+            return Err(anyhow!(
+                "invalid block signature found! block hash: {:?} block view: {:?} committee len {:?}",
+                block.hash(),
+                block.view(),
+                committee.len()
+            ));
         }
 
         // Check if the co-signers of the block's QC represent the supermajority.
@@ -2327,13 +2466,11 @@ impl Consensus {
             &committee,
             parent.state_root_hash(),
             block,
-        )
-        .map_err(|e| (e, false))?;
+        )?;
 
         // Verify the block's QC signature - note the parent should be the committee the QC
         // was signed over.
-        self.verify_qc_signature(&block.header.qc, committee.clone())
-            .map_err(|e| (e, false))?;
+        self.verify_qc_signature(&block.header.qc, committee.clone())?;
         if let Some(agg) = &block.agg {
             // Check if the signers of the block's aggregate QC represent the supermajority
             self.check_quorum_in_indices(
@@ -2341,24 +2478,16 @@ impl Consensus {
                 &committee,
                 parent.state_root_hash(),
                 block,
-            )
-            .map_err(|e| (e, false))?;
+            )?;
             // Verify the aggregate QC's signature
-            self.batch_verify_agg_signature(agg, &committee)
-                .map_err(|e| (e, false))?;
+            self.batch_verify_agg_signature(agg, &committee)?;
         }
 
         // Retrieve the highest among the aggregated QCs and check if it equals the block's QC.
-        let block_high_qc = self.get_high_qc_from_block(block).map_err(|e| (e, false))?;
-        let Some(block_high_qc_block) = self
-            .get_block(&block_high_qc.block_hash)
-            .map_err(|e| (e, false))?
-        else {
-            warn!("missing finalized block4");
-            return Err((
-                MissingBlockError::from(block_high_qc.block_hash).into(),
-                false,
-            ));
+        let block_high_qc = self.get_high_qc_from_block(block)?;
+        let Some(block_high_qc_block) = self.get_block(&block_high_qc.block_hash)? else {
+            warn!("missing finalized block");
+            return Err(MissingBlockError::from(block_high_qc.block_hash).into());
         };
         // Prevent the creation of forks from the already committed chain
         if block_high_qc_block.view() < finalized_block.view() {
@@ -2367,20 +2496,18 @@ impl Consensus {
                 block_high_qc_block.view(),
                 finalized_block.view(),
                 self.high_qc,
-                block);
-            return Err((
-                anyhow!(
-                    "invalid block - high QC view is {} while finalized is {}",
-                    block_high_qc_block.view(),
-                    finalized_block.view()
-                ),
-                false,
+                block
+            );
+            return Err(anyhow!(
+                "invalid block - high QC view is {} while finalized is {}",
+                block_high_qc_block.view(),
+                finalized_block.view()
             ));
         }
 
         // This block's timestamp must be greater than or equal to the parent block's timestamp.
         if block.timestamp() < parent.timestamp() {
-            return Err((anyhow!("timestamp decreased from parent"), false));
+            return Err(anyhow!("timestamp decreased from parent"));
         }
 
         // This block's timestamp should be at most `self.allowed_timestamp_skew` away from the current time. Note this
@@ -2390,31 +2517,22 @@ impl Consensus {
             .elapsed()
             .unwrap_or_else(|err| err.duration());
         if !during_sync && difference > self.config.allowed_timestamp_skew {
-            return Err((
-                anyhow!(
-                    "timestamp difference for block {} greater than allowed skew: {difference:?}",
-                    block.view()
-                ),
-                false,
+            return Err(anyhow!(
+                "timestamp difference for block {} greater than allowed skew: {difference:?}",
+                block.view()
             ));
         }
 
         // Blocks must be in sequential order
         if block.header.number != parent.header.number + 1 {
-            return Err((
-                anyhow!(
-                    "block number is not sequential: {} != {} + 1",
-                    block.header.number,
-                    parent.header.number
-                ),
-                false,
+            return Err(anyhow!(
+                "block number is not sequential: {} != {} + 1",
+                block.header.number,
+                parent.header.number
             ));
         }
 
-        if !self
-            .block_extends_from(block, &finalized_block)
-            .map_err(|e| (e, false))?
-        {
+        if !self.block_extends_from(block, &finalized_block)? {
             warn!(
                 "invalid block {:?}, does not extend finalized block {:?} our head is {:?}",
                 block,
@@ -2422,9 +2540,8 @@ impl Consensus {
                 self.head_block()
             );
 
-            return Err((
-                anyhow!("invalid block, does not extend from finalized block"),
-                false,
+            return Err(anyhow!(
+                "invalid block, does not extend from finalized block"
             ));
         }
         Ok(())
@@ -2434,15 +2551,10 @@ impl Consensus {
     pub fn receive_block_availability(
         &mut self,
         from: PeerId,
-        availability: &Option<Vec<BlockStrategy>>,
+        _availability: &Option<Vec<BlockStrategy>>,
     ) -> Result<()> {
-        trace!(
-            "Received block availability from {:?} avail {:?}",
-            from,
-            availability
-        );
-        self.block_store.update_availability(from, availability)?;
-        Ok(())
+        trace!("Received block availability from {:?}", from);
+        Ok(()) // FIXME: Stub
     }
 
     // Checks for the validity of a block and adds it to our block store if valid.
@@ -2457,8 +2569,6 @@ impl Consensus {
             proposal.number(),
             proposal.view()
         );
-        self.block_store
-            .received_process_proposal(proposal.header.view);
         let result = self.proposal(from, proposal, true)?;
         // Processing the received block can either result in:
         // * A `Proposal`, if we have buffered votes for this block which form a supermajority, meaning we can
@@ -2470,29 +2580,11 @@ impl Consensus {
         Ok(result.and_then(|(_, message)| message.into_proposal()))
     }
 
-    fn add_block(&mut self, from: Option<PeerId>, block: Block) -> Result<()> {
+    fn add_block(&self, from: Option<PeerId>, block: Block) -> Result<()> {
         let hash = block.hash();
         debug!(?from, ?hash, ?block.header.view, ?block.header.number, "added block");
         let _ = self.new_blocks.send(block.header);
-        // We may have child blocks; process them too.
-        self.block_store
-            .process_block(from, block)?
-            .into_iter()
-            .try_for_each(|(from_id, child_proposal)| -> Result<()> {
-                // The only reason this can fail is permanent failure of the messaging mechanism, so
-                // propagate it back here.
-                // Mark this block in the cache as "we're about to process this one"
-                let view = child_proposal.header.view;
-                self.message_sender.send_external_message(
-                    self.peer_id(),
-                    ExternalMessage::ProcessProposal(ProcessProposal {
-                        from: from_id.to_bytes(),
-                        block: child_proposal,
-                    }),
-                )?;
-                self.block_store.expect_process_proposal(view);
-                Ok(())
-            })?;
+        self.db.insert_block(&block)?;
         Ok(())
     }
 
@@ -2533,18 +2625,18 @@ impl Consensus {
     }
 
     pub fn get_block(&self, key: &Hash) -> Result<Option<Block>> {
-        self.block_store.get_block(*key)
+        self.db.get_block(key.into())
     }
 
     pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
-        self.block_store.get_block_by_view(view)
+        self.db.get_block(BlockFilter::View(view))
     }
 
     pub fn get_canonical_block_by_number(&self, number: u64) -> Result<Option<Block>> {
-        self.block_store.get_canonical_block_by_number(number)
+        self.db.get_block(BlockFilter::Height(number))
     }
 
-    fn set_finalized_view(&mut self, view: u64) -> Result<()> {
+    fn set_finalized_view(&self, view: u64) -> Result<()> {
         self.db.set_finalized_view(view)
     }
 
@@ -2555,9 +2647,9 @@ impl Consensus {
         }))
     }
 
-    fn set_view(&mut self, view: u64) -> Result<()> {
-        if self.db.set_view(view)? {
-            self.view_updated_at = SystemTime::now();
+    fn set_view(&self, view: u64, voted: bool) -> Result<()> {
+        if self.db.set_view(view, voted)? {
+            *self.view_updated_at.write() = SystemTime::now();
         } else {
             warn!(
                 "Tried to set view to lower or same value - this is incorrect. value: {}",
@@ -2581,7 +2673,10 @@ impl Consensus {
         // in other words, the current view is always at least 2 views ahead of the highQC's view
         // i.e. to get `consensus_timeout_ms * 2^0` we have to subtract 2 from `view_difference`
         let consensus_timeout = self.config.consensus.consensus_timeout.as_millis() as f32;
-        (consensus_timeout * (1.5f32).powi(view_difference.saturating_sub(2) as i32)).floor() as u64
+        (consensus_timeout
+            * (EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER)
+                .powi(view_difference.saturating_sub(2) as i32))
+        .floor() as u64
     }
 
     /// Find minimum number of views which could have passed by in the given time difference.
@@ -2595,7 +2690,7 @@ impl Consensus {
         let mut views = 0;
         let mut total = 0.0;
         loop {
-            total += (1.5f32).powi(views);
+            total += (EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER).powi(views);
             if total > normalised_time_difference {
                 break;
             }
@@ -2614,8 +2709,8 @@ impl Consensus {
 
     pub fn state_at(&self, number: u64) -> Result<Option<State>> {
         Ok(self
-            .block_store
-            .get_canonical_block_by_number(number)?
+            .db
+            .get_block(BlockFilter::Height(number))?
             .map(|block| self.state.at_root(block.state_root_hash().into())))
     }
 
@@ -2627,21 +2722,9 @@ impl Consensus {
     fn get_highest_from_agg(&self, agg: &AggregateQc) -> Result<QuorumCertificate> {
         agg.qcs
             .iter()
-            .map(|qc| (qc, self.get_block(&qc.block_hash)))
-            .try_fold(None, |acc, (qc, block)| {
-                let block = block?.ok_or_else(|| anyhow!("missing block"))?;
-                if let Some((_, acc_view)) = acc {
-                    if acc_view < block.view() {
-                        Ok::<_, anyhow::Error>(Some((qc, block.view())))
-                    } else {
-                        Ok(acc)
-                    }
-                } else {
-                    Ok(Some((qc, block.view())))
-                }
-            })?
+            .max_by_key(|qc| qc.view)
+            .copied()
             .ok_or_else(|| anyhow!("no qcs in agg"))
-            .map(|(qc, _)| *qc)
     }
 
     fn verify_qc_signature(
@@ -2764,27 +2847,19 @@ impl Consensus {
     }
 
     pub fn leader_at_block(&self, block: &Block, view: u64) -> Option<Validator> {
-        if let Some(CachedLeader {
-            block_number: cached_block_number,
-            view: cached_view,
-            next_leader,
-        }) = *self.latest_leader_cache.borrow()
-        {
-            if cached_block_number == block.number() && cached_view == view {
-                return Some(next_leader);
-            }
-        }
-
-        let Ok(state_at) = self.try_get_state_at(block.number()) else {
-            return None;
-        };
+        let state_at = self.state.at_root(block.state_root_hash().into());
 
         let executed_block = BlockHeader {
             number: block.header.number + 1,
             ..Default::default()
         };
-        let public_key = state_at.leader(view, executed_block).unwrap();
-        let peer_id = state_at.get_peer_id(public_key).unwrap().unwrap();
+        let Ok(public_key) = state_at.leader(view, executed_block) else {
+            return None;
+        };
+
+        let Ok(Some(peer_id)) = state_at.get_peer_id(public_key) else {
+            return None;
+        };
 
         Some(Validator {
             public_key,
@@ -2819,7 +2894,7 @@ impl Consensus {
         let mut proposed_block = block.clone();
         let mut proposed_block_height = block.number();
         trace!(
-            "Dealing with fork: from block {} (height {}), back to block {} (height {})",
+            "Dealing with fork: between head block {} (height {}), and proposed block {} (height {})",
             head.hash(),
             head_height,
             proposed_block.hash(),
@@ -2845,6 +2920,12 @@ impl Consensus {
             head = self.get_block(&head.parent_hash())?.unwrap();
             proposed_block = self.get_block(&proposed_block.parent_hash())?.unwrap();
         }
+        trace!(
+            "common ancestor found: block number: {}, view: {}, hash: {}",
+            head.number(),
+            head.view(),
+            head.hash()
+        );
 
         // Now, we want to revert the blocks until the head block is the common ancestor
         while self.head_block().hash() != head.hash() {
@@ -2860,38 +2941,34 @@ impl Consensus {
                 panic!("genesis block is not supposed to be reverted");
             }
 
-            trace!("Reverting block {head_block:?}");
+            trace!(
+                "Reverting block number: {}, view: {}, hash: {}",
+                head_block.number(),
+                head_block.view(),
+                head_block.hash()
+            );
             // block store doesn't require anything, it will just hold blocks that may now be invalid
 
             // State is easily set - must be to the parent block, though
             trace!(
-                "Setting state to: {} aka block: {parent_block:?}",
-                parent_block.state_root_hash()
+                "Setting state to: {} aka block: number: {}, view: {}, hash: {}",
+                parent_block.state_root_hash(),
+                parent_block.number(),
+                parent_block.view(),
+                parent_block.hash()
             );
             self.state
                 .set_to_root(parent_block.state_root_hash().into());
 
-            // Ensure the transaction pool is consistent by recreating it. This is moderately costly, but forks are
-            // rare.
-            let existing_txns = self.transaction_pool.drain();
-
-            for txn in existing_txns {
-                let account_nonce = self.state.get_account(txn.signer)?.nonce;
-                self.transaction_pool.insert_transaction(txn, account_nonce);
-            }
-
             // block transactions need to be removed from self.transactions and re-injected
+            let mut pool = self.transaction_pool.write();
             for tx_hash in &head_block.transactions {
-                let orig_tx = self.get_transaction_by_hash(*tx_hash)?.unwrap();
+                let orig_tx = self.db.get_transaction(tx_hash)?.unwrap();
 
                 // Insert this unwound transaction back into the transaction pool.
-                let account_nonce = self.state.get_account(orig_tx.signer)?.nonce;
-                self.transaction_pool
-                    .insert_transaction(orig_tx, account_nonce);
+                let account = self.state.get_account(orig_tx.signer)?;
+                pool.insert_transaction(orig_tx, &account, true);
             }
-            // then purge them all from the db, including receipts and indexes
-            self.db
-                .remove_transactions_executed_in_block(&head_block.hash())?;
 
             // this block is no longer in the main chain
             self.db.mark_block_as_non_canonical(head_block.hash())?;
@@ -2900,34 +2977,53 @@ impl Consensus {
         // Now, we execute forward from the common ancestor to the new block parent which can
         // be required in rare cases.
         // We have the chain of blocks from the ancestor upwards to the proposed block via walking back.
+        // We also keep track of the hash of the block of the previous iteration of this loop, to detect infinite loops
+        // and give up.
+        let mut last_block = block.hash();
         while self.head_block().hash() != block.parent_hash() {
             trace!("Advancing the head block to prepare for proposed block fork.");
-            trace!("Head block: {:?}", self.head_block());
+            let head_block_for_log = self.head_block();
+            trace!(
+                "Head block number: {}, view: {}, hash: {}",
+                head_block_for_log.number(),
+                head_block_for_log.view(),
+                head_block_for_log.hash()
+            );
             trace!("desired block hash: {}", block.parent_hash());
 
             let desired_block_height = self.head_block().number() + 1;
-            // Pointer to parent of head block
+            // Pointer to parent of proposed block
             let mut block_pointer = self
                 .get_block(&block.parent_hash())?
                 .ok_or_else(|| anyhow!("missing block when advancing head block pointer"))?;
 
-            // If the parent of the proposed
             if block_pointer.header.number < desired_block_height {
                 panic!("block height mismatch when advancing head block pointer");
             }
 
+            // Update pointer to be the next block in the proposed block's chain which the node's chain has not yet executed
             while block_pointer.header.number != desired_block_height {
                 block_pointer = self
                     .get_block(&block_pointer.parent_hash())?
                     .ok_or_else(|| anyhow!("missing block when advancing head block pointer"))?;
             }
 
+            if block_pointer.hash() == last_block {
+                return Err(anyhow!("entered loop while dealing with fork"));
+            }
+            last_block = block_pointer.hash();
+
             // We now have the block pointer at the desired height, we can apply it.
-            trace!("Fork execution of block: {block_pointer:?}");
+            trace!(
+                "Fork execution of block number: {}, view: {}, hash: {}",
+                block_pointer.number(),
+                block_pointer.view(),
+                block_pointer.hash()
+            );
             let transactions = block_pointer.transactions.clone();
             let transactions = transactions
                 .iter()
-                .map(|tx_hash| self.get_transaction_by_hash(*tx_hash).unwrap().unwrap().tx)
+                .map(|tx_hash| self.db.get_transaction(tx_hash).unwrap().unwrap().tx)
                 .collect();
             let parent = self
                 .get_block(&block_pointer.parent_hash())?
@@ -2959,56 +3055,93 @@ impl Consensus {
             trace!("applying {} transactions to state", transactions.len());
         }
 
-        // Early return if it is safe to fast-forward
-        if self.receipts_cache_hash == block.receipts_root_hash()
-            && from.is_some_and(|peer_id| peer_id == self.peer_id())
         {
-            debug!(
-                "fast-forward self-proposal {} for view {}",
-                block.header.number, block.header.view
-            );
+            // Early return if it is safe to fast-forward
+            let mut receipts_cache = self.receipts_cache.lock();
+            if receipts_cache.hash == block.receipts_root_hash()
+                && from.is_some_and(|peer_id| peer_id == self.peer_id())
+            {
+                debug!(
+                    "fast-forward self-proposal view {} block number {}",
+                    block.header.view, block.header.number
+                );
 
-            let mut block_receipts = Vec::new();
+                let mut block_receipts = Vec::new();
 
-            for (tx_index, txn_hash) in block.transactions.iter().enumerate() {
-                let (receipt, addresses) = self
-                    .receipts_cache
-                    .remove(txn_hash)
-                    .expect("receipt cached during proposal assembly");
+                for (tx_index, txn_hash) in block.transactions.iter().enumerate() {
+                    let (receipt, addresses) = receipts_cache
+                        .remove(txn_hash)
+                        .expect("receipt cached during proposal assembly");
 
-                // Recover set of receipts
-                block_receipts.push((receipt, tx_index));
+                    // Recover set of receipts
+                    block_receipts.push((receipt, tx_index));
 
-                // Apply 'touched-address' from cache
-                for address in addresses {
-                    self.db.add_touched_address(address, *txn_hash)?;
+                    // Apply 'touched-address' from cache
+                    for address in addresses {
+                        self.db.add_touched_address(address, *txn_hash)?;
+                    }
                 }
-            }
-            // fast-forward state
-            self.state.set_to_root(block.state_root_hash().into());
+                // fast-forward state
+                self.state.set_to_root(block.state_root_hash().into());
 
-            // broadcast/commit receipts
-            return self.broadcast_commit_receipts(from, block, block_receipts);
-        };
+                // broadcast/commit receipts
+                return self.broadcast_commit_receipts(from, block, block_receipts);
+            };
+        }
 
+        let mut pool = self.transaction_pool.write();
+        pool.update_with_state(&self.state);
         let mut verified_txns = Vec::new();
+
+        let fork = self.state.forks.get(block.header.number);
 
         // We re-inject any missing Intershard transactions (or really, any missing
         // transactions) from our mempool. If any txs are unavailable in both the
         // message or locally, the proposal cannot be applied
         for (idx, tx_hash) in block.transactions.iter().enumerate() {
             // Prefer to insert verified txn from pool. This is faster.
-            let txn = match self.transaction_pool.get_transaction(*tx_hash) {
+            let txn = match pool.get_transaction(tx_hash) {
                 Some(txn) => txn.clone(),
-                _ => match transactions
-                    .get(idx)
-                    .map(|sig_tx| sig_tx.clone().verify())
-                    .transpose()?
-                {
-                    // Otherwise, recover txn from proposal. This is slower.
-                    Some(txn) if txn.hash == *tx_hash => txn,
-                    _ => {
-                        warn!("Proposal {} at view {} referenced a transaction {} that was neither included in the broadcast nor found locally - cannot apply block", block.hash(), block.view(), tx_hash);
+                _ => match transactions.get(idx) {
+                    Some(sig_txn) => {
+                        let Ok(verified) = sig_txn.clone().verify() else {
+                            warn!("Unable to verify included transaction in given block!");
+                            return Ok(());
+                        };
+                        if verified.hash != *tx_hash {
+                            warn!(
+                                "Computed txn hash doesn't match the hash provided in the given block!"
+                            );
+                            return Ok(());
+                        }
+
+                        if fork.check_minimum_gas_price {
+                            let Ok(acc) = self.state.get_account(verified.signer) else {
+                                warn!(
+                                    "Sender doesn't exist in recovered transaction from given block!"
+                                );
+                                return Ok(());
+                            };
+
+                            let Ok(ValidationOutcome::Success) = sig_txn.validate(
+                                &acc,
+                                self.config.consensus.eth_block_gas_limit,
+                                self.config.consensus.gas_price.0,
+                                self.config.eth_chain_id,
+                            ) else {
+                                warn!("Transaction recovered from given block failed to validate!");
+                                return Ok(());
+                            };
+                        }
+                        verified
+                    }
+                    None => {
+                        warn!(
+                            "Proposal {} at view {} referenced a transaction {} that was neither included in the broadcast nor found locally - cannot apply block",
+                            block.hash(),
+                            block.view(),
+                            tx_hash
+                        );
                         return Ok(());
                     }
                 },
@@ -3020,6 +3153,7 @@ impl Consensus {
         let mut cumulative_gas_used = EvmGas(0);
         let mut receipts_trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
         let mut transactions_trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
+        let mut cumulative_gas_fee = 0_u128;
 
         let transaction_hashes = verified_txns
             .iter()
@@ -3028,18 +3162,18 @@ impl Consensus {
 
         let mut touched_addresses = vec![];
         for (tx_index, txn) in verified_txns.iter().enumerate() {
-            self.new_transaction(txn.clone())?;
+            self.new_transaction(txn.clone(), true, &mut pool)?;
             let tx_hash = txn.hash;
             let mut inspector = TouchedAddressInspector::default();
-            let result = self
-                .apply_transaction(
-                    txn.clone(),
-                    block.header,
-                    &mut inspector,
-                    self.config.enable_ots_indices,
-                )?
-                .ok_or_else(|| anyhow!("proposed transaction failed to execute"))?;
-            self.transaction_pool.mark_executed(txn);
+            let result = Self::apply_transaction_at(
+                &mut self.state,
+                txn.clone(),
+                block.header,
+                &mut inspector,
+                self.config.enable_ots_indices,
+            )?
+            .ok_or_else(|| anyhow!("proposed transaction failed to execute"))?;
+            pool.mark_executed(txn);
             for address in inspector.touched {
                 touched_addresses.push((address, tx_hash));
             }
@@ -3052,11 +3186,22 @@ impl Consensus {
                 return Ok(());
             }
 
+            let gas_fee = gas_used.0 as u128 * txn.tx.gas_price_per_evm_gas();
+            cumulative_gas_fee = cumulative_gas_fee
+                .checked_add(gas_fee)
+                .ok_or_else(|| anyhow!("Overflow occurred in cumulative gas fee calculation"))?;
+
             let receipt = Self::create_txn_receipt(result, tx_hash, tx_index, cumulative_gas_used);
 
             let receipt_hash = receipt.compute_hash();
 
-            debug!("During execution in view: {}, transaction with hash: {:?} produced receipt: {:?}, receipt hash: {:?}", self.get_view()?, tx_hash, receipt, receipt_hash);
+            debug!(
+                "During execution in view: {}, transaction with hash: {:?} produced receipt: {:?}, receipt hash: {:?}",
+                self.get_view()?,
+                tx_hash,
+                receipt,
+                receipt_hash
+            );
             receipts_trie.insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())?;
 
             transactions_trie.insert(tx_hash.as_bytes(), tx_hash.as_bytes())?;
@@ -3064,10 +3209,12 @@ impl Consensus {
             debug!(?receipt, "applied transaction {:?}", receipt);
             block_receipts.push((receipt, tx_index));
         }
+        std::mem::drop(pool);
+
         self.db.with_sqlite_tx(|sqlite_tx| {
             for txn in &verified_txns {
                 self.db
-                    .insert_transaction_with_db_tx(sqlite_tx, &txn.hash, &txn.tx)?;
+                    .insert_transaction_with_db_tx(sqlite_tx, &txn.hash, txn)?;
             }
             for (addr, txn_hash) in touched_addresses {
                 self.db
@@ -3077,7 +3224,10 @@ impl Consensus {
         })?;
 
         if cumulative_gas_used != block.gas_used() {
-            warn!("Cumulative gas used by executing all transactions: {cumulative_gas_used} is different that the one provided in the block: {}", block.gas_used());
+            warn!(
+                "Cumulative gas used by executing all transactions: {cumulative_gas_used} is different than the one provided in the block: {}",
+                block.gas_used()
+            );
             return Ok(());
         }
 
@@ -3085,7 +3235,10 @@ impl Consensus {
         if block.header.receipts_root_hash != receipts_root_hash {
             warn!(
                 "Block number: {}, Receipt root mismatch. Specified in block: {} vs computed: {}, txn_hashes: {}",
-                block.number(), block.header.receipts_root_hash, receipts_root_hash, transaction_hashes
+                block.number(),
+                block.header.receipts_root_hash,
+                receipts_root_hash,
+                transaction_hashes
             );
             return Ok(());
         }
@@ -3094,37 +3247,17 @@ impl Consensus {
         if block.header.transactions_root_hash != transactions_root_hash {
             warn!(
                 "Block number: {}, Transactions root mismatch. Specified in block: {} vs computed: {}, txn_hashes: {}",
-                block.number(), block.header.transactions_root_hash, transactions_root_hash, transaction_hashes
+                block.number(),
+                block.header.transactions_root_hash,
+                transactions_root_hash,
+                transaction_hashes
             );
             return Ok(());
         }
 
-        // Apply rewards after executing transactions but with the committee members from the previous block
-        let proposer = self.leader_at_block(&parent, block.view()).unwrap();
-        Self::apply_rewards_late_at(
-            &parent,
-            &mut self.state,
-            &self.config.consensus,
-            committee,
-            proposer.public_key,
-            block,
-        )?;
-
-        // ZIP-9: Sink gas to zero account
-        self.state.mutate_account(Address::ZERO, |a| {
-            a.balance = a
-                .balance
-                .checked_add(block.gas_used().0 as u128)
-                .ok_or(anyhow!("Overflow occured in zero account balance"))?;
-            Ok(())
-        })?;
-
-        if self.block_is_first_in_epoch(block.header.number) {
-            // Update state with any contract upgrades for this block
-            let mut state_clone = self.state.clone();
-            self.contract_upgrade_apply_state_change(&mut state_clone, block.header)?;
-            self.state = state_clone;
-        }
+        let mut state = self.state.clone();
+        self.apply_proposal_to_state(&mut state, block, &parent, committee, cumulative_gas_fee)?;
+        self.state = state;
 
         if self.state.root_hash()? != block.state_root_hash() {
             warn!(
@@ -3143,8 +3276,124 @@ impl Consensus {
         self.broadcast_commit_receipts(from, block, block_receipts)
     }
 
+    fn apply_proposal_to_state(
+        &self,
+        state: &mut State,
+        block: &Block,
+        parent: &Block,
+        committee: &[NodePublicKey],
+        cumulative_gas_fee: u128,
+    ) -> Result<()> {
+        // Apply the rewards of previous round
+        let proposer = self.leader_at_block(parent, block.view()).unwrap();
+        Self::apply_rewards_late_at(
+            parent,
+            state,
+            &self.config.consensus,
+            committee,
+            proposer.public_key,
+            block,
+        )?;
+
+        // ZIP-9: Sink gas to zero account
+        let fork = state.forks.get(block.header.number).clone();
+        let gas_fee_amount = if fork.transfer_gas_fee_to_zero_account {
+            cumulative_gas_fee
+        } else {
+            block.gas_used().0 as u128
+        };
+
+        state.mutate_account(Address::ZERO, |a| {
+            a.balance = a
+                .balance
+                .checked_add(gas_fee_amount)
+                .ok_or(anyhow!("Overflow occurred in zero account balance"))?;
+            Ok(())
+        })?;
+
+        if !fork.fund_accounts_from_zero_account.is_empty() {
+            if let Some(fork_height) = self
+                .state
+                .forks
+                .find_height_fork_first_activated(ForkName::FundAccountsFromZeroAccount)
+            {
+                if fork_height == block.header.number {
+                    for address_amount_pair in fork.fund_accounts_from_zero_account.clone() {
+                        state.mutate_account(Address::ZERO, |a| {
+                            a.balance = a
+                                .balance
+                                .checked_sub(*address_amount_pair.1)
+                                .ok_or(anyhow!("Underflow occurred in zero account balance"))?;
+                            Ok(())
+                        })?;
+                        state.mutate_account(address_amount_pair.0, |a| {
+                            a.balance = a
+                                .balance
+                                .checked_add(*address_amount_pair.1)
+                                .ok_or(anyhow!("Overflow occurred in Faucet account balance"))?;
+                            Ok(())
+                        })?;
+                    }
+                }
+            };
+        }
+
+        if fork.restore_xsgd_contract {
+            if let Some(fork_height) = self
+                .state
+                .forks
+                .find_height_fork_first_activated(ForkName::RestoreXsgdContract)
+            {
+                if fork_height == block.header.number {
+                    let code: Code = serde_json::from_slice(&hex::decode(XSGD_CODE)?)?;
+                    state.mutate_account(XSGD_MAINNET_ADDR, |a| {
+                        a.code = code;
+                        Ok(())
+                    })?;
+                }
+            }
+        }
+        if fork.revert_restore_xsgd_contract {
+            if let Some(fork_height) = self
+                .state
+                .forks
+                .find_height_fork_first_activated(ForkName::RevertRestoreXsgdContract)
+            {
+                if fork_height == block.header.number {
+                    state.mutate_account(XSGD_MAINNET_ADDR, |a| {
+                        a.code = Code::Evm(vec![]);
+                        Ok(())
+                    })?;
+                }
+            }
+        }
+        if fork.restore_ignite_wallet_contracts {
+            if let Some(fork_height) = self
+                .state
+                .forks
+                .find_height_fork_first_activated(ForkName::RestoreIgniteWalletContracts)
+            {
+                if fork_height == block.header.number {
+                    for (addr, code) in build_ignite_wallet_addr_scilla_code_map()?.iter() {
+                        state.mutate_account(*addr, |a| {
+                            a.code = code.clone();
+                            Ok(())
+                        })?;
+                    }
+                }
+            }
+        }
+
+        if self.block_is_first_in_epoch(block.header.number) {
+            // Update state with any contract upgrades for this block
+            state.contract_upgrade_apply_state_change(&self.config.consensus, block.header)?;
+        }
+
+        Ok(())
+    }
+
     fn broadcast_commit_receipts(
-        &mut self,
+        &self,
         from: Option<PeerId>,
         block: &Block,
         mut block_receipts: Vec<(TransactionReceipt, usize)>,
@@ -3212,116 +3461,63 @@ impl Consensus {
         }
     }
 
-    pub fn report_outgoing_message_failure(
-        &mut self,
-        failure: OutgoingMessageFailure,
-    ) -> Result<()> {
-        self.block_store.report_outgoing_message_failure(failure)
+    pub fn get_num_transactions(&self) -> Result<usize> {
+        let count = self.db.get_total_transaction_count()?;
+        Ok(count)
     }
 
-    pub fn tick(&mut self) -> Result<()> {
-        trace!("consensus::tick()");
-        trace!("request_missing_blocks from timer");
+    pub fn get_sync_data(&self) -> Result<Option<SyncingStruct>> {
+        self.sync.get_sync_data()
+    }
 
-        // Drives the block fetching state machine - see docs/fetching_blocks.md
-        if self.block_store.request_missing_blocks()? {
-            // We're syncing..
-            // Is it likely that the next thing in the buffer could be the next block?
-            let likely_blocks = self.block_store.next_proposals_if_likely()?;
-            if likely_blocks.is_empty() {
-                trace!("no blocks buffered");
-                // If there are no next blocks buffered, someone may well have lied to us about
-                // where the gaps in the view range are. This should be a rare occurrence, so in
-                // lieu of timing it out, just zap the view range gap and we'll take the hit on
-                // any rerequests.
-                self.block_store.delete_empty_view_range_cache();
-            } else {
-                likely_blocks.into_iter().for_each(|(from, block)| {
-                    trace!(
-                        "buffer may contain the next block - {0:?} v={1} n={2}",
-                        block.hash(),
-                        block.view(),
-                        block.number()
-                    );
-                    // Ignore errors here - just carry on and wait for re-request to clean up.
-                    let view = block.view();
-                    let _ = self.message_sender.send_external_message(
-                        self.peer_id(),
-                        ExternalMessage::ProcessProposal(ProcessProposal {
-                            from: from.to_bytes(),
-                            block,
-                        }),
-                    );
-                    self.block_store.expect_process_proposal(view);
-                });
+    /// This function is intended for use only by admin_forceView API. It is dangerous and should not be touched outside of testing or test network recovery.
+    ///
+    /// Force set our view and override exponential timeout such that view timeouts at given timestamp
+    /// View value must be larger than current
+    pub fn force_view(&mut self, view: u64, timeout_at: String) -> Result<()> {
+        if self.get_view()? > view {
+            return Err(anyhow!(
+                "view cannot be forced into lower view than current"
+            ));
+        }
+        match timeout_at.parse::<DateTime>() {
+            Ok(datetime) => self.force_view = Some((view, datetime)),
+            Err(_) => {
+                return Err(anyhow!(
+                    "timeout date must be in format 2001-01-02T12:13:14Z"
+                ));
             }
-        } else {
-            trace!("not syncing ...");
+        };
+        self.set_view(view, false)?;
+
+        // Build a new view - We assume the network is stuck.
+        if !self.db.get_voted_in_view()? {
+            self.build_new_view()?;
         }
         Ok(())
     }
 
-    pub fn buffer_proposal(&mut self, from: PeerId, proposal: Proposal) -> Result<()> {
-        self.block_store.buffer_proposal(from, proposal)?;
+    fn in_committee(&mut self, val: bool) -> Result<()> {
+        if val && !self.in_committee {
+            self.in_committee = true;
+            self.message_sender.send_message_to_coordinator(
+                InternalMessage::SubscribeToGossipSubTopic(GossipSubTopic::Validator(
+                    self.config.eth_chain_id,
+                )),
+            )?;
+        }
+        if !val && self.in_committee {
+            self.in_committee = false;
+            self.message_sender.send_message_to_coordinator(
+                InternalMessage::UnsubscribeFromGossipSubTopic(GossipSubTopic::Validator(
+                    self.config.eth_chain_id,
+                )),
+            )?;
+        }
         Ok(())
     }
 
-    pub fn buffer_lack_of_proposals(
-        &mut self,
-        from_view: u64,
-        proposals: &Vec<Proposal>,
-    ) -> Result<()> {
-        self.block_store
-            .buffer_lack_of_proposals(from_view, proposals)
-    }
-
-    pub fn get_sync_data(&self) -> Result<Option<(BlockNumber, BlockNumber, BlockNumber)>> {
-        self.block_store.get_sync_data()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn test_minimum_views_in_time_difference() {
-        // 2 views ahead - 1.5 ^ 0 = 1
-        assert_eq!(
-            Consensus::minimum_views_in_time_difference(
-                Duration::from_secs(0),
-                Duration::from_secs(1)
-            ),
-            0
-        );
-        // 3 views ahead - 1.5^0 + 1.5^1 = 2.5
-        assert_eq!(
-            Consensus::minimum_views_in_time_difference(
-                Duration::from_secs(2),
-                Duration::from_secs(1)
-            ),
-            1
-        );
-        assert_eq!(
-            Consensus::minimum_views_in_time_difference(
-                Duration::from_secs(3),
-                Duration::from_secs(1)
-            ),
-            2
-        );
-        // 5 views ahead - 1.5^0 + 1.5^1 + 1.5^2 + 1.5^3 = 8.125
-        assert_eq!(
-            Consensus::minimum_views_in_time_difference(
-                Duration::from_secs(8),
-                Duration::from_secs(1)
-            ),
-            3
-        );
-        assert_eq!(
-            Consensus::minimum_views_in_time_difference(
-                Duration::from_secs(9),
-                Duration::from_secs(1)
-            ),
-            4
-        );
+    pub fn clear_mempool(&self) {
+        self.transaction_pool.write().clear();
     }
 }

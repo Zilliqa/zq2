@@ -19,7 +19,7 @@ use zilliqa::{
     state::contract_addr,
 };
 
-use crate::{fund_wallet, LocalRpcClient, Network, Wallet};
+use crate::{LocalRpcClient, Network, Wallet, fund_wallet, get_reward_address, get_stakers};
 
 async fn check_miner_got_reward(
     wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
@@ -55,12 +55,15 @@ async fn deposit_stake(
         .await
         .unwrap()
         .tx_hash();
-    network.run_until_receipt(staker_wallet, hash, 80).await;
+    network.run_until_receipt(staker_wallet, hash, 101).await;
 
     // Stake the new validator's funds.
     let tx = TransactionRequest::new()
         .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
         .value(stake)
+        // Set a high gas limit manually, in case the gas estimate and transaction cross an epoch boundary, in which
+        // case our estimate will be incorrect.
+        .gas(5_000_000)
         .data(
             contracts::deposit::DEPOSIT
                 .encode_input(&[
@@ -82,7 +85,7 @@ async fn deposit_stake(
         .await
         .unwrap()
         .tx_hash();
-    let receipt = network.run_until_receipt(staker_wallet, hash, 80).await;
+    let receipt = network.run_until_receipt(staker_wallet, hash, 102).await;
     assert_eq!(receipt.status.unwrap().as_u64(), 1);
     hash
 }
@@ -105,12 +108,15 @@ async fn deposit_v3_stake(
         .await
         .unwrap()
         .tx_hash();
-    network.run_until_receipt(staker_wallet, hash, 80).await;
+    network.run_until_receipt(staker_wallet, hash, 103).await;
 
     // Stake the new validator's funds.
     let tx = TransactionRequest::new()
         .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
         .value(stake)
+        // Set a high gas limit manually, in case the gas estimate and transaction cross an epoch boundary, in which
+        // case our estimate will be incorrect.
+        .gas(5_000_000)
         .data(
             contracts::deposit_v3::DEPOSIT
                 .encode_input(&[
@@ -133,7 +139,7 @@ async fn deposit_v3_stake(
         .await
         .unwrap()
         .tx_hash();
-    let receipt = network.run_until_receipt(staker_wallet, hash, 80).await;
+    let receipt = network.run_until_receipt(staker_wallet, hash, 104).await;
     assert_eq!(receipt.status.unwrap().as_u64(), 1);
     hash
 }
@@ -178,7 +184,7 @@ async fn unstake_amount(network: &mut Network, control_wallet: &Wallet, amount: 
         .await
         .unwrap()
         .tx_hash();
-    let receipt = network.run_until_receipt(control_wallet, hash, 100).await;
+    let receipt = network.run_until_receipt(control_wallet, hash, 200).await;
     assert_eq!(receipt.status.unwrap().as_u64(), 1);
     hash
 }
@@ -220,26 +226,6 @@ async fn get_total_stake(wallet: &Wallet) -> u128 {
         .unwrap();
 
     stake.as_u128()
-}
-
-async fn get_stakers(
-    wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
-) -> Vec<NodePublicKey> {
-    let tx = TransactionRequest::new()
-        .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
-        .data(contracts::deposit::GET_STAKERS.encode_input(&[]).unwrap());
-    let stakers = wallet.call(&tx.into(), None).await.unwrap();
-    let stakers = contracts::deposit::GET_STAKERS
-        .decode_output(&stakers)
-        .unwrap()[0]
-        .clone()
-        .into_array()
-        .unwrap();
-
-    stakers
-        .into_iter()
-        .map(|k| NodePublicKey::from_bytes(&k.into_bytes().unwrap()).unwrap())
-        .collect()
 }
 
 async fn get_minimum_deposit(
@@ -300,26 +286,6 @@ async fn get_blocks_per_epoch(
     deposit.as_u64()
 }
 
-async fn get_reward_address(
-    wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
-    staker: &NodePublicKey,
-) -> H160 {
-    let tx = TransactionRequest::new()
-        .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
-        .data(
-            contracts::deposit::GET_REWARD_ADDRESS
-                .encode_input(&[Token::Bytes(staker.as_bytes())])
-                .unwrap(),
-        );
-    let return_value = wallet.call(&tx.into(), None).await.unwrap();
-    contracts::deposit::GET_REWARD_ADDRESS
-        .decode_output(&return_value)
-        .unwrap()[0]
-        .clone()
-        .into_address()
-        .unwrap()
-}
-
 async fn get_signing_address(
     wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
     staker: &NodePublicKey,
@@ -365,13 +331,7 @@ async fn deposit_storage_initially_set(mut network: Network) {
     let wallet = network.random_wallet().await;
     assert_eq!(
         get_minimum_deposit(&wallet).await,
-        *network.nodes[0]
-            .inner
-            .lock()
-            .unwrap()
-            .config
-            .consensus
-            .minimum_stake
+        *network.nodes[0].inner.read().config.consensus.minimum_stake
     );
     assert_eq!(
         get_maximum_stakers(&wallet).await,
@@ -381,8 +341,7 @@ async fn deposit_storage_initially_set(mut network: Network) {
         get_blocks_per_epoch(&wallet).await,
         network.nodes[0]
             .inner
-            .lock()
-            .unwrap()
+            .read()
             .config
             .consensus
             .blocks_per_epoch
@@ -393,8 +352,7 @@ async fn deposit_storage_initially_set(mut network: Network) {
         stakers.len(),
         network.nodes[0]
             .inner
-            .lock()
-            .unwrap()
+            .read()
             .config
             .consensus
             .genesis_deposits
@@ -425,14 +383,14 @@ async fn rewards_are_sent_to_reward_address_of_proposer(mut network: Network) {
     check_miner_got_reward(&wallet, 1).await;
 }
 
-#[zilliqa_macros::test(blocks_per_epoch = 2, deposit_v3_upgrade_block_height = 12)]
+#[zilliqa_macros::test(blocks_per_epoch = 2, deposit_v3_upgrade_block_height = 24)]
 async fn validators_can_join_and_become_proposer(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
     // randomise the current epoch state and current leader
-    let blocks_to_prerun = network.rng.lock().unwrap().gen_range(0..8);
+    let blocks_to_prerun = network.rng.lock().unwrap().gen_range(0..4);
     network
-        .run_until_block(&wallet, blocks_to_prerun.into(), 100)
+        .run_until_block(&wallet, blocks_to_prerun.into(), 200)
         .await;
 
     // First test joining deposit_v2
@@ -447,6 +405,7 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
     let staker_wallet = network.wallet_of_node(index).await;
     let pop_sinature = new_validator_key.pop_prove();
 
+    // This has to be done before `contract_upgrade_block_heights` which is 24, by default in this test
     let deposit_hash = deposit_stake(
         &mut network,
         &wallet,
@@ -513,7 +472,6 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
     check_miner_got_reward(&wallet, BlockNumber::Latest).await;
 
     // Now test joining deposit_v3
-    let deposit_v3_deploy_block = 12;
     let index = network.add_node();
     let new_validator_priv_key = network.get_node_raw(index).secret_key;
     let new_validator_pub_key = new_validator_priv_key.node_public_key();
@@ -532,7 +490,7 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
 
     // Give new node time to catch up to block including deposit_v3 deployment
     network
-        .run_until_block(&staker_wallet, deposit_v3_deploy_block.into(), 200)
+        .run_until_block(&staker_wallet, 24.into(), 424)
         .await;
 
     let deposit_hash = deposit_v3_stake(
@@ -607,6 +565,7 @@ async fn block_proposers_are_selected_proportionally_to_their_stake(mut network:
     let staker_wallet = network.wallet_of_node(index).await;
     let pop_signature = new_validator_key.pop_prove();
 
+    network.run_until_synced(index).await;
     deposit_stake(
         &mut network,
         &wallet,
@@ -675,7 +634,7 @@ async fn validators_can_unstake(mut network: Network) {
     // randomise the current epoch state and current leader
     let blocks_to_prerun = network.rng.lock().unwrap().gen_range(0..8);
     network
-        .run_until_block(&wallet, blocks_to_prerun.into(), 100)
+        .run_until_block(&wallet, blocks_to_prerun.into(), 400)
         .await;
 
     let validator_idx = network.random_index();
@@ -695,11 +654,9 @@ async fn validators_can_unstake(mut network: Network) {
     // unstake validator's entire stake
     let stake = get_stake(&wallet, &validator_blskey).await;
     let unstake_hash = unstake_amount(&mut network, &validator_control_wallet, stake).await;
-    let unstake_block = wallet
-        .get_transaction_receipt(unstake_hash)
+    let unstake_block = network
+        .run_until_receipt(&wallet, unstake_hash, 100)
         .await
-        .unwrap()
-        .unwrap()
         .block_number
         .unwrap()
         .as_u64();

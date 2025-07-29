@@ -1,0 +1,49 @@
+#!/bin/bash
+echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
+
+ETHEREUM_METRICS_EXPORTER_IMAGE="{{ ethereum_metrics_exporter_image }}"
+
+start() {
+    docker ps -a --filter "name=ethereum-metrics-exporter-" --format "{{'{{'}}.ID{{'}}'}}" | xargs -r docker rm -f &> /dev/null || echo 0
+    cat > config.yaml << 'EOL'
+execution:
+  enabled: true
+  url: "https://api.{{ dns_subdomain }}"
+  name: "execution-client"
+  modules:
+    - "eth"
+    - "net"
+zilliqa:
+  enabled: true
+  rpcUrl: "https://api.{{ dns_subdomain }}"
+  interval: "30s"
+consensus:
+  enabled: false
+  url: "http://localhost:5052"
+  name: "consensus-client"
+diskUsage:
+  enabled: false
+  directories:
+    - "/var/lib/ethereum"
+    - "/var/lib/zilliqa"
+    - "/tmp"
+  interval: "30s"
+EOL
+    docker run -td --name ethereum-metrics-exporter-{{ ethereum_metrics_exporter_version }} \
+        --log-driver json-file --log-opt max-size=1g --log-opt max-file=1 \
+        --net=host \
+        --cpus=".5" \
+        -v $(pwd)/config.yaml:/config.yaml \
+        --restart=unless-stopped --pull=always \
+        ${ETHEREUM_METRICS_EXPORTER_IMAGE} --config=/config.yaml
+}
+
+stop() {
+    docker ps --filter "name=ethereum-metrics-exporter-" --format "{{'{{'}}.ID{{'}}'}}" | xargs -r docker stop
+}
+
+case ${1} in
+    start|stop) ${1} ;;
+esac
+
+exit 0

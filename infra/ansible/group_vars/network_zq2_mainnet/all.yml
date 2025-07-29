@@ -1,0 +1,34 @@
+---
+# GCP Configuration
+ansible_ssh_args: --tunnel-through-iap --zone={{ zone }} --no-user-output-enabled
+ansible_scp_extra_args: --tunnel-through-iap --zone={{ zone }} --quiet
+
+# Node Configuration
+eth_chain_id: 32769
+chain_name: "zq2-mainnet"
+dns_subdomain: "zilliqa.com"
+stats_endpoint: "stats.zq2-mainnet.zilliqa.com"
+project_id: prj-p-zq2-mainnet-sn5n8wfl
+log_level: "zilliqa=trace"
+enable_faucet: false
+
+# Docker images
+zq2_image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zq2:v0.16.0
+otterscan_image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/otterscan:v1.0.7
+spout_image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/eth-spout:main
+stats_dashboard_image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zilstats-server:v0.1.0
+stats_agent_image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zilstats-agent:v0.1.0
+ethereum_metrics_exporter_image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/ethereum-metrics-exporter:v0.2.0
+process_exporter_image: ncabatoff/process-exporter:0.8.1
+node_exporter_image: prom/node-exporter:v1.9.0
+
+# Persistence Configuration
+persistence_interval_blocks: 7200
+persistence_max_item_to_keep: 50
+persistence_dir: "/data"
+persistence_url: ""
+checkpoint_url: ""
+
+# KMS Configuration
+enable_kms: true
+kms_project_id: "{{ 'prj-p-kms-2vduab0g' if project_id.startswith('prj-p') else 'prj-d-kms-tw1xyxbh' }}"

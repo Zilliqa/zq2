@@ -1,0 +1,12 @@
+name: zq2-testnet
+eth_chain_id: 33101
+roles:
+  - bootstrap
+  - validator
+  - api
+  - apps
+  - checkpoint
+  - persistence
+  - private-api
+versions:
+  zq2: v0.16.0

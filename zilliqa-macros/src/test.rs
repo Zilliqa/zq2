@@ -1,6 +1,6 @@
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
-use syn::{parse::Parser, ItemFn};
+use syn::{ItemFn, parse::Parser};
 
 // Much of this code is adapted from https://github.com/tokio-rs/tokio/blob/910a1e2fcf8ebafd41c2841144c3a1037af7dc40/tokio-macros/src/lib.rs.
 
@@ -34,7 +34,7 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
                         return token_stream_with_error(
                             args,
                             syn::Error::new_spanned(p, "Unknown attribute"),
-                        )
+                        );
                     }
                 }
             }
@@ -88,7 +88,7 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
                         return token_stream_with_error(
                             args,
                             syn::Error::new_spanned(a, "Unknown attribute"),
-                        )
+                        );
                     }
                 }
             }
@@ -98,7 +98,7 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
                 return token_stream_with_error(
                     args,
                     syn::Error::new_spanned(other, "Unknown attribute"),
-                )
+                );
             }
         }
     }
@@ -149,93 +149,18 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
             use std::time::{Duration, Instant};
             let seeds_number = seeds.len();
 
-            let mut name = format!("scilla-server-{}-", stringify!(#test_name));
-            let rng = <rand::rngs::SmallRng as rand_core::SeedableRng>::from_entropy();
-
-            name.extend(rand::Rng::sample_iter(rng, &rand::distributions::Alphanumeric).map(char::from).take(8));
-
-            let scilla_stdlib_dir = "/scilla/0/_build/default/src/stdlib/";
             // Spawn a Scilla container for this group of tests.
-            let mut child = std::process::Command::new("docker")
-                .arg("run")
-                .arg("--name")
-                .arg(&name)
-                .arg("--add-host")
-                .arg("host.docker.internal:host-gateway")
-                // Let Docker auto-assign a free port on the host. The scilla-server listens on port 3000.
-                .arg("--publish")
-                .arg("3000")
-                .arg("--init")
-                .arg("--rm")
-                .arg("-v")
-                .arg("/tmp:/scilla_ext_libs")
-                .arg("asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:a5a81f72")
-                .arg("/scilla/0/bin/scilla-server-http")
-                .spawn()
-                .unwrap();
-
-            // Wait for the container to be running.
-            for i in 0.. {
-                let status_output = std::process::Command::new("docker")
-                    .arg("inspect")
-                    .arg("-f")
-                    .arg("{{.State.Status}}")
-                    .arg(&name)
-                    .output()
-                    .unwrap();
-                let status = String::from_utf8(status_output.stdout).unwrap();
-                if status.trim() == "running" {
-                    break;
-                }
-                if i >= 1200 {
-                    panic!("container is still not running");
-                }
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
-
-            // Find the port that Docker selected on the host.
-            let inspect = std::process::Command::new("docker")
-                .arg("inspect")
-                .arg("--format")
-                .arg("{{json .NetworkSettings.Ports}}")
-                .arg(&name)
-                .output()
-                .unwrap();
-            #[derive(serde::Deserialize, Copy, Clone)]
-            struct Addr {
-                #[serde(rename = "HostIp")]
-                ip: std::net::IpAddr,
-                #[serde(rename = "HostPort", with = "zilliqa::serde_util::num_as_str")]
-                port: u16,
-            }
-            let inspect: std::collections::HashMap<String, Vec<Addr>> =
-                serde_json::from_slice(&inspect.stdout).unwrap();
-            let addrs: Vec<std::net::SocketAddr> = inspect["3000/tcp"]
-                .iter()
-                .copied()
-                .map(|a| (a.ip, a.port).into())
-                .collect();
-            let addr = *addrs.iter().find(|a| a.is_ipv4()).unwrap();
-
-            let mut stop = || {
-                let mut stop_child = std::process::Command::new("docker")
-                    .arg("stop")
-                    .arg("--signal")
-                    .arg("SIGKILL")
-                    .arg(&name)
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .spawn()
-                    .unwrap();
-                let _ = child.wait();
-                let _ = stop_child.wait();
-            };
+            let scilla = zilliqa::test_util::ScillaServer::default();
+            let addr = scilla.addr.clone();
+            let temp_dir = scilla.temp_dir.clone();
 
             // Silence the default panic hook.
             std::panic::set_hook(Box::new(|_| {}));
 
             for seed in seeds {
                 let sem = sem.clone();
+                let addr = addr.clone();
+                let temp_dir = temp_dir.clone();
                 let handle = set.spawn(async move {
                     let _permit = sem.acquire_owned().await.unwrap();
 
@@ -255,18 +180,27 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
                     };
 
                     async move {
-                        let mut rng = <rand_chacha::ChaCha8Rng as rand_core::SeedableRng>::seed_from_u64(seed);
+                        let mut rng = <rand_chacha::ChaCha8Rng as rand::SeedableRng>::seed_from_u64(seed);
                         let mut deposit_v3_upgrade_block_height_option = Option::None;
                         if #deposit_v3_upgrade_block_height != 0 {
                             deposit_v3_upgrade_block_height_option = Option::Some(#deposit_v3_upgrade_block_height);
                         };
-                        let network = crate::Network::new(std::sync::Arc::new(std::sync::Mutex::new(rng)), 4, seed, format!("http://{addr}"),
-                                                          scilla_stdlib_dir.to_string(), #do_checkpoints, #blocks_per_epoch, deposit_v3_upgrade_block_height_option);
+                        let result = zilliqa::time::with_fake_time(async {
+                            let network = crate::Network::new(
+                                std::sync::Arc::new(std::sync::Mutex::new(rng)),
+                                4,
+                                seed,
+                                addr,
+                                "/scilla/0/_build/default/src/stdlib/".to_owned(),
+                                #do_checkpoints,
+                                #blocks_per_epoch,
+                                deposit_v3_upgrade_block_height_option,
+                                format!("{temp_dir}/scilla-sockets"),
+                            );
 
-                        // Call the original test function, wrapped in `catch_unwind` so we can detect the panic.
-                        let result = futures::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(
-                            zilliqa::time::with_fake_time(#inner_name(network))
-                        )).await;
+                            // Call the original test function, wrapped in `catch_unwind` so we can detect the panic.
+                            futures::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(#inner_name(network))).await
+                        }).await;
 
                         match result {
                             Ok(()) => {},
@@ -310,8 +244,6 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
                 println!("\x1b[0;31mFailure: {failure}{examples}\x1b[0m");
                 println!("Pass rate: {}%", (success as f32 / total as f32) * 100.0);
 
-                stop();
-
                 if failure != 0 {
                     panic!();
                 }
@@ -333,7 +265,6 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
 
                                 let seed = id_to_seed.get(&id).expect("task ID not found");
                                 println!("Reproduce this test run by setting ZQ_TEST_RNG_SEED={seed}");
-                                stop();
                                 std::panic::resume_unwind(p);
                             } else {
                                 panic!("task cancelled")
@@ -342,8 +273,6 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
                     }
                 }
             }
-
-            stop();
         }
     }
 }

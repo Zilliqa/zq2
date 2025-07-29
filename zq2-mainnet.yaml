@@ -1,0 +1,12 @@
+name: zq2-mainnet
+eth_chain_id: 32769
+roles:
+  - bootstrap
+  - validator
+  - api
+  - apps
+  - checkpoint
+  - persistence
+  - private-api
+versions:
+  zq2: v0.16.0

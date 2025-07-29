@@ -1,0 +1,44 @@
+# ---
+# # GCP Configuration
+# ansible_ssh_args: --tunnel-through-iap --zone={{ zone }} --no-user-output-enabled
+# ansible_scp_extra_args: --tunnel-through-iap --zone={{ zone }} --quiet
+# project_id: prj-d-zq2-devnet-c83bkpsd
+# # environment: "{{ environment }}"
+# gcp_service_account_key: "{{ lookup('env', 'GCP_SERVICE_ACCOUNT_KEY') }}"
+# gcp_persistent_disk_device: /dev/sdb
+# gcp_persistent_disk_mount_point: /data
+# enable_gcp_monitoring: true
+
+# # Docker Configuration
+# zq2_image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zq2:v0.11.0
+# otterscan_image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/otterscan:v1.0.7
+# spout_image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/eth-spout:main
+# stats_dashboard_image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zilstats-server:v0.0.6
+# stats_agent_image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zilstats-agent:v0.0.6
+# process_exporter_image: ncabatoff/process-exporter:0.8.1
+# node_exporter_image: prom/node-exporter:v1.9.0
+
+# # Node Configuration
+# # node_role: "{{ node_role | default('validator') }}"
+# chain_name: "zq2-infratest"
+# eth_chain_id: 33103
+# log_level: "zilliqa=trace"
+# dns_subdomain: "zq2-infratest.zilstg.dev"
+# enable_faucet: true
+
+# # Persistence Configuration
+# persistence_url: ""
+# checkpoint_url: ""
+
+# # KMS Configuration
+# enable_kms: true
+# kms_project_id: "{{ 'prj-p-kms-2vduab0g' if project_id.startswith('prj-p') else 'prj-d-kms-tw1xyxbh' }}"
+
+# # Node configuration
+# node_roles: []
+# spout_enabled: true
+
+# # Stats configuration
+# stats_agent_port: 8080
+# stats_agent_collect_interval: 30
+# stats_agent_metrics_endpoint: "http://localhost:9090"

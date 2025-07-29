@@ -6,7 +6,7 @@ use std::{
 };
 
 use alloy::primitives::Address;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use bitvec::{bitarr, order::Msb0};
 use itertools::Either;
 use libp2p::PeerId;
@@ -17,7 +17,7 @@ use crate::{
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey},
     db::TrieStorage,
     time::SystemTime,
-    transaction::{EvmGas, SignedTransaction, VerifiedTransaction},
+    transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
 };
 
 /// The maximum number of validators in the consensus committee. This is passed to the deposit contract and we expect
@@ -203,13 +203,13 @@ pub enum BlockStrategy {
     Latest(u64),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct BlockRequest {
     pub from_view: u64,
     pub to_view: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct BlockResponse {
     pub proposals: Vec<Proposal>,
     pub from_view: u64,
@@ -218,11 +218,27 @@ pub struct BlockResponse {
     pub availability: Option<Vec<BlockStrategy>>,
 }
 
+impl fmt::Debug for BlockResponse {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BlockResponse")
+            .field("proposals", &self.proposals)
+            .field("from_view", &self.from_view)
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestBlocksByHeight {
+    pub request_at: SystemTime,
+    pub from_height: u64,
+    pub to_height: u64,
+}
+
 /// Used to convey proposal processing internally, to avoid blocking threads for too long.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProcessProposal {
+pub struct InjectedProposal {
     // An encoded PeerId
-    pub from: Vec<u8>,
+    pub from: PeerId,
     pub block: Proposal,
 }
 
@@ -239,17 +255,33 @@ pub struct IntershardCall {
 
 /// A message intended to be sent over the network as part of p2p communication.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Keep this in-sync with the routing in P2pNode::start()
 pub enum ExternalMessage {
     Proposal(Proposal),
     Vote(Box<Vote>),
     NewView(Box<NewView>),
     BlockRequest(BlockRequest),
     BlockResponse(BlockResponse),
-    ProcessProposal(ProcessProposal),
-    NewTransaction(SignedTransaction),
+    ProcessProposal,                   // deprecated since 0.7.0
+    NewTransaction(SignedTransaction), // deprecated since 0.9.4
     /// An acknowledgement of the receipt of a message. Note this is only used as a response when the caller doesn't
     /// require any data in the response.
     Acknowledgement,
+    /// The following are used for the new sync protocol
+    InjectedProposal(InjectedProposal),
+    /// 0.6.0
+    MetaDataRequest(RequestBlocksByHeight),
+    MetaDataResponse, // deprecated since 0.9.0
+    MultiBlockRequest(Vec<Hash>),
+    MultiBlockResponse(Vec<Proposal>),
+    /// 0.7.0
+    SyncBlockHeaders(Vec<SyncBlockHeader>),
+    /// 0.8.0
+    PassiveSyncRequest(RequestBlocksByHash),
+    PassiveSyncResponse(Vec<BlockTransactionsReceipts>),
+    PassiveSyncResponseLZ(Vec<u8>), // compressed block
+    /// 0.9.4
+    BatchedTransactions(Vec<SignedTransaction>),
 }
 
 impl ExternalMessage {
@@ -265,37 +297,47 @@ impl ExternalMessage {
 impl Display for ExternalMessage {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            ExternalMessage::PassiveSyncResponseLZ(r) => {
+                write!(f, "PassiveSyncResponseLZ({})", r.len())
+            }
+            ExternalMessage::PassiveSyncResponse(r) => {
+                write!(f, "PassiveSyncResponse({})", r.len())
+            }
+            ExternalMessage::PassiveSyncRequest(r) => {
+                write!(f, "PassiveSyncRequest({})", r.hash)
+            }
+            ExternalMessage::SyncBlockHeaders(r) => {
+                write!(f, "SyncBlockHeaders({})", r.len())
+            }
+            ExternalMessage::MultiBlockRequest(r) => {
+                write!(f, "MultiBlockRequest({})", r.len())
+            }
+            ExternalMessage::MultiBlockResponse(r) => {
+                write!(f, "MultiBlockResponse({})", r.len())
+            }
+            ExternalMessage::MetaDataRequest(r) => {
+                write!(f, "MetaDataRequest({:?})", r.from_height..=r.to_height)
+            }
+            ExternalMessage::InjectedProposal(p) => {
+                write!(f, "InjectedProposal({})", p.block.view())
+            }
             ExternalMessage::Proposal(p) => write!(f, "Proposal({})", p.view()),
             ExternalMessage::Vote(v) => write!(f, "Vote({})", v.view),
             ExternalMessage::NewView(n) => write!(f, "NewView({})", n.view),
             ExternalMessage::BlockRequest(r) => {
                 write!(f, "BlockRequest({}..={})", r.from_view, r.to_view)
             }
-            ExternalMessage::ProcessProposal(r) => {
-                write!(
-                    f,
-                    "ProcessProposal({}, view={} num={})",
-                    PeerId::from_bytes(&r.from)
-                        .map_or("(undecodable)".to_string(), |x| x.to_base58()),
-                    r.block.header.view,
-                    r.block.header.number
-                )
-            }
             ExternalMessage::BlockResponse(r) => {
                 let mut views = r.proposals.iter().map(|p| p.view());
                 let first = views.next();
-                let last = views.last();
+                let last = views.next_back();
                 match (first, last) {
-                    (None, None) => write!(f, "BlockResponse([], avail={:?})", r.availability),
+                    (None, None) => write!(f, "BlockResponse([])"),
                     (Some(first), None) => {
-                        write!(f, "BlockResponse([{first}, avail={:?}])", r.availability)
+                        write!(f, "BlockResponse([{first}])")
                     }
                     (Some(first), Some(last)) => {
-                        write!(
-                            f,
-                            "BlockResponse([{first}, ..., {last}, avail={:?}])",
-                            r.availability
-                        )
+                        write!(f, "BlockResponse([{first}, ..., {last}])")
                     }
                     (None, Some(_)) => unreachable!(),
                 }
@@ -314,7 +356,13 @@ impl Display for ExternalMessage {
                     write!(f, "NewTransaction(Unable to verify txn due to: {:?})", err)
                 }
             },
+            ExternalMessage::BatchedTransactions(txns) => {
+                write!(f, "BatchedTransactions(txns_count: {:?})", txns.len())
+            }
             ExternalMessage::Acknowledgement => write!(f, "RequestResponse"),
+            ExternalMessage::ProcessProposal | ExternalMessage::MetaDataResponse => {
+                unimplemented!("deprecated")
+            }
         }
     }
 }
@@ -339,6 +387,18 @@ pub enum InternalMessage {
         TrieStorage,
         Box<Path>,
     ),
+    /// Notify p2p cordinator to subscribe to a particular gossipsub topic
+    SubscribeToGossipSubTopic(GossipSubTopic),
+    /// Notify p2p cordinator to unsubscribe from a particular gossipsub topic
+    UnsubscribeFromGossipSubTopic(GossipSubTopic),
+}
+
+#[derive(Debug, Clone)]
+pub enum GossipSubTopic {
+    /// General topic for all nodes. Includes Proposal messages
+    General(u64),
+    /// Topic for Validators only. Includes NewView messages
+    Validator(u64),
 }
 
 /// Returns a terse, human-readable summary of a message.
@@ -350,6 +410,12 @@ impl Display for InternalMessage {
             InternalMessage::IntershardCall(_) => write!(f, "IntershardCall"),
             InternalMessage::ExportBlockCheckpoint(block, ..) => {
                 write!(f, "ExportCheckpoint({})", block.number())
+            }
+            InternalMessage::SubscribeToGossipSubTopic(topic) => {
+                write!(f, "SubscribeToGossipSubTopic({:?})", topic)
+            }
+            InternalMessage::UnsubscribeFromGossipSubTopic(topic) => {
+                write!(f, "UnsubscribeFromGossipSubTopic({:?})", topic)
             }
         }
     }
@@ -406,11 +472,7 @@ impl QuorumCertificate {
             .zip(self.cosigned.iter())
             .filter_map(
                 |(public_key, cosigned)| {
-                    if *cosigned {
-                        Some(public_key)
-                    } else {
-                        None
-                    }
+                    if *cosigned { Some(public_key) } else { None }
                 },
             )
             .collect::<Vec<_>>();
@@ -488,6 +550,23 @@ pub enum BlockRef {
     Number(u64),
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct SyncBlockHeader {
+    pub header: BlockHeader,
+    pub size_estimate: usize,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestBlocksByHash {
+    pub hash: Hash,
+    pub count: usize,
+    pub request_at: SystemTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockTransactionsReceipts {
+    pub block: Block,
+    pub transaction_receipts: Vec<(SignedTransaction, TransactionReceipt)>,
+}
 /// The [Copy]-able subset of a block.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BlockHeader {

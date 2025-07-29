@@ -1,0 +1,48 @@
+---
+- name: Install required packages
+  hosts: all
+  become: true
+  tags:
+    - install
+    - all
+  
+  tasks:
+  
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Update and upgrade all packages
+      ansible.builtin.apt:
+        update_cache: true
+        upgrade: dist
+
+    - name: Install required packages basic packages
+      ansible.builtin.apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - software-properties-common
+          - jq
+          - python3-pip
+          - python3-setuptools
+          - python3-wheel
+          - build-essential
+          - pigz
+          - python3-dev
+          - unzip
+          - zip
+        state: present
+
+    - name: Install Python packages
+      pip:
+        name:
+          - flask
+          - google-cloud-storage
+          - google-cloud-kms
+          - requests
+        state: present

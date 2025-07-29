@@ -10,6 +10,8 @@ tx,block,get,number
 
 `GetTxBlock` returns the details of a specified transaction block.
 
+Note: the `Rewards` field is included for backwards compatibility and will always return `0`.
+
 # Curl
 
 ```shell

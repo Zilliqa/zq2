@@ -1,4 +1,4 @@
-FROM rust:1.83.0-slim-bullseye as builder
+FROM rust:1.86.0-slim-bullseye as builder
 
 ARG is_release=false
 RUN apt update -y && \
@@ -27,10 +27,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 FROM ubuntu:22.04
 
 RUN apt update -y && \
-    apt install -y build-essential libev-dev libgmp-dev
+    apt install -y build-essential libev-dev libgmp-dev curl
 
 COPY --chmod=777 ./infra/run.sh /run.sh
 COPY --from=builder /zilliqa/build/zilliqa /zilliqa
-COPY --from=asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:a5a81f72 /scilla/0 /scilla/0
+COPY --from=asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:abdb24b1 /scilla/0 /scilla/0
 
 ENTRYPOINT [ "/run.sh" ]

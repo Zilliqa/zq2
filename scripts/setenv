@@ -1,8 +1,8 @@
 if [[ "$SHELL" == *"zsh"* ]] ; then
-   echo "Running on $SHELL ..."
-   BASEDIR=$(dirname "$0")/../
+    echo "Running on $SHELL ..."
+    BASEDIR=$(dirname "$0")/../
 else
     BASEDIR=$(dirname "$BASH_SOURCE")/../
 fi
 REALPATH=$(realpath "$BASEDIR")
-export PATH=$REALPATH/scripts:$PATH
+export PATH=$REALPATH/scripts:$REALPATH/infra/scripts:$PATH

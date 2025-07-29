@@ -1,15 +1,17 @@
+network = "{{ network }}"
 p2p_port = 3333
 
-{%- if set_bootstrap_address == "true" %}
-bootstrap_address = [ "{{ bootstrap_peer_id }}", "/dns/{{ bootstrap_endpoint }}/tcp/3333" ]
-{%- endif %}
+bootstrap_address = {{ bootstrap_address }}
 
 [[nodes]]
 eth_chain_id = {{ eth_chain_id }}
 allowed_timestamp_skew = { secs = 60, nanos = 0 }
 data_dir = "/data"
-consensus.genesis_accounts = [ ["{{ genesis_address }}", "900_000_000_000_000_000_000_000_000" ] ]
-consensus.genesis_deposits = [ ["{{ bootstrap_bls_public_key }}", "{{ bootstrap_peer_id }}", "20_000_000_000_000_000_000_000_000", "0x0000000000000000000000000000000000000000", "{{ genesis_address }}"] ]
+consensus.genesis_accounts = [ ["{{ genesis_address }}", "{{ genesis_amount }}" ] ]
+consensus.genesis_deposits = {{ genesis_deposits }}
+{%- if staker_withdrawal_period %}
+consensus.staker_withdrawal_period = {{ staker_withdrawal_period }}
+{%- endif %}
 
 # Reward parameters
 consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"
@@ -18,8 +20,12 @@ consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
 # Gas parameters
 consensus.eth_block_gas_limit = 84000000
 consensus.gas_price = "4_761_904_800_000"
-consensus.scilla_call_gas_exempt_addrs = {{ whitelisted_evm_contract_addresses }}
-consensus.contract_upgrade_block_heights = {{ contract_upgrade_block_heights }}
+{%- if contract_upgrades %}
+consensus.contract_upgrades = {{ contract_upgrades }}
+{%- endif %}
+{%- if new_view_broadcast_interval %}
+consensus.new_view_broadcast_interval = { secs = {{ new_view_broadcast_interval }}, nanos = 0 }
+{%- endif %}
 
 {%- if role == "checkpoint" %}
 # Checkpoint configuration
@@ -28,9 +34,8 @@ consensus.blocks_per_epoch=3600
 consensus.epochs_per_checkpoint=24
 {%- endif %}
 
-{%- if role == "query" %}
-# Query node configuration
-max_rpc_response_size={{ max_rpc_response_size }}
+{%- if role == "validator" %}
+sync.ignore_passive = true
 {%- endif %}
 
 api_servers = {{ api_servers }}
@@ -39,12 +44,20 @@ api_servers = {{ api_servers }}
 enable_ots_indices = true
 {%- endif %}
 
+{%- if genesis_fork %}
+consensus.genesis_fork = {{ genesis_fork }}
+{%- endif %}
+
+{%- if forks %}
+consensus.forks = [
+    {%- for fork in forks %}
+    {{ fork }},
+    {%- endfor %}
+]
+{%- endif %}
+
 {%- if checkpoint_file %}
 [nodes.load_checkpoint]
 file = "{{ checkpoint_file }}"
 hash = "{{ checkpoint_hash }}"
-{%- endif %}
-
-{%- if forks %}
-consensus.forks = {{ forks }}
 {%- endif %}

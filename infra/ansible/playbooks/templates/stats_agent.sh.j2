@@ -1,0 +1,36 @@
+#!/bin/bash
+echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
+
+STATS_AGENT_IMAGE="{{ stats_agent_image }}"
+
+start() {
+    docker ps -a --filter "name=stats-agent-" --format "{{'{{'}}.ID{{'}}'}}" | xargs -r docker rm -f &> /dev/null || echo 0
+    STATS_DASHBOARD_KEY={{ stats_dashboard_key }}
+    docker run -td --name stats-agent-{{ stats_agent_version }} \
+        --log-driver json-file --log-opt max-size=1g --log-opt max-file=1 \
+        --net=host \
+        --cpus=".5" \
+        -e RPC_HOST="localhost" \
+        -e RPC_PORT="4202" \
+        -e WS_PORT="4202" \
+        -e LISTENING_PORT="3333" \
+        -e INSTANCE_NAME={{ ansible_hostname }} \
+        -e CONTACT_DETAILS="devops@zilliqa.com" \
+        -e WS_SERVER="ws://{{ stats_endpoint }}" \
+        -e WS_SECRET="${STATS_DASHBOARD_KEY}" \
+        -e PEER_ID="{{ hostvars[inventory_hostname]['labels']['peer-id'] }}" \
+        -e VERBOSITY="2" \
+        --restart=unless-stopped --pull=always \
+        ${STATS_AGENT_IMAGE}
+    unset STATS_DASHBOARD_KEY
+}
+
+stop() {
+    docker ps --filter "name=stats-agent-" --format "{{'{{'}}.ID{{'}}'}}" | xargs -r docker stop
+}
+
+case ${1} in
+    start|stop) ${1} ;;
+esac
+
+exit 0

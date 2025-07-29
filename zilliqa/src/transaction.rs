@@ -1,5 +1,5 @@
 use std::{
-    cmp::{max, Ordering, PartialOrd},
+    cmp::{Ordering, PartialOrd, max},
     collections::BTreeMap,
     fmt::{self, Display, Formatter},
     ops::{Add, AddAssign, Sub},
@@ -7,24 +7,26 @@ use std::{
 };
 
 use alloy::{
-    consensus::{transaction::RlpEcdsaTx, SignableTransaction, TxEip1559, TxEip2930, TxLegacy},
-    primitives::{keccak256, Address, PrimitiveSignature, TxKind, B256, U256},
-    rlp::{Encodable, Header, EMPTY_STRING_CODE},
+    consensus::{
+        SignableTransaction, TxEip1559, TxEip2930, TxLegacy, transaction::RlpEcdsaEncodableTx,
+    },
+    primitives::{Address, B256, PrimitiveSignature, TxKind, U256, keccak256},
+    rlp::{EMPTY_STRING_CODE, Encodable, Header},
     sol_types::SolValue,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use bytes::{BufMut, BytesMut};
 use itertools::Itertools;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use sha3::{
+    Digest, Keccak256,
     digest::generic_array::{
+        GenericArray,
         sequence::Split,
         typenum::{U12, U20},
-        GenericArray,
     },
-    Digest, Keccak256,
 };
 use tracing::warn;
 
@@ -35,7 +37,7 @@ use crate::{
         ZIL_NORMAL_TXN_GAS,
     },
     crypto::{self, Hash},
-    exec::{ScillaError, ScillaException, ScillaTransition},
+    exec::{BLESSED_TRANSACTIONS, ScillaError, ScillaException, ScillaTransition},
     schnorr,
     scilla::ParamValue,
     serde_util::vec_param_value,
@@ -48,7 +50,7 @@ use crate::{
 /// Result<Result<String>>, which would be confusing.
 /// The argument is a human-readable error message which can be returned to the
 /// user to indicate the problem with the transaction.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum ValidationOutcome {
     Success,
     /// Transaction input size exceeds configured limit - (size, limit)
@@ -69,6 +71,14 @@ pub enum ValidationOutcome {
     NonceTooLow(u64, u64),
     /// Unrecognised type - not invocation, creation or transfer
     UnknownTransactionType,
+    /// Global transaction count exceeded
+    GlobalTransactionCountExceeded,
+    /// Transaction counter exceeded for a sender
+    TransactionCountExceededForSender,
+    /// Total nunber of sender slots exceeded
+    TotalNumberOfSlotsExceeded,
+    /// Gas price is too low
+    GasPriceTooLow,
 }
 
 impl ValidationOutcome {
@@ -78,11 +88,7 @@ impl ValidationOutcome {
     where
         T: FnOnce() -> Result<ValidationOutcome>,
     {
-        if self.is_ok() {
-            test()
-        } else {
-            Ok(*self)
-        }
+        if self.is_ok() { test() } else { Ok(*self) }
     }
 
     pub fn is_ok(&self) -> bool {
@@ -119,6 +125,16 @@ impl ValidationOutcome {
             Self::UnknownTransactionType => {
                 "Txn is not transfer, contract creation or contract invocation".to_string()
             }
+            Self::GlobalTransactionCountExceeded => {
+                "Global number of transactions stored in the mempool has been exceeded!".to_string()
+            }
+            Self::TransactionCountExceededForSender => {
+                "Transactions count kept per user has been exceeded!".to_string()
+            }
+            Self::TotalNumberOfSlotsExceeded => {
+                "Total number of slots for all senders has been exceeded".to_string()
+            }
+            Self::GasPriceTooLow => "Provided gas price is too low".to_string(),
         }
     }
 }
@@ -162,7 +178,7 @@ mod ser_rlp {
     use std::marker::PhantomData;
 
     use alloy::rlp::{Decodable, Encodable};
-    use serde::{de, Deserializer, Serializer};
+    use serde::{Deserializer, Serializer, de};
 
     pub fn serialize<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -384,6 +400,14 @@ impl SignedTransaction {
     }
 
     pub fn verify(self) -> Result<VerifiedTransaction> {
+        self.verify_inner(false, Hash::ZERO)
+    }
+
+    pub fn verify_bypass(self, hash: Hash) -> Result<VerifiedTransaction> {
+        self.verify_inner(true, hash)
+    }
+
+    fn verify_inner(self, force: bool, hash: Hash) -> Result<VerifiedTransaction> {
         let (tx, signer, hash) = match self {
             SignedTransaction::Legacy { tx, sig } => {
                 let signed = tx.into_signed(sig);
@@ -406,14 +430,17 @@ impl SignedTransaction {
             SignedTransaction::Zilliqa { tx, key, sig } => {
                 let txn_data = encode_zilliqa_transaction(&tx, key);
 
-                schnorr::verify(&txn_data, key, sig).ok_or_else(|| anyhow!("invalid signature"))?;
+                if !force {
+                    schnorr::verify(&txn_data, key, sig)
+                        .ok_or_else(|| anyhow!("invalid signature"))?;
+                }
 
                 let hashed = Sha256::digest(key.to_encoded_point(true).as_bytes());
                 let (_, bytes): (GenericArray<u8, U12>, GenericArray<u8, U20>) = hashed.split();
                 let signer = Address::new(bytes.into());
 
                 let tx = SignedTransaction::Zilliqa { tx, key, sig };
-                let hash = tx.calculate_hash();
+                let hash = if !force { tx.calculate_hash() } else { hash };
                 (tx, signer, hash)
             }
             SignedTransaction::Intershard { tx, from } => {
@@ -423,7 +450,16 @@ impl SignedTransaction {
             }
         };
 
-        Ok(VerifiedTransaction { tx, signer, hash })
+        let cbor_size = cbor4ii::serde::to_vec(Vec::with_capacity(4096), &tx)
+            .map(|b| b.len())
+            .unwrap_or_default();
+
+        Ok(VerifiedTransaction {
+            tx,
+            signer,
+            hash,
+            cbor_size,
+        })
     }
 
     /// Calculate the hash of this transaction. If you need to do this more than once, consider caching the result
@@ -455,11 +491,18 @@ impl SignedTransaction {
         &self,
         account: &Account,
         block_gas_limit: EvmGas,
+        min_gas_price: u128,
         eth_chain_id: u64,
     ) -> Result<ValidationOutcome> {
+        let hash = self.calculate_hash();
+        let blessed = BLESSED_TRANSACTIONS.iter().any(|elem| elem.hash == hash);
+        if blessed {
+            return Ok(ValidationOutcome::Success);
+        }
         let result = ValidationOutcome::Success
             .and_then(|| self.validate_input_size())?
             .and_then(|| self.validate_gas_limit(block_gas_limit))?
+            .and_then(|| self.validate_gas_price(min_gas_price))?
             .and_then(|| self.validate_chain_id(eth_chain_id))?
             .and_then(|| self.validate_sender_account(account))?;
         Ok(result)
@@ -498,7 +541,9 @@ impl SignedTransaction {
         }
 
         if tx_kind == TxKind::Create && input_size > EVM_MAX_INIT_CODE_SIZE {
-            warn!("Evm transaction initcode size: {input_size} exceeds limit: {EVM_MAX_INIT_CODE_SIZE}");
+            warn!(
+                "Evm transaction initcode size: {input_size} exceeds limit: {EVM_MAX_INIT_CODE_SIZE}"
+            );
             return Ok(ValidationOutcome::InitCodeSizeExceeded(
                 input_size,
                 EVM_MAX_INIT_CODE_SIZE,
@@ -521,7 +566,10 @@ impl SignedTransaction {
         if let SignedTransaction::Zilliqa { tx, .. } = self {
             let required_gas = tx.get_deposit_gas()?;
             if tx.gas_limit < required_gas {
-                warn!("Insufficient gas give for zil transaction, given: {}, required: {required_gas}!", tx.gas_limit);
+                warn!(
+                    "Insufficient gas give for zil transaction, given: {}, required: {required_gas}!",
+                    tx.gas_limit
+                );
                 return Ok(ValidationOutcome::InsufficientGasZil(
                     tx.gas_limit,
                     required_gas,
@@ -533,7 +581,9 @@ impl SignedTransaction {
         let gas_limit = self.gas_limit();
 
         if gas_limit < EVM_MIN_GAS_UNITS {
-            warn!("Insufficient gas give for evm transaction, given: {gas_limit}, required: {EVM_MIN_GAS_UNITS}!");
+            warn!(
+                "Insufficient gas give for evm transaction, given: {gas_limit}, required: {EVM_MIN_GAS_UNITS}!"
+            );
             return Ok(ValidationOutcome::InsufficientGasEvm(
                 gas_limit,
                 EVM_MIN_GAS_UNITS,
@@ -564,10 +614,18 @@ impl SignedTransaction {
         Ok(ValidationOutcome::Success)
     }
 
+    fn validate_gas_price(&self, min_gas_price: u128) -> Result<ValidationOutcome> {
+        let gas_price = self.gas_price_per_evm_gas();
+        if gas_price < min_gas_price {
+            return Ok(ValidationOutcome::GasPriceTooLow);
+        }
+        Ok(ValidationOutcome::Success)
+    }
+
     fn validate_sender_account(&self, account: &Account) -> Result<ValidationOutcome> {
         let txn_cost = self.maximum_validation_cost()?;
         if txn_cost > account.balance {
-            warn!("Insufficient funds");
+            warn!("Insufficient funds for acc: {:?}", account);
             return Ok(ValidationOutcome::InsufficientFunds(
                 txn_cost,
                 account.balance,
@@ -598,6 +656,14 @@ pub struct VerifiedTransaction {
     pub tx: SignedTransaction,
     pub signer: Address,
     pub hash: crypto::Hash,
+    pub cbor_size: usize,
+}
+
+impl VerifiedTransaction {
+    #[inline]
+    pub fn encoded_size(&self) -> usize {
+        self.cbor_size
+    }
 }
 
 /// The core information of a transaction.
@@ -616,7 +682,7 @@ impl Transaction {
             Transaction::Legacy(TxLegacy { chain_id, .. }) => *chain_id,
             Transaction::Eip2930(TxEip2930 { chain_id, .. }) => Some(*chain_id),
             Transaction::Eip1559(TxEip1559 { chain_id, .. }) => Some(*chain_id),
-            Transaction::Zilliqa(TxZilliqa { chain_id, .. }) => Some(*chain_id as u64),
+            Transaction::Zilliqa(TxZilliqa { chain_id, .. }) => Some(*chain_id as u64 + 0x8000),
             Transaction::Intershard(TxIntershard { chain_id, .. }) => Some(*chain_id),
         }
     }
@@ -811,6 +877,18 @@ impl TxZilliqa {
             Err(anyhow!("Unknown transaction type"))
         }
     }
+
+    pub fn get_contract_address(&self, signer: &Address) -> Result<Address> {
+        let mut hasher = Sha256::new();
+        hasher.update(signer.as_slice());
+        if self.nonce > 0 {
+            hasher.update((self.nonce - 1).to_be_bytes());
+        } else {
+            return Err(anyhow!("Nonce must be greater than 0"));
+        }
+        let hashed = hasher.finalize();
+        Ok(Address::from_slice(&hashed[12..]))
+    }
 }
 
 /// A wrapper for ZIL amounts in the Zilliqa API. These are represented in units of (10^-12) ZILs, rather than (10^-18)
@@ -849,6 +927,18 @@ impl ZilAmount {
         } else {
             None
         }
+    }
+
+    // In ZIL, rounded down to the nearest ZIL unit.
+    pub fn to_zils(self) -> u128 {
+        self.0 / 10u128.pow(12)
+    }
+
+    // In ZIL, as a string representation of the exact float amount
+    pub fn to_float_string(self) -> String {
+        let integer_part = self.0 / 10u128.pow(12);
+        let fractional_part = self.0 % 10u128.pow(12);
+        format!("{}.{}", integer_part, fractional_part)
     }
 }
 
@@ -948,6 +1038,14 @@ impl Sub for EvmGas {
 
     fn sub(self, rhs: Self) -> Self::Output {
         self.checked_sub(rhs).expect("evm gas underflow")
+    }
+}
+
+impl Add for EvmGas {
+    type Output = EvmGas;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        EvmGas(self.0.checked_add(rhs.0).expect("evm gas overflow"))
     }
 }
 

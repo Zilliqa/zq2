@@ -1,23 +1,26 @@
-# Add a random suffix to the compute instance names. This ensures that when they are re-created, their `self_link`
-# changes and any instance groups containing them are updated.
-
-resource "random_id" "name_suffix" {
-  byte_length = 2
-
-  # Enable keepers to force reprovisioning the module resources
-  # keepers = var.metadata
-}
-
 resource "google_service_account" "this" {
-  account_id = substr(local.resource_name, 0, 28)
+  for_each = local.instances_map
+
+  account_id   = "sa-${substr(md5(each.value.resource_name), 0, 27)}"
+  display_name = each.value.resource_name
+  description  = format("Service account for the node %s", each.value.resource_name)
 }
 
 resource "google_project_iam_member" "this" {
-  for_each = toset(var.service_account_iam)
+  for_each = {
+    for pair in flatten([
+      for sa_key, sa in google_service_account.this : [
+        for iam in var.service_account_iam : {
+          sa_key = sa_key
+          iam    = iam
+        }
+      ]
+    ]) : "${pair.sa_key}-${pair.iam}" => pair
+  }
 
-  project = split("=>", each.value)[1]
-  role    = split("=>", each.value)[0]
-  member  = "serviceAccount:${google_service_account.this.email}"
+  project = split("=>", each.value.iam)[1]
+  role    = split("=>", each.value.iam)[0]
+  member  = "serviceAccount:${google_service_account.this[each.value.sa_key].email}"
 }
 
 resource "google_compute_address" "external_regional" {
@@ -51,7 +54,7 @@ resource "google_compute_instance" "this" {
   labels = merge(local.labels, { "node-name" = each.value.resource_name })
 
   service_account {
-    email = google_service_account.this.email
+    email = google_service_account.this[each.value.resource_id].email
     scopes = [
       "https://www.googleapis.com/auth/cloud-platform",
       "https://www.googleapis.com/auth/devstorage.read_only",
@@ -102,18 +105,4 @@ resource "google_compute_instance" "this" {
       labels["peer-id"]
     ]
   }
-}
-
-resource "google_dns_record_set" "this" {
-  for_each = local.instances_map
-
-  project      = var.node_dns_zone_project_id
-  managed_zone = local.node_dns_zone_name
-  name         = "${google_compute_instance.this[each.value.resource_id].name}.${var.node_dns_subdomain}."
-  type         = "A"
-  ttl          = "60"
-
-  rrdatas = [google_compute_instance.this[each.value.resource_id].network_interface[0].access_config[0].nat_ip]
-
-  depends_on = [google_compute_instance.this]
 }

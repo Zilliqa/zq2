@@ -78,6 +78,10 @@ Then you can install a suitable Solc version by executing:
 svm install <solc version>
 ```
 
+### Tests with JMeter
+
+JMeter for performance and load tests is integrated in the Github Action pipelines in `.github/workflows/test_performance.yaml` and can be manually executed from the Github console with custom and default parameters. The test executions are restricted to users of the Zilliqa organization.
+
 ## Running benchmarks
 
 Benchmarks can be run with `cargo bench --package zilliqa --bench it`.
@@ -104,6 +108,24 @@ Or via individual modules using eg.
 RUST_LOG=debug,sled=info,zilliqa::scilla=trace
 ```
 
+## Observability
+
+### OpenTelemetry
+
+OpenTelemetry metrics from the Zilliqa nodes container are available when the OTLP collector endpoint is defined in the configuration.
+
+```yaml
+otlp_collector_endpoint = "http://otel-collector:4317"
+```
+
+There is a docker-compose project that includes the OpenTelemetry configuration and tech stack that can be run in local environment for testing purposes:
+
+```bash
+docker-compose -f infra/opentelemetry/compose.yaml up -d
+```
+
+After the services are running, a sample dashboard could be obtained from the (Grafana)[http://localhost:9010] local service.
+
 ## `rustfmt`
 
 We use a couple of nightly-only rustfmt features. The easiest way to get these is:
@@ -128,3 +150,50 @@ Of the currently undocumented APIs, the following are partially implemented:
   * `eth_getBlockByHash` (issue #79)
   * `eth_getBlockByNumber` (issue #79)
   * `net_peerCount`
+
+## zurl - IAP Tunnel Curl Wrapper
+
+`zurl` is a curl wrapper that automatically manages Google Cloud IAP tunnels for accessing private instances.
+
+### Usage
+
+Login to GCP and set the environment variables and paths.
+
+```sh
+source scripts/setenv
+```
+
+Use exactly like curl, but with your private instance hostname:
+
+```bash
+zurl [curl-options] "instance-name:port[/path]"
+```
+
+To see more information, you can use the --debug parameter:
+
+```bash
+zurl --debug [curl-options] "instance-name:port[/path]"
+```
+
+### Project Auto-Detection
+
+Automatically selects the correct GCP project based on instance name:
+- `zq2-devnet-*` → `prj-d-zq2-devnet-c83bkpsd`
+- `zq2-testnet-*` → `prj-d-zq2-testnet-g13pnaa8`
+- `zq2-mainnet-*` → `prj-p-zq2-mainnet-sn5n8wfl`
+- Default: `prj-p-zq2-mainnet-sn5n8wfl`
+
+### Example
+
+```bash
+zurl -d '{
+    "id": "1",
+    "jsonrpc": "2.0", 
+    "method": "eth_blockNumber"
+}' -H "Content-Type: application/json" -X POST "zq2-devnet-api-ase1-2:4201"
+```
+
+Output:
+```
+{"jsonrpc":"2.0","id":"1","result":"0x17a2b"}
+```

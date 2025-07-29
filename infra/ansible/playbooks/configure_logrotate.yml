@@ -1,0 +1,14 @@
+---
+- name: Configure log rotation
+  hosts: all:!role_apps
+  become: true
+  tags:
+    - install
+    - all
+
+  tasks:
+    - name: Create logrotate configuration
+      template:
+        src: templates/zilliqa_logrotate.j2
+        dest: /etc/logrotate.d/zilliqa
+        mode: '0644'

@@ -1,0 +1,10 @@
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://mimir:9009/prometheus
+    jsonData:
+      timeInterval: "5s"
+      queryTimeout: "60s"

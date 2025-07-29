@@ -19,6 +19,8 @@ number.
 For example, to retrieve all the transactions for a block with `NumPages=3`, one
 must call `GetTxBodiesForTxBlockEx` three times with page number 0, 1, and 2.
 
+The `cumulative_gas` field is deprecated.
+
 ## Block Parameters
 
 | Parameter      | Type   | Required | Description                                              |
@@ -54,7 +56,9 @@ curl -d '{
         "gasPrice": "2000000000",
         "nonce": "96538",
         "receipt": {
-          "cumulative_gas": "1",
+          "cumulative_gas": "50",
+          "cumulative_gas_used": "50",
+          "gas_used": "50",
           "epoch_num": "1002353",
           "success": true
         },
@@ -70,7 +74,9 @@ curl -d '{
         "gasPrice": "2000000000",
         "nonce": "98068",
         "receipt": {
-          "cumulative_gas": "1",
+          "cumulative_gas": "50",
+          "cumulative_gas_used": "150",
+          "gas_used": "50",
           "epoch_num": "1002353",
           "success": true
         },
@@ -92,4 +98,3 @@ curl -d '{
 | `jsonrpc` | string | Required | `"2.0"`                      |
 | `method`  | string | Required | `"GetTxnBodiesForTxBlockEx"` |
 | `params`  | array  | Required | Block parameters             |
-

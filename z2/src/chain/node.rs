@@ -1,19 +1,26 @@
-use std::{collections::BTreeMap, fmt, str::FromStr};
+use std::{
+    collections::BTreeMap,
+    fmt,
+    process::{Child, Command, Output, Stdio},
+    str::FromStr,
+    thread::sleep,
+    time::Duration,
+};
 
-use anyhow::{anyhow, Ok, Result};
+use anyhow::{Ok, Result, anyhow};
 use clap::ValueEnum;
 use cliclack::MultiProgress;
 use colored::Colorize;
-use rand::seq::SliceRandom;
+use rand::Rng;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tempfile::NamedTempFile;
 use tera::{Context, Tera};
 use tokio::{fs::File, io::AsyncWriteExt};
 
 use super::instance::ChainInstance;
-use crate::{address::EthereumAddress, chain::Chain, secret::Secret};
+use crate::{chain::Chain, kms::KmsService};
 
 #[derive(Clone, Debug, Default, ValueEnum, PartialEq)]
 pub enum NodePort {
@@ -35,10 +42,6 @@ impl NodePort {
 pub enum Components {
     #[serde(rename = "zq2")]
     ZQ2,
-    #[serde(rename = "otterscan")]
-    Otterscan,
-    #[serde(rename = "spout")]
-    Spout,
 }
 
 impl FromStr for Components {
@@ -47,8 +50,6 @@ impl FromStr for Components {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "zq2" => Ok(Components::ZQ2),
-            "otterscan" => Ok(Components::Otterscan),
-            "spout" => Ok(Components::Spout),
             _ => Err(anyhow!("Component not supported")),
         }
     }
@@ -74,16 +75,11 @@ pub fn docker_image(component: &str, version: &str) -> Result<String> {
                 Err(anyhow!("Invalid version for ZQ2"))
             }
         }
-        Components::Spout => Ok(format!(
-            "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/eth-spout:{}",
-            version
-        )),
-        Components::Otterscan => Ok(format!("docker.io/zilliqa/otterscan:{}", version)),
     }
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "kebab-case")]
 pub enum NodeRole {
     /// Virtual machine bootstrap
     Bootstrap,
@@ -91,14 +87,14 @@ pub enum NodeRole {
     Validator,
     /// Virtual machine api
     Api,
+    /// Virtual machine private api
+    PrivateApi,
     /// Virtual machine apps
     Apps,
     /// Virtual machine checkpoint
     Checkpoint,
     /// Virtual machine persistence
     Persistence,
-    /// Virtual machine query
-    Query,
     /// Virtual machine sentry
     Sentry,
 }
@@ -112,8 +108,8 @@ impl FromStr for NodeRole {
             "apps" => Ok(NodeRole::Apps),
             "validator" => Ok(NodeRole::Validator),
             "checkpoint" => Ok(NodeRole::Checkpoint),
+            "private-api" => Ok(NodeRole::PrivateApi),
             "persistence" => Ok(NodeRole::Persistence),
-            "query" => Ok(NodeRole::Query),
             "sentry" => Ok(NodeRole::Sentry),
             _ => Err(anyhow!("Node role not supported")),
         }
@@ -128,8 +124,8 @@ impl fmt::Display for NodeRole {
             NodeRole::Apps => write!(f, "apps"),
             NodeRole::Validator => write!(f, "validator"),
             NodeRole::Checkpoint => write!(f, "checkpoint"),
+            NodeRole::PrivateApi => write!(f, "private-api"),
             NodeRole::Persistence => write!(f, "persistence"),
-            NodeRole::Query => write!(f, "query"),
             NodeRole::Sentry => write!(f, "sentry"),
         }
     }
@@ -145,34 +141,6 @@ pub struct Machine {
 }
 
 impl Machine {
-    pub async fn add_labels(&self, labels: BTreeMap<String, String>) -> Result<()> {
-        let labels = &labels
-            .iter()
-            .map(|(k, v)| format!("{}={}", k, v))
-            .collect::<Vec<_>>()
-            .join(",");
-        let args = [
-            "--project",
-            &self.project_id,
-            "compute",
-            "instances",
-            "add-labels",
-            &self.name,
-            &format!("--labels={}", labels.to_lowercase()),
-            "--zone",
-            &self.zone,
-        ];
-
-        println!("gcloud {}", args.join(" "));
-
-        zqutils::commands::CommandBuilder::new()
-            .silent()
-            .cmd("gcloud", &args)
-            .run()
-            .await?;
-        Ok(())
-    }
-
     async fn copy(&self, file_from: &[&str], file_to: &str) -> Result<()> {
         let tgt_spec = format!("{0}:{file_to}", &self.name);
         let args = [
@@ -192,49 +160,74 @@ impl Machine {
         ]
         .concat();
 
-        zqutils::commands::CommandBuilder::new()
-            .silent()
-            .cmd("gcloud", &args)
-            .run()
-            .await?;
+        Command::new("gcloud").args(args).output()?;
+
         Ok(())
     }
 
-    pub async fn run(&self, cmd: &str, print: bool) -> Result<zqutils::commands::CommandOutput> {
+    pub fn run(&self, cmd: &str, print: bool) -> Result<Output> {
         if print {
             println!("Running command '{}' in {}", cmd, self.name);
         }
-        let output: zqutils::commands::CommandOutput = zqutils::commands::CommandBuilder::new()
-            .silent()
-            .cmd(
-                "gcloud",
-                &[
-                    "compute",
-                    "ssh",
-                    "--project",
-                    &self.project_id,
-                    "--zone",
-                    &self.zone,
-                    &self.name,
-                    "--tunnel-through-iap",
-                    "--strict-host-key-checking=no",
-                    "--ssh-flag=",
-                    "--command",
-                    cmd,
-                ],
-            )
-            .run_for_output()
-            .await?;
-        Ok(output)
+        Ok(Command::new("gcloud")
+            .args([
+                "compute",
+                "ssh",
+                "--project",
+                &self.project_id,
+                "--zone",
+                &self.zone,
+                &self.name,
+                "--tunnel-through-iap",
+                "--strict-host-key-checking=no",
+                "--ssh-flag=",
+                "--command",
+                cmd,
+            ])
+            .output()?)
+    }
+
+    pub fn get_private_key(&self, chain_name: &str, enable_kms: bool) -> Result<String> {
+        // Get the base64 encoded secret from Secret Manager
+        let secret_suffix = if enable_kms { "-enckey" } else { "-pk" };
+        let cmd = format!(
+            "gcloud secrets versions access latest --project=\"{}\" --secret=\"{}{}\"",
+            self.project_id, self.name, secret_suffix
+        );
+
+        let output = self.run(&cmd, false)?;
+        if !output.status.success() {
+            return Err(anyhow!(
+                "Error retrieving {} private key: {}",
+                self.name,
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+
+        let value = std::str::from_utf8(&output.stdout)?.trim();
+
+        // Decrypt the key if KMS is enabled
+        if enable_kms {
+            let plaintext = KmsService::decrypt(
+                &self.project_id,
+                value,
+                &format!("kms-{}", chain_name),
+                &self.name,
+                Some(self.clone()),
+            )?;
+            Ok(plaintext)
+        } else {
+            Ok(value.to_string())
+        }
     }
 
     pub async fn get_local_block_number(&self) -> Result<u64> {
         let inner_command = r#"curl -s http://localhost:4201 -X POST -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber"}'"#;
-        let output = self.run(inner_command, true).await?;
-        if !output.success {
+        let output = self.run(inner_command, true)?;
+        if !output.status.success() {
             return Err(anyhow!(
-                "getting local block number failed: {:?}",
-                output.stderr
+                "getting local block number failed: {}",
+                String::from_utf8_lossy(&output.stderr)
             ));
         }
 
@@ -251,12 +244,12 @@ impl Machine {
         Ok(block_number)
     }
 
-    pub async fn get_rpc_response(
+    pub fn get_rpc_response(
         &self,
         method: &str,
         params: &Option<String>,
         timeout: usize,
-        port: NodePort,
+        port: u64,
     ) -> Result<String> {
         let body = format!(
             "{{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"method\":\"{}\",\"params\":{}}}",
@@ -264,54 +257,42 @@ impl Machine {
             params.clone().unwrap_or("[]".to_string()),
         );
 
-        let args = &[
-            "--max-time",
-            &timeout.to_string(),
-            "-X",
-            "POST",
-            "-H",
-            "Content-Type:application/json",
-            "-H",
-            "accept:application/json,*/*;q=0.5",
-            "--data",
-            &body,
-            &format!("http://{}:{}", self.external_address, port.value()),
-        ];
-
-        let output = if port == NodePort::Admin {
-            let inner_command = format!(
-                r#"curl --max-time {} -X POST -H 'content-type: application/json' -H 'accept:application/json,*/*;q=0.5' -d '{}' http://localhost:{}"#,
+        let url = format!("http://localhost:{}", port);
+        let output = std::process::Command::new("curl")
+            .args([
+                "--max-time",
                 &timeout.to_string(),
+                "-X",
+                "POST",
+                "-H",
+                "content-type: application/json",
+                "-H",
+                "accept:application/json,*/*;q=0.5",
+                "-d",
                 &body,
-                port.value()
-            );
-            self.run(&inner_command, false).await?
-        } else {
-            zqutils::commands::CommandBuilder::new()
-                .silent()
-                .cmd("curl", args)
-                .run_for_output()
-                .await?
-        };
+                &url,
+            ])
+            .output()?;
 
-        if !output.success {
+        if !output.status.success() {
             return Err(anyhow!(
-                "getting rpc response for {} with params {:?} failed: {:?}",
+                "getting rpc response for {} with params {:?} failed: {}",
                 method,
                 params,
-                output.stderr
+                String::from_utf8_lossy(&output.stderr)
             ));
         }
 
         Ok(std::str::from_utf8(&output.stdout)?.trim().to_owned())
     }
 
-    pub async fn get_block_number(&self, timeout: usize) -> Result<u64> {
-        let response: Value = serde_json::from_str(
-            &self
-                .get_rpc_response("eth_blockNumber", &None, timeout, NodePort::Default)
-                .await?,
-        )?;
+    pub async fn get_block_number(&self, timeout: usize, port: u64) -> Result<u64> {
+        let response: Value = serde_json::from_str(&self.get_rpc_response(
+            "eth_blockNumber",
+            &None,
+            timeout,
+            port,
+        )?)?;
         let block_number = response
             .get("result")
             .ok_or_else(|| anyhow!("response has no result"))?
@@ -323,18 +304,72 @@ impl Machine {
         Ok(u64::from_str_radix(block_number, 16)?)
     }
 
-    pub async fn get_consensus_info(&self, timeout: usize) -> Result<Value> {
-        let response: Value = serde_json::from_str(
-            &self
-                .get_rpc_response("admin_consensusInfo", &None, timeout, NodePort::Admin)
-                .await?,
-        )?;
+    pub async fn get_consensus_info(&self, timeout: usize, port: u64) -> Result<Value> {
+        let response: Value = serde_json::from_str(&self.get_rpc_response(
+            "admin_consensusInfo",
+            &None,
+            timeout,
+            port,
+        )?)?;
 
         let response = response
             .get("result")
             .ok_or_else(|| anyhow!("response has no result"))?;
 
         Ok(response.to_owned())
+    }
+
+    pub fn find_available_port(&self) -> Option<u16> {
+        let mut rng = rand::thread_rng();
+        let min_port = 5000u16;
+        let max_port = 8000u16;
+        for _ in 0..20 {
+            let port = rng.gen_range(min_port..=max_port);
+            if self.port_is_available(port) {
+                return Some(port);
+            }
+        }
+        // Fallback: sequential search
+        (min_port..=max_port).find(|&port| self.port_is_available(port))
+    }
+
+    fn port_is_available(&self, port: u16) -> bool {
+        std::net::TcpStream::connect(("127.0.0.1", port)).is_err()
+    }
+
+    pub fn open_tunnel(&self, port: u16, remote_port: u64) -> Option<Child> {
+        Command::new("gcloud")
+            .args([
+                "compute",
+                "start-iap-tunnel",
+                &self.name,
+                &remote_port.to_string(),
+                "--project",
+                &self.project_id,
+                "--zone",
+                &self.zone,
+                "--local-host-port",
+                &format!("localhost:{}", port),
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .ok()
+    }
+
+    pub fn wait_for_port(&self, port: u16, max_retries: u32) -> bool {
+        for _ in 0..max_retries {
+            if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+                return true;
+            }
+            sleep(Duration::from_millis(500));
+        }
+        false
+    }
+
+    pub fn close_tunnel(&self, child: &mut Child) {
+        let _ = child.kill();
+        let _ = child.wait();
     }
 }
 
@@ -373,7 +408,6 @@ impl fmt::Display for ConsensusInfo {
 
 #[derive(Debug, Deserialize)]
 struct HighQc {
-    signature: String,
     cosigned: String,
     view: String,
     block_hash: String,
@@ -382,7 +416,6 @@ struct HighQc {
 impl Default for HighQc {
     fn default() -> Self {
         Self {
-            signature: "---".to_string(),
             cosigned: "---".to_string(),
             view: "---".to_string(),
             block_hash: "---".to_string(),
@@ -394,8 +427,8 @@ impl fmt::Display for HighQc {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "view: {}\tblock_hash: {}\tcosigned: {}\nsign: {}",
-            self.view, self.block_hash, self.cosigned, self.signature
+            "view: {}\tblock_hash: {}\tcosigned: {}",
+            self.view, self.block_hash, self.cosigned
         )
     }
 }
@@ -404,7 +437,7 @@ impl fmt::Display for HighQc {
 pub struct ChainNode {
     chain: ChainInstance,
     pub role: NodeRole,
-    machine: Machine,
+    pub machine: Machine,
     eth_chain_id: u64,
 }
 
@@ -435,7 +468,6 @@ impl ChainNode {
         let message = format!("Installing {} instance {}", self.role, self.machine.name);
         println!("{}", message.bold().yellow());
 
-        self.tag_machine().await?;
         self.clean_previous_install().await?;
         self.import_config_files().await?;
         self.run_provisioning_script().await?;
@@ -447,7 +479,6 @@ impl ChainNode {
         let message = format!("Upgrading {} instance {}", self.role, self.machine.name);
         println!("{}", message.bold().yellow());
 
-        self.tag_machine().await?;
         self.clean_previous_install().await?;
         self.import_config_files().await?;
         self.run_provisioning_script().await?;
@@ -543,7 +574,7 @@ impl ChainNode {
         }
     }
 
-    pub async fn get_private_key(&self) -> Result<String> {
+    pub fn get_private_key(&self) -> Result<String> {
         if self.role == NodeRole::Apps {
             return Err(anyhow!(
                 "Node {} has role 'apps' and does not own a private key",
@@ -551,57 +582,8 @@ impl ChainNode {
             ));
         }
 
-        let private_keys = retrieve_secret_by_node_name(
-            &self.chain.name(),
-            &self.machine.project_id,
-            &self.machine.name,
-        )
-        .await?;
-        let private_key = if let Some(private_key) = private_keys.first() {
-            private_key
-        } else {
-            return Err(anyhow!(
-                "No private key for the instance {}",
-                &self.machine.name
-            ));
-        };
-
-        Ok(private_key.value().await?)
-    }
-
-    async fn tag_machine(&self) -> Result<()> {
-        if self.role == NodeRole::Apps {
-            return Ok(());
-        }
-
-        let private_keys = retrieve_secret_by_node_name(
-            &self.chain.name(),
-            &self.machine.project_id,
-            &self.machine.name,
-        )
-        .await?;
-        let private_key = if let Some(private_key) = private_keys.first() {
-            private_key.value().await?
-        } else {
-            return Err(anyhow!(
-                "No private key for the instance {}",
-                &self.machine.name
-            ));
-        };
-
-        let ethereum_address = EthereumAddress::from_private_key(&private_key)?;
-
-        let mut labels = BTreeMap::<String, String>::new();
-        labels.insert("peer-id".to_string(), ethereum_address.peer_id.to_string());
-
-        self.machine.add_labels(labels).await?;
-
-        println!(
-            "Tagged the machine {} with the peer-id {}",
-            self.machine.name, ethereum_address.peer_id
-        );
-
-        Ok(())
+        self.machine
+            .get_private_key(&self.chain.name(), self.chain()?.get_enable_kms()?)
     }
 
     async fn import_config_files(&self) -> Result<()> {
@@ -622,33 +604,6 @@ impl ChainNode {
             .copy(&[provisioning_script], "/tmp/provision_node.py")
             .await?;
 
-        if self.role == NodeRole::Checkpoint {
-            let temp_checkpoint_cron_job = NamedTempFile::new()?;
-            let checkpoint_cron_job = &self
-                .create_checkpoint_cron_job(temp_checkpoint_cron_job.path().to_str().unwrap())
-                .await?;
-
-            self.machine
-                .copy(&[checkpoint_cron_job], "/tmp/checkpoint_cron_job.sh")
-                .await?;
-        }
-
-        if self.role == NodeRole::Persistence {
-            let temp_persistence_export_cron_job = NamedTempFile::new()?;
-            let persistence_export_cron_job = &self
-                .create_persistence_export_cron_job(
-                    temp_persistence_export_cron_job.path().to_str().unwrap(),
-                )
-                .await?;
-
-            self.machine
-                .copy(
-                    &[persistence_export_cron_job],
-                    "/tmp/persistence_export_cron_job.sh",
-                )
-                .await?;
-        }
-
         println!("Configuration files imported in the node");
 
         Ok(())
@@ -656,30 +611,10 @@ impl ChainNode {
 
     async fn clean_previous_install(&self) -> Result<()> {
         let cmd = "sudo rm -f /tmp/config.toml /tmp/provision_node.py";
-        let output = self.machine.run(cmd, true).await?;
-        if !output.success {
-            println!("{:?}", output.stderr);
+        let output = self.machine.run(cmd, true)?;
+        if !output.status.success() {
+            println!("{}", String::from_utf8_lossy(&output.stderr));
             return Err(anyhow!("Error removing previous installation files"));
-        }
-
-        if self.role == NodeRole::Checkpoint {
-            let cmd = "sudo rm -f /tmp/checkpoint_cron_job.sh";
-            let output = self.machine.run(cmd, true).await?;
-            if !output.success {
-                println!("{:?}", output.stderr);
-                return Err(anyhow!("Error removing previous checkpoint cron job"));
-            }
-        }
-
-        if self.role == NodeRole::Persistence {
-            let cmd = "sudo rm -f /tmp/persistence_export_cron_job.sh";
-            let output = self.machine.run(cmd, true).await?;
-            if !output.success {
-                println!("{:?}", output.stderr);
-                return Err(anyhow!(
-                    "Error removing previous persistence export cron job"
-                ));
-            }
         }
 
         println!("Removed previous installation files");
@@ -689,36 +624,10 @@ impl ChainNode {
 
     async fn run_provisioning_script(&self) -> Result<()> {
         let cmd = "sudo chmod 666 /tmp/config.toml /tmp/provision_node.py && sudo mv /tmp/config.toml /config.toml && sudo python3 /tmp/provision_node.py";
-        let output = self.machine.run(cmd, true).await?;
-        if !output.success {
-            println!("{:?}", output.stderr);
+        let output = self.machine.run(cmd, true)?;
+        if !output.status.success() {
+            println!("{}", String::from_utf8_lossy(&output.stderr));
             return Err(anyhow!("Error running the provisioning script"));
-        }
-
-        if self.role == NodeRole::Checkpoint {
-            let cmd = r#"
-                sudo chmod 777 /tmp/checkpoint_cron_job.sh && \
-                sudo mv /tmp/checkpoint_cron_job.sh /checkpoint_cron_job.sh && \
-                echo '*/30 * * * * /checkpoint_cron_job.sh' | sudo crontab -"#;
-
-            let output = self.machine.run(cmd, true).await?;
-            if !output.success {
-                println!("{:?}", output.stderr);
-                return Err(anyhow!("Error creating the checkpoint cronjob"));
-            }
-        }
-
-        if self.role == NodeRole::Persistence {
-            let cmd = r#"
-                sudo chmod 777 /tmp/persistence_export_cron_job.sh && \
-                sudo mv /tmp/persistence_export_cron_job.sh /persistence_export_cron_job.sh && \
-                echo '0 */2 * * * /persistence_export_cron_job.sh' | sudo crontab -"#;
-
-            let output = self.machine.run(cmd, true).await?;
-            if !output.success {
-                println!("{:?}", output.stderr);
-                return Err(anyhow!("Error creating the persistence export cronjob"));
-            }
         }
 
         println!(
@@ -729,127 +638,189 @@ impl ChainNode {
         Ok(())
     }
 
-    async fn create_checkpoint_cron_job(&self, filename: &str) -> Result<String> {
-        let spec_config = include_str!("../../resources/checkpoints.tera.sh");
+    pub fn get_keys_config(
+        &self,
+    ) -> Result<serde_json::Map<std::string::String, serde_json::Value>> {
+        let keys_config_file = format!("/opt/zilliqa/{}-keys-config.toml", self.chain.name());
+        let output = self
+            .machine
+            .run(format!("sudo cat {keys_config_file}").as_str(), false)?;
 
-        let chain_name = self.chain.name();
-        let eth_chain_id = self.eth_chain_id.to_string();
+        if !output.status.success() {
+            eprintln!("Error: {}", String::from_utf8_lossy(&output.stderr));
+            return Err(anyhow!("Error getting the keys config file"));
+        }
 
-        let mut var_map = BTreeMap::<&str, &str>::new();
-        var_map.insert("network_name", &chain_name);
-        var_map.insert("eth_chain_id", &eth_chain_id);
+        let content = String::from_utf8_lossy(&output.stdout);
+        let nodes_info: serde_json::Value = serde_json::from_str(&content)?;
 
-        let ctx = Context::from_serialize(var_map)?;
-        let rendered_template = Tera::one_off(spec_config, &ctx, false)?;
-        let config_file = rendered_template.as_str();
-
-        let mut fh = File::create(filename).await?;
-        fh.write_all(config_file.as_bytes()).await?;
-        println!("Checkpoint cron job file created: {filename}");
-
-        Ok(filename.to_owned())
-    }
-
-    async fn create_persistence_export_cron_job(&self, filename: &str) -> Result<String> {
-        let spec_config = include_str!("../../resources/persistence_export.tera.sh");
-
-        let chain_name = self.chain.name();
-        let eth_chain_id = self.eth_chain_id.to_string();
-
-        let mut var_map = BTreeMap::<&str, &str>::new();
-        var_map.insert("network_name", &chain_name);
-        var_map.insert("eth_chain_id", &eth_chain_id);
-
-        let ctx = Context::from_serialize(var_map)?;
-        let rendered_template = Tera::one_off(spec_config, &ctx, false)?;
-        let config_file = rendered_template.as_str();
-
-        let mut fh = File::create(filename).await?;
-        fh.write_all(config_file.as_bytes()).await?;
-        println!("Persistence export cron job file created: {filename}");
-
-        Ok(filename.to_owned())
+        Ok(nodes_info.as_object().unwrap().to_owned())
     }
 
     pub async fn get_config_toml(&self) -> Result<String> {
         let spec_config = include_str!("../../resources/config.tera.toml");
-        let mut bootstrap_nodes = self.chain.nodes_by_role(NodeRole::Bootstrap).await?;
+        let bootstrap_nodes = self.chain.nodes_by_role(NodeRole::Bootstrap).await?;
+        let subdomain = self.chain()?.get_subdomain()?;
+        let keys_config = self.get_keys_config()?;
+        let gzil_node_prefix = &format!("{}-gzil", self.chain.name());
 
-        let set_bootstrap_address = if self.role != NodeRole::Bootstrap || bootstrap_nodes.len() > 1
-        {
-            "true"
-        } else {
-            "false"
+        if bootstrap_nodes.is_empty() {
+            return Err(anyhow!(
+                "No bootstrap instances found in the network {}",
+                &self.chain.name()
+            ));
         };
 
-        if bootstrap_nodes.len() > 1 {
-            bootstrap_nodes.retain(|node| node.name() != self.name());
-        }
-
-        // Pick a random element among the bootstrap nodes
-        let selected_bootstrap =
-            if let Some(random_item) = bootstrap_nodes.choose(&mut rand::thread_rng()) {
-                println!("Bootstrap picked: {}", random_item.name().bold());
-                random_item.to_owned()
+        let mut bootstrap_addresses = Vec::new();
+        for (idx, n) in bootstrap_nodes.into_iter().enumerate() {
+            let (public_key, peer_id) = if let Some(node_keys) = keys_config.get(&n.name()) {
+                let bls_public_key = node_keys["bls_public_key"].as_str().unwrap().to_string();
+                let peer_id = node_keys["peer_id"].as_str().unwrap().to_string();
+                (bls_public_key, peer_id)
             } else {
-                return Err(anyhow!(
-                    "No bootstrap instances found in the network {}",
-                    &self.chain.name()
-                ));
+                return Err(anyhow!("{} not found in keys config", n.name()));
             };
 
-        let genesis_account =
-            EthereumAddress::from_private_key(&self.chain.genesis_private_key().await?)?;
-        let bootstrap_node =
-            EthereumAddress::from_private_key(&selected_bootstrap.get_private_key().await?)?;
+            let endpoint = format!("/dns/bootstrap-{idx}.{subdomain}/tcp/3333");
+            bootstrap_addresses.push((endpoint, (public_key, peer_id)));
+        }
+
+        let mut validator_addresses = Vec::new();
+
+        let validator_nodes = self.chain.nodes_by_role(NodeRole::Validator).await?;
+        for n in validator_nodes.into_iter() {
+            let (public_key, peer_id) = if let Some(node_keys) = keys_config.get(&n.name()) {
+                let bls_public_key = node_keys["bls_public_key"].as_str().unwrap().to_string();
+                let peer_id = node_keys["peer_id"].as_str().unwrap().to_string();
+                (bls_public_key, peer_id)
+            } else {
+                return Err(anyhow!("{} not found in keys config", n.name()));
+            };
+
+            validator_addresses.push((public_key, peer_id));
+        }
+
         let role_name = self.role.to_string();
         let eth_chain_id = self.eth_chain_id.to_string();
-        let bootstrap_endpoint = self.chain()?.get_bootstrap_endpoint()?;
-        let whitelisted_evm_contract_addresses = self.chain()?.get_whitelisted_evm_contracts();
-        let contract_upgrade_block_heights = self.chain()?.get_contract_upgrades_block_heights();
+        let contract_upgrades = self.chain()?.get_contract_upgrades_block_heights();
         // 4201 is the publically exposed port - We don't expose everything there.
-        let public_api = if self.role == NodeRole::Api {
+        let public_api = if self.role == NodeRole::Api
+            || (self.role == NodeRole::PrivateApi && !self.name().starts_with(gzil_node_prefix))
+        {
             // Enable all APIs, except `admin_` for API nodes.
-            json!({ "port": 4201, "enabled_apis": ["erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] })
+            json!({
+                "port": 4201,
+                "enabled_apis": [
+                    "debug",
+                    "erigon",
+                    "eth",
+                    "net",
+                    {
+                        "namespace": "ots",
+                        // Enable all APIs except `ots_getContractCreator` until #2381 is resolved.
+                        "apis": [
+                            "getApiLevel",
+                            "getBlockDetails",
+                            "getBlockDetailsByHash",
+                            "getBlockTransactions",
+                            "getInternalOperations",
+                            "getTransactionBySenderAndNonce",
+                            "getTransactionError",
+                            "hasCode",
+                            "searchTransactionsAfter",
+                            "searchTransactionsBefore",
+                            "traceTransaction",
+                        ],
+                    },
+                    "trace",
+                    "txpool",
+                    "web3",
+                    "zilliqa",
+                ]
+            })
         } else {
             // Only enable `eth_blockNumber` for other nodes.
             json!({"port": 4201, "enabled_apis": [ { "namespace": "eth", "apis": ["blockNumber"] } ] })
         };
         // 4202 is not exposed, so enable everything for local debugging.
-        let private_api = json!({ "port": 4202, "enabled_apis": ["admin", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] });
+        let private_api = json!({ "port": 4202, "enabled_apis": ["admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] });
         let api_servers = json!([public_api, private_api]);
 
-        // Enable Otterscan indices on API nodes.
-        let enable_ots_indices = self.role == NodeRole::Api;
-
-        let max_rpc_response_size = if self.role == NodeRole::Query {
-            u32::MAX
-        } else {
-            10 * 1024 * 1024
-        };
+        // Enable Otterscan indices on API and persistence nodes.
+        let enable_ots_indices = self.role == NodeRole::Api
+            || (self.role == NodeRole::PrivateApi && !self.name().starts_with(gzil_node_prefix))
+            || self.role == NodeRole::Persistence;
 
         let mut ctx = Context::new();
         ctx.insert("role", &role_name);
+        ctx.insert("network", &self.chain.name());
         ctx.insert("eth_chain_id", &eth_chain_id);
-        ctx.insert("bootstrap_endpoint", bootstrap_endpoint);
-        ctx.insert("bootstrap_peer_id", &bootstrap_node.peer_id);
-        ctx.insert("bootstrap_bls_public_key", &bootstrap_node.bls_public_key);
-        ctx.insert("set_bootstrap_address", set_bootstrap_address);
-        ctx.insert("genesis_address", &genesis_account.address);
-        ctx.insert("max_rpc_response_size", &max_rpc_response_size);
+
+        let bootstrap_address = if bootstrap_addresses.len() > 1 {
+            serde_json::to_value(
+                bootstrap_addresses
+                    .iter()
+                    .map(|(e, a)| (a.1.clone(), e))
+                    .collect::<Vec<_>>(),
+            )?
+        } else {
+            serde_json::to_value((
+                bootstrap_addresses[0].1.1.clone(),
+                format!("/dns/bootstrap.{subdomain}/tcp/3333"),
+            ))?
+        };
+
+        let genesis_account_address = if let Some(genesis_key) = keys_config.get("genesis-key") {
+            genesis_key["control_address"].as_str().unwrap().to_string()
+        } else {
+            return Err(anyhow!("Genesis account address not found in keys config"));
+        };
+
+        let validator_control_address = self
+            .chain()?
+            .get_validator_control_address()
+            .unwrap_or(&genesis_account_address);
+
+        let genesis_deposits_amount = &self.chain()?.get_genesis_deposits_amount()?;
+        let genesis_deposits = serde_json::to_value(
+            validator_addresses
+                .iter()
+                .map(|v| {
+                    (
+                        v.0.clone(),
+                        v.1.clone(),
+                        &genesis_deposits_amount,
+                        "0x0000000000000000000000000000000000000000",
+                        &validator_control_address,
+                    )
+                })
+                .collect::<Vec<_>>(),
+        )?;
+
         ctx.insert(
-            "whitelisted_evm_contract_addresses",
-            &serde_json::from_value::<toml::Value>(json!(whitelisted_evm_contract_addresses))?
-                .to_string(),
+            "bootstrap_address",
+            &serde_json::to_string_pretty(&bootstrap_address)?,
         );
         ctx.insert(
-            "contract_upgrade_block_heights",
-            &contract_upgrade_block_heights.to_toml().to_string(),
+            "genesis_deposits",
+            &serde_json::to_string_pretty(&genesis_deposits)?,
+        );
+        ctx.insert("genesis_address", &genesis_account_address);
+        ctx.insert("genesis_amount", &self.chain()?.get_genesis_amount()?);
+        ctx.insert(
+            "contract_upgrades",
+            &contract_upgrades.to_toml().to_string(),
         );
         // convert json to toml formatting
         let toml_servers: toml::Value = serde_json::from_value(api_servers)?;
         ctx.insert("api_servers", &toml_servers.to_string());
         ctx.insert("enable_ots_indices", &enable_ots_indices);
+        if let Some(genesis_fork) = self.chain()?.genesis_fork() {
+            ctx.insert(
+                "genesis_fork",
+                &serde_json::from_value::<toml::Value>(genesis_fork)?.to_string(),
+            );
+        }
         if let Some(forks) = self.chain()?.get_forks() {
             ctx.insert(
                 "forks",
@@ -861,21 +832,18 @@ impl ChainNode {
         }
 
         if let Some(checkpoint_url) = self.chain.checkpoint_url() {
-            if self.role == NodeRole::Validator {
+            if self.role == NodeRole::Validator || self.role == NodeRole::Bootstrap {
                 let checkpoint_file = checkpoint_url.rsplit('/').next().unwrap_or("");
                 ctx.insert("checkpoint_file", &format!("/{}", checkpoint_file));
 
                 let checkpoint_hex_block =
                     crate::utils::string_decimal_to_hex(&checkpoint_file.replace(".dat", ""))?;
 
-                let json_response = self
-                    .chain
-                    .run_rpc_call(
-                        "eth_getBlockByNumber",
-                        &Some(format!("[\"{}\", false]", checkpoint_hex_block)),
-                        30,
-                    )
-                    .await?;
+                let json_response = self.chain.run_rpc_call(
+                    "eth_getBlockByNumber",
+                    &Some(format!("[\"{}\", false]", checkpoint_hex_block)),
+                    30,
+                )?;
 
                 let parsed_json: Value = serde_json::from_str(&json_response)?;
 
@@ -908,6 +876,10 @@ impl ChainNode {
             }
         }
 
+        if let Some(new_view_interval) = self.chain()?.get_new_view_broadcast_interval() {
+            ctx.insert("new_view_broadcast_interval", &new_view_interval.as_secs());
+        }
+
         Ok(Tera::one_off(spec_config, &ctx, false)?)
     }
 
@@ -915,8 +887,15 @@ impl ChainNode {
         let rendered_template = self.get_config_toml().await?;
         let config_file = rendered_template.as_str();
 
+        // Adding the OpenTelemetry collector endpoint to all nodes configurations
+        let otlp_collector_endpoint = "http://localhost:4317";
+        let config_file_with_otlp = format!(
+            "otlp_collector_endpoint = \"{otlp_collector_endpoint}\"\n{}",
+            config_file
+        );
+
         let mut fh = File::create(filename).await?;
-        fh.write_all(config_file.as_bytes()).await?;
+        fh.write_all(config_file_with_otlp.as_bytes()).await?;
         println!("Configuration file created: {filename}");
 
         Ok(filename.to_owned())
@@ -931,35 +910,29 @@ impl ChainNode {
 
         let provisioning_script = include_str!("../../resources/node_provision.tera.py");
         let role_name = &self.role.to_string();
-
         let z2_image = &docker_image("zq2", &self.chain.get_version("zq2"))?;
-        let otterscan_image = &docker_image("otterscan", &self.chain.get_version("otterscan"))?;
-        let spout_image = &docker_image("spout", &self.chain.get_version("spout"))?;
-
-        let private_key = if *role_name == NodeRole::Apps.to_string() {
-            ""
-        } else {
-            &self.get_private_key().await?
-        };
-
-        let genesis_key = if *role_name == NodeRole::Apps.to_string() {
-            &self.chain.genesis_private_key().await?
-        } else {
-            ""
-        };
-
         let persistence_url = self.chain.persistence_url().unwrap_or_default();
         let checkpoint_url = self.chain.checkpoint_url().unwrap_or_default();
+        let log_level = self.chain()?.get_log_level()?;
+        let project_id = &self.machine.project_id;
+        let chain_name = &self.chain.name();
+        let node_name = &self.machine.name;
+        let enable_kms = if self.chain()?.get_enable_kms()? {
+            "true"
+        } else {
+            "false"
+        };
 
         let mut var_map = BTreeMap::<&str, &str>::new();
         var_map.insert("role", role_name);
         var_map.insert("docker_image", z2_image);
-        var_map.insert("otterscan_image", otterscan_image);
-        var_map.insert("spout_image", spout_image);
-        var_map.insert("secret_key", private_key);
-        var_map.insert("genesis_key", genesis_key);
+        var_map.insert("enable_kms", enable_kms);
         var_map.insert("persistence_url", &persistence_url);
         var_map.insert("checkpoint_url", &checkpoint_url);
+        var_map.insert("log_level", log_level);
+        var_map.insert("project_id", project_id);
+        var_map.insert("chain_name", chain_name);
+        var_map.insert("node_name", node_name);
 
         let ctx = Context::from_serialize(var_map)?;
         let rendered_template = Tera::one_off(provisioning_script, &ctx, false)?;
@@ -993,33 +966,29 @@ impl ChainNode {
             self.chain()?,
             backup_name
         );
-        let result = machine.run(&command, false).await;
+        let result = machine.run(&command, false);
         if result.is_ok() {
             let command = format!(
                 "sudo gsutil -m rm -rf gs://{}-persistence/{}",
                 self.chain()?,
                 backup_name
             );
-            machine.run(&command, false).await?;
+            machine.run(&command, false)?;
         }
         progress_bar.inc(1);
 
         // stop the service
         progress_bar.start("Stopping the service");
-        machine
-            .run("sudo systemctl stop zilliqa.service", false)
-            .await?;
+        machine.run("sudo systemctl stop zilliqa.service", false)?;
         progress_bar.inc(1);
 
         if zip {
             // create the zip file
             progress_bar.start("Packaging the data dir");
-            machine
-                .run(
-                    "sudo apt install -y zip && sudo zip -r /tmp/data.zip /data",
-                    false,
-                )
-                .await?;
+            machine.run(
+                "sudo apt install -y zip && sudo zip -r /tmp/data.zip /data",
+                false,
+            )?;
             progress_bar.inc(1);
 
             // upload the zip file to the bucket
@@ -1029,12 +998,12 @@ impl ChainNode {
                 self.chain()?,
                 backup_name
             );
-            machine.run(&command, false).await?;
+            machine.run(&command, false)?;
             progress_bar.inc(1);
 
             // clean the temp backup file
             progress_bar.start("Cleaning the temp backup files");
-            machine.run("sudo rm -rf /tmp/data.zip", false).await?;
+            machine.run("sudo rm -rf /tmp/data.zip", false)?;
             progress_bar.inc(1);
         } else {
             // export the backup files
@@ -1044,15 +1013,13 @@ impl ChainNode {
                 self.chain()?,
                 backup_name
             );
-            machine.run(&command, false).await?;
+            machine.run(&command, false)?;
             progress_bar.inc(1);
         }
 
         // start the service
         progress_bar.start("Starting the service");
-        machine
-            .run("sudo systemctl start zilliqa.service", false)
-            .await?;
+        machine.run("sudo systemctl start zilliqa.service", false)?;
         progress_bar.inc(1);
 
         progress_bar.stop(format!("{} Backup completed", "✔".green()));
@@ -1065,24 +1032,25 @@ impl ChainNode {
         &self,
         name: Option<String>,
         zip: bool,
+        no_restart: bool,
         multi_progress: &MultiProgress,
     ) -> Result<()> {
         let machine = &self.machine;
 
-        let mut backup_name = name.unwrap_or(self.name());
+        let backup_name = name.unwrap_or(self.name());
 
-        if zip {
-            backup_name = format!("{}.zip", backup_name);
-        }
-
-        let bar_length = if zip { 6 } else { 4 };
+        let bar_length = if zip {
+            if no_restart { 5 } else { 6 }
+        } else if no_restart {
+            3
+        } else {
+            4
+        };
         let progress_bar = multi_progress.add(cliclack::progress_bar(bar_length));
 
         // stop the service
         progress_bar.start(format!("{}: Stopping the service", self.name()));
-        machine
-            .run("sudo systemctl stop zilliqa.service", false)
-            .await?;
+        machine.run("sudo systemctl stop zilliqa.service", false)?;
         progress_bar.inc(1);
 
         if zip {
@@ -1092,29 +1060,27 @@ impl ChainNode {
                 self.chain()?,
                 backup_name
             );
-            machine.run(&command, false).await?;
+            machine.run(&command, false)?;
             progress_bar.inc(1);
 
             progress_bar.start(format!("{}: Deleting the data folder", self.name()));
-            machine.run("sudo rm -rf /data", false).await?;
+            machine.run("sudo rm -rf /data", false)?;
             progress_bar.inc(1);
 
             progress_bar.start(format!("{}: Restoring the data folder", self.name()));
-            machine
-                .run(
-                    "sudo apt install -y unzip && sudo unzip /tmp/data.zip -d /",
-                    false,
-                )
-                .await?;
+            machine.run(
+                "sudo apt install -y unzip && sudo unzip /tmp/data.zip -d /",
+                false,
+            )?;
             progress_bar.inc(1);
 
             progress_bar.start(format!("{}: Cleaning the backup files", self.name()));
-            machine.run("sudo rm -f /tmp/data.zip", false).await?;
+            machine.run("sudo rm -f /tmp/data.zip", false)?;
             progress_bar.inc(1);
         } else {
             // delete the data folder
             progress_bar.start(format!("{}: Deleting the data folder", self.name()));
-            machine.run("sudo rm -rf /data", false).await?;
+            machine.run("sudo rm -rf /data", false)?;
             progress_bar.inc(1);
 
             // import the backup files
@@ -1124,22 +1090,28 @@ impl ChainNode {
                 self.chain()?,
                 backup_name
             );
-            machine.run(&command, false).await?;
+            machine.run(&command, false)?;
             progress_bar.inc(1);
         }
 
         // start the service
-        progress_bar.start(format!("{}: Starting the service", self.name()));
-        machine
-            .run("sudo systemctl start zilliqa.service", false)
-            .await?;
-        progress_bar.inc(1);
+        if !no_restart {
+            progress_bar.start(format!("{}: Starting the service", self.name()));
+            machine.run("sudo systemctl start zilliqa.service", false)?;
+            progress_bar.inc(1);
+        }
 
-        progress_bar.stop(format!(
-            "{} {}: Restore completed",
-            "✔".green(),
-            self.name()
-        ));
+        let completion_message = if no_restart {
+            format!(
+                "{} {}: Restore completed (service not restarted)",
+                "✔".green(),
+                self.name()
+            )
+        } else {
+            format!("{} {}: Restore completed", "✔".green(), self.name())
+        };
+
+        progress_bar.stop(completion_message);
 
         Ok(())
     }
@@ -1149,13 +1121,11 @@ impl ChainNode {
         let progress_bar = multi_progress.add(cliclack::progress_bar(2));
 
         progress_bar.start(format!("{}: Stopping the service", self.name()));
-        machine
-            .run("sudo systemctl stop zilliqa.service", false)
-            .await?;
+        machine.run("sudo systemctl stop zilliqa.service", false)?;
         progress_bar.inc(1);
 
         progress_bar.start(format!("{}: Deleting the data folder", self.name()));
-        machine.run("sudo rm -rf /data", false).await?;
+        machine.run("sudo rm -rf /data", false)?;
         progress_bar.inc(1);
 
         progress_bar.stop(format!("{} {}: Reset completed", "✔".green(), self.name()));
@@ -1168,15 +1138,11 @@ impl ChainNode {
         let progress_bar = multi_progress.add(cliclack::progress_bar(2));
 
         progress_bar.start(format!("{}: Stopping the service", self.name()));
-        machine
-            .run("sudo systemctl stop zilliqa.service", false)
-            .await?;
+        machine.run("sudo systemctl stop zilliqa.service", false)?;
         progress_bar.inc(1);
 
         progress_bar.start(format!("{}: Starting the service", self.name()));
-        machine
-            .run("sudo systemctl start zilliqa.service", false)
-            .await?;
+        machine.run("sudo systemctl start zilliqa.service", false)?;
         progress_bar.inc(1);
 
         progress_bar.stop(format!(
@@ -1192,6 +1158,7 @@ impl ChainNode {
         &self,
         multi_progress: &indicatif::MultiProgress,
         follow: bool,
+        port: u64,
     ) -> Result<()> {
         const BAR_SIZE: u64 = 40;
         const INTERVAL_IN_SEC: u64 = 5;
@@ -1211,7 +1178,7 @@ impl ChainNode {
 
         let block_number = self
             .machine
-            .get_block_number(INTERVAL_IN_SEC as usize)
+            .get_block_number(INTERVAL_IN_SEC as usize, port)
             .await
             .ok();
 
@@ -1232,7 +1199,7 @@ impl ChainNode {
 
                 let response = self
                     .machine
-                    .get_block_number(INTERVAL_IN_SEC as usize)
+                    .get_block_number(INTERVAL_IN_SEC as usize, port)
                     .await
                     .ok();
 
@@ -1275,6 +1242,7 @@ impl ChainNode {
         &self,
         multi_progress: &indicatif::MultiProgress,
         follow: bool,
+        port: u64,
     ) -> Result<()> {
         const BAR_SIZE: u64 = 40;
         const INTERVAL_IN_SEC: u64 = 5;
@@ -1295,7 +1263,7 @@ impl ChainNode {
 
         let response = self
             .machine
-            .get_consensus_info(INTERVAL_IN_SEC as usize)
+            .get_consensus_info(INTERVAL_IN_SEC as usize, port)
             .await
             .ok();
 
@@ -1316,7 +1284,7 @@ impl ChainNode {
 
                 let response = self
                     .machine
-                    .get_consensus_info(INTERVAL_IN_SEC as usize)
+                    .get_consensus_info(INTERVAL_IN_SEC as usize, port)
                     .await
                     .ok();
 
@@ -1334,66 +1302,4 @@ impl ChainNode {
 
         Ok(())
     }
-
-    pub async fn api_attach(&self, multi_progress: &MultiProgress) -> Result<()> {
-        let machine = &self.machine;
-        let progress_bar = multi_progress.add(cliclack::progress_bar(1));
-
-        progress_bar.start(format!("{}: Starting the service", self.name()));
-        machine
-            .run("sudo systemctl start healthcheck.service", false)
-            .await?;
-        progress_bar.inc(1);
-
-        progress_bar.stop(format!("{} {}: Attach completed", "✔".green(), self.name()));
-
-        Ok(())
-    }
-
-    pub async fn api_detach(&self, multi_progress: &MultiProgress) -> Result<()> {
-        let machine = &self.machine;
-        let progress_bar = multi_progress.add(cliclack::progress_bar(1));
-
-        progress_bar.start(format!("{}: Stopping the service", self.name()));
-        machine
-            .run("sudo systemctl stop healthcheck.service", false)
-            .await?;
-        progress_bar.inc(1);
-
-        progress_bar.stop(format!("{} {}: Detach completed", "✔".green(), self.name()));
-
-        Ok(())
-    }
-}
-
-pub async fn retrieve_secret_by_role(
-    chain_name: &str,
-    project_id: &str,
-    role_name: &str,
-) -> Result<Vec<Secret>> {
-    Secret::get_secrets(
-        project_id,
-        format!(
-            "labels.zq2-network={} AND labels.role={}",
-            chain_name, role_name
-        )
-        .as_str(),
-    )
-    .await
-}
-
-async fn retrieve_secret_by_node_name(
-    chain_name: &str,
-    project_id: &str,
-    node_name: &str,
-) -> Result<Vec<Secret>> {
-    Secret::get_secrets(
-        project_id,
-        format!(
-            "labels.zq2-network={} AND labels.node-name={} AND labels.is-private-key=true",
-            chain_name, node_name
-        )
-        .as_str(),
-    )
-    .await
 }

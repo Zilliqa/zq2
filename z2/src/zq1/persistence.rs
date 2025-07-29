@@ -4,26 +4,29 @@ use alloy::{
     eips::eip2930::{AccessList, AccessListItem},
     primitives::{Address, B256, B512},
 };
-use anyhow::{anyhow, Result};
-use ethabi::Token;
+use anyhow::{Result, anyhow};
 use k256::ecdsa::VerifyingKey;
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 use sha2::Sha256;
 use sha3::{
+    Digest, Keccak256,
     digest::generic_array::{
+        GenericArray,
         sequence::Split,
         typenum::{U12, U20},
-        GenericArray,
     },
-    Digest, Keccak256,
 };
-use zilliqa::exec::{ScillaException, ScillaTransition};
+use zilliqa::{
+    exec::{ScillaException, ScillaTransition},
+    scilla::ParamValue,
+    transaction::{EvmLog, ScillaLog},
+};
 
 use super::proto::{
-    proto_account_base, proto_mb_info, proto_transaction_core_info, proto_transaction_receipt,
-    proto_tx_block::tx_block_header, ProtoAccountBase, ProtoMbInfo, ProtoTransactionWithReceipt,
-    ProtoTxBlock,
+    ProtoAccountBase, ProtoMbInfo, ProtoTransactionWithReceipt, ProtoTxBlock, proto_account_base,
+    proto_mb_info, proto_transaction_core_info, proto_transaction_receipt,
+    proto_tx_block::tx_block_header,
 };
 
 #[derive(Debug)]
@@ -351,29 +354,36 @@ pub enum Log {
 }
 
 impl Log {
-    pub fn to_eth_log(&self) -> Result<EthLog> {
+    pub fn to_zq2_log(&self) -> Result<zilliqa::transaction::Log> {
         match self {
-            Log::Eth(l) => Ok(l.clone()),
+            Log::Eth(l) => Ok(zilliqa::transaction::Log::Evm(EvmLog {
+                address: l.address,
+                topics: l.topics.clone(),
+                data: l.data.clone(),
+            })),
             Log::Zilliqa(log) => {
                 let event_name = log
                     .get("_eventname")
                     .ok_or_else(|| anyhow!("no `_eventname` in log"))?
                     .as_str()
                     .ok_or_else(|| anyhow!("`_eventname` is not a string"))?;
-                let topic0 = B256::new(Keccak256::digest(event_name.as_bytes()).into());
                 let address = log
                     .get("address")
                     .ok_or_else(|| anyhow!("no `address` in log"))?
                     .as_str()
                     .ok_or_else(|| anyhow!("`address` is not a string"))?;
 
-                let data = ethabi::encode(&[Token::String(serde_json::to_string(&log)?)]);
+                let params = log
+                    .get("params")
+                    .ok_or_else(|| anyhow!("no `params` in log"))?
+                    .clone();
+                let params: Vec<ParamValue> = serde_json::from_value(params)?;
 
-                Ok(EthLog {
+                Ok(zilliqa::transaction::Log::Scilla(ScillaLog {
                     address: address.parse()?,
-                    topics: vec![topic0],
-                    data,
-                })
+                    event_name: event_name.to_string(),
+                    params,
+                }))
             }
         }
     }
@@ -408,7 +418,7 @@ pub struct Transition {
     #[serde(rename = "addr")]
     address: Address,
     #[serde(default)]
-    depth: u64,
+    depth: u32,
     #[serde(rename = "msg")]
     message: Message,
 }
@@ -431,7 +441,7 @@ impl From<Transition> for ScillaTransition {
         ScillaTransition {
             from: x.address,
             to: x.message.recipient,
-            depth: x.depth,
+            depth: x.depth.into(),
             amount: zilliqa::transaction::ZilAmount::from_raw(x.message.amount),
             tag: x.message.tag,
             params: serde_json::to_string(&x.message.params).unwrap(),

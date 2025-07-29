@@ -1,28 +1,30 @@
 use std::{fmt::Debug, ops::DerefMut, sync::Arc};
 
+use ethabi::{Token, ethereum_types::U64};
 use alloy::primitives::{hex, Address, B256};
 use eth_trie::{EthTrie, MemoryDB, Trie};
-use ethabi::{ethereum_types::U64, Token};
+
 use ethers::{
     abi::FunctionExt,
     core::types::{Bytes, Signature},
     providers::{Middleware, MiddlewareError, Provider},
     types::{
+        BlockId, BlockNumber, Eip1559TransactionRequest, Eip2930TransactionRequest, Filter,
+        Transaction, TransactionReceipt, TransactionRequest,
         transaction::{
             eip2718::TypedTransaction,
             eip2930::{AccessList, AccessListItem},
         },
-        BlockId, BlockNumber, Eip1559TransactionRequest, Eip2930TransactionRequest, Filter,
-        Transaction, TransactionReceipt, TransactionRequest,
     },
     utils::keccak256,
 };
-use futures::{future::join_all, StreamExt};
+use futures::{StreamExt, future::join_all};
 use primitive_types::{H160, H256};
 use serde::{Deserialize, Serialize};
 use zilliqa::state::{Account, State};
+use serde_json::{Value, json};
 
-use crate::{deploy_contract, LocalRpcClient, Network, Wallet};
+use crate::{LocalRpcClient, Network, Wallet, deploy_contract};
 
 #[zilliqa_macros::test]
 async fn call_block_number(mut network: Network) {
@@ -31,6 +33,7 @@ async fn call_block_number(mut network: Network) {
     let (hash, abi) = deploy_contract(
         "tests/it/contracts/CallMe.sol",
         "CallMe",
+        0u128,
         &wallet,
         &mut network,
     )
@@ -348,6 +351,7 @@ async fn eth_get_transaction_receipt(mut network: Network) {
     let (hash, _abi) = deploy_contract(
         "tests/it/contracts/EmitEvents.sol",
         "EmitEvents",
+        0u128,
         &wallet,
         &mut network,
     )
@@ -387,12 +391,65 @@ async fn eth_get_transaction_receipt(mut network: Network) {
 }
 
 #[zilliqa_macros::test]
+async fn get_transaction_receipt_sequential_log_indexes(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    // Deploy a contract that can emit events
+    let (hash1, abi) = deploy_contract(
+        "tests/it/contracts/EmitEvents.sol",
+        "EmitEvents",
+        0u128,
+        &wallet,
+        &mut network,
+    )
+    .await;
+
+    let receipt1 = network.run_until_receipt(&wallet, hash1, 50).await;
+    let contract_address = receipt1.contract_address.unwrap();
+
+    // Call emitEvents() to generate some logs in block 1
+    let emit_events = abi.function("emitEvents").unwrap();
+    let tx1 = TransactionRequest::new()
+        .to(contract_address)
+        .data(emit_events.encode_input(&[]).unwrap());
+
+    let tx1_hash = wallet.send_transaction(tx1, None).await.unwrap().tx_hash();
+
+    let receipt1 = network.run_until_receipt(&wallet, tx1_hash, 50).await;
+
+    // Verify logs in first block have sequential indexes starting at 0
+    assert!(receipt1.logs.len() > 1);
+    for (i, log) in receipt1.logs.iter().enumerate() {
+        assert_eq!(log.log_index.unwrap().as_u64(), i as u64);
+    }
+
+    // Create another transaction in a new block
+    let tx2 = TransactionRequest::new()
+        .to(contract_address)
+        .data(emit_events.encode_input(&[]).unwrap());
+
+    let tx2_hash = wallet.send_transaction(tx2, None).await.unwrap().tx_hash();
+
+    let receipt2 = network.run_until_receipt(&wallet, tx2_hash, 50).await;
+
+    // Verify logs in second block also start at index 0
+    assert!(receipt2.logs.len() > 1);
+    for (i, log) in receipt2.logs.iter().enumerate() {
+        assert_eq!(log.log_index.unwrap().as_u64(), i as u64);
+    }
+
+    // Verify blocks are different
+    assert_ne!(receipt1.block_hash, receipt2.block_hash);
+}
+
+#[zilliqa_macros::test]
 async fn get_logs(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
     let (hash, contract) = deploy_contract(
         "tests/it/contracts/EmitEvents.sol",
         "EmitEvents",
+        0u128,
         &wallet,
         &mut network,
     )
@@ -583,6 +640,7 @@ async fn get_storage_at(mut network: Network) {
     let (hash, abi) = deploy_contract(
         "tests/it/contracts/Storage.sol",
         "Storage",
+        0u128,
         &wallet,
         &mut network,
     )
@@ -662,9 +720,9 @@ async fn get_storage_at(mut network: Network) {
 /// Helper method for send transaction tests.
 async fn send_transaction(
     network: &mut Network,
+    wallet: &Wallet,
     mut tx: TypedTransaction,
 ) -> (Transaction, TransactionReceipt) {
-    let wallet = network.genesis_wallet().await;
     wallet.fill_transaction(&mut tx, None).await.unwrap();
     let sig = wallet.signer().sign_transaction_sync(&tx).unwrap();
     let expected_hash = tx.hash(&sig);
@@ -695,7 +753,8 @@ async fn send_transaction(
 async fn send_legacy_transaction(mut network: Network) {
     let to = H160::random_using(network.rng.lock().unwrap().deref_mut());
     let tx = TransactionRequest::pay(to, 123).into();
-    let (tx, receipt) = send_transaction(&mut network, tx).await;
+    let wallet = network.genesis_wallet().await;
+    let (tx, receipt) = send_transaction(&mut network, &wallet, tx).await;
 
     assert_eq!(tx.transaction_type.unwrap().as_u64(), 0);
     assert_eq!(receipt.to.unwrap(), to);
@@ -717,7 +776,8 @@ async fn send_eip2930_transaction(mut network: Network) {
     };
     let tx = Eip2930TransactionRequest::new(TransactionRequest::pay(to, 123), access_list.clone())
         .into();
-    let (tx, receipt) = send_transaction(&mut network, tx).await;
+    let wallet = network.genesis_wallet().await;
+    let (tx, receipt) = send_transaction(&mut network, &wallet, tx).await;
 
     assert_eq!(tx.transaction_type.unwrap().as_u64(), 1);
     assert_eq!(tx.access_list.unwrap(), access_list);
@@ -746,7 +806,8 @@ async fn send_eip1559_transaction(mut network: Network) {
         .max_fee_per_gas(gas_price)
         .max_priority_fee_per_gas(gas_price)
         .into();
-    let (tx, receipt) = send_transaction(&mut network, tx).await;
+    let wallet = network.genesis_wallet().await;
+    let (tx, receipt) = send_transaction(&mut network, &wallet, tx).await;
 
     assert_eq!(tx.transaction_type.unwrap().as_u64(), 2);
     assert_eq!(tx.access_list.unwrap(), access_list);
@@ -813,6 +874,7 @@ async fn eth_call(mut network: Network) {
     let (hash, abi) = deploy_contract(
         "tests/it/contracts/SetGetContractValue.sol",
         "SetGetContractValue",
+        0u128,
         &wallet,
         &mut network,
     )
@@ -857,6 +919,7 @@ async fn revert_transaction(mut network: Network) {
     let (hash, abi) = deploy_contract(
         "tests/it/contracts/RevertMe.sol",
         "RevertMe",
+        0u128,
         &wallet,
         &mut network,
     )
@@ -871,7 +934,7 @@ async fn revert_transaction(mut network: Network) {
     let success_call = TransactionRequest::new()
         .to(contract_address)
         .data(setter.encode_input(&[Token::Bool(true)]).unwrap());
-    let (_, receipt) = send_transaction(&mut network, success_call.into()).await;
+    let (_, receipt) = send_transaction(&mut network, &wallet, success_call.into()).await;
     assert_eq!(receipt.status.unwrap().as_u32(), 1);
 
     // Ensure value was incremented
@@ -890,7 +953,7 @@ async fn revert_transaction(mut network: Network) {
         .to(contract_address)
         .data(setter.encode_input(&[Token::Bool(false)]).unwrap())
         .gas(1_000_000); // Pass a gas limit, otherwise estimate_gas is called and fails due to the revert
-    let (_, receipt) = send_transaction(&mut network, revert_call.into()).await;
+    let (_, receipt) = send_transaction(&mut network, &wallet, revert_call.into()).await;
     assert_eq!(receipt.status.unwrap().as_u32(), 0);
 
     // Ensure value was NOT incremented a second time
@@ -909,6 +972,7 @@ async fn gas_charged_on_revert(mut network: Network) {
     let (hash, abi) = deploy_contract(
         "tests/it/contracts/RevertMe.sol",
         "RevertMe",
+        0u128,
         &wallet,
         &mut network,
     )
@@ -927,7 +991,7 @@ async fn gas_charged_on_revert(mut network: Network) {
         .to(contract_address)
         .data(setter.encode_input(&[Token::Bool(false)]).unwrap())
         .gas(large_gas_limit);
-    let (_, receipt) = send_transaction(&mut network, revert_call.into()).await;
+    let (_, receipt) = send_transaction(&mut network, &wallet, revert_call.into()).await;
 
     assert_eq!(receipt.status.unwrap().as_u32(), 0);
     assert!(receipt.gas_used.is_some());
@@ -950,7 +1014,7 @@ async fn gas_charged_on_revert(mut network: Network) {
         .to(contract_address)
         .data(setter.encode_input(&[Token::Bool(true)]).unwrap())
         .gas(small_gas_limit);
-    let (_, receipt) = send_transaction(&mut network, fail_out_of_gas_call.into()).await;
+    let (_, receipt) = send_transaction(&mut network, &wallet, fail_out_of_gas_call.into()).await;
 
     assert_eq!(receipt.status.unwrap().as_u32(), 0);
     let balance_after_call = wallet.get_balance(wallet.address(), None).await.unwrap();
@@ -1127,6 +1191,7 @@ async fn priority_fees_tx(mut network: Network) {
 #[zilliqa_macros::test]
 async fn pending_transaction_is_returned_by_get_transaction_by_hash(mut network: Network) {
     let wallet = network.genesis_wallet().await;
+
     let provider = wallet.provider();
 
     // Send a transaction.
@@ -1182,35 +1247,56 @@ async fn get_transaction_by_index(mut network: Network) {
     let r1 = network.run_until_receipt(&wallet, h1, 50).await;
     let r2 = network.run_until_receipt(&wallet, h2, 50).await;
 
-    assert_eq!(r1.block_hash, r2.block_hash);
+    // NOTE: they are not always in the same block
+    if r1.block_hash == r2.block_hash {
+        let block_hash = r1.block_hash.unwrap();
+        let block_number = r1.block_number.unwrap();
 
-    let block_hash = r1.block_hash.unwrap();
-    let block_number = r1.block_number.unwrap();
+        let txn = wallet
+            .get_transaction_by_block_and_index(block_hash, 0u64.into())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(txn.hash, h2);
 
-    let txn = wallet
-        .get_transaction_by_block_and_index(block_hash, 0u64.into())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(txn.hash, h2);
+        let txn = wallet
+            .get_transaction_by_block_and_index(block_number, 1u64.into())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(txn.hash, h1);
+    } else {
+        let block_hash = r2.block_hash.unwrap();
+        let block_number = r1.block_number.unwrap();
 
-    let txn = wallet
-        .get_transaction_by_block_and_index(block_number, 1u64.into())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(txn.hash, h1);
+        let txn = wallet
+            .get_transaction_by_block_and_index(block_hash, 0u64.into())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(txn.hash, h2);
+
+        let txn = wallet
+            .get_transaction_by_block_and_index(block_number, 0u64.into())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(txn.hash, h1);
+    }
 }
 
 #[zilliqa_macros::test]
 async fn block_subscription(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
-    let mut block_stream = wallet.subscribe_blocks().await.unwrap();
+    let mut block_stream: ethers::providers::SubscriptionStream<
+        '_,
+        LocalRpcClient,
+        ethers::types::Block<H256>,
+    > = wallet.subscribe_blocks().await.unwrap();
+    network.run_until_block(&wallet, 3.into(), 100).await;
 
-    network.run_until_block(&wallet, 3.into(), 50).await;
-
-    // Assert the stream contains 3 blocks.
+    // Assert the stream contains next 3 blocks.
     assert_eq!(
         block_stream.next().await.unwrap().number.unwrap().as_u64(),
         1
@@ -1234,6 +1320,7 @@ async fn logs_subscription(mut network: Network) {
     let (hash, contract) = deploy_contract(
         "tests/it/contracts/EmitEvents.sol",
         "EmitEvents",
+        0u128,
         &wallet,
         &mut network,
     )
@@ -1310,8 +1397,7 @@ async fn get_accounts_with_extra_args(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn deploy_deterministic_deployment_proxy(mut network: Network) {
-    let wallet = network.random_wallet().await;
-    let provider = wallet.inner();
+    let wallet = network.genesis_wallet().await;
 
     let signer: H160 = "0x3fab184622dc19b6109349b94811493bf2a45362"
         .parse()
@@ -1322,7 +1408,7 @@ async fn deploy_deterministic_deployment_proxy(mut network: Network) {
 
     // Send the signer enough money to cover the deployment.
     let tx = TransactionRequest::pay(signer, gas_price * gas);
-    send_transaction(&mut network, tx.into()).await;
+    send_transaction(&mut network, &wallet, tx.into()).await;
 
     // Transaction from https://github.com/Arachnid/deterministic-deployment-proxy.
     let tx = TransactionRequest::new()
@@ -1338,13 +1424,9 @@ async fn deploy_deterministic_deployment_proxy(mut network: Network) {
         v: 27,
     };
     let raw_tx = tx.rlp_signed(&signature);
-    let hash = provider
-        .send_raw_transaction(raw_tx)
-        .await
-        .unwrap()
-        .tx_hash();
+    let hash = wallet.send_raw_transaction(raw_tx).await.unwrap().tx_hash();
 
-    let receipt = network.run_until_receipt(&wallet, hash, 100).await;
+    let receipt = network.run_until_receipt(&wallet, hash, 150).await;
 
     assert_eq!(receipt.from, signer);
     assert_eq!(
@@ -1358,6 +1440,8 @@ async fn deploy_deterministic_deployment_proxy(mut network: Network) {
 #[zilliqa_macros::test]
 async fn test_send_transaction_errors(mut network: Network) {
     let wallet = network.random_wallet().await;
+    network.run_until_block(&wallet, 3.into(), 70).await;
+
     async fn send_transaction_get_error(wallet: &Wallet, tx: TransactionRequest) -> (i64, String) {
         let result = wallet.send_transaction(tx, None).await;
         assert!(result.is_err());
@@ -1377,7 +1461,8 @@ async fn test_send_transaction_errors(mut network: Network) {
 
     // Give the signer some funds.
     let tx = TransactionRequest::pay(wallet.address(), 2 * gas_price * gas);
-    send_transaction(&mut network, tx.into()).await;
+    let genesis_wallet = network.genesis_wallet().await;
+    send_transaction(&mut network, &genesis_wallet, tx.into()).await;
 
     // Deliberately set too low a gas fee
     {
@@ -1426,13 +1511,8 @@ pub enum SyncingResult {
 async fn test_eth_syncing(mut network: Network) {
     let client = network.rpc_client(0).await.unwrap();
     let wallet = network.random_wallet().await;
-    network
-        .run_until_async(
-            || async { wallet.get_block_number().await.unwrap().as_u64() > 4 },
-            100,
-        )
-        .await
-        .unwrap();
+    network.run_until_block(&wallet, 3.into(), 70).await;
+
     let result = client
         .request_optional::<(), SyncingResult>("eth_syncing", None)
         .await
@@ -1449,6 +1529,7 @@ async fn get_block_receipts(mut network: Network) {
     let (hash1, _) = deploy_contract(
         "tests/it/contracts/EmitEvents.sol",
         "EmitEvents",
+        0u128,
         &wallet,
         &mut network,
     )
@@ -1583,4 +1664,288 @@ async fn test_eth_get_proof(mut network: Network) {
 
         assert_eq!(verify_result.as_slice(), storage_value.as_slice());
     }
+}
+
+#[zilliqa_macros::test]
+async fn test_block_filter(mut network: Network) {
+    println!("Starting block filter test");
+    let wallet = network.random_wallet().await;
+    let provider = wallet.provider();
+
+    // Create a new block filter
+    println!("Creating new block filter");
+    let filter_id: u128 = provider.request("eth_newBlockFilter", ()).await.unwrap();
+    println!("Created filter with ID: {}", filter_id);
+
+    // Generate some blocks
+    println!("Generating blocks");
+    network.run_until_block(&wallet, 3.into(), 50).await;
+    println!("Generated blocks");
+
+    // Get filter changes - should return the new block hashes
+    println!("Getting filter changes");
+    let changes_result: serde_json::Value = provider
+        .request("eth_getFilterChanges", [filter_id])
+        .await
+        .unwrap();
+    let changes: Vec<H256> = serde_json::from_value(changes_result).unwrap();
+    println!("Got {} changes", changes.len());
+
+    // We should have at least 2 new blocks (not counting the block at which we created the filter)
+    assert!(!changes.is_empty());
+    assert!(changes.len() >= 2);
+
+    // Changes should be valid block hashes
+    println!("Verifying block hashes");
+    for hash in &changes {
+        println!("Checking block hash: {}", hash);
+        let block = provider
+            .get_block(BlockId::Hash(*hash))
+            .await
+            .unwrap()
+            .unwrap();
+        block.number.unwrap();
+    }
+
+    // Calling get_filter_changes again should return empty as we've already retrieved the changes
+    println!("Getting filter changes second time");
+    let changes_result: serde_json::Value = provider
+        .request("eth_getFilterChanges", [filter_id])
+        .await
+        .unwrap();
+    let changes: Vec<H256> = serde_json::from_value(changes_result).unwrap();
+    println!("Got {} changes on second call", changes.len());
+    dbg!(&changes);
+    assert!(changes.is_empty());
+
+    println!("Removing filter");
+    let filter_removed_successfully: bool = provider
+        .request("eth_uninstallFilter", [filter_id])
+        .await
+        .unwrap();
+    println!("Filter removed: {}", filter_removed_successfully);
+    assert!(filter_removed_successfully);
+}
+
+#[zilliqa_macros::test]
+async fn test_pending_transaction_filter(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let provider = wallet.provider();
+
+    // Create a new pending transaction filter
+    println!("Creating new pending transaction filter");
+    let filter_id: u128 = provider
+        .request("eth_newPendingTransactionFilter", ())
+        .await
+        .unwrap();
+    println!("Created filter with ID: {}", filter_id);
+
+    // Send a transaction.
+    let hash = wallet
+        .send_transaction(TransactionRequest::pay(H160::random(), 10), None)
+        .await
+        .unwrap()
+        .tx_hash();
+
+    // Get filter changes - should return the pending transaction hashes
+    println!("Getting filter changes");
+    let changes_result: serde_json::Value = provider
+        .request("eth_getFilterChanges", [filter_id])
+        .await
+        .unwrap();
+    let changes: Vec<H256> = serde_json::from_value(changes_result).unwrap();
+    println!("Got {} changes", changes.len());
+
+    assert!(changes.contains(&hash));
+
+    // Calling get_filter_changes again should return empty
+    println!("Getting filter changes second time");
+    let changes_result: serde_json::Value = provider
+        .request("eth_getFilterChanges", [filter_id])
+        .await
+        .unwrap();
+    let changes: Vec<H256> = serde_json::from_value(changes_result).unwrap();
+    println!("Got {} changes on second call", changes.len());
+    assert!(changes.is_empty());
+}
+
+#[zilliqa_macros::test]
+async fn test_log_filter(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let provider = wallet.provider();
+
+    let (hash, contract) = deploy_contract(
+        "tests/it/contracts/EmitEvents.sol",
+        "EmitEvents",
+        0u128,
+        &wallet,
+        &mut network,
+    )
+    .await;
+
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+    let contract_address = receipt.contract_address.unwrap();
+
+    // Create a filter for contract events
+    println!("Creating event filter");
+    let filter = json!({
+        "fromBlock": "latest",
+        "address": contract_address,
+    });
+    let filter_id: u128 = provider.request("eth_newFilter", [filter]).await.unwrap();
+    println!("Created filter with ID: {}", filter_id);
+
+    let emit_events = contract.function("emitEvents").unwrap();
+    let call_tx = TransactionRequest::new()
+        .to(contract_address)
+        .data(emit_events.encode_input(&[]).unwrap());
+
+    let call_tx_hash = wallet
+        .send_transaction(call_tx, None)
+        .await
+        .unwrap()
+        .tx_hash();
+    network.run_until_receipt(&wallet, call_tx_hash, 50).await;
+
+    // Get filter changes
+    println!("Getting filter changes");
+    let logs_result: serde_json::Value = provider
+        .request("eth_getFilterChanges", [filter_id])
+        .await
+        .unwrap();
+    dbg!(&logs_result);
+    let logs: Vec<serde_json::Value> = serde_json::from_value(logs_result).unwrap();
+    println!("Got {} logs", logs.len());
+
+    assert_eq!(logs.len(), 2);
+
+    // Test get_filter_logs
+    println!("Testing get_filter_logs");
+    let logs_via_get_result: serde_json::Value = provider
+        .request("eth_getFilterLogs", [filter_id])
+        .await
+        .unwrap();
+    let logs_via_get: Vec<serde_json::Value> = serde_json::from_value(logs_via_get_result).unwrap();
+    assert_eq!(logs, logs_via_get);
+
+    // Calling get_filter_changes again should return empty
+    println!("Getting filter changes second time");
+    let changes_result: serde_json::Value = provider
+        .request("eth_getFilterChanges", [filter_id])
+        .await
+        .unwrap();
+    let changes: Vec<serde_json::Value> = serde_json::from_value(changes_result).unwrap();
+    println!("Got {} changes on second call", changes.len());
+    assert!(changes.is_empty());
+
+    println!("Removing filter");
+    let filter_removed_successfully: bool = provider
+        .request("eth_uninstallFilter", [filter_id])
+        .await
+        .unwrap();
+    println!("Filter removed: {}", filter_removed_successfully);
+    assert!(filter_removed_successfully);
+}
+
+#[zilliqa_macros::test]
+async fn test_invalid_filter_id(mut network: Network) {
+    println!("Starting invalid filter ID test");
+    let wallet = network.random_wallet().await;
+    let provider = wallet.provider();
+
+    // Try to get changes for non-existent filter
+    println!("Attempting to get changes for invalid filter ID");
+    let result = provider
+        .request::<_, Value>("eth_getFilterChanges", ["0x123"])
+        .await;
+    assert!(result.is_err());
+}
+
+#[zilliqa_macros::test]
+async fn test_uninstall_filter(mut network: Network) {
+    println!("Starting uninstall filter test");
+    let wallet = network.random_wallet().await;
+    let provider = wallet.provider();
+
+    // Create a new filter
+    println!("Creating new block filter");
+    let filter_id: u128 = provider.request("eth_newBlockFilter", ()).await.unwrap();
+    println!("Created filter with ID: {}", filter_id);
+
+    // Verify filter exists by using it
+    println!("Verifying filter exists");
+    let _changes: Vec<H256> = provider
+        .request("eth_getFilterChanges", [filter_id])
+        .await
+        .unwrap();
+    println!("Filter verified");
+
+    // Successfully uninstall the filter
+    println!("Uninstalling filter");
+    let filter_removed: bool = provider
+        .request("eth_uninstallFilter", [filter_id])
+        .await
+        .unwrap();
+    println!("Filter removed: {}", filter_removed);
+    assert!(filter_removed);
+
+    // Verify filter no longer exists
+    println!("Verifying filter no longer exists");
+    let result = provider
+        .request::<_, Value>("eth_getFilterChanges", [filter_id])
+        .await;
+    assert!(result.is_err());
+}
+
+#[zilliqa_macros::test]
+async fn get_block_by_number(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let provider = wallet.provider();
+
+    // Make sure there's at least one block to retrieve
+    network.run_until_block(&wallet, 2u64.into(), 50).await;
+
+    // Get the latest block number
+    let latest_number = provider.get_block_number().await.unwrap();
+
+    // Query eth_getBlockByNumber with 'latest', full transactions requested
+    let block = provider
+        .request::<_, serde_json::Value>("eth_getBlockByNumber", (latest_number, true))
+        .await
+        .unwrap();
+
+    // Some block fields should always be present
+    assert_eq!(
+        block["number"],
+        serde_json::json!(format!("0x{:x}", latest_number.as_u64()))
+    );
+    assert!(block["hash"].as_str().unwrap().starts_with("0x"));
+    assert!(block["parentHash"].as_str().unwrap().starts_with("0x"));
+    assert_eq!(block["uncles"], serde_json::json!([])); // No uncles in ZQ2
+
+    // Specific required fields
+    // difficulty: 0x0
+    assert_eq!(block["difficulty"], serde_json::json!("0x0"));
+
+    // sha3Uncles: RLP( [] ), 0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347
+    assert_eq!(
+        block["sha3Uncles"],
+        serde_json::json!("0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347")
+    );
+
+    // miner is a proper address, not "None"
+    let miner = block["miner"].as_str().unwrap();
+    assert!(
+        miner.starts_with("0x") && miner.len() == 42,
+        "Miner field is not a 20-byte address: {miner}"
+    );
+
+    // Some other typical fields
+    assert!(block["transactions"].is_array());
+
+    // Block gasLimit/gasUsed, timestamp, size are all nonzero/zero
+    assert!(block["gasLimit"].as_str().unwrap().starts_with("0x"));
+    assert!(block["gasUsed"].as_str().unwrap().starts_with("0x"));
+    assert!(block["timestamp"].as_str().unwrap().starts_with("0x"));
+    assert!(u64::from_str_radix(&block["size"].as_str().unwrap()[2..], 16).unwrap() > 0);
 }

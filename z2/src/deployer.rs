@@ -1,12 +1,15 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::HashMap, ops::Add, sync::Arc};
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use clap::ValueEnum;
-use cliclack::MultiProgress;
 use colored::Colorize;
-use strum::Display;
-use tokio::{fs, sync::Semaphore, task};
-use zilliqa::crypto::SecretKey;
+use ethers::{
+    middleware::Middleware,
+    prelude::{Bytes, TransactionRequest},
+};
+use primitive_types::{H160, H256, U256};
+use tokio::{sync::Semaphore, task};
+use zilliqa::{crypto::SecretKey, exec::BLESSED_TRANSACTIONS};
 
 use crate::{
     address::EthereumAddress,
@@ -15,21 +18,12 @@ use crate::{
         instance::ChainInstance,
         node::{ChainNode, NodePort, NodeRole},
     },
-    secret::Secret,
-    validators,
+    utils::format_amount,
+    validators::{self, SignerClient},
 };
 
 const VALIDATOR_DEPOSIT_IN_MILLIONS: u8 = 20;
 const ZERO_ACCOUNT: &str = "0x0000000000000000000000000000000000000000";
-
-pub async fn new(network_name: &str, eth_chain_id: u64, roles: Vec<NodeRole>) -> Result<()> {
-    let config = NetworkConfig::new(network_name.to_string(), eth_chain_id, roles).await?;
-    let content = serde_yaml::to_string(&config)?;
-    let mut file_path = std::env::current_dir()?;
-    file_path.push(format!("{network_name}.yaml"));
-    fs::write(file_path, content).await?;
-    Ok(())
-}
 
 pub async fn install_or_upgrade(
     config_file: &str,
@@ -45,9 +39,7 @@ pub async fn install_or_upgrade(
     chain.set_checkpoint_url(checkpoint_url);
     let mut chain_nodes = chain.nodes().await?;
 
-    if chain.checkpoint_url().is_some() {
-        chain_nodes.retain(|node| node.role == NodeRole::Validator);
-    }
+    chain_nodes.retain(|node| node.role != NodeRole::Apps);
 
     let node_names = chain_nodes
         .iter()
@@ -74,11 +66,6 @@ pub async fn install_or_upgrade(
         node.role == NodeRole::Bootstrap && selected_machines.clone().contains(&node.name())
     });
 
-    let mut apps_nodes = chain_nodes.clone();
-    apps_nodes.retain(|node| {
-        node.role == NodeRole::Apps && selected_machines.clone().contains(&node.name())
-    });
-
     chain_nodes.retain(|node| {
         node.role != NodeRole::Bootstrap
             && node.role != NodeRole::Apps
@@ -86,8 +73,11 @@ pub async fn install_or_upgrade(
     });
 
     let _ = execute_install_or_upgrade(bootstrap_nodes, is_upgrade, max_parallel).await;
-    let _ = execute_install_or_upgrade(chain_nodes, is_upgrade, max_parallel).await;
-    let _ = execute_install_or_upgrade(apps_nodes, is_upgrade, max_parallel).await;
+    let _ = execute_install_or_upgrade(chain_nodes.clone(), is_upgrade, max_parallel).await;
+
+    if !is_upgrade {
+        post_install(chain).await?;
+    }
 
     Ok(())
 }
@@ -121,7 +111,7 @@ async fn execute_install_or_upgrade(
 
     for result in results {
         match result? {
-            (node, Ok(())) => successes.push(node.name()),
+            (node, Ok(())) => successes.push(node),
             (node, Err(err)) => {
                 println!("Node {} failed with error: {}", node.name(), err);
                 failures.push(node.name());
@@ -129,8 +119,8 @@ async fn execute_install_or_upgrade(
         }
     }
 
-    for success in successes {
-        log::info!("SUCCESS: {}", success);
+    for success in &successes {
+        log::info!("SUCCESS: {}", success.name());
     }
 
     for failure in failures {
@@ -140,7 +130,48 @@ async fn execute_install_or_upgrade(
     Ok(())
 }
 
-pub async fn get_config_file(config_file: &str, role: NodeRole) -> Result<()> {
+async fn post_install(chain: ChainInstance) -> Result<()> {
+    let genesis_private_key = chain.genesis_private_key()?;
+    let url = chain.chain()?.get_api_endpoint()?;
+
+    let genesis_address = EthereumAddress::from_private_key(&genesis_private_key)?;
+
+    let client = SignerClient::new(&url, &genesis_private_key)?
+        .get_signer()
+        .await?;
+
+    let gas_price = client.get_gas_price().await?;
+
+    let mut start_nonce = client
+        .get_transaction_count(H160(genesis_address.address.0.into()), None)
+        .await?;
+    for blessed_txns in BLESSED_TRANSACTIONS {
+        if let Ok(Some(_)) = client
+            .get_transaction_receipt(H256(blessed_txns.hash.0))
+            .await
+        {
+            continue;
+        }
+
+        let tx = TransactionRequest::new()
+            .to(H160(blessed_txns.sender.0.into()))
+            .nonce(start_nonce)
+            .value(U256::from(blessed_txns.gas_limit) * gas_price);
+
+        start_nonce = start_nonce.add(1);
+
+        let funding_txn = client.send_transaction(tx, None).await?;
+        _ = funding_txn.await?;
+
+        // Send blessed transaction itself
+        let payload = Bytes::from(blessed_txns.payload.to_vec());
+        _ = client.send_raw_transaction(payload).await?;
+    }
+
+    anyhow::Ok(())
+}
+
+pub async fn get_config_file(config_file: &str, role: NodeRole, out: Option<&str>) -> Result<()> {
     if role == NodeRole::Apps {
         log::info!(
             "Config file is not present for nodes with role {}",
@@ -157,10 +188,15 @@ pub async fn get_config_file(config_file: &str, role: NodeRole) -> Result<()> {
 
     if let Some(node) = chain_nodes.first() {
         let content = node.get_config_toml().await?;
-        println!("Config file for a node role {} in {}", role, chain.name());
-        println!("---");
-        println!("{}", content);
-        println!("---");
+        if let Some(out) = out {
+            std::fs::write(out, content)?;
+            log::info!("Config file {out} successfully written");
+        } else {
+            println!("Config file for a node role {} in {}", role, chain.name());
+            println!("---");
+            println!("{}", content);
+            println!("---");
+        }
     } else {
         log::error!(
             "No nodes available in {} for the role {}",
@@ -205,7 +241,7 @@ pub async fn get_deposit_commands(config_file: &str, node_selection: bool) -> Re
         chain.name()
     );
 
-    let genesis_private_key = chain.genesis_private_key().await?;
+    let genesis_private_key = chain.genesis_private_key()?;
     for node in validators {
         let permit = semaphore.clone().acquire_owned().await?;
         let genesis_key = genesis_private_key.clone();
@@ -229,7 +265,7 @@ pub async fn get_deposit_commands(config_file: &str, node_selection: bool) -> Re
 }
 
 pub async fn get_node_deposit_commands(genesis_private_key: &str, node: &ChainNode) -> Result<()> {
-    let private_keys = node.get_private_key().await?;
+    let private_keys = node.get_private_key()?;
     let node_ethereum_address = EthereumAddress::from_private_key(&private_keys)?;
     let deposit_auth_signature = node_ethereum_address.secret_key.deposit_auth_signature(
         node.chain_id(),
@@ -245,6 +281,69 @@ pub async fn get_node_deposit_commands(genesis_private_key: &str, node: &ChainNo
     println!("\t--reward-address {} \\", ZERO_ACCOUNT);
     println!("\t--signing-address {} \\", ZERO_ACCOUNT);
     println!("\t--amount {VALIDATOR_DEPOSIT_IN_MILLIONS}\n");
+
+    Ok(())
+}
+
+pub async fn run_stakers(config_file: &str) -> Result<()> {
+    let config = NetworkConfig::from_file(config_file).await?;
+    let chain = ChainInstance::new(config.clone()).await?;
+    let mut validators = chain.nodes().await?;
+    validators.retain(|node| node.role == NodeRole::Bootstrap || node.role == NodeRole::Validator);
+
+    println!("Retrieving the stakers info in the chain {}", chain.name());
+
+    let genesis_private_key = chain.genesis_private_key()?;
+    let signer_client =
+        validators::SignerClient::new(&chain.chain()?.get_api_endpoint()?, &genesis_private_key)?;
+    println!("Loading the stakers...");
+    let stakers = signer_client.get_stakers().await?;
+
+    println!("Loading the internal nodes...");
+    let mut internal_validators = HashMap::<String, String>::new();
+    for node in validators {
+        let private_keys = node.get_private_key()?;
+        let node_ethereum_address = EthereumAddress::from_private_key(&private_keys)?;
+
+        internal_validators.insert(
+            node_ethereum_address.bls_public_key.to_string(),
+            node.name(),
+        );
+
+        if !stakers.contains(&node_ethereum_address.bls_public_key)
+            && node.role == NodeRole::Validator
+        {
+            log::warn!("{} is NOT a validator", node.name());
+        }
+    }
+
+    for public_key in stakers {
+        let stake = signer_client.get_stake(&public_key).await? as f64 / 10f64.powi(18);
+        let future_stake =
+            signer_client.get_future_stake(&public_key).await? as f64 / 10f64.powi(18);
+        let public_key = &public_key.to_string();
+        let name = internal_validators.get(public_key).unwrap_or(public_key);
+
+        println!("---\n{}:", name.bold());
+
+        println!(
+            "\tStake        {:>width$} $ZIL",
+            if stake != future_stake {
+                format_amount(stake).red()
+            } else {
+                format_amount(stake).normal()
+            },
+            width = 30
+        );
+
+        if stake != future_stake {
+            println!(
+                "\tFuture stake {:>width$} $ZIL",
+                format_amount(future_stake).green(),
+                width = 30
+            );
+        }
+    }
 
     Ok(())
 }
@@ -283,31 +382,32 @@ pub async fn run_deposit(config_file: &str, node_selection: bool) -> Result<()> 
     let mut failures = vec![];
 
     for node in validators {
-        let genesis_private_key = chain.genesis_private_key().await?;
-        let private_keys = node.get_private_key().await?;
+        let genesis_private_key = chain.genesis_private_key()?;
+        let private_keys = node.get_private_key()?;
         let node_ethereum_address = EthereumAddress::from_private_key(&private_keys)?;
         let deposit_auth_signature = node_ethereum_address.secret_key.deposit_auth_signature(
             node.chain_id(),
             SecretKey::from_hex(&genesis_private_key)?.to_evm_address(),
         );
 
-        println!("Validator {}:", node.name());
+        println!("{}", format!("Validator {}:", node.name()).yellow());
 
         let validator = validators::Validator::new(
             node_ethereum_address.peer_id,
             node_ethereum_address.bls_public_key,
             deposit_auth_signature,
         )?;
-        let stake = validators::StakeDeposit::new(
-            validator,
-            VALIDATOR_DEPOSIT_IN_MILLIONS,
-            chain.chain()?.get_api_endpoint()?,
+        let signer_client = validators::SignerClient::new(
+            &chain.chain()?.get_api_endpoint()?,
             &genesis_private_key,
+        )?;
+        let deposit_params = validators::DepositParams::new(
+            VALIDATOR_DEPOSIT_IN_MILLIONS,
             ZERO_ACCOUNT,
             ZERO_ACCOUNT,
         )?;
 
-        let result = validators::deposit_stake(&stake).await;
+        let result = signer_client.deposit(&validator, &deposit_params).await;
 
         match result {
             Ok(()) => successes.push(node.name()),
@@ -326,7 +426,219 @@ pub async fn run_deposit(config_file: &str, node_selection: bool) -> Result<()> 
         for failure in failures {
             log::error!("FAILURE: {}", failure);
         }
-        log::error!("Run `z2 deployer get-deposit-commands <chain_file>` to get the deposit command each node");
+        log::error!(
+            "Run `z2 deployer get-deposit-commands <chain_file>` to get the deposit command each node"
+        );
+    }
+
+    Ok(())
+}
+
+pub async fn run_deposit_top_up(config_file: &str, node_selection: bool, amount: u8) -> Result<()> {
+    let config = NetworkConfig::from_file(config_file).await?;
+    let chain = ChainInstance::new(config.clone()).await?;
+    let mut validators = chain.nodes().await?;
+    validators.retain(|node| node.role == NodeRole::Validator);
+
+    let validator_names = validators
+        .iter()
+        .map(|n| n.name().clone())
+        .collect::<Vec<_>>();
+
+    let selected_machines = if !node_selection {
+        validator_names
+    } else {
+        let mut multi_select = cliclack::multiselect("Select nodes");
+
+        for name in validator_names {
+            multi_select = multi_select.item(name.clone(), name, "");
+        }
+
+        multi_select.interact()?
+    };
+
+    validators.retain(|node| selected_machines.clone().contains(&node.name()));
+
+    println!(
+        "Running stake deposit top-up for the validators in the chain {}",
+        chain.name()
+    );
+
+    let mut successes = vec![];
+    let mut failures = vec![];
+
+    for node in validators {
+        let genesis_private_key = chain.genesis_private_key()?;
+        let private_keys = node.get_private_key()?;
+        let node_ethereum_address = EthereumAddress::from_private_key(&private_keys)?;
+
+        let signer_client = validators::SignerClient::new(
+            &chain.chain()?.get_api_endpoint()?,
+            &genesis_private_key,
+        )?;
+
+        println!("{}", format!("Validator {}:", node.name()).yellow());
+        let result = signer_client
+            .deposit_top_up(&node_ethereum_address.bls_public_key, amount)
+            .await;
+
+        match result {
+            Ok(()) => successes.push(node.name()),
+            Err(err) => {
+                println!("Node {} failed with error: {}", node.name(), err);
+                failures.push(node.name());
+            }
+        }
+    }
+
+    for success in successes {
+        log::info!("SUCCESS: {}", success);
+    }
+
+    if !failures.is_empty() {
+        for failure in failures {
+            log::error!("FAILURE: {}", failure);
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn run_unstake(config_file: &str, node_selection: bool, amount: u8) -> Result<()> {
+    let config = NetworkConfig::from_file(config_file).await?;
+    let chain = ChainInstance::new(config.clone()).await?;
+    let mut validators = chain.nodes().await?;
+    validators.retain(|node| node.role == NodeRole::Validator);
+
+    let validator_names = validators
+        .iter()
+        .map(|n| n.name().clone())
+        .collect::<Vec<_>>();
+
+    let selected_machines = if !node_selection {
+        validator_names
+    } else {
+        let mut multi_select = cliclack::multiselect("Select nodes");
+
+        for name in validator_names {
+            multi_select = multi_select.item(name.clone(), name, "");
+        }
+
+        multi_select.interact()?
+    };
+
+    validators.retain(|node| selected_machines.clone().contains(&node.name()));
+
+    println!(
+        "Running unstake for the validators in the chain {}",
+        chain.name()
+    );
+
+    let mut successes = vec![];
+    let mut failures = vec![];
+
+    for node in validators {
+        let genesis_private_key = chain.genesis_private_key()?;
+        let private_keys = node.get_private_key()?;
+        let node_ethereum_address = EthereumAddress::from_private_key(&private_keys)?;
+
+        let signer_client = validators::SignerClient::new(
+            &chain.chain()?.get_api_endpoint()?,
+            &genesis_private_key,
+        )?;
+
+        println!("{}", format!("Validator {}:", node.name()).yellow());
+        let result = signer_client
+            .unstake(&node_ethereum_address.bls_public_key, amount)
+            .await;
+
+        match result {
+            Ok(()) => successes.push(node.name()),
+            Err(err) => {
+                println!("Node {} failed with error: {}", node.name(), err);
+                failures.push(node.name());
+            }
+        }
+    }
+
+    for success in successes {
+        log::info!("SUCCESS: {}", success);
+    }
+
+    if !failures.is_empty() {
+        for failure in failures {
+            log::error!("FAILURE: {}", failure);
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn run_withdraw(config_file: &str, node_selection: bool) -> Result<()> {
+    let config = NetworkConfig::from_file(config_file).await?;
+    let chain = ChainInstance::new(config.clone()).await?;
+    let mut validators = chain.nodes().await?;
+    validators.retain(|node| node.role == NodeRole::Validator);
+
+    let validator_names = validators
+        .iter()
+        .map(|n| n.name().clone())
+        .collect::<Vec<_>>();
+
+    let selected_machines = if !node_selection {
+        validator_names
+    } else {
+        let mut multi_select = cliclack::multiselect("Select nodes");
+
+        for name in validator_names {
+            multi_select = multi_select.item(name.clone(), name, "");
+        }
+
+        multi_select.interact()?
+    };
+
+    validators.retain(|node| selected_machines.clone().contains(&node.name()));
+
+    println!(
+        "Running withdraw for the validators in the chain {}",
+        chain.name()
+    );
+
+    let mut successes = vec![];
+    let mut failures = vec![];
+
+    for node in validators {
+        let genesis_private_key = chain.genesis_private_key()?;
+        let private_keys = node.get_private_key()?;
+        let node_ethereum_address = EthereumAddress::from_private_key(&private_keys)?;
+
+        let signer_client = validators::SignerClient::new(
+            &chain.chain()?.get_api_endpoint()?,
+            &genesis_private_key,
+        )?;
+
+        println!("{}", format!("Validator {}:", node.name()).yellow());
+        let result = signer_client
+            .withdraw(&node_ethereum_address.bls_public_key, 0)
+            .await;
+
+        match result {
+            Ok(()) => successes.push(node.name()),
+            Err(err) => {
+                println!("Node {} failed with error: {}", node.name(), err);
+                failures.push(node.name());
+            }
+        }
+    }
+
+    for success in successes {
+        log::info!("SUCCESS: {}", success);
+    }
+
+    if !failures.is_empty() {
+        for failure in failures {
+            log::error!("FAILURE: {}", failure);
+        }
     }
 
     Ok(())
@@ -386,10 +698,41 @@ pub async fn run_rpc_call(
         let current_method = method.to_owned();
         let current_params = params.to_owned();
         let permit = semaphore.clone().acquire_owned().await?;
+        let machine_name = machine.name.clone();
+        let remote_port = current_port.value();
         let future = task::spawn(async move {
-            let result = machine
-                .get_rpc_response(&current_method, &current_params, timeout, current_port)
-                .await;
+            let local_port = machine.find_available_port().unwrap_or(6000);
+            let tunnel = machine.open_tunnel(local_port, remote_port);
+            if tunnel.is_none() {
+                drop(permit);
+                return (
+                    machine,
+                    Err(anyhow::anyhow!(
+                        "Failed to open tunnel for {}",
+                        machine_name
+                    )),
+                );
+            }
+            let mut tunnel = tunnel.unwrap();
+            if !machine.wait_for_port(local_port, 20) {
+                machine.close_tunnel(&mut tunnel);
+                drop(permit);
+                return (
+                    machine,
+                    Err(anyhow::anyhow!(
+                        "Tunnel did not become ready for {}",
+                        machine_name
+                    )),
+                );
+            }
+            // Now call get_rpc_response, which will use curl to localhost:local_port
+            let result = machine.get_rpc_response(
+                &current_method,
+                &current_params,
+                timeout,
+                local_port as u64,
+            );
+            machine.close_tunnel(&mut tunnel);
             drop(permit); // Release the permit when the task is done
             (machine, result)
         });
@@ -461,7 +804,7 @@ pub async fn run_ssh_command(
         let current_command = command.to_owned();
         let permit = semaphore.clone().acquire_owned().await?;
         let future = task::spawn(async move {
-            let result = machine.run(&current_command.join(" "), false).await;
+            let result = machine.run(&current_command.join(" "), false);
             drop(permit); // Release the permit when the task is done
             (machine, result)
         });
@@ -473,7 +816,7 @@ pub async fn run_ssh_command(
     for result in results {
         match result? {
             (machine, Ok(output)) => {
-                let output = if !output.success {
+                let output = if !output.status.success() {
                     format!(
                         "{}: {}",
                         "ERROR".red(),
@@ -530,6 +873,7 @@ pub async fn run_restore(
     max_parallel: usize,
     name: Option<String>,
     zip: bool,
+    no_restart: bool,
 ) -> Result<()> {
     let config = NetworkConfig::from_file(config_file).await?;
     let chain = ChainInstance::new(config).await?;
@@ -563,7 +907,7 @@ pub async fn run_restore(
         let permit = semaphore.clone().acquire_owned().await?;
         let mp = multi_progress.to_owned();
         let future = task::spawn(async move {
-            let result = node.restore_from(name, zip, &mp).await;
+            let result = node.restore_from(name, zip, no_restart, &mp).await;
             drop(permit); // Release the permit when the task is done
             (node, result)
         });
@@ -718,241 +1062,6 @@ pub async fn run_restart(config_file: &str, node_selection: bool) -> Result<()> 
     Ok(())
 }
 
-pub async fn run_generate_genesis_key(config_file: &str, force: bool) -> Result<()> {
-    let config = NetworkConfig::from_file(config_file).await?;
-    let chain = ChainInstance::new(config).await?;
-
-    let multi_progress = cliclack::multi_progress("Generating the genesis key".yellow());
-
-    let secret_name = &format!("{}-genesis-key", chain.name());
-    let mut labels = BTreeMap::<String, String>::new();
-    labels.insert("role".to_string(), "genesis".to_owned());
-    labels.insert("zq2-network".to_string(), chain.name());
-    let result = generate_secret(
-        &multi_progress,
-        secret_name,
-        labels,
-        chain.chain()?.get_project_id()?,
-        force,
-    )
-    .await;
-
-    multi_progress.stop();
-
-    result
-}
-
-pub async fn run_generate_private_keys(
-    config_file: &str,
-    node_selection: bool,
-    force: bool,
-) -> Result<()> {
-    let config = NetworkConfig::from_file(config_file).await?;
-    let chain = ChainInstance::new(config).await?;
-
-    // Create a list of instances
-    let mut machines = chain.machines();
-    machines.retain(|m| m.labels.get("role") != Some(&NodeRole::Apps.to_string()));
-
-    let machine_names = machines.iter().map(|m| m.name.clone()).collect::<Vec<_>>();
-
-    let target_nodes = if node_selection {
-        let mut select = cliclack::multiselect("Select target nodes");
-
-        for name in &machine_names {
-            select = select.item(name.clone(), name, "");
-        }
-
-        let selection = select.interact()?;
-        let mut machines = machines.clone();
-        machines.retain(|m| selection.contains(&m.name));
-        machines
-    } else {
-        machines.sort_by_key(|machine| machine.name.to_owned());
-        machines
-    };
-
-    let semaphore = Arc::new(Semaphore::new(50));
-    let mut futures = vec![];
-
-    let multi_progress = cliclack::multi_progress("Generating the node private keys".yellow());
-
-    for node in target_nodes {
-        let permit = semaphore.clone().acquire_owned().await?;
-        let mp = multi_progress.to_owned();
-        let chain_name = chain.name();
-        let role = node
-            .labels
-            .get("role")
-            .unwrap_or_else(|| panic!("The machine {} has no label role", node.name))
-            .clone();
-        let future = task::spawn(async move {
-            let secret_name = &format!("{}-pk", node.clone().name);
-            let project_id = &node.clone().project_id;
-            let mut labels = BTreeMap::<String, String>::new();
-            labels.insert("is-private-key".to_string(), "true".to_string());
-            labels.insert("role".to_string(), role);
-            labels.insert("zq2-network".to_string(), chain_name);
-            labels.insert("node-name".to_string(), node.clone().name);
-            let result = generate_secret(&mp, secret_name, labels, project_id, force).await;
-            drop(permit); // Release the permit when the task is done
-            (node, result)
-        });
-        futures.push(future);
-    }
-
-    let results = futures::future::join_all(futures).await;
-
-    multi_progress.stop();
-
-    let mut failures = vec![];
-
-    for result in results {
-        if let (machine, Err(err)) = result? {
-            println!("Node {} failed with error: {}", machine.name, err);
-            failures.push(machine.name);
-        }
-    }
-
-    for failure in failures {
-        log::error!("FAILURE: {}", failure);
-    }
-
-    Ok(())
-}
-
-async fn generate_secret(
-    multi_progress: &MultiProgress,
-    name: &str,
-    labels: BTreeMap<String, String>,
-    project_id: &str,
-    force: bool,
-) -> Result<()> {
-    let progress_bar = multi_progress.add(cliclack::progress_bar(if force { 4 } else { 3 }));
-    let mut filters = Vec::<String>::new();
-    for (k, v) in labels.clone() {
-        filters.push(format!("labels.{}={}", k, v));
-    }
-    let filters = &filters.join(" AND ");
-
-    // Retrieve existing secret
-    progress_bar.start(format!("{}: Retrieving existing secret", name));
-    let mut secrets = Secret::get_secrets(project_id, filters).await?;
-    if secrets.len() > 1 {
-        return Err(anyhow!(
-            "Error: found multiple secrets with the filter {filters}"
-        ));
-    }
-    progress_bar.inc(1);
-
-    // If force and present delete the old secret before
-    if !secrets.is_empty() && force {
-        progress_bar.start(format!("{}: Deleting existing secret", name));
-        secrets[0].delete().await?;
-        secrets.clear();
-        progress_bar.inc(1);
-    }
-
-    // Create secret if does not exist
-    progress_bar.start(format!("{}: Create secret if does not exist", name));
-    if secrets.is_empty() {
-        let secret = Secret::create(project_id, name, labels).await?;
-        secrets.push(secret);
-    }
-    progress_bar.inc(1);
-
-    // Create a version if does not exist or replace it
-    progress_bar.start(format!(
-        "{}: Creating new secret version if not exist",
-        name
-    ));
-    let secret_value = &Secret::generate_random_secret().await?;
-
-    if let Some(error) = secrets[0].value().await.err() {
-        if error.to_string().contains("has no versions") {
-            secrets[0].add_version(secret_value).await?;
-        }
-    }
-    progress_bar.inc(1);
-
-    // Process completed
-    progress_bar.stop(format!("{} {}: Secret created", "✔".green(), name));
-
-    Ok(())
-}
-
-#[derive(Clone, Debug, Display, ValueEnum)]
-pub enum ApiOperation {
-    #[value(name = "attach")]
-    Attach,
-    #[value(name = "detach")]
-    Detach,
-}
-
-pub async fn run_api_operation(config_file: &str, operation: ApiOperation) -> Result<()> {
-    let config = NetworkConfig::from_file(config_file).await?;
-    let chain = ChainInstance::new(config).await?;
-    let chain_nodes = chain.nodes().await?;
-    let node_names = chain_nodes
-        .iter()
-        .filter(|n| n.role == NodeRole::Api)
-        .map(|n| n.name().clone())
-        .collect::<Vec<_>>();
-
-    let target_nodes = {
-        let mut select = cliclack::multiselect("Select target nodes");
-
-        for name in &node_names {
-            select = select.item(name.clone(), name, "");
-        }
-
-        let selection = select.interact()?;
-        let mut nodes = chain_nodes.clone();
-        nodes.retain(|n| selection.contains(&n.name()));
-        nodes
-    };
-
-    let semaphore = Arc::new(Semaphore::new(50));
-    let mut futures = vec![];
-
-    let multi_progress =
-        cliclack::multi_progress(format!("Running API operation '{}'", operation).yellow());
-
-    for node in target_nodes {
-        let permit = semaphore.clone().acquire_owned().await?;
-        let operation = operation.to_owned();
-        let mp = multi_progress.to_owned();
-        let future = task::spawn(async move {
-            let result = match operation {
-                ApiOperation::Attach => node.api_attach(&mp).await,
-                ApiOperation::Detach => node.api_detach(&mp).await,
-            };
-            drop(permit); // Release the permit when the task is done
-            (node, result)
-        });
-        futures.push(future);
-    }
-
-    let results = futures::future::join_all(futures).await;
-
-    multi_progress.stop();
-
-    let mut failures = vec![];
-
-    for result in results {
-        if let (node, Err(err)) = result? {
-            println!("Node {} failed with error: {}", node.name(), err);
-            failures.push(node.name());
-        }
-    }
-
-    for failure in failures {
-        log::error!("FAILURE: {}", failure);
-    }
-
-    Ok(())
-}
-
 #[derive(Clone, Debug, Default, ValueEnum)]
 pub enum Metrics {
     #[default]
@@ -970,6 +1079,10 @@ pub async fn run_monitor(
     let chain = ChainInstance::new(config).await?;
     let mut chain_nodes = chain.nodes().await?;
     chain_nodes.retain(|node| node.role != NodeRole::Apps);
+    if matches!(metric, Metrics::ConsensusInfo) {
+        chain_nodes
+            .retain(|node| node.role == NodeRole::Bootstrap || node.role == NodeRole::Validator);
+    }
 
     let node_names = chain_nodes
         .iter()
@@ -1003,12 +1116,42 @@ pub async fn run_monitor(
         let permit = semaphore.clone().acquire_owned().await?;
         let mp = multi_progress.to_owned();
         let future = task::spawn(async move {
+            let machine = node.machine.clone();
+            let machine_name = machine.name.clone();
+            let local_port = machine.find_available_port().unwrap_or(6000);
+            let tunnel = machine.open_tunnel(local_port, NodePort::Admin.value());
+            if tunnel.is_none() {
+                drop(permit);
+                return (
+                    machine,
+                    Err(anyhow::anyhow!(
+                        "Failed to open tunnel for {}",
+                        machine_name
+                    )),
+                );
+            }
+            let mut tunnel = tunnel.unwrap();
+            if !machine.wait_for_port(local_port, 20) {
+                machine.close_tunnel(&mut tunnel);
+                drop(permit);
+                return (
+                    machine,
+                    Err(anyhow::anyhow!(
+                        "Tunnel did not become ready for {}",
+                        machine_name
+                    )),
+                );
+            }
             let result = match metric {
-                Metrics::BlockNumber => node.get_block_number(&mp, follow).await,
-                Metrics::ConsensusInfo => node.get_consensus_info(&mp, follow).await,
+                Metrics::BlockNumber => node.get_block_number(&mp, follow, local_port as u64).await,
+                Metrics::ConsensusInfo => {
+                    node.get_consensus_info(&mp, follow, local_port as u64)
+                        .await
+                }
             };
+            machine.close_tunnel(&mut tunnel);
             drop(permit); // Release the permit when the task is done
-            (node, result)
+            (machine, result)
         });
         futures.push(future);
     }
@@ -1019,8 +1162,8 @@ pub async fn run_monitor(
 
     for result in results {
         if let (node, Err(err)) = result? {
-            println!("Node {} failed with error: {}", node.name(), err);
-            failures.push(node.name());
+            println!("Node {} failed with error: {}", node.name, err);
+            failures.push(node.name);
         }
     }
 

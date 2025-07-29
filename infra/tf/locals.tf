@@ -17,7 +17,7 @@ locals {
   default_service_account_iam = [
     "roles/monitoring.metricWriter=>${var.project_id}",
     "roles/logging.logWriter=>${var.project_id}",
+    "roles/cloudtrace.agent=>${var.project_id}",
     "roles/artifactregistry.reader=>${var.gcp_docker_registry_project_id}",
-    "roles/secretmanager.secretAccessor=>${var.project_id}",
   ]
 }

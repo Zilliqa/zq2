@@ -13,11 +13,8 @@ module "checkpoints" {
   network_tags = []
 
   metadata = {
-    subdomain = base64encode("")
+    subdomain = base64encode(var.subdomain)
   }
-
-  node_dns_subdomain       = var.node_dns_subdomain
-  node_dns_zone_project_id = var.node_dns_zone_project_id
 
   service_account_iam = local.default_service_account_iam
 }
@@ -46,14 +43,46 @@ resource "google_storage_bucket" "checkpoint" {
   public_access_prevention    = "inherited"
 
   versioning {
-    enabled = true
+    enabled = var.checkpoint.bucket_versioning
+  }
+
+  # Delete objects 30 days after creation
+  lifecycle_rule {
+    action {
+      type = "Delete"
+    }
+    condition {
+      age            = 30
+      matches_prefix = ["previous/"]
+    }
+  }
+
+  # Delete noncurrent (deleted) file versions after 7 days
+  lifecycle_rule {
+    action {
+      type = "Delete"
+    }
+    condition {
+      days_since_noncurrent_time = 7
+      send_age_if_zero           = false
+    }
+  }
+
+  cors {
+    origin          = ["*"]
+    method          = ["GET", "HEAD", "POST", "OPTIONS", "PUT"]
+    response_header = ["Content-Type", "Access-Control-Allow-Origin", "x-goog-resumable"]
+    max_age_seconds = 3600
   }
 }
 
 resource "google_storage_bucket_iam_binding" "checkpoint_bucket_admins" {
-  bucket  = google_storage_bucket.checkpoint.name
-  role    = "roles/storage.objectAdmin"
-  members = ["serviceAccount:${module.checkpoints.service_account.email}"]
+  bucket = google_storage_bucket.checkpoint.name
+  role   = "roles/storage.objectAdmin"
+  members = [
+    for name, instance in module.checkpoints.instances : 
+      "serviceAccount:${instance.service_account}"
+  ]
 }
 
 resource "google_storage_bucket_iam_binding" "checkpoint_bucket_viewers" {
@@ -81,6 +110,16 @@ resource "google_compute_backend_bucket" "checkpoint" {
   project = var.project_id
 }
 
+resource "google_compute_url_map" "checkpoint_http_redirect" {
+  name = "${var.chain_name}-checkpoint-http-redirect"
+  
+  default_url_redirect {
+    https_redirect         = true
+    redirect_response_code = "MOVED_PERMANENTLY_DEFAULT"
+    strip_query            = false
+  }
+}
+
 resource "google_compute_url_map" "checkpoint" {
   name            = format("%s-checkpoint-cdn", var.chain_name)
   default_service = google_compute_backend_bucket.checkpoint.id
@@ -90,7 +129,10 @@ resource "google_compute_managed_ssl_certificate" "checkpoint" {
   name = format("%s-checkpoint-cdn", var.chain_name)
 
   managed {
-    domains = [format("checkpoints.%s", var.subdomain)]
+    domains = concat(
+      [format("checkpoints.%s", var.subdomain)],
+      var.checkpoint.alternative_ssl_domains.default
+    )
   }
 }
 
@@ -103,7 +145,7 @@ resource "google_compute_ssl_policy" "tls12_modern" {
 
 resource "google_compute_target_http_proxy" "checkpoint" {
   name    = format("%s-checkpoint-cdn", var.chain_name)
-  url_map = google_compute_url_map.checkpoint.id
+  url_map = google_compute_url_map.checkpoint_http_redirect.id
 }
 
 resource "google_compute_target_https_proxy" "checkpoint" {

@@ -2,30 +2,31 @@ use std::sync::Arc;
 
 use alloy::{
     primitives::{I256, U256},
-    sol_types::{abi::Decoder, SolValue},
+    sol_types::{SolValue, abi::Decoder},
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use revm::{
+    ContextStatefulPrecompile, FrameOrResult, InnerEvmContext,
     handler::register::EvmHandler,
     interpreter::{CallInputs, Gas, InstructionResult, InterpreterResult},
     precompile::PrecompileError,
     primitives::{
         Address, Bytes, EVMError, LogData, PrecompileErrors, PrecompileOutput, PrecompileResult,
     },
-    ContextStatefulPrecompile, FrameOrResult, InnerEvmContext,
 };
 use scilla_parser::{
     ast::nodes::{
-        NodeByteStr, NodeMetaIdentifier, NodeScillaType, NodeTypeMapKey, NodeTypeMapValue,
-        NodeTypeMapValueAllowingTypeArguments, NodeTypeNameIdentifier,
+        NodeAddressType, NodeByteStr, NodeMetaIdentifier, NodeScillaType, NodeTypeMapKey,
+        NodeTypeMapValue, NodeTypeMapValueAllowingTypeArguments, NodeTypeNameIdentifier,
     },
     parser::{lexer::Lexer, parser::ScillaTypeParser},
 };
+use tracing::trace;
 
 use crate::{
     cfg::scilla_ext_libs_path_default,
     constants::SCILLA_INVOKE_RUNNER,
-    exec::{scilla_call, ExternalContext, PendingState, ScillaError},
+    exec::{ExternalContext, PendingState, ScillaError, scilla_call},
     inspector::ScillaInspector,
     state::Code,
     transaction::{EvmGas, ZilAmount},
@@ -49,6 +50,27 @@ enum ScillaType {
     String,
 }
 
+impl ScillaType {
+    /// Returns the Scilla representation of this type, assuming it is a transition parameter. Note this may not be
+    /// exactly the same as the type in the contract (e.g. `ByStr20 with contract end` types are truncated to just
+    /// `ByStr20`).
+    fn param_type(&self) -> Option<&'static str> {
+        match self {
+            ScillaType::ByStr20 => Some("ByStr20"),
+            ScillaType::Int32 => Some("Int32"),
+            ScillaType::Int64 => Some("Int64"),
+            ScillaType::Int128 => Some("Int128"),
+            ScillaType::Int256 => Some("Int256"),
+            ScillaType::Uint32 => Some("Uint32"),
+            ScillaType::Uint64 => Some("Uint64"),
+            ScillaType::Uint128 => Some("Uint128"),
+            ScillaType::Uint256 => Some("Uint256"),
+            ScillaType::String => Some("String"),
+            ScillaType::Map(_, _) => None,
+        }
+    }
+}
+
 trait ToScillaType {
     fn to_scilla_type(self) -> Option<ScillaType>;
 }
@@ -61,6 +83,7 @@ impl ToScillaType for NodeScillaType {
                 ident.node.to_scilla_type()
             }
             NodeScillaType::EnclosedType(ty) => ty.node.to_scilla_type(),
+            NodeScillaType::ScillaAddresseType(ty) => ty.node.to_scilla_type(),
             _ => None,
         }
     }
@@ -105,31 +128,39 @@ impl ToScillaType for (NodeTypeMapKey, NodeTypeMapValue) {
 impl ToScillaType for NodeMetaIdentifier {
     fn to_scilla_type(self) -> Option<ScillaType> {
         match self {
-            NodeMetaIdentifier::MetaName(ty) => match ty.node {
-                NodeTypeNameIdentifier::ByteStringType(NodeByteStr::Type(s)) => {
-                    match s.node.as_str() {
-                        "ByStr20" => Some(ScillaType::ByStr20),
-                        _ => None,
-                    }
-                }
-                NodeTypeNameIdentifier::TypeOrEnumLikeIdentifier(ident) => {
-                    match ident.node.as_str() {
-                        "Int32" => Some(ScillaType::Int32),
-                        "Int64" => Some(ScillaType::Int64),
-                        "Int128" => Some(ScillaType::Int128),
-                        "Int256" => Some(ScillaType::Int256),
-                        "Uint32" => Some(ScillaType::Uint32),
-                        "Uint64" => Some(ScillaType::Uint64),
-                        "Uint128" => Some(ScillaType::Uint128),
-                        "Uint256" => Some(ScillaType::Uint256),
-                        "String" => Some(ScillaType::String),
-                        _ => None,
-                    }
-                }
+            NodeMetaIdentifier::MetaName(ty) => ty.node.to_scilla_type(),
+            _ => None,
+        }
+    }
+}
+
+impl ToScillaType for NodeTypeNameIdentifier {
+    fn to_scilla_type(self) -> Option<ScillaType> {
+        match self {
+            NodeTypeNameIdentifier::ByteStringType(NodeByteStr::Type(s)) => match s.node.as_str() {
+                "ByStr20" => Some(ScillaType::ByStr20),
+                _ => None,
+            },
+            NodeTypeNameIdentifier::TypeOrEnumLikeIdentifier(ident) => match ident.node.as_str() {
+                "Int32" => Some(ScillaType::Int32),
+                "Int64" => Some(ScillaType::Int64),
+                "Int128" => Some(ScillaType::Int128),
+                "Int256" => Some(ScillaType::Int256),
+                "Uint32" => Some(ScillaType::Uint32),
+                "Uint64" => Some(ScillaType::Uint64),
+                "Uint128" => Some(ScillaType::Uint128),
+                "Uint256" => Some(ScillaType::Uint256),
+                "String" => Some(ScillaType::String),
                 _ => None,
             },
             _ => None,
         }
+    }
+}
+
+impl ToScillaType for NodeAddressType {
+    fn to_scilla_type(self) -> Option<ScillaType> {
+        self.identifier.node.to_scilla_type()
     }
 }
 
@@ -180,19 +211,33 @@ fn get_indices(
 
 pub(crate) struct ScillaRead;
 
+#[track_caller]
 fn oog<T>() -> Result<T, PrecompileErrors> {
+    let location = std::panic::Location::caller();
+    trace!(%location, "scilla_call out of gas");
     Err(PrecompileErrors::Error(PrecompileError::OutOfGas))
 }
 
+#[track_caller]
 fn err<T>(message: impl Into<String>) -> Result<T, PrecompileErrors> {
+    let location = std::panic::Location::caller();
+    let message = message.into();
+    trace!(%location, message, "scilla_call failed");
     Err(err_inner(message))
 }
 
+#[track_caller]
 fn err_inner(message: impl Into<String>) -> PrecompileErrors {
+    let location = std::panic::Location::caller();
+    let message = message.into();
+    trace!(%location, message, "scilla_call failed");
     PrecompileErrors::Error(PrecompileError::other(message))
 }
 
+#[track_caller]
 fn fatal<T>(message: &'static str) -> Result<T, PrecompileErrors> {
+    let location = std::panic::Location::caller();
+    trace!(%location, message, "scilla_call failed");
     Err(PrecompileErrors::Fatal {
         msg: message.to_owned(),
     })
@@ -350,6 +395,15 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
         prev_handle(ctx, inputs)
     });
 
+    // Create result handler
+    let prev_handle = handler.execution.insert_create_outcome.clone();
+    handler.execution.insert_create_outcome = Arc::new(move |ctx, frame, outcome| {
+        if outcome.result.is_error() || outcome.result.is_revert() {
+            ctx.external.has_evm_failed = true;
+        }
+        prev_handle(ctx, frame, outcome)
+    });
+
     // EOF create handler
     let prev_handle = handler.execution.eofcreate.clone();
     handler.execution.eofcreate = Arc::new(move |ctx, inputs| {
@@ -363,6 +417,15 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
         ctx.external.callers[ctx.evm.journaled_state.depth] = inputs.caller;
 
         prev_handle(ctx, inputs)
+    });
+
+    // EOF result handler
+    let prev_handle = handler.execution.insert_eofcreate_outcome.clone();
+    handler.execution.insert_eofcreate_outcome = Arc::new(move |ctx, frame, outcome| {
+        if outcome.result.is_error() || outcome.result.is_revert() {
+            ctx.external.has_evm_failed = true;
+        }
+        prev_handle(ctx, frame, outcome)
     });
 
     // Call handler
@@ -384,8 +447,12 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
         let gas = Gas::new(inputs.gas_limit);
         let gas_exempt = ctx
             .external
+            .fork
             .scilla_call_gas_exempt_addrs
             .contains(&inputs.caller);
+
+        // Record access of scilla precompile
+        ctx.external.has_called_scilla_precompile = true;
 
         // The behaviour is different for contracts having 21k gas and/or deployed with zq1
         // 1. If gas == 21k and gas_exempt -> allow it to run with gas_left()
@@ -447,6 +514,15 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
             inputs.return_memory_offset.clone(),
         ))
     });
+
+    // Call result handler
+    let prev_handle = handler.execution.insert_call_outcome.clone();
+    handler.execution.insert_call_outcome = Arc::new(move |ctx, frame, memory, outcome| {
+        if outcome.result.is_error() || outcome.result.is_revert() {
+            ctx.external.has_evm_failed = true;
+        }
+        prev_handle(ctx, frame, memory, outcome)
+    });
 }
 
 fn scilla_call_precompile<I: ScillaInspector>(
@@ -487,6 +563,7 @@ fn scilla_call_precompile<I: ScillaInspector>(
     } else {
         return err("call mode should be either 0 or 1");
     };
+    trace!(%address, transition, %keep_origin, "scilla_call");
 
     let account = match evmctx.db.pre_state.get_account(address) {
         Ok(account) => account,
@@ -517,6 +594,9 @@ fn scilla_call_precompile<I: ScillaInspector>(
             let Some(ty) = parsed.node.to_scilla_type() else {
                 return err(format!("unsupported scilla type: {}", param.ty));
             };
+            let Some(param_type) = ty.param_type() else {
+                return err(format!("unexpected scilla type as a parameter: {ty:?}"));
+            };
 
             let Ok(value) = read_index(ty, &mut decoder) else {
                 return fatal("failed to get value");
@@ -524,7 +604,8 @@ fn scilla_call_precompile<I: ScillaInspector>(
             let Ok(value) = serde_json::from_slice::<serde_json::Value>(&value) else {
                 return fatal("failed to parse value");
             };
-            let param = serde_json::json!({"vname": param.name, "type": param.ty, "value": value});
+            let param =
+                serde_json::json!({"vname": param.name, "type": param_type, "value": value});
 
             Ok(param)
         })
@@ -532,11 +613,32 @@ fn scilla_call_precompile<I: ScillaInspector>(
 
     let message = serde_json::json!({"_tag": transition.name, "params": params });
 
-    let empty_state = PendingState::new(evmctx.db.pre_state.clone());
+    let empty_state = PendingState::new(evmctx.db.pre_state.clone(), external_context.fork.clone());
     // Temporarily move the `PendingState` out of `evmctx`, replacing it with an empty state.
-    let state = std::mem::replace(&mut evmctx.db, empty_state);
+    let mut state = std::mem::replace(&mut evmctx.db, empty_state);
+    let depth = evmctx.journaled_state.depth;
+    if external_context.fork.scilla_call_respects_evm_state_changes {
+        state.evm_state = Some(evmctx.journaled_state.clone());
+    }
+
+    // 1. if evm_exec_failure_causes_scilla_precompile_to_fail == true then we take converted value
+    // 2. if evm_exec_failure_causes_scilla_precompile_to_fail == false and evm_to_scilla_value_transfer_zero == true -> we return 0
+    // 3. else we take converted value
+    let effective_value = {
+        match (
+            external_context
+                .fork
+                .evm_exec_failure_causes_scilla_precompile_to_fail,
+            external_context.fork.evm_to_scilla_value_transfer_zero,
+        ) {
+            (true, _) => ZilAmount::from_amount(input.transfer_value().unwrap_or_default().to()),
+            (false, true) => ZilAmount::from_amount(0),
+            _ => ZilAmount::from_amount(input.transfer_value().unwrap_or_default().to()),
+        }
+    };
+
     let scilla = evmctx.db.pre_state.scilla();
-    let Ok((result, state)) = scilla_call(
+    let Ok((result, mut state)) = scilla_call(
         state,
         scilla,
         evmctx.env.tx.caller,
@@ -546,7 +648,7 @@ fn scilla_call_precompile<I: ScillaInspector>(
                 .call_mode_1_sets_caller_to_parent_caller
             {
                 // Use the caller of the parent call-stack.
-                external_context.callers[evmctx.journaled_state.depth - 1]
+                external_context.callers[depth - 1]
             } else {
                 // Use the original transaction signer.
                 evmctx.env.tx.caller
@@ -562,14 +664,18 @@ fn scilla_call_precompile<I: ScillaInspector>(
             EvmGas(gas_limit - required_gas).into()
         },
         address,
-        ZilAmount::from_amount(input.transfer_value().unwrap_or_default().to()),
+        effective_value,
         serde_json::to_string(&message).unwrap(),
         &mut external_context.inspector,
         &scilla_ext_libs_path_default(),
+        external_context.fork,
+        evmctx.env.block.number.to(),
     ) else {
         return fatal("scilla call failed");
     };
+    trace!(?result, "scilla_call complete");
     if !&result.success {
+        evmctx.db = state;
         if result.errors.values().any(|errs| {
             errs.iter()
                 .any(|err| matches!(err, ScillaError::GasNotSufficient))
@@ -579,7 +685,25 @@ fn scilla_call_precompile<I: ScillaInspector>(
             return err("scilla call failed");
         }
     }
-    // Move the new state back into `evmctx`.
+    state.new_state.retain(|address, account| {
+        if !account.touched {
+            return true;
+        }
+        if !account.from_evm {
+            return true;
+        }
+
+        // Apply changes made to EVM accounts back to the EVM `JournaledState`.
+        let before = evmctx.journaled_state.state.get_mut(address).unwrap();
+
+        // The only thing that Scilla is able to update is the balance.
+        if before.info.balance.to::<u128>() != account.account.balance {
+            before.info.balance = account.account.balance.try_into().unwrap();
+            before.mark_touch();
+        }
+
+        false
+    });
     evmctx.db = state;
 
     for log in result.logs {

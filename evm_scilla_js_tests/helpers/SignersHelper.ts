@@ -24,7 +24,7 @@ export const getEthBalance = async (
   return [wallet.address.toLowerCase(), await wallet.getBalance()];
 };
 
-export const getZilBalance = async (
+export const getZilBalanceByPrivateAddress = async (
   hre: HardhatRuntimeEnvironment,
   privateKey: string
 ): Promise<[address: string, balance: BN]> => {
@@ -38,6 +38,23 @@ export const getZilBalance = async (
     return [address.toLowerCase(), new BN(balanceResult.result.balance)];
   }
 };
+
+export const getZilBalance = async (hre: HardhatRuntimeEnvironment, address: string): Promise<BN> => {
+  let zilliqa = new Zilliqa(hre.getNetworkUrl());
+  const balanceResult = await zilliqa.blockchain.getBalance(address);
+
+  if (balanceResult.error) {
+    return new BN(0);
+  }
+
+  return new BN(balanceResult.result.balance);
+};
+
+export async function getNonce(hre: HardhatRuntimeEnvironment, address: string): Promise<number> {
+  let zilliqa = new Zilliqa(hre.getNetworkUrl());
+  const balance = await zilliqa.blockchain.getBalance(address);
+  return balance.result.nonce as number;
+}
 
 export const getZilAddress = (privateKey: string): string => {
   return getAddressFromPrivateKey(privateKey).toLowerCase();
@@ -78,6 +95,6 @@ export const getZilSignersBalances = async (
 ): Promise<[address: string, balance: BN][]> => {
   const signers = getAllSigners(hre);
 
-  let promises = signers.map((signer) => getZilBalance(hre, signer));
+  let promises = signers.map((signer) => getZilBalanceByPrivateAddress(hre, signer));
   return await Promise.all(promises);
 };
