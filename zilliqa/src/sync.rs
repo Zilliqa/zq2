@@ -1864,13 +1864,14 @@ impl SyncSegments {
             tracing::warn!("sync counter = 0");
             return Ok(None);
         }
+
         let markers = self.db.open_tree("markers")?;
         let SyncMarker { mut hash, peer } =
             if let Some(marker) = markers.remove(self.counter.to_ne_bytes())? {
-                self.counter -= self.counter.saturating_sub(1);
+                self.counter = self.counter.saturating_sub(1);
                 cbor4ii::serde::from_slice::<SyncMarker>(marker.to_vec().as_slice())?
             } else {
-                tracing::warn!("marker not found");
+                tracing::warn!(counter = %self.counter, "marker not found");
                 return Ok(None);
             };
 
@@ -1879,7 +1880,7 @@ impl SyncSegments {
             let header = cbor4ii::serde::from_slice::<SyncHeader>(header.to_vec().as_slice())?;
             header.number
         } else {
-            tracing::warn!("header not found");
+            tracing::warn!(%hash, "header not found");
             return Ok(None);
         };
 
