@@ -1,9 +1,8 @@
 use std::{fmt::Debug, ops::DerefMut, sync::Arc};
 
-use ethabi::{Token, ethereum_types::U64};
-use alloy::primitives::{hex, Address, B256};
+use alloy::primitives::{Address, B256, hex};
 use eth_trie::{EthTrie, MemoryDB, Trie};
-
+use ethabi::{Token, ethereum_types::U64};
 use ethers::{
     abi::FunctionExt,
     core::types::{Bytes, Signature},
@@ -21,8 +20,8 @@ use ethers::{
 use futures::{StreamExt, future::join_all};
 use primitive_types::{H160, H256};
 use serde::{Deserialize, Serialize};
-use zilliqa::state::{Account, State};
 use serde_json::{Value, json};
+use zilliqa::state::{Account, State};
 
 use crate::{LocalRpcClient, Network, Wallet, deploy_contract};
 

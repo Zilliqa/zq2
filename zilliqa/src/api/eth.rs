@@ -24,10 +24,9 @@ use jsonrpsee::{
     },
 };
 use parking_lot::{RwLock, RwLockReadGuard};
-use revm::primitives::keccak256;
-use serde_json::json;
-use revm::primitives::Bytecode;
+use revm::primitives::{Bytecode, keccak256};
 use serde::Deserialize;
+use serde_json::json;
 use tracing::*;
 
 use super::{
@@ -38,9 +37,9 @@ use super::{
     },
 };
 use crate::{
-    api::{types::eth::GetAccountResult, zilliqa::ZilAddress},
     api::{
-        types::eth::{Proof, StorageProof},
+        types::eth::{GetAccountResult, Proof, StorageProof},
+        zilliqa::ZilAddress,
     },
     cfg::EnabledApi,
     crypto::Hash,
