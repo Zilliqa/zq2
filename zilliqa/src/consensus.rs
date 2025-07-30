@@ -410,23 +410,19 @@ impl Consensus {
 
         // TODO: check if the leader is fetched before this point
         let mut block = latest_block.unwrap();
-        loop {
-            if let Some(parent) = consensus.get_block(&block.parent_hash())? {
-                let mut start = parent.view();
-                if start + MAX_MISSED_VIEW_AGE < latest_block_view {
-                    start = latest_block_view - MAX_MISSED_VIEW_AGE - 1;
+        while let Some(parent) = consensus.get_block(&block.parent_hash())? {
+            let mut start = parent.view();
+            if start + MAX_MISSED_VIEW_AGE < latest_block_view {
+                start = latest_block_view - MAX_MISSED_VIEW_AGE - 1;
+            }
+            for key in (start+1..block.view()).rev() {
+                if let Some(leader) = consensus.leader_for_view(parent.hash(), key) {
+                    let mut deque = consensus.state().missed_views.lock().unwrap();
+                    deque.push_front((key, leader));
                 }
-                for key in (start+1..block.view()).rev() {
-                    if let Some(leader) = consensus.leader_for_view(parent.hash(), key) {
-                        let mut deque = consensus.state().missed_views.lock().unwrap();
-                        deque.push_front((key, leader));
-                    }
-                }
-                block = parent;
-                if block.view() + MAX_MISSED_VIEW_AGE < latest_block_view {
-                    break;
-                }
-            } else {
+            }
+            block = parent;
+            if block.view() + MAX_MISSED_VIEW_AGE < latest_block_view {
                 break;
             }
         }

@@ -102,7 +102,7 @@ pub fn dispatch<I: ScillaInspector>(
         "jailed",
         &[ParamType::Bytes, ParamType::Uint(256)],
     );
-    if &input.input[..4] != sig {
+    if input.input[..4] != sig {
         return Err(PrecompileError::Other(
             "Unable to find handler with given selector".to_string(),
         )
@@ -114,8 +114,8 @@ pub fn dispatch<I: ScillaInspector>(
     ) else {
         return Err(PrecompileError::Other("ABI input decoding error!".into()).into());
     };
-    let pubkey = decoded.get(0).unwrap().to_owned().into_bytes().unwrap();
-    let view = decoded.get(1).unwrap().to_owned().into_uint().unwrap();
+    let pubkey = decoded.first().unwrap().to_owned().into_bytes().unwrap();
+    let view = decoded.last().unwrap().to_owned().into_uint().unwrap();
     //TODO: ensure the available history of missed views is sufficient for the view number passed as input
     let deque = external_context.missed_views.lock().unwrap();
     let missed_views: Vec<&u64> = deque.iter()
