@@ -1,8 +1,10 @@
 use std::sync::Arc;
+
 use ethabi::{ParamType, Token, decode, encode, short_signature};
 use revm::{
-    //ContextStatefulPrecompile, 
-    FrameOrResult, InnerEvmContext,
+    //ContextStatefulPrecompile,
+    FrameOrResult,
+    InnerEvmContext,
     handler::register::EvmHandler,
     interpreter::{CallInputs, Gas, InstructionResult, InterpreterResult},
     precompile::PrecompileError,
@@ -11,13 +13,13 @@ use revm::{
         alloy_primitives::private::alloy_rlp::Encodable,
     },
 };
+use tracing::info;
 
 use crate::{
     crypto::NodePublicKey,
+    exec::{ExternalContext, PendingState},
     inspector::ScillaInspector,
-    exec::{PendingState, ExternalContext}
 };
-use tracing::info;
 
 /*
 pub struct Penalty;
@@ -86,40 +88,38 @@ pub fn dispatch<I: ScillaInspector>(
     input: &CallInputs,
     _gas_limit: u64,
     _context: &mut InnerEvmContext<PendingState>,
-    external_context: &mut ExternalContext<I>
+    external_context: &mut ExternalContext<I>,
 ) -> PrecompileResult {
     //TODO: check gas limit?
     //if gas_limit < 10_000u64 {
     //    return Err(PrecompileErrors::Error(PrecompileError::OutOfGas));
     //}
     if input.input.length() < 4 {
-        return Err(PrecompileError::Other(
-            "Provided input must be at least 4-byte long".into(),
-        )
-        .into());
+        return Err(
+            PrecompileError::Other("Provided input must be at least 4-byte long".into()).into(),
+        );
     }
-    let sig = short_signature(
-        "jailed",
-        &[ParamType::Bytes, ParamType::Uint(256)],
-    );
+    let sig = short_signature("jailed", &[ParamType::Bytes, ParamType::Uint(256)]);
     if input.input[..4] != sig {
         return Err(PrecompileError::Other(
             "Unable to find handler with given selector".to_string(),
         )
         .into());
     }
-    let Ok(decoded) = decode(
-        &[ParamType::Bytes, ParamType::Uint(256)],
-        &input.input[4..],
-    ) else {
+    let Ok(decoded) = decode(&[ParamType::Bytes, ParamType::Uint(256)], &input.input[4..]) else {
         return Err(PrecompileError::Other("ABI input decoding error!".into()).into());
     };
     let pubkey = decoded.first().unwrap().to_owned().into_bytes().unwrap();
     let view = decoded.last().unwrap().to_owned().into_uint().unwrap();
     //TODO: ensure the available history of missed views is sufficient for the view number passed as input
     let deque = external_context.missed_views.lock().unwrap();
-    let missed_views: Vec<&u64> = deque.iter()
-        .filter(|(key, value)| *key < view.as_u64() && key + 100 >= view.as_u64() && value == &NodePublicKey::from_bytes(pubkey.as_slice()).unwrap())
+    let missed_views: Vec<&u64> = deque
+        .iter()
+        .filter(|(key, value)| {
+            *key < view.as_u64()
+                && key + 100 >= view.as_u64()
+                && value == &NodePublicKey::from_bytes(pubkey.as_slice()).unwrap()
+        })
         .map(|(key, _)| key)
         .collect();
     //TODO: nice to have: don't punish proposers if their blocks were reorganized because of the next leader's fault, i.e.
@@ -130,10 +130,7 @@ pub fn dispatch<I: ScillaInspector>(
     let id = &pubkey[..3];
     info!(jailed, missed, ?view, id, "----------> leader");
     let output = encode(&[Token::Bool(jailed)]);
-    Ok(PrecompileOutput::new(
-        10_000u64,
-        output.into(),
-    ))
+    Ok(PrecompileOutput::new(10_000u64, output.into()))
 }
 
 pub fn penalty_handle_register<I: ScillaInspector>(
@@ -147,12 +144,7 @@ pub fn penalty_handle_register<I: ScillaInspector>(
 
         let gas = Gas::new(inputs.gas_limit);
 
-        let outcome = dispatch(
-            &inputs,
-            gas.limit(),
-            &mut ctx.evm.inner,
-            &mut ctx.external
-        );
+        let outcome = dispatch(&inputs, gas.limit(), &mut ctx.evm.inner, &mut ctx.external);
 
         let mut result = InterpreterResult {
             result: InstructionResult::Return,

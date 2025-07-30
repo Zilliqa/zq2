@@ -29,7 +29,10 @@ use crate::{
     api::types::eth::SyncingStruct,
     aux, blockhooks,
     cfg::{ConsensusConfig, ForkName, NodeConfig},
-    constants::{EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, TIME_TO_ALLOW_PROPOSAL_BROADCAST, MAX_MISSED_VIEW_AGE},
+    constants::{
+        EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, MAX_MISSED_VIEW_AGE,
+        TIME_TO_ALLOW_PROPOSAL_BROADCAST,
+    },
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey, verify_messages},
     db::{self, BlockFilter, Db},
     exec::{PendingState, TransactionApplyResult},
@@ -415,7 +418,7 @@ impl Consensus {
             if start + MAX_MISSED_VIEW_AGE < latest_block_view {
                 start = latest_block_view - MAX_MISSED_VIEW_AGE - 1;
             }
-            for key in (start+1..block.view()).rev() {
+            for key in (start + 1..block.view()).rev() {
                 if let Some(leader) = consensus.leader_for_view(parent.hash(), key) {
                     let mut deque = consensus.state().missed_views.lock().unwrap();
                     deque.push_front((key, leader));
@@ -809,7 +812,7 @@ impl Consensus {
                 block.hash()
             );
             {
-                for key in parent.view()+1..block.view() {
+                for key in parent.view() + 1..block.view() {
                     if let Some(leader) = self.leader_for_view(parent.hash(), key) {
                         let mut deque = self.state().missed_views.lock().unwrap();
                         deque.push_back((key, leader));
@@ -819,7 +822,7 @@ impl Consensus {
                 while let Some((key, value)) = deque.front() {
                     if *key + MAX_MISSED_VIEW_AGE < block.view() {
                         let leader = value.as_bytes();
-                        info!(key, ?leader, "----------> missed view dropped"); 
+                        info!(key, ?leader, "----------> missed view dropped");
                         deque.pop_front();
                     } else {
                         break; // keys are monotonic

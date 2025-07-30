@@ -1,7 +1,7 @@
 //! Manages execution of transactions on state.
 
 use std::{
-    collections::{BTreeMap, HashMap, hash_map::Entry, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque, hash_map::Entry},
     error::Error,
     fmt::{self, Display, Formatter},
     fs, mem,
@@ -36,7 +36,7 @@ use crate::{
     error::ensure_success,
     inspector::{self, ScillaInspector},
     message::{Block, BlockHeader},
-    precompiles::{get_custom_precompiles, scilla_call_handle_register, penalty_handle_register},
+    precompiles::{get_custom_precompiles, penalty_handle_register, scilla_call_handle_register},
     scilla::{self, ParamValue, Scilla, split_storage_key, storage_key},
     state::{Account, Code, ContractInit, ExternalLibrary, State, contract_addr},
     time::SystemTime,
