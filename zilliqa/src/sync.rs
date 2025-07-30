@@ -1458,7 +1458,7 @@ impl Sync {
                             // FIXME: ZQ1 bypass
                             error!(number = %block.number(), index = %rt.index, hash = %rt.tx_hash, "sync::StoreProposals : unverifiable");
                             self.db
-                                .insert_transaction_with_db_tx(sqlite_tx, &rt.tx_hash, &st.verify_bypass()?)?;
+                                .insert_transaction_with_db_tx(sqlite_tx, &rt.tx_hash, &st.verify_bypass(rt.tx_hash)?)?;
                         } else {
                             anyhow::bail!(
                                 "sync::StoreProposal : unverifiable transaction {}/{}/{}",
