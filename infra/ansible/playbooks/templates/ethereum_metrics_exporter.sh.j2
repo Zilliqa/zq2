@@ -33,6 +33,7 @@ EOL
         --log-driver json-file --log-opt max-size=1g --log-opt max-file=1 \
         --net=host \
         --cpus=".5" \
+        --memory=512m \
         -v $(pwd)/config.yaml:/config.yaml \
         --restart=unless-stopped --pull=always \
         ${ETHEREUM_METRICS_EXPORTER_IMAGE} --config=/config.yaml

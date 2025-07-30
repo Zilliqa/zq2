@@ -400,14 +400,14 @@ impl SignedTransaction {
     }
 
     pub fn verify(self) -> Result<VerifiedTransaction> {
-        self.verify_inner(false)
+        self.verify_inner(false, Hash::ZERO)
     }
 
-    pub fn verify_bypass(self) -> Result<VerifiedTransaction> {
-        self.verify_inner(true)
+    pub fn verify_bypass(self, hash: Hash) -> Result<VerifiedTransaction> {
+        self.verify_inner(true, hash)
     }
 
-    fn verify_inner(self, force: bool) -> Result<VerifiedTransaction> {
+    fn verify_inner(self, force: bool, hash: Hash) -> Result<VerifiedTransaction> {
         let (tx, signer, hash) = match self {
             SignedTransaction::Legacy { tx, sig } => {
                 let signed = tx.into_signed(sig);
@@ -440,7 +440,7 @@ impl SignedTransaction {
                 let signer = Address::new(bytes.into());
 
                 let tx = SignedTransaction::Zilliqa { tx, key, sig };
-                let hash = tx.calculate_hash();
+                let hash = if !force { tx.calculate_hash() } else { hash };
                 (tx, signer, hash)
             }
             SignedTransaction::Intershard { tx, from } => {
