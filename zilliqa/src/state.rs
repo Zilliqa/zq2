@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     fmt::Display,
     sync::{Arc, Mutex, MutexGuard, OnceLock},
 };
@@ -19,7 +19,7 @@ use tracing::{debug, info};
 use crate::{
     cfg::{Amount, ConsensusConfig, Forks, NodeConfig, ReinitialiseParams, ScillaExtLibsPath},
     contracts::{self, Contract},
-    crypto::{self, Hash},
+    crypto::{self, Hash, NodePublicKey},
     db::{BlockFilter, Db, TrieStorage},
     error::ensure_success,
     message::{Block, BlockHeader, MAX_COMMITTEE_SIZE},
@@ -53,6 +53,7 @@ pub struct State {
     pub gas_price: u128,
     pub chain_id: ChainId,
     pub forks: Forks,
+    pub missed_views: Arc<Mutex<VecDeque<(u64, NodePublicKey)>>>,
 }
 
 impl State {
@@ -72,6 +73,7 @@ impl State {
             chain_id: ChainId::new(config.eth_chain_id),
             forks: consensus_config.get_forks()?,
             sql,
+            missed_views: Arc::new(Mutex::new(VecDeque::new())),
         })
     }
 
@@ -330,6 +332,7 @@ impl State {
             chain_id: self.chain_id,
             forks: self.forks.clone(),
             sql: self.sql.clone(),
+            missed_views: self.missed_views.clone(),
         }
     }
 

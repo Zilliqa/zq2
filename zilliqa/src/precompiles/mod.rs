@@ -1,5 +1,6 @@
 mod bls_verify;
 mod pop_verify;
+mod penalty;
 mod scilla;
 
 use std::sync::Arc;
@@ -7,6 +8,8 @@ use std::sync::Arc;
 use alloy::primitives::Address;
 use bls_verify::BlsVerify;
 use pop_verify::PopVerify;
+//use penalty::Penalty;
+pub use penalty::penalty_handle_register;
 use revm::ContextPrecompile;
 use scilla::ScillaRead;
 pub use scilla::scilla_call_handle_register;
@@ -23,6 +26,12 @@ pub fn get_custom_precompiles() -> Vec<(Address, ContextPrecompile<PendingState>
             Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x81"),
             ContextPrecompile::ContextStateful(Arc::new(BlsVerify)),
         ),
+        /* The Penalty precompile requires appending a custom call handler to revm
+           that can access the external context containing the history of missed views. 
+        (
+            Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x82"),
+            ContextPrecompile::ContextStateful(Arc::new(Penalty)),
+        ),*/
         (
             Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x92"),
             ContextPrecompile::ContextStateful(Arc::new(ScillaRead)),

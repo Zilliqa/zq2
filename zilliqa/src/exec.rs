@@ -1,13 +1,13 @@
 //! Manages execution of transactions on state.
 
 use std::{
-    collections::{BTreeMap, HashMap, hash_map::Entry},
+    collections::{BTreeMap, HashMap, hash_map::Entry, VecDeque},
     error::Error,
     fmt::{self, Display, Formatter},
     fs, mem,
     num::NonZeroU128,
     path::Path,
-    sync::{Arc, MutexGuard},
+    sync::{Arc, Mutex, MutexGuard},
 };
 
 use alloy::primitives::{Address, Bytes, U256, address, hex};
@@ -36,7 +36,7 @@ use crate::{
     error::ensure_success,
     inspector::{self, ScillaInspector},
     message::{Block, BlockHeader},
-    precompiles::{get_custom_precompiles, scilla_call_handle_register},
+    precompiles::{get_custom_precompiles, scilla_call_handle_register, penalty_handle_register},
     scilla::{self, ParamValue, Scilla, split_storage_key, storage_key},
     state::{Account, Code, ContractInit, ExternalLibrary, State, contract_addr},
     time::SystemTime,
@@ -435,6 +435,7 @@ pub struct ExternalContext<'a, I> {
     pub callers: Vec<Address>,
     pub has_evm_failed: bool,
     pub has_called_scilla_precompile: bool,
+    pub missed_views: Arc<Mutex<VecDeque<(u64, NodePublicKey)>>>,
 }
 
 impl<I: Inspector<PendingState>> GetInspector<PendingState> for ExternalContext<'_, I> {
@@ -550,6 +551,7 @@ impl State {
             callers: vec![from_addr],
             has_evm_failed: false,
             has_called_scilla_precompile: false,
+            missed_views: self.missed_views.clone(),
         };
         let pending_state = PendingState::new(self.clone(), fork.clone());
         let mut evm = Evm::builder()
@@ -573,6 +575,7 @@ impl State {
             .with_external_context(external_context)
             .with_handler_cfg(HandlerCfg { spec_id: SPEC_ID })
             .append_handler_register(scilla_call_handle_register)
+            .append_handler_register(penalty_handle_register)
             .modify_cfg_env(|c| {
                 c.disable_eip3607 = extra_opts.disable_eip3607;
                 c.chain_id = self.chain_id.eth;
