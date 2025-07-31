@@ -128,7 +128,7 @@ pub fn dispatch<I: ScillaInspector>(
     //TODO: prevent that we return true for all the validators in the committee or even just keep querying the precompile too many times to find one
     let jailed = missed >= 3;
     let id = &pubkey[..3];
-    info!(jailed, missed, ?view, id, "----------> leader");
+    info!(jailed, missed, ?view, id, "==========> leader");
     let output = encode(&[Token::Bool(jailed)]);
     Ok(PrecompileOutput::new(10_000u64, output.into()))
 }

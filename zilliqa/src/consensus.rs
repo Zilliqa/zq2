@@ -412,6 +412,13 @@ impl Consensus {
         }
 
         // TODO: check if the leader is fetched before this point
+        // when the node goes down, its highest view block was B(v)
+        // and it had a history of up to MAX_MISSED_VIEW_AGE missed view
+        // when it retrieves the leaders of the past views [v-100..v] to reconstruct
+        // the view history, it will not take leaders jailed because of [v-100-k..v-k] into account
+        // and will assign incorrect leaders (most likely itself because it was jailed)
+        // to the missed views i.e. when it comes to selecting the next leader, it will jail them
+        // and end up with a leader selection that is inconsistent with the rest of the network
         let mut block = latest_block.unwrap();
         while let Some(parent) = consensus.get_block(&block.parent_hash())? {
             let mut start = parent.view();
@@ -419,9 +426,11 @@ impl Consensus {
                 start = latest_block_view - MAX_MISSED_VIEW_AGE - 1;
             }
             for key in (start + 1..block.view()).rev() {
-                if let Some(leader) = consensus.leader_for_view(parent.hash(), key) {
+                if let Some(value) = consensus.leader_for_view(parent.hash(), key) {
                     let mut deque = consensus.state().missed_views.lock().unwrap();
-                    deque.push_front((key, leader));
+                    let leader = value.as_bytes();
+                    info!(key, ?leader, "**********> missed view added");
+                    deque.push_front((key, value));
                 }
             }
             block = parent;
@@ -813,16 +822,23 @@ impl Consensus {
             );
             {
                 for key in parent.view() + 1..block.view() {
-                    if let Some(leader) = self.leader_for_view(parent.hash(), key) {
+                    if let Some(value) = self.leader_for_view(parent.hash(), key) {
                         let mut deque = self.state().missed_views.lock().unwrap();
-                        deque.push_back((key, leader));
+                        if let Some((last, _)) = deque.back() {
+                            if key <= *last {
+                                continue;
+                            }
+                        }
+                        let leader = value.as_bytes();
+                        info!(key, ?leader, "++++++++++> missed view added");
+                        deque.push_back((key, value));
                     }
                 }
                 let mut deque = self.state().missed_views.lock().unwrap();
                 while let Some((key, value)) = deque.front() {
                     if *key + MAX_MISSED_VIEW_AGE < block.view() {
                         let leader = value.as_bytes();
-                        info!(key, ?leader, "----------> missed view dropped");
+                        info!(key, ?leader, "----------> missed view deleted");
                         deque.pop_front();
                     } else {
                         break; // keys are monotonic
