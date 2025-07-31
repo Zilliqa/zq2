@@ -18,6 +18,7 @@ start() {
         --log-driver json-file --log-opt max-size=1g --log-opt max-file=1 \
         --memory=6g \
         -e RUST_LOG='{{ log_level }}' \
+        -e OTEL_METRIC_EXPORT_INTERVAL=60000 \
         -e RUST_BACKTRACE=1 \
         --restart=unless-stopped \
         ${ZQ2_IMAGE} ${SCILLA_SERVER_PORT} "${PRIVATE_KEY}" --log-json

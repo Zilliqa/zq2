@@ -81,7 +81,7 @@ start() {
     docker run -td -p 3333:3333/udp -p 4201:4201 -p 4202:4202 --net=host --name zilliqa-""" + VERSIONS.get('zilliqa') + """ \
         -v /config.toml:/config.toml -v /zilliqa.log:/zilliqa.log -v /data:/data \
         --log-driver json-file --log-opt max-size=1g --log-opt max-file=1 --memory=6g \
-        -e RUST_LOG='""" + LOG_LEVEL + """' -e RUST_BACKTRACE=1 \
+        -e RUST_LOG='""" + LOG_LEVEL + """' -e OTEL_METRIC_EXPORT_INTERVAL=60000 -e RUST_BACKTRACE=1 \
         --restart=unless-stopped \
     """ + mount_checkpoint_file() + """ ${ZQ2_IMAGE} """ + SCILLA_SERVER_PORT + """ "${PRIVATE_KEY}" --log-json
     unset PRIVATE_KEY
