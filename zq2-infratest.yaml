@@ -9,4 +9,4 @@ roles:
   - persistence
   - private-api
 versions:
-  zq2: v0.16.0
+  zq2: v0.11.0
