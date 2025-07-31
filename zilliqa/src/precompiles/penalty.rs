@@ -109,7 +109,7 @@ pub fn dispatch<I: ScillaInspector>(
     let Ok(decoded) = decode(&[ParamType::Bytes, ParamType::Uint(256)], &input.input[4..]) else {
         return Err(PrecompileError::Other("ABI input decoding error!".into()).into());
     };
-    let pubkey = decoded.first().unwrap().to_owned().into_bytes().unwrap();
+    let leader = decoded.first().unwrap().to_owned().into_bytes().unwrap();
     let view = decoded.last().unwrap().to_owned().into_uint().unwrap();
     //TODO: ensure the available history of missed views is sufficient for the view number passed as input
     let deque = external_context.missed_views.lock().unwrap();
@@ -118,16 +118,16 @@ pub fn dispatch<I: ScillaInspector>(
         .filter(|(key, value)| {
             *key < view.as_u64()
                 && key + 100 >= view.as_u64()
-                && value == &NodePublicKey::from_bytes(pubkey.as_slice()).unwrap()
+                && value == &NodePublicKey::from_bytes(leader.as_slice()).unwrap()
         })
         .map(|(key, _)| key)
         .collect();
-    //TODO: nice to have: don't punish proposers if their blocks were reorganized because of the next leader's fault, i.e.
+    //TODO: nice to have - don't punish proposers if their blocks were reorganized because of the next leader's fault;
     //      if view k-1 is not missing, but views k and k+1 are missing, then the proposal from view k was reorganized
     let missed = missed_views.len();
-    //TODO: prevent that we return true for all the validators in the committee or even just keep querying the precompile too many times to find one
+    //TODO: prevent that we return true for all the validators in the committee or keep querying the precompile too many times to find one
     let jailed = missed >= 3;
-    let id = &pubkey[..3];
+    let id = &leader[..3];
     info!(jailed, missed, ?view, id, "==========> leader");
     let output = encode(&[Token::Bool(jailed)]);
     Ok(PrecompileOutput::new(10_000u64, output.into()))
