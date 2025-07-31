@@ -1258,7 +1258,7 @@ impl Db {
             .lock()
             .unwrap()
             .prepare_cached(
-                "SELECT data, transactions.tx_hash FROM transactions INNER JOIN receipts ON transactions.tx_hash = receipts.tx_hash WHERE receipts.block_hash = ?1",
+                "SELECT data, transactions.tx_hash FROM transactions INNER JOIN receipts ON transactions.tx_hash = receipts.tx_hash WHERE receipts.block_hash = ?1 ORDER BY receipts.tx_index ASC",
             )?
             .query_map([block.header.hash], |row| {
                 let txn: SignedTransaction = row.get(0)?;
