@@ -18,6 +18,7 @@ use anyhow::{Result, anyhow};
 use bytes::{BufMut, BytesMut};
 use itertools::Itertools;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
+use revm::primitives::AccessListItem;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use sha3::{
@@ -791,23 +792,11 @@ impl Transaction {
         }
     }
 
-    pub fn access_list(&self) -> Option<Vec<(Address, Vec<B256>)>> {
+    pub fn access_list(&self) -> Option<Vec<AccessListItem>> {
         match self {
             Transaction::Legacy(_) => None,
-            Transaction::Eip2930(TxEip2930 { access_list, .. }) => Some(
-                access_list
-                    .0
-                    .iter()
-                    .map(|i| (i.address, i.storage_keys.clone()))
-                    .collect(),
-            ),
-            Transaction::Eip1559(TxEip1559 { access_list, .. }) => Some(
-                access_list
-                    .0
-                    .iter()
-                    .map(|i| (i.address, i.storage_keys.clone()))
-                    .collect(),
-            ),
+            Transaction::Eip2930(TxEip2930 { access_list, .. }) => Some(access_list.0.clone()),
+            Transaction::Eip1559(TxEip1559 { access_list, .. }) => Some(access_list.0.clone()),
             Transaction::Zilliqa(_) => None,
             Transaction::Intershard(_) => None,
         }

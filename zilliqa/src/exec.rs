@@ -19,8 +19,8 @@ use libp2p::PeerId;
 use revm::{
     Database, DatabaseRef, Evm, GetInspector, Inspector, JournaledState, inspector_handle_register,
     primitives::{
-        AccountInfo, B256, BlockEnv, Bytecode, Env, ExecutionResult, HaltReason, HandlerCfg,
-        KECCAK_EMPTY, Output, ResultAndState, SpecId, TxEnv,
+        AccessListItem, AccountInfo, B256, BlockEnv, Bytecode, Env, ExecutionResult, HaltReason,
+        HandlerCfg, KECCAK_EMPTY, Output, ResultAndState, SpecId, TxEnv,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -470,6 +470,7 @@ impl State {
             amount,
             creation_bytecode,
             None,
+            None,
             current_block,
             inspector::noop(),
             false,
@@ -534,6 +535,7 @@ impl State {
         amount: u128,
         payload: Vec<u8>,
         nonce: Option<u64>,
+        access_list: Option<Vec<AccessListItem>>,
         current_block: BlockHeader,
         inspector: I,
         enable_inspector: bool,
@@ -591,7 +593,7 @@ impl State {
                 data: payload.clone().into(),
                 nonce,
                 chain_id: Some(self.chain_id.eth),
-                access_list: vec![],
+                access_list: access_list.unwrap_or_default(),
                 gas_priority_fee: max_priority_fee_per_gas.map(U256::from),
                 blob_hashes: vec![],
                 max_fee_per_blob_gas: None,
@@ -810,6 +812,7 @@ impl State {
                     txn.amount(),
                     txn.payload().to_vec(),
                     txn.nonce(),
+                    txn.access_list(),
                     current_block,
                     inspector,
                     enable_inspector,
@@ -1193,6 +1196,7 @@ impl State {
         gas: Option<EvmGas>,
         gas_price: Option<u128>,
         value: u128,
+        access_list: Option<Vec<AccessListItem>>,
     ) -> Result<u64> {
         let gas_price = gas_price.unwrap_or(self.gas_price);
 
@@ -1210,6 +1214,7 @@ impl State {
             EvmGas(upper_bound),
             gas_price,
             value,
+            access_list.clone(),
         )?;
 
         // Execute the while loop iff (max - min)/max < MINIMUM_PERCENT_RATIO [%]
@@ -1232,6 +1237,7 @@ impl State {
                 value,
                 data.clone(),
                 None,
+                access_list.clone(),
                 current_block,
                 inspector::noop(),
                 false,
@@ -1264,6 +1270,7 @@ impl State {
         gas: EvmGas,
         gas_price: u128,
         value: u128,
+        access_list: Option<Vec<AccessListItem>>,
     ) -> Result<u64> {
         let (ResultAndState { result, .. }, ..) = self.apply_transaction_evm(
             from_addr,
@@ -1274,6 +1281,7 @@ impl State {
             value,
             data.clone(),
             None,
+            access_list,
             current_block,
             inspector::noop(),
             false,
@@ -1308,6 +1316,7 @@ impl State {
             amount,
             data,
             None,
+            None,
             current_block,
             inspector::noop(),
             false,
@@ -1339,6 +1348,7 @@ impl State {
             self.block_gas_limit,
             amount,
             data,
+            None,
             None,
             current_block,
             inspector::noop(),
