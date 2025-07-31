@@ -159,6 +159,8 @@ pub struct Header {
     pub mix_hash: B256,
     #[serde(serialize_with = "hex")]
     pub logs_bloom: [u8; 256],
+    #[serde(serialize_with = "hex")]
+    base_fee_per_gas: u64,
 }
 
 impl Header {
@@ -193,6 +195,7 @@ impl Header {
                 .unwrap_or_default()
                 .as_secs(),
             logs_bloom: [0; 256],
+            base_fee_per_gas: 0,
         }
     }
 }

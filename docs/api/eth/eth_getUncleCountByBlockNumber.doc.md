@@ -34,5 +34,5 @@ curl -d '{
 | `id`      | string | Required | `"1"`                              |
 | `jsonrpc` | string | Required | `"2.0"`                            |
 | `method`  | string | Required | `"eth_getUncleCountByBlockNumber"` |
-| `params`  | array  | Requred  | can be anything                    |
+| `params`  | array  | Required | can be anything                    |
 
