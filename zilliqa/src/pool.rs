@@ -422,6 +422,40 @@ impl TransactionsAccount {
             })
     }
 
+    #[allow(clippy::collapsible_else_if)] // Clearer semantics
+    fn delete_transactions<I>(&mut self, txns: I) -> Vec<VerifiedTransaction>
+    where
+        I: IntoIterator<Item = VerifiedTransaction>,
+    {
+        let mut recalculate_needed = false;
+        let mut result = Vec::new();
+        for txn in txns {
+            if let Some(nonce) = txn.tx.nonce() {
+                if let Some(removed_txn) = self.nonced_transactions_pending.remove(&nonce) {
+                    result.push(removed_txn);
+                    recalculate_needed = true;
+                } else if let Some(removed_txn) = self.nonced_transactions_queued.remove(&nonce) {
+                    result.push(removed_txn);
+                }
+            } else {
+                if let Some(removed_txn) =
+                    self.nonceless_transactions_pending.remove(&(&txn).into())
+                {
+                    result.push(removed_txn);
+                    recalculate_needed = true;
+                } else if let Some(removed_txn) =
+                    self.nonceless_transactions_queued.remove(&(&txn).into())
+                {
+                    result.push(removed_txn);
+                }
+            }
+        }
+        if recalculate_needed {
+            self.full_recalculate();
+        }
+        result
+    }
+
     fn mark_executed(&mut self, txn: &VerifiedTransaction) -> Vec<Hash> {
         if let std::collections::btree_map::Entry::Occupied(entry) =
             self.nonceless_transactions_pending.entry(txn.into())
