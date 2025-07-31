@@ -411,7 +411,8 @@ impl Consensus {
             aux::check_and_build_ots_indices(db, latest_block_view)?;
         }
 
-        // TODO: check if the leader is fetched before this point
+        // TODO: check if the leader is fetched somewhere before this point
+        // after restarting, reconstruct the missed views history even before receiving new proposals
         let mut block = latest_block.unwrap();
         while let Some(parent) = consensus.get_block(&block.parent_hash())? {
             let mut start = parent.view();
@@ -422,7 +423,7 @@ impl Consensus {
                 if let Some(leader) = consensus.leader_for_view(parent.hash(), view) {
                     let mut deque = consensus.state().missed_views.lock().unwrap();
                     let id = &leader.as_bytes()[..3];
-                    info!(view, id, "**********> missed view added");
+                    info!(view, id, "~~~~~~~~~~> restoring missed");
                     deque.push_front((view, leader));
                 }
             }
@@ -823,7 +824,7 @@ impl Consensus {
                             }
                         }
                         let id = &leader.as_bytes()[..3];
-                        info!(view, id, "++++++++++> missed view added");
+                        info!(view, id, "++++++++++> adding missed");
                         deque.push_back((view, leader));
                     }
                 }
@@ -831,7 +832,7 @@ impl Consensus {
                 while let Some((view, leader)) = deque.front() {
                     if *view + MAX_MISSED_VIEW_AGE < block.view() {
                         let id = &leader.as_bytes()[..3];
-                        info!(view, id, "----------> missed view deleted");
+                        info!(view, id, "----------> deleting missed");
                         deque.pop_front();
                     } else {
                         break; // keys are monotonic
