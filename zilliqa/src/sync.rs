@@ -1848,7 +1848,7 @@ impl SyncSegments {
 
         // the choice of cbor4ii is purely ergonomics; any serializer will do.
         let marker = cbor4ii::serde::to_vec(Vec::with_capacity(1024), &marker).unwrap_or_default();
-        markers.insert(counter.to_ne_bytes(), marker).unwrap();
+        markers.insert(counter.to_be_bytes(), marker).unwrap();
         SyncSegments { counter, db }
     }
 
@@ -1870,7 +1870,7 @@ impl SyncSegments {
 
         let markers = self.db.open_tree("markers")?;
         let SyncMarker { mut hash, peer } =
-            if let Some(marker) = markers.remove(self.counter.to_ne_bytes())? {
+            if let Some(marker) = markers.remove(self.counter.to_be_bytes())? {
                 self.counter = self.counter.saturating_sub(1);
                 cbor4ii::serde::from_slice::<SyncMarker>(marker.to_vec().as_slice())?
             } else {
@@ -1917,7 +1917,7 @@ impl SyncSegments {
     fn push_sync_segment(&mut self, peer: &PeerInfo, hash: Hash) -> Result<()> {
         // do not double-push
         let markers = self.db.open_tree("markers")?;
-        if let Some(marker) = markers.get(self.counter.to_ne_bytes())? {
+        if let Some(marker) = markers.get(self.counter.to_be_bytes())? {
             let marker = cbor4ii::serde::from_slice::<SyncMarker>(marker.to_vec().as_slice())?;
             if hash != marker.hash {
                 let marker = SyncMarker {
@@ -1926,7 +1926,7 @@ impl SyncSegments {
                 };
                 let marker = cbor4ii::serde::to_vec(Vec::with_capacity(1024), &marker)?;
                 self.counter = self.counter.saturating_add(1);
-                markers.insert(self.counter.to_ne_bytes(), marker)?;
+                markers.insert(self.counter.to_be_bytes(), marker)?;
             }
         }
         Ok(())
