@@ -793,6 +793,35 @@ impl TransactionPoolCore {
             }
         }
     }
+
+    fn delete_transactions<I>(&mut self, txns: I)
+    where
+        I: IntoIterator<Item = VerifiedTransaction>,
+    {
+        let mut to_delete: HashMap<Address, Vec<VerifiedTransaction>> = HashMap::new();
+        for txn in txns {
+            let address = txn.signer;
+            to_delete.entry(address).or_default().push(txn);
+        }
+        for (address, txns) in to_delete {
+            if let Some(transactions_account) = self.all_transactions.get_mut(&address) {
+                let removed_txns = transactions_account.delete_transactions(txns);
+                self.total_transactions_counter -= removed_txns.len();
+                if let Some(pending_queue_key) = transactions_account.get_pending_queue_key() {
+                    self.pending_account_queue.remove(&pending_queue_key);
+                }
+                if let Some(pending_queue_key) = transactions_account.get_pending_queue_key() {
+                    self.pending_account_queue.insert(pending_queue_key);
+                }
+                if transactions_account.is_empty() {
+                    self.all_transactions.remove(&address);
+                }
+                for txn in removed_txns {
+                    self.hash_to_txn_map.remove(&txn.hash);
+                }
+            }
+        }
+    }
 }
 
 /// This struct wraps the transaction pool to separate the methods needed by the wider application
