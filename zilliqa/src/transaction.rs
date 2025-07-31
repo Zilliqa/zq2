@@ -18,6 +18,7 @@ use anyhow::{Result, anyhow};
 use bytes::{BufMut, BytesMut};
 use itertools::Itertools;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
+use revm::primitives::AccessListItem;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use sha3::{
@@ -307,6 +308,23 @@ impl SignedTransaction {
                 tx.gas_price.get() / (EVM_GAS_PER_SCILLA_GAS as u128)
             }
             SignedTransaction::Intershard { tx, .. } => tx.gas_price,
+        }
+    }
+
+    pub fn effective_gas_price(&self, base_fee: u128) -> u128 {
+        match self {
+            SignedTransaction::Eip1559 { tx, .. } => {
+                // if the tip is greater than the max priority fee per gas, set it to the max
+                // priority fee per gas + base fee
+                let tip = tx.max_fee_per_gas.saturating_sub(base_fee);
+                if tip > tx.max_priority_fee_per_gas {
+                    tx.max_priority_fee_per_gas + base_fee
+                } else {
+                    // otherwise return the max fee per gas
+                    tx.max_fee_per_gas
+                }
+            }
+            _ => self.gas_price_per_evm_gas(),
         }
     }
 
@@ -710,6 +728,16 @@ impl Transaction {
         }
     }
 
+    pub fn max_priority_fee_per_gas(&self) -> Option<u128> {
+        match self {
+            Transaction::Eip1559(TxEip1559 {
+                max_priority_fee_per_gas,
+                ..
+            }) => Some(*max_priority_fee_per_gas),
+            _ => None,
+        }
+    }
+
     pub fn gas_limit(&self) -> EvmGas {
         match self {
             Transaction::Legacy(TxLegacy { gas_limit, .. }) => EvmGas(*gas_limit),
@@ -764,23 +792,11 @@ impl Transaction {
         }
     }
 
-    pub fn access_list(&self) -> Option<Vec<(Address, Vec<B256>)>> {
+    pub fn access_list(&self) -> Option<Vec<AccessListItem>> {
         match self {
             Transaction::Legacy(_) => None,
-            Transaction::Eip2930(TxEip2930 { access_list, .. }) => Some(
-                access_list
-                    .0
-                    .iter()
-                    .map(|i| (i.address, i.storage_keys.clone()))
-                    .collect(),
-            ),
-            Transaction::Eip1559(TxEip1559 { access_list, .. }) => Some(
-                access_list
-                    .0
-                    .iter()
-                    .map(|i| (i.address, i.storage_keys.clone()))
-                    .collect(),
-            ),
+            Transaction::Eip2930(TxEip2930 { access_list, .. }) => Some(access_list.0.clone()),
+            Transaction::Eip1559(TxEip1559 { access_list, .. }) => Some(access_list.0.clone()),
             Transaction::Zilliqa(_) => None,
             Transaction::Intershard(_) => None,
         }
