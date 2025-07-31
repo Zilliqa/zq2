@@ -593,7 +593,7 @@ impl State {
                 data: payload.clone().into(),
                 nonce,
                 chain_id: Some(self.chain_id.eth),
-                access_list: access_list.unwrap_or(vec![]),
+                access_list: access_list.unwrap_or_default(),
                 gas_priority_fee: max_priority_fee_per_gas.map(U256::from),
                 blob_hashes: vec![],
                 max_fee_per_blob_gas: None,
