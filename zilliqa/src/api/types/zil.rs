@@ -683,7 +683,12 @@ pub struct TransactionBody {
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct TransactionReceiptResponse {
-    pub cumulative_gas: String,
+    #[serde(with = "num_as_str")]
+    pub gas_used: ScillaGas,
+    #[serde(with = "num_as_str")]
+    pub cumulative_gas_used: ScillaGas,
+    #[serde(with = "num_as_str")]
+    pub cumulative_gas: ScillaGas, // deprecated
     pub epoch_num: String,
     pub success: bool,
 }
