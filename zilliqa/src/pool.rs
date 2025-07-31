@@ -1,6 +1,7 @@
 use std::{
-    cmp::Ordering,
+    cmp::{Ordering, min},
     collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
+    time::{Duration, Instant},
 };
 
 use alloy::primitives::Address;
@@ -523,11 +524,14 @@ impl TransactionsAccount {
 /// The pool is a set of pools for individual accounts (all_transactions), each of which maintains
 /// its own pending lists of nonced and nonceless transactions.
 /// When pending transactions are queried they just need to be merged from the individual accounts.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 struct TransactionPoolCore {
     all_transactions: HashMap<Address, TransactionsAccount>,
     pending_account_queue: BTreeSet<PendingQueueKey>,
-    hash_to_txn_map: HashMap<Hash, VerifiedTransaction>,
+    hash_to_txn_map: HashMap<Hash, (VerifiedTransaction, Instant)>, // Also tracks insertion times
+    oldest_insertion_time: Option<Instant>, // For efficiency, this is only updated during clear_old_transactions
+    pool_expiry_time_minimum: Duration, // Transactions are allowed to remain at least this long in the pool
+    expiry_time_clearout_threshold: Duration, // When oldest_insertion_time reaches this age, a clearout is initiated
     // Keeps track of the total number of transactions in the pool for speed
     total_transactions_counter: usize,
 }
@@ -648,7 +652,7 @@ impl TransactionPoolCore {
     }
 
     fn get_transaction_by_hash(&self, hash: &Hash) -> Option<&VerifiedTransaction> {
-        self.hash_to_txn_map.get(hash)
+        self.hash_to_txn_map.get(hash).map(|(txn, _)| txn)
     }
 
     fn update_txn(&mut self, txn: VerifiedTransaction) {
@@ -658,10 +662,11 @@ impl TransactionPoolCore {
         }
         let old_hash = transactions_account.update_txn(txn.clone()).unwrap();
         self.hash_to_txn_map.remove(&old_hash);
-        self.hash_to_txn_map.insert(txn.hash, txn);
+        self.hash_to_txn_map.insert(txn.hash, (txn, Instant::now()));
         if let Some(pending_queue_key) = transactions_account.get_pending_queue_key() {
             self.pending_account_queue.insert(pending_queue_key);
         }
+        self.clear_old_transactions();
     }
 
     fn add_txn(&mut self, txn: VerifiedTransaction, account: &Account) {
@@ -686,7 +691,9 @@ impl TransactionPoolCore {
         if let Some(pending_queue_key) = transactions_account.get_pending_queue_key() {
             self.pending_account_queue.insert(pending_queue_key);
         }
-        self.hash_to_txn_map.insert(txn.hash, txn);
+        self.hash_to_txn_map.insert(txn.hash, (txn, Instant::now()));
+        self.oldest_insertion_time.get_or_insert(Instant::now());
+        self.clear_old_transactions();
     }
 
     fn preview_content(&self) -> TxPoolContent {
@@ -820,6 +827,44 @@ impl TransactionPoolCore {
                     self.hash_to_txn_map.remove(&txn.hash);
                 }
             }
+        }
+    }
+
+    fn clear_old_transactions(&mut self) {
+        if self
+            .oldest_insertion_time
+            .is_none_or(|x| x > Instant::now() - self.expiry_time_clearout_threshold)
+        {
+            // No transactions older than maximum age, so no need to clear
+            return;
+        }
+        let oldest_allowable_insertion_time = Instant::now() - self.pool_expiry_time_minimum;
+        let mut transactions_to_delete = Vec::new();
+        self.oldest_insertion_time = None;
+        for (txn, insertion_time) in self.hash_to_txn_map.values() {
+            if *insertion_time < oldest_allowable_insertion_time {
+                transactions_to_delete.push(txn.clone());
+            } else {
+                self.oldest_insertion_time = Some(
+                    self.oldest_insertion_time
+                        .map_or(*insertion_time, |x| min(x, *insertion_time)),
+                )
+            }
+        }
+        self.delete_transactions(transactions_to_delete);
+    }
+}
+
+impl Default for TransactionPoolCore {
+    fn default() -> Self {
+        Self {
+            all_transactions: HashMap::new(),
+            pending_account_queue: BTreeSet::new(),
+            hash_to_txn_map: HashMap::new(),
+            oldest_insertion_time: None,
+            pool_expiry_time_minimum: Duration::from_secs(60 * 60 * 24),
+            expiry_time_clearout_threshold: Duration::from_secs(60 * 60 * 48),
+            total_transactions_counter: 0,
         }
     }
 }
