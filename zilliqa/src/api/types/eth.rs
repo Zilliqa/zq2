@@ -5,6 +5,7 @@ use alloy::{
     primitives::{Address, B256, U64, U128, U256},
     rpc::types::TransactionInput,
 };
+use revm::primitives::AccessListItem;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
@@ -159,6 +160,8 @@ pub struct Header {
     pub mix_hash: B256,
     #[serde(serialize_with = "hex")]
     pub logs_bloom: [u8; 256],
+    #[serde(serialize_with = "hex")]
+    base_fee_per_gas: u64,
 }
 
 impl Header {
@@ -193,6 +196,7 @@ impl Header {
                 .unwrap_or_default()
                 .as_secs(),
             logs_bloom: [0; 256],
+            base_fee_per_gas: 0,
         }
     }
 }
@@ -269,6 +273,12 @@ impl Transaction {
                 Some(max_priority_fee_per_gas),
             ),
         };
+        let access_list = transaction.access_list().map(|list| {
+            list.iter()
+                .map(|item| (item.address, item.storage_keys.clone()))
+                .collect()
+        });
+
         Transaction {
             block_hash: block.as_ref().map(|b| b.hash().0.into()),
             block_number: block.as_ref().map(|b| b.number()),
@@ -288,7 +298,7 @@ impl Transaction {
             r,
             s,
             chain_id: transaction.chain_id(),
-            access_list: transaction.access_list().map(|a| a.to_vec()),
+            access_list,
             transaction_type: match transaction {
                 transaction::Transaction::Legacy(_) => 0,
                 transaction::Transaction::Eip2930(_) => 1,
@@ -448,6 +458,8 @@ pub struct CallParams {
     pub value: U128,
     #[serde(default, flatten)]
     pub data: TransactionInput,
+    #[serde(default)]
+    pub access_list: Option<Vec<AccessListItem>>,
 }
 
 #[derive(Clone, Serialize)]
