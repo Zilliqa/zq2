@@ -1225,6 +1225,7 @@ impl Sync {
             for p in self.in_flight.drain(..) {
                 self.peers.done_with_peer(Some(p), DownGrade::None);
             }
+            self.segments.flush()?;
         }
         Ok(())
     }
@@ -1948,6 +1949,12 @@ impl SyncSegments {
     fn empty_sync_metadata(&mut self) -> Result<()> {
         self.db.drop_tree("markers")?;
         self.db.drop_tree("headers")?;
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        self.db.open_tree("markers")?.flush()?;
+        self.db.open_tree("headers")?.flush()?;
         Ok(())
     }
 }
