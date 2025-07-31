@@ -1059,102 +1059,22 @@ fn blob_base_fee(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
 
 /// eth_feeHistory
 /// Returns the collection of historical gas information
-fn fee_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<FeeHistory> {
+fn fee_history(params: Params, _node: &Arc<RwLock<Node>>) -> Result<eth::FeeHistory> {
     let mut params = params.sequence();
-    let block_count: String = params.next()?;
-    let block_count = if let Some(block_count) = block_count.strip_prefix("0x") {
-        u64::from_str_radix(block_count, 16)?
-    } else {
-        block_count.parse::<u64>()?
-    };
-
-    let mut block_count = block_count.min(1024);
-
-    if block_count == 0 {
-        return Ok(FeeHistory::default());
-    }
-
+    let block_count: u64 = params.next()?;
     let newest_block: BlockNumberOrTag = params.next()?;
-    let reward_percentiles: Option<Vec<f64>> = params.optional_next()?;
-    if let Some(ref percentiles) = reward_percentiles {
-        if !percentiles.windows(2).all(|w| w[0] <= w[1])
-            || percentiles.iter().any(|&p| !(0.0..=100.0).contains(&p))
-        {
-            return Err(anyhow!(
-                "reward_percentiles must be in ascending order and within the range [0, 100]"
-            ));
-        }
-    }
+    let _reward_percentiles: Option<Vec<f64>> = params.optional_next()?;
     expect_end_of_params(&mut params, 2, 3)?;
 
-    let node = node.read();
-    let newest_block_number = node
-        .resolve_block_number(newest_block)?
-        .ok_or_else(|| anyhow!("block not found"))?
-        .number();
-    if newest_block_number < block_count {
-        warn!("block_count is greater than newest_block");
-        block_count = newest_block_number;
-    }
-
-    let oldest_block = newest_block_number - block_count + 1;
-    let (reward, gas_used_ratio) = (oldest_block..=newest_block_number)
-        .map(|block_number| {
-            let block = node
-                .get_block(BlockNumberOrTag::Number(block_number))?
-                .ok_or_else(|| anyhow!("block not found"))?;
-
-            let reward = if let Some(reward_percentiles) = reward_percentiles.as_ref() {
-                let mut effective_gas_prices = block
-                    .transactions
-                    .iter()
-                    .map(|tx_hash| {
-                        let tx = node
-                            .get_transaction_by_hash(*tx_hash)?
-                            .ok_or_else(|| anyhow!("transaction not found: {}", tx_hash))?;
-                        Ok(tx.tx.effective_gas_price(BASE_FEE_PER_GAS))
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-
-                effective_gas_prices.sort_unstable();
-
-                let fees_len = effective_gas_prices.len() as f64;
-                if fees_len == 0.0 {
-                    effective_gas_prices.push(*node.config.consensus.gas_price);
-                }
-
-                reward_percentiles
-                    .iter()
-                    .map(|x| {
-                        // Calculate the index in the sorted effective priority fees based on the percentile
-                        let i = ((x / 100_f64) * fees_len) as usize;
-
-                        // Get the fee at the calculated index, or default to 0 if the index is out of bounds
-                        effective_gas_prices.get(i).cloned().unwrap_or_default()
-                    })
-                    .collect()
-            } else {
-                vec![]
-            };
-
-            let gas_limit = block.gas_limit().0 as f64;
-            if gas_limit == 0.0 {
-                return Err(anyhow!("gas limit is zero"));
-            }
-
-            Ok((reward, (block.gas_used().0 as f64) / gas_limit))
-        })
-        .collect::<Result<(Vec<Vec<_>>, Vec<_>)>>()?;
-
-    let res = FeeHistory {
-        oldest_block,
-        reward: reward_percentiles.map(|_| reward),
-        gas_used_ratio,
-        base_fee_per_gas: vec![0; (block_count + 1) as usize],
-        base_fee_per_blob_gas: vec![0; (block_count + 1) as usize],
-        blob_gas_used_ratio: vec![0.0; block_count as usize],
+    let fee_history = eth::FeeHistory {
+        oldest_block: newest_block.as_number().unwrap() - block_count + 1,
+        base_fee_per_gas: vec!["0x0".to_string(); block_count as usize],
+        gas_used_ratio: 0,
+        base_fee_per_blob_gas: vec!["0x0".to_string(); block_count as usize],
+        blob_gas_used_ratio: vec![0; block_count as usize],
     };
-    Ok(res)
+
+    Ok(fee_history)
 }
 
 /// eth_getAccount
