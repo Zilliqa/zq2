@@ -30,7 +30,8 @@ use tracing::{debug, info, trace, warn};
 
 use crate::{
     cfg::{Fork, ScillaExtLibsPath, ScillaExtLibsPathInScilla, ScillaExtLibsPathInZq2},
-    constants, contracts,
+    constants::{self, BASE_FEE_PER_GAS},
+    contracts,
     crypto::{Hash, NodePublicKey},
     db::TrieStorage,
     error::ensure_success,
@@ -566,7 +567,7 @@ impl State {
                         .as_secs(),
                 ),
                 gas_limit: U256::from(self.block_gas_limit.0),
-                basefee: U256::from(current_block.base_fee_per_gas),
+                basefee: U256::from(BASE_FEE_PER_GAS),
                 difficulty: U256::from(1),
                 prevrandao: Some(Hash::builder().with(padded_view_number).finalize().into()),
                 blob_excess_gas_and_price: None,
