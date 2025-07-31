@@ -37,6 +37,9 @@ consensus.epochs_per_checkpoint=24
 {%- if role == "validator" %}
 sync.ignore_passive = true
 {%- endif %}
+{%- if role == "private-api" %}
+sync.ignore_passive = true
+{%- endif %}
 
 api_servers = {{ api_servers }}
 
