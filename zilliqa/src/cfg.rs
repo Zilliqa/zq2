@@ -595,6 +595,7 @@ impl Forks {
                 }
                 ForkName::RestoreIgniteWalletContracts => fork.restore_ignite_wallet_contracts,
                 ForkName::InjectAccessList => fork.inject_access_list,
+                ForkName::UseMaxGasPriorityFee => fork.use_max_gas_priority_fee,
             } {
                 return Some(fork.at_height);
             }
@@ -636,6 +637,7 @@ pub struct Fork {
     pub scilla_failed_txn_correct_gas_fee_charged: bool,
     pub check_minimum_gas_price: bool,
     pub inject_access_list: bool,
+    pub use_max_gas_priority_fee: bool,
 }
 
 pub enum ForkName {
@@ -660,6 +662,7 @@ pub enum ForkName {
     ScillaFixContractCodeRemovalOnEvmTx,
     RestoreIgniteWalletContracts,
     InjectAccessList,
+    UseMaxGasPriorityFee,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -766,6 +769,8 @@ pub struct ForkDelta {
     pub check_minimum_gas_price: Option<bool>,
     /// if true, inject access list into execution
     pub inject_access_list: Option<bool>,
+    /// if true, use max gas priority fee
+    pub use_max_gas_priority_fee: Option<bool>,
 }
 
 impl Fork {
@@ -861,6 +866,9 @@ impl Fork {
                 .check_minimum_gas_price
                 .unwrap_or(self.check_minimum_gas_price),
             inject_access_list: delta.inject_access_list.unwrap_or(self.inject_access_list),
+            use_max_gas_priority_fee: delta
+                .use_max_gas_priority_fee
+                .unwrap_or(self.use_max_gas_priority_fee),
         }
     }
 }
@@ -959,6 +967,7 @@ pub fn genesis_fork_default() -> Fork {
         scilla_failed_txn_correct_gas_fee_charged: true,
         check_minimum_gas_price: true,
         inject_access_list: true,
+        use_max_gas_priority_fee: true,
     }
 }
 
@@ -1109,6 +1118,7 @@ mod tests {
                 scilla_failed_txn_correct_gas_fee_charged: None,
                 check_minimum_gas_price: None,
                 inject_access_list: None,
+                use_max_gas_priority_fee: None,
             }],
             ..Default::default()
         };
@@ -1162,6 +1172,7 @@ mod tests {
                     scilla_failed_txn_correct_gas_fee_charged: None,
                     check_minimum_gas_price: None,
                     inject_access_list: None,
+                    use_max_gas_priority_fee: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1195,6 +1206,7 @@ mod tests {
                     scilla_failed_txn_correct_gas_fee_charged: None,
                     check_minimum_gas_price: None,
                     inject_access_list: None,
+                    use_max_gas_priority_fee: None,
                 },
             ],
             ..Default::default()
@@ -1262,6 +1274,7 @@ mod tests {
                     scilla_failed_txn_correct_gas_fee_charged: None,
                     check_minimum_gas_price: None,
                     inject_access_list: None,
+                    use_max_gas_priority_fee: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1295,6 +1308,7 @@ mod tests {
                     scilla_failed_txn_correct_gas_fee_charged: None,
                     check_minimum_gas_price: None,
                     inject_access_list: None,
+                    use_max_gas_priority_fee: None,
                 },
             ],
             ..Default::default()
@@ -1353,6 +1367,7 @@ mod tests {
                 scilla_failed_txn_correct_gas_fee_charged: true,
                 check_minimum_gas_price: true,
                 inject_access_list: true,
+                use_max_gas_priority_fee: true,
             },
             forks: vec![],
             ..Default::default()
@@ -1399,6 +1414,7 @@ mod tests {
                     scilla_failed_txn_correct_gas_fee_charged: None,
                     check_minimum_gas_price: None,
                     inject_access_list: None,
+                    use_max_gas_priority_fee: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1432,6 +1448,7 @@ mod tests {
                     scilla_failed_txn_correct_gas_fee_charged: None,
                     check_minimum_gas_price: None,
                     inject_access_list: None,
+                    use_max_gas_priority_fee: None,
                 },
             ],
             ..Default::default()
