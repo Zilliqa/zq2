@@ -594,6 +594,7 @@ impl Forks {
                     fork.scilla_fix_contract_code_removal_on_evm_tx
                 }
                 ForkName::RestoreIgniteWalletContracts => fork.restore_ignite_wallet_contracts,
+                ForkName::InjectAccessList => fork.inject_access_list,
             } {
                 return Some(fork.at_height);
             }
@@ -634,6 +635,7 @@ pub struct Fork {
     pub prevent_zil_transfer_from_evm_to_scilla_contract: bool,
     pub scilla_failed_txn_correct_gas_fee_charged: bool,
     pub check_minimum_gas_price: bool,
+    pub inject_access_list: bool,
 }
 
 pub enum ForkName {
@@ -657,6 +659,7 @@ pub enum ForkName {
     RevertRestoreXsgdContract,
     ScillaFixContractCodeRemovalOnEvmTx,
     RestoreIgniteWalletContracts,
+    InjectAccessList,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -761,6 +764,8 @@ pub struct ForkDelta {
     pub scilla_failed_txn_correct_gas_fee_charged: Option<bool>,
     /// if true, there's a check if transaction uses at least minimum gas price
     pub check_minimum_gas_price: Option<bool>,
+    /// if true, inject access list into execution
+    pub inject_access_list: Option<bool>,
 }
 
 impl Fork {
@@ -855,6 +860,7 @@ impl Fork {
             check_minimum_gas_price: delta
                 .check_minimum_gas_price
                 .unwrap_or(self.check_minimum_gas_price),
+            inject_access_list: delta.inject_access_list.unwrap_or(self.inject_access_list),
         }
     }
 }
@@ -952,6 +958,7 @@ pub fn genesis_fork_default() -> Fork {
         prevent_zil_transfer_from_evm_to_scilla_contract: true,
         scilla_failed_txn_correct_gas_fee_charged: true,
         check_minimum_gas_price: true,
+        inject_access_list: true,
     }
 }
 
@@ -1101,6 +1108,7 @@ mod tests {
                 prevent_zil_transfer_from_evm_to_scilla_contract: None,
                 scilla_failed_txn_correct_gas_fee_charged: None,
                 check_minimum_gas_price: None,
+                inject_access_list: None,
             }],
             ..Default::default()
         };
@@ -1153,6 +1161,7 @@ mod tests {
                     prevent_zil_transfer_from_evm_to_scilla_contract: None,
                     scilla_failed_txn_correct_gas_fee_charged: None,
                     check_minimum_gas_price: None,
+                    inject_access_list: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1185,6 +1194,7 @@ mod tests {
                     prevent_zil_transfer_from_evm_to_scilla_contract: None,
                     scilla_failed_txn_correct_gas_fee_charged: None,
                     check_minimum_gas_price: None,
+                    inject_access_list: None,
                 },
             ],
             ..Default::default()
@@ -1251,6 +1261,7 @@ mod tests {
                     prevent_zil_transfer_from_evm_to_scilla_contract: None,
                     scilla_failed_txn_correct_gas_fee_charged: None,
                     check_minimum_gas_price: None,
+                    inject_access_list: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1283,6 +1294,7 @@ mod tests {
                     prevent_zil_transfer_from_evm_to_scilla_contract: None,
                     scilla_failed_txn_correct_gas_fee_charged: None,
                     check_minimum_gas_price: None,
+                    inject_access_list: None,
                 },
             ],
             ..Default::default()
@@ -1340,6 +1352,7 @@ mod tests {
                 prevent_zil_transfer_from_evm_to_scilla_contract: true,
                 scilla_failed_txn_correct_gas_fee_charged: true,
                 check_minimum_gas_price: true,
+                inject_access_list: true,
             },
             forks: vec![],
             ..Default::default()
@@ -1385,6 +1398,7 @@ mod tests {
                     prevent_zil_transfer_from_evm_to_scilla_contract: None,
                     scilla_failed_txn_correct_gas_fee_charged: None,
                     check_minimum_gas_price: None,
+                    inject_access_list: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1417,6 +1431,7 @@ mod tests {
                     prevent_zil_transfer_from_evm_to_scilla_contract: None,
                     scilla_failed_txn_correct_gas_fee_charged: None,
                     check_minimum_gas_price: None,
+                    inject_access_list: None,
                 },
             ],
             ..Default::default()
