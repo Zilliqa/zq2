@@ -556,6 +556,16 @@ impl State {
             has_called_scilla_precompile: false,
             missed_views: self.missed_views.clone(),
         };
+        let access_list = if fork.inject_access_list {
+            access_list.unwrap_or_default()
+        } else {
+            vec![]
+        };
+        let gas_priority_fee = if fork.use_max_gas_priority_fee {
+            max_priority_fee_per_gas.map(U256::from)
+        } else {
+            None
+        };
         let pending_state = PendingState::new(self.clone(), fork.clone());
         let mut evm = Evm::builder()
             .with_db(pending_state)
@@ -596,8 +606,8 @@ impl State {
                 data: payload.clone().into(),
                 nonce,
                 chain_id: Some(self.chain_id.eth),
-                access_list: access_list.unwrap_or_default(),
-                gas_priority_fee: max_priority_fee_per_gas.map(U256::from),
+                access_list,
+                gas_priority_fee,
                 blob_hashes: vec![],
                 max_fee_per_blob_gas: None,
                 authorization_list: None,
