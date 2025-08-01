@@ -133,6 +133,7 @@ impl Chain {
                 "scilla_failed_txn_correct_gas_fee_charged": false,
                 "check_minimum_gas_price": false,
                 "inject_access_list": false,
+                "use_max_gas_priority_fee": false,
             })),
             Chain::Zq2Mainnet => Some(json!({
                 "at_height": 0,
@@ -166,6 +167,7 @@ impl Chain {
                 "scilla_failed_txn_correct_gas_fee_charged": false,
                 "check_minimum_gas_price": false,
                 "inject_access_list": false,
+                "use_max_gas_priority_fee": false,
             })),
             _ => None,
         }
@@ -204,7 +206,7 @@ impl Chain {
                 // estimated: 2025-07-28T12.00.00Z
                 json!({ "at_height": 10854709, "scilla_failed_txn_correct_gas_fee_charged": true, "check_minimum_gas_price": true}),
                 // estimated: 2025-08-02T12.00.00Z
-                json!({ "at_height": 11300000, "inject_access_list": true}),
+                json!({ "at_height": 11300000, "inject_access_list": true, "use_max_gas_priority_fee": true}),
             ]),
             Chain::Zq2Mainnet => Some(vec![
                 json!({ "at_height": 4770088, "executable_blocks": true }),
@@ -244,7 +246,7 @@ impl Chain {
                 // estimated: 2025-07-29T12.00.00Z
                 json!({ "at_height": 6771996, "scilla_failed_txn_correct_gas_fee_charged": true, "check_minimum_gas_price": true}),
                 // estimated: 2025-08-04T12.00.00Z
-                json!({ "at_height": 7000000, "inject_access_list": true}),
+                json!({ "at_height": 7000000, "inject_access_list": true, "use_max_gas_priority_fee": true}),
             ]),
             _ => None,
         }
