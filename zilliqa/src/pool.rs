@@ -1,6 +1,7 @@
 use std::{
-    cmp::Ordering,
+    cmp::{Ordering, min},
     collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
+    time::Duration,
 };
 
 use alloy::primitives::Address;
@@ -11,6 +12,7 @@ use tracing::debug;
 use crate::{
     crypto::Hash,
     state::{Account, State},
+    time::SystemTime,
     transaction::{SignedTransaction, ValidationOutcome, VerifiedTransaction},
 };
 
@@ -422,6 +424,40 @@ impl TransactionsAccount {
             })
     }
 
+    #[allow(clippy::collapsible_else_if)] // Clearer semantics
+    fn delete_transactions<I>(&mut self, txns: I) -> Vec<VerifiedTransaction>
+    where
+        I: IntoIterator<Item = VerifiedTransaction>,
+    {
+        let mut recalculate_needed = false;
+        let mut result = Vec::new();
+        for txn in txns {
+            if let Some(nonce) = txn.tx.nonce() {
+                if let Some(removed_txn) = self.nonced_transactions_pending.remove(&nonce) {
+                    result.push(removed_txn);
+                    recalculate_needed = true;
+                } else if let Some(removed_txn) = self.nonced_transactions_queued.remove(&nonce) {
+                    result.push(removed_txn);
+                }
+            } else {
+                if let Some(removed_txn) =
+                    self.nonceless_transactions_pending.remove(&(&txn).into())
+                {
+                    result.push(removed_txn);
+                    recalculate_needed = true;
+                } else if let Some(removed_txn) =
+                    self.nonceless_transactions_queued.remove(&(&txn).into())
+                {
+                    result.push(removed_txn);
+                }
+            }
+        }
+        if recalculate_needed {
+            self.full_recalculate();
+        }
+        result
+    }
+
     fn mark_executed(&mut self, txn: &VerifiedTransaction) -> Vec<Hash> {
         if let std::collections::btree_map::Entry::Occupied(entry) =
             self.nonceless_transactions_pending.entry(txn.into())
@@ -489,11 +525,14 @@ impl TransactionsAccount {
 /// The pool is a set of pools for individual accounts (all_transactions), each of which maintains
 /// its own pending lists of nonced and nonceless transactions.
 /// When pending transactions are queried they just need to be merged from the individual accounts.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 struct TransactionPoolCore {
     all_transactions: HashMap<Address, TransactionsAccount>,
     pending_account_queue: BTreeSet<PendingQueueKey>,
-    hash_to_txn_map: HashMap<Hash, VerifiedTransaction>,
+    hash_to_txn_map: HashMap<Hash, (VerifiedTransaction, SystemTime)>, // Also tracks insertion times
+    oldest_insertion_time: Option<SystemTime>, // For efficiency, this is only updated during clear_old_transactions
+    pool_expiry_time_minimum: Duration, // Transactions are allowed to remain at least this long in the pool
+    expiry_time_clearout_threshold: Duration, // When oldest_insertion_time reaches this age, a clearout is initiated
     // Keeps track of the total number of transactions in the pool for speed
     total_transactions_counter: usize,
 }
@@ -614,7 +653,7 @@ impl TransactionPoolCore {
     }
 
     fn get_transaction_by_hash(&self, hash: &Hash) -> Option<&VerifiedTransaction> {
-        self.hash_to_txn_map.get(hash)
+        self.hash_to_txn_map.get(hash).map(|(txn, _)| txn)
     }
 
     fn update_txn(&mut self, txn: VerifiedTransaction) {
@@ -624,10 +663,12 @@ impl TransactionPoolCore {
         }
         let old_hash = transactions_account.update_txn(txn.clone()).unwrap();
         self.hash_to_txn_map.remove(&old_hash);
-        self.hash_to_txn_map.insert(txn.hash, txn);
+        self.hash_to_txn_map
+            .insert(txn.hash, (txn, SystemTime::now()));
         if let Some(pending_queue_key) = transactions_account.get_pending_queue_key() {
             self.pending_account_queue.insert(pending_queue_key);
         }
+        self.clear_old_transactions();
     }
 
     fn add_txn(&mut self, txn: VerifiedTransaction, account: &Account) {
@@ -652,7 +693,10 @@ impl TransactionPoolCore {
         if let Some(pending_queue_key) = transactions_account.get_pending_queue_key() {
             self.pending_account_queue.insert(pending_queue_key);
         }
-        self.hash_to_txn_map.insert(txn.hash, txn);
+        self.hash_to_txn_map
+            .insert(txn.hash, (txn, SystemTime::now()));
+        self.oldest_insertion_time.get_or_insert(SystemTime::now());
+        self.clear_old_transactions();
     }
 
     fn preview_content(&self) -> TxPoolContent {
@@ -698,6 +742,7 @@ impl TransactionPoolCore {
         self.all_transactions.clear();
         self.hash_to_txn_map.clear();
         self.total_transactions_counter = 0;
+        self.oldest_insertion_time = None;
     }
 
     fn peek_best_txn(&self) -> Option<&VerifiedTransaction> {
@@ -757,6 +802,75 @@ impl TransactionPoolCore {
             if account.is_empty() {
                 self.all_transactions.remove(&address);
             }
+        }
+    }
+
+    fn delete_transactions<I>(&mut self, txns: I)
+    where
+        I: IntoIterator<Item = VerifiedTransaction>,
+    {
+        let mut to_delete: HashMap<Address, Vec<VerifiedTransaction>> = HashMap::new();
+        for txn in txns {
+            let address = txn.signer;
+            to_delete.entry(address).or_default().push(txn);
+        }
+        for (address, txns) in to_delete {
+            if let Some(transactions_account) = self.all_transactions.get_mut(&address) {
+                if let Some(pending_queue_key) = transactions_account.get_pending_queue_key() {
+                    self.pending_account_queue.remove(&pending_queue_key);
+                }
+                let removed_txns = transactions_account.delete_transactions(txns);
+                self.total_transactions_counter -= removed_txns.len();
+                if let Some(pending_queue_key) = transactions_account.get_pending_queue_key() {
+                    self.pending_account_queue.insert(pending_queue_key);
+                }
+                if transactions_account.is_empty() {
+                    self.all_transactions.remove(&address);
+                }
+                for txn in removed_txns {
+                    self.hash_to_txn_map.remove(&txn.hash);
+                }
+            }
+        }
+    }
+
+    fn clear_old_transactions(&mut self) {
+        if self
+            .oldest_insertion_time
+            .is_none_or(|x| x.elapsed().unwrap() < self.expiry_time_clearout_threshold)
+        {
+            // No transactions older than maximum age, so no need to clear
+            return;
+        }
+        let oldest_allowable_insertion_time = SystemTime::now()
+            .checked_sub(self.pool_expiry_time_minimum)
+            .unwrap();
+        let mut transactions_to_delete = Vec::new();
+        self.oldest_insertion_time = None;
+        for (txn, insertion_time) in self.hash_to_txn_map.values() {
+            if *insertion_time < oldest_allowable_insertion_time {
+                transactions_to_delete.push(txn.clone());
+            } else {
+                self.oldest_insertion_time = Some(
+                    self.oldest_insertion_time
+                        .map_or(*insertion_time, |x| min(x, *insertion_time)),
+                )
+            }
+        }
+        self.delete_transactions(transactions_to_delete);
+    }
+}
+
+impl Default for TransactionPoolCore {
+    fn default() -> Self {
+        Self {
+            all_transactions: HashMap::new(),
+            pending_account_queue: BTreeSet::new(),
+            hash_to_txn_map: HashMap::new(),
+            oldest_insertion_time: None,
+            pool_expiry_time_minimum: Duration::from_secs(60 * 60 * 24),
+            expiry_time_clearout_threshold: Duration::from_secs(60 * 60 * 48),
+            total_transactions_counter: 0,
         }
     }
 }
@@ -2414,6 +2528,428 @@ mod tests {
         pool.insert_transaction(txn0, &old_acc, true);
         pool.insert_transaction(txn1, &old_acc, true);
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_transaction_expiry_basic() -> Result<()> {
+        use std::time::Duration;
+
+        use crate::time::{advance, sync_with_fake_time};
+
+        sync_with_fake_time(|| {
+            let mut pool = TransactionPool::default();
+            let addr = "0x0000000000000000000000000000000000000001"
+                .parse()
+                .unwrap();
+            let mut state = get_in_memory_state().unwrap();
+            let acc = create_acc(&mut state, addr, 100, 0).unwrap();
+
+            // Set shorter expiry times for testing
+            pool.core.pool_expiry_time_minimum = Duration::from_secs(5);
+            pool.core.expiry_time_clearout_threshold = Duration::from_secs(10);
+
+            let txn1 = transaction(addr, 0, 10);
+            let txn2 = transaction(addr, 1, 20);
+
+            // Insert transactions at time 0
+            pool.insert_transaction(txn1.clone(), &acc, false);
+            pool.insert_transaction(txn2.clone(), &acc, false);
+
+            assert_eq!(pool.transaction_count(), 2);
+            assert!(pool.get_transaction(&txn1.hash).is_some());
+            assert!(pool.get_transaction(&txn2.hash).is_some());
+
+            // Advance time by 5 seconds - transactions should still be there
+            advance(Duration::from_secs(5));
+
+            // Trigger a potential cleanup by adding another transaction
+            let txn3 = transaction(addr, 2, 15);
+            pool.insert_transaction(txn3.clone(), &acc, false);
+
+            assert_eq!(pool.transaction_count(), 3);
+            assert!(pool.get_transaction(&txn1.hash).is_some());
+            assert!(pool.get_transaction(&txn2.hash).is_some());
+
+            // Advance time by another 10 seconds (total 15 seconds)
+            // This should exceed expiry_time_clearout_threshold and trigger cleanup
+            advance(Duration::from_secs(10));
+
+            // Add another transaction to trigger cleanup
+            let txn4 = transaction(addr, 3, 25);
+            pool.insert_transaction(txn4.clone(), &acc, false);
+
+            // The first two transactions should be expired and removed
+            assert_eq!(pool.transaction_count(), 1);
+            assert!(pool.get_transaction(&txn1.hash).is_none());
+            assert!(pool.get_transaction(&txn2.hash).is_none());
+            assert!(pool.get_transaction(&txn3.hash).is_none());
+            assert!(pool.get_transaction(&txn4.hash).is_some());
+        });
+        Ok(())
+    }
+
+    #[test]
+    fn test_transaction_expiry_with_mixed_ages() -> Result<()> {
+        use std::time::Duration;
+
+        use crate::time::{advance, sync_with_fake_time};
+
+        sync_with_fake_time(|| {
+            let mut pool = TransactionPool::default();
+            let addr = "0x0000000000000000000000000000000000000001"
+                .parse()
+                .unwrap();
+            let mut state = get_in_memory_state().unwrap();
+            let acc = create_acc(&mut state, addr, 200, 0).unwrap();
+
+            pool.core.pool_expiry_time_minimum = Duration::from_secs(10);
+            pool.core.expiry_time_clearout_threshold = Duration::from_secs(15);
+
+            // Insert first batch of transactions
+            let txn1 = transaction(addr, 0, 10);
+            let txn2 = transaction(addr, 1, 20);
+            pool.insert_transaction(txn1.clone(), &acc, false);
+            pool.insert_transaction(txn2.clone(), &acc, false);
+
+            // Advance time by 8 seconds
+            advance(Duration::from_secs(8));
+
+            // Insert more transactions (these will be newer)
+            let txn3 = transaction(addr, 2, 15);
+            let txn4 = transaction(addr, 3, 25);
+            pool.insert_transaction(txn3.clone(), &acc, false);
+            pool.insert_transaction(txn4.clone(), &acc, false);
+
+            assert_eq!(pool.transaction_count(), 4);
+
+            // Advance time by another 8 seconds (total 16 seconds from start)
+            // This should trigger cleanup of the first batch
+            advance(Duration::from_secs(8));
+
+            // Add a new transaction to trigger the cleanup check
+            let txn5 = transaction(addr, 4, 30);
+            pool.insert_transaction(txn5.clone(), &acc, false);
+
+            // First two transactions should be expired, others should remain
+            assert_eq!(pool.transaction_count(), 3);
+            assert!(pool.get_transaction(&txn1.hash).is_none());
+            assert!(pool.get_transaction(&txn2.hash).is_none());
+            assert!(pool.get_transaction(&txn3.hash).is_some());
+            assert!(pool.get_transaction(&txn4.hash).is_some());
+            assert!(pool.get_transaction(&txn5.hash).is_some());
+        });
+        Ok(())
+    }
+
+    #[test]
+    fn test_expiry_across_multiple_accounts() -> Result<()> {
+        use std::time::Duration;
+
+        use crate::time::{advance, sync_with_fake_time};
+
+        sync_with_fake_time(|| {
+            let mut pool = TransactionPool::default();
+            let addr1 = "0x0000000000000000000000000000000000000001"
+                .parse()
+                .unwrap();
+            let addr2 = "0x0000000000000000000000000000000000000002"
+                .parse()
+                .unwrap();
+            let mut state = get_in_memory_state().unwrap();
+            let acc1 = create_acc(&mut state, addr1, 100, 0).unwrap();
+            let acc2 = create_acc(&mut state, addr2, 100, 0).unwrap();
+
+            pool.core.pool_expiry_time_minimum = Duration::from_secs(5);
+            pool.core.expiry_time_clearout_threshold = Duration::from_secs(10);
+
+            // Insert transactions from both accounts
+            let txn1_acc1 = transaction(addr1, 0, 10);
+            let txn1_acc2 = transaction(addr2, 0, 15);
+            pool.insert_transaction(txn1_acc1.clone(), &acc1, false);
+            pool.insert_transaction(txn1_acc2.clone(), &acc2, false);
+
+            // Advance time to trigger expiry
+            advance(Duration::from_secs(15));
+
+            // Add new transaction to trigger cleanup
+            let txn2_acc1 = transaction(addr1, 1, 20);
+            pool.insert_transaction(txn2_acc1.clone(), &acc1, false);
+
+            // Old transactions should be expired
+            assert!(pool.get_transaction(&txn1_acc1.hash).is_none());
+            assert!(pool.get_transaction(&txn1_acc2.hash).is_none());
+            assert!(pool.get_transaction(&txn2_acc1.hash).is_some());
+            assert_eq!(pool.transaction_count(), 1);
+        });
+        Ok(())
+    }
+
+    #[test]
+    fn test_no_premature_expiry() -> Result<()> {
+        use std::time::Duration;
+
+        use crate::time::{advance, sync_with_fake_time};
+
+        sync_with_fake_time(|| {
+            let mut pool = TransactionPool::default();
+            let addr = "0x0000000000000000000000000000000000000001"
+                .parse()
+                .unwrap();
+            let mut state = get_in_memory_state().unwrap();
+            let acc = create_acc(&mut state, addr, 100, 0).unwrap();
+
+            pool.core.pool_expiry_time_minimum = Duration::from_secs(2);
+            pool.core.expiry_time_clearout_threshold = Duration::from_secs(4);
+
+            let txn1 = transaction(addr, 0, 10);
+            pool.insert_transaction(txn1.clone(), &acc, false);
+
+            // Advance time, but not enough to trigger clearout threshold
+            advance(Duration::from_secs(3));
+
+            // Add another transaction - should not trigger cleanup
+            let txn2 = transaction(addr, 1, 20);
+            pool.insert_transaction(txn2.clone(), &acc, false);
+
+            // Both transactions should still be there
+            assert_eq!(pool.transaction_count(), 2);
+            assert!(pool.get_transaction(&txn1.hash).is_some());
+            assert!(pool.get_transaction(&txn2.hash).is_some());
+        });
+        Ok(())
+    }
+
+    #[test]
+    fn test_bulk_transaction_deletion() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let addr1 = "0x0000000000000000000000000000000000000001".parse()?;
+        let addr2 = "0x0000000000000000000000000000000000000002".parse()?;
+        let mut state = get_in_memory_state()?;
+        let acc1 = create_acc(&mut state, addr1, 200, 0)?;
+        let acc2 = create_acc(&mut state, addr2, 200, 0)?;
+
+        // Insert multiple transactions from both accounts
+        let txn1_acc1 = transaction(addr1, 0, 10);
+        let txn2_acc1 = transaction(addr1, 1, 20);
+        let txn3_acc1 = transaction(addr1, 2, 15);
+        let txn1_acc2 = transaction(addr2, 0, 25);
+        let txn2_acc2 = transaction(addr2, 1, 30);
+
+        pool.insert_transaction(txn1_acc1.clone(), &acc1, false);
+        pool.insert_transaction(txn2_acc1.clone(), &acc1, false);
+        pool.insert_transaction(txn3_acc1.clone(), &acc1, false);
+        pool.insert_transaction(txn1_acc2.clone(), &acc2, false);
+        pool.insert_transaction(txn2_acc2.clone(), &acc2, false);
+
+        assert_eq!(pool.transaction_count(), 5);
+
+        // Use the internal delete_transactions method to bulk delete
+        let to_delete = vec![txn1_acc1.clone(), txn2_acc1.clone(), txn2_acc2.clone()];
+        pool.core.delete_transactions(to_delete);
+
+        // Should have 2 transactions remaining
+        assert_eq!(pool.transaction_count(), 2);
+
+        // Check which transactions remain
+        assert!(pool.get_transaction(&txn1_acc1.hash).is_none());
+        assert!(pool.get_transaction(&txn2_acc1.hash).is_none());
+        assert!(pool.get_transaction(&txn1_acc2.hash).is_some());
+        assert!(pool.get_transaction(&txn3_acc1.hash).is_some());
+        assert!(pool.get_transaction(&txn2_acc2.hash).is_none());
+
+        // Verify pending queue is updated correctly
+        assert!(pool.has_txn_ready());
+        let best = pool.best_transaction().unwrap();
+        // Should be txn2_acc2 with highest gas price (30)
+        assert_eq!(best.hash, txn1_acc2.hash);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_deletion_of_nonexistent_transactions() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let addr = "0x0000000000000000000000000000000000000001".parse()?;
+        let mut state = get_in_memory_state()?;
+        let acc = create_acc(&mut state, addr, 100, 0)?;
+
+        let txn1 = transaction(addr, 0, 10);
+        let txn2 = transaction(addr, 1, 20);
+        let txn_nonexistent = transaction(addr, 5, 15); // Never inserted
+
+        pool.insert_transaction(txn1.clone(), &acc, false);
+        pool.insert_transaction(txn2.clone(), &acc, false);
+
+        assert_eq!(pool.transaction_count(), 2);
+
+        // Try to delete a mix of existing and non-existing transactions
+        let to_delete = vec![txn1.clone(), txn_nonexistent.clone()];
+        pool.core.delete_transactions(to_delete);
+
+        // Should have removed only the existing transaction
+        assert_eq!(pool.transaction_count(), 1);
+        assert!(pool.get_transaction(&txn1.hash).is_none());
+        assert!(pool.get_transaction(&txn2.hash).is_some());
+        assert!(pool.get_transaction(&txn_nonexistent.hash).is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_deletion_maintains_pool_consistency() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let addr = "0x0000000000000000000000000000000000000001".parse()?;
+        let mut state = get_in_memory_state()?;
+        let acc = create_acc(&mut state, addr, 50, 0)?; // Limited balance
+
+        // Insert transactions that will have mixed pending/queued status
+        let txn1 = transaction(addr, 0, 20); // Will be pending
+        let txn2 = transaction(addr, 1, 20); // Will be pending
+        let txn3 = transaction(addr, 2, 20); // Will be queued (insufficient balance)
+
+        pool.insert_transaction(txn1.clone(), &acc, false);
+        pool.insert_transaction(txn2.clone(), &acc, false);
+        pool.insert_transaction(txn3.clone(), &acc, false);
+
+        // Verify initial state
+        assert_eq!(pool.pending_transaction_count(), 2);
+        assert_eq!(pool.transaction_count(), 3);
+
+        // Delete one pending transaction
+        pool.core.delete_transactions(vec![txn1.clone()]);
+
+        // Pool should maintain consistency
+        assert_eq!(pool.transaction_count(), 2);
+        assert_eq!(pool.pending_transaction_count(), 0);
+        assert!(pool.get_transaction(&txn1.hash).is_none());
+        assert!(pool.get_transaction(&txn2.hash).is_some());
+        assert!(pool.get_transaction(&txn3.hash).is_some());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_deletion_updates_pending_queue_keys() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let addr1 = "0x0000000000000000000000000000000000000001".parse()?;
+        let addr2 = "0x0000000000000000000000000000000000000002".parse()?;
+        let mut state = get_in_memory_state()?;
+        let acc1 = create_acc(&mut state, addr1, 100, 0)?;
+        let acc2 = create_acc(&mut state, addr2, 100, 0)?;
+
+        let txn1_acc1 = transaction(addr1, 0, 30); // Highest gas price
+        let txn2_acc1 = transaction(addr1, 1, 10);
+        let txn1_acc2 = transaction(addr2, 0, 20);
+
+        pool.insert_transaction(txn1_acc1.clone(), &acc1, false);
+        pool.insert_transaction(txn2_acc1.clone(), &acc1, false);
+        pool.insert_transaction(txn1_acc2.clone(), &acc2, false);
+
+        // Best transaction should be txn1_acc1 (highest gas price)
+        assert_eq!(pool.best_transaction().unwrap().hash, txn1_acc1.hash);
+
+        dbg!(&pool.core.pending_account_queue);
+        dbg!(&pool.core.peek_best_txn());
+
+        // Delete the best transaction from account 1
+        pool.core.delete_transactions(vec![txn1_acc1.clone()]);
+
+        dbg!(&pool.core.pending_account_queue);
+        dbg!(&pool.core.peek_best_txn());
+
+        // Best transaction should now be txn1_acc2 (gas price 20)
+        let best = pool.best_transaction().unwrap();
+        assert_eq!(best.hash, txn1_acc2.hash);
+        assert_eq!(best.tx.gas_price_per_evm_gas(), 20);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_expiry_during_high_activity() -> Result<()> {
+        use std::time::Duration;
+
+        use crate::time::{advance, sync_with_fake_time};
+
+        sync_with_fake_time(|| {
+            let mut pool = TransactionPool::default();
+            let addr = "0x0000000000000000000000000000000000000001"
+                .parse()
+                .unwrap();
+            let mut state = get_in_memory_state().unwrap();
+            let acc = create_acc(&mut state, addr, 1000, 0).unwrap();
+
+            pool.core.pool_expiry_time_minimum = Duration::from_secs(5);
+            pool.core.expiry_time_clearout_threshold = Duration::from_secs(8);
+
+            // Insert initial transactions
+            for nonce in 0..10 {
+                let txn = transaction(addr, nonce, 10);
+                pool.insert_transaction(txn, &acc, false);
+            }
+            assert_eq!(pool.transaction_count(), 10);
+
+            // Advance time by 5 seconds
+            advance(Duration::from_secs(5));
+
+            // Insert more transactions (mixed ages now)
+            for nonce in 10..15 {
+                let txn = transaction(addr, nonce, 10);
+                pool.insert_transaction(txn, &acc, false);
+            }
+            assert_eq!(pool.transaction_count(), 15);
+
+            // Advance time by another 4 seconds (total 9 seconds)
+            // This should trigger cleanup of the first batch
+            advance(Duration::from_secs(4));
+
+            // Insert one more transaction to trigger cleanup
+            let final_txn = transaction(addr, 15, 10);
+            pool.insert_transaction(final_txn.clone(), &acc, false);
+
+            // Should have removed the first 10 transactions (they're older than 5 seconds)
+            // and kept the newer ones
+            assert_eq!(pool.transaction_count(), 6); // 5 from second batch + 1 new
+        });
+        Ok(())
+    }
+
+    #[test]
+    fn test_oldest_insertion_time_tracking() -> Result<()> {
+        use std::time::Duration;
+
+        use crate::time::{advance, sync_with_fake_time};
+
+        sync_with_fake_time(|| {
+            let mut pool = TransactionPool::default();
+            let addr = "0x0000000000000000000000000000000000000001"
+                .parse()
+                .unwrap();
+            let mut state = get_in_memory_state().unwrap();
+            let acc = create_acc(&mut state, addr, 100, 0).unwrap();
+
+            // Initially no oldest insertion time
+            assert!(pool.core.oldest_insertion_time.is_none());
+
+            // Insert first transaction
+            let txn1 = transaction(addr, 0, 10);
+            pool.insert_transaction(txn1.clone(), &acc, false);
+
+            // Should now have an oldest insertion time
+            assert!(pool.core.oldest_insertion_time.is_some());
+
+            // Advance time and insert another
+            advance(Duration::from_secs(5));
+            let txn2 = transaction(addr, 1, 20);
+            pool.insert_transaction(txn2.clone(), &acc, false);
+
+            // Clear the pool
+            pool.clear();
+
+            // Oldest insertion time should be reset
+            assert!(pool.core.oldest_insertion_time.is_none());
+        });
         Ok(())
     }
 }
