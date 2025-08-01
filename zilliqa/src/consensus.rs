@@ -29,7 +29,10 @@ use crate::{
     api::types::eth::SyncingStruct,
     aux, blockhooks,
     cfg::{ConsensusConfig, ForkName, NodeConfig},
-    constants::{EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, TIME_TO_ALLOW_PROPOSAL_BROADCAST},
+    constants::{
+        EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, MAX_MISSED_VIEW_AGE,
+        TIME_TO_ALLOW_PROPOSAL_BROADCAST,
+    },
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey, verify_messages},
     db::{self, BlockFilter, Db},
     exec::{PendingState, TransactionApplyResult},
@@ -406,6 +409,28 @@ impl Consensus {
             return Ok(consensus);
         } else if enable_ots_indices {
             aux::check_and_build_ots_indices(db, latest_block_view)?;
+        }
+
+        // TODO: check if the leader is fetched somewhere before this point
+        // after restarting, reconstruct the missed views history even before receiving new proposals
+        let mut block = latest_block.unwrap();
+        while let Some(parent) = consensus.get_block(&block.parent_hash())? {
+            let mut start = parent.view();
+            if start + MAX_MISSED_VIEW_AGE < latest_block_view {
+                start = latest_block_view - MAX_MISSED_VIEW_AGE - 1;
+            }
+            for view in (start + 1..block.view()).rev() {
+                if let Some(leader) = consensus.leader_for_view(parent.hash(), view) {
+                    let mut deque = consensus.state().missed_views.lock().unwrap();
+                    let id = &leader.as_bytes()[..3];
+                    info!(view, id, "~~~~~~~~~~> restoring missed");
+                    deque.push_front((view, leader));
+                }
+            }
+            block = parent;
+            if block.view() + MAX_MISSED_VIEW_AGE < latest_block_view {
+                break;
+            }
         }
 
         // If we started from a checkpoint, execute the checkpointed block now
@@ -789,6 +814,31 @@ impl Consensus {
                 block.number(),
                 block.hash()
             );
+            {
+                for view in parent.view() + 1..block.view() {
+                    if let Some(leader) = self.leader_for_view(parent.hash(), view) {
+                        let mut deque = self.state().missed_views.lock().unwrap();
+                        if let Some((last, _)) = deque.back() {
+                            if view <= *last {
+                                continue;
+                            }
+                        }
+                        let id = &leader.as_bytes()[..3];
+                        info!(view, id, "++++++++++> adding missed");
+                        deque.push_back((view, leader));
+                    }
+                }
+                let mut deque = self.state().missed_views.lock().unwrap();
+                while let Some((view, leader)) = deque.front() {
+                    if *view + MAX_MISSED_VIEW_AGE < block.view() {
+                        let id = &leader.as_bytes()[..3];
+                        info!(view, id, "----------> deleting missed");
+                        deque.pop_front();
+                    } else {
+                        break; // keys are monotonic
+                    }
+                }
+            }
 
             if head_block.hash() != parent.hash() || block.number() != head_block.header.number + 1
             {

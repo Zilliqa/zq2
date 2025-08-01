@@ -220,11 +220,34 @@ contract Deposit is UUPSUpgradeable {
 
     function leaderAtView(
         uint256 viewNumber
-    ) public view returns (bytes memory) {
-        uint256 randomness = uint256(
-            keccak256(bytes.concat(bytes32(viewNumber)))
-        );
-        return leaderFromRandomness(randomness);
+    ) public view returns (bytes memory stakerKey) {
+        uint256 randomness = viewNumber;
+        bytes memory output;
+        do {
+            randomness = uint256(
+                keccak256(bytes.concat(bytes32(randomness)))
+            );
+            stakerKey = leaderFromRandomness(randomness);
+            bytes memory input = abi.encodeWithSelector(
+                hex"5db5c142", // bytes4(keccak256("jailed(bytes,uint256)"))
+                stakerKey,
+                viewNumber
+            );
+            uint256 inputLength = input.length;
+            output = new bytes(32);
+            bool success;
+            assembly {
+                success := staticcall(
+                    gas(),
+                    0x5a494c82, // "ZIL\x82"
+                    add(input, 0x20),
+                    inputLength,
+                    add(output, 0x20),
+                    32
+                )
+            }
+            require(success, "Penalty precompile failed");
+        } while(abi.decode(output, (bool)));
     }
 
     function getStakers() public view returns (bytes[] memory) {
