@@ -45,7 +45,7 @@ bincode = { version = "2.0.1", features = ["serde"] }
 bitvec = { version = "1.0.1", features = ["serde"] }
 bs58 = "0.5.1"
 bytes = "1.10.0"
-clap = { version = "4.5.41", features = ["derive"] }
+clap = { version = "4.5.42", features = ["derive"] }
 eth_trie = { path = "../eth-trie.rs" }
 ethabi = "18.0.0"
 futures = "0.3.31"
