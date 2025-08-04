@@ -80,3 +80,6 @@ pub const EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER: f32 = 1.25f32;
 // base_fee: 0
 // priority fee_per_gas: gas_price
 pub const BASE_FEE_PER_GAS: u128 = 0;
+
+// Max age of the items in the missed view history
+pub const MAX_MISSED_VIEW_AGE: u64 = 100;
