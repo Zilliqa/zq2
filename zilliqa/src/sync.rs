@@ -360,7 +360,7 @@ impl Sync {
                 self.request_missing_headers()?;
             }
             // Continue phase 2, until we have all segments.
-            SyncState::Phase2(_) if self.in_pipeline < self.max_blocks_in_flight => {
+            SyncState::Phase2(_) if self.in_pipeline < self.max_batch_size => {
                 self.request_missing_blocks()?;
             }
             // Wait till 99% synced, zip it up!
