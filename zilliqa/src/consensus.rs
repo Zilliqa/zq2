@@ -242,7 +242,7 @@ pub struct Consensus {
 
 impl Consensus {
     // determined empirically
-    const PROP_SIZE_THRESHOLD: usize = 921 * 1024; // 90% of 1MB
+    const PROP_SIZE_THRESHOLD: usize = crate::constants::PROPOSAL_THRESHOLD;
     // view buffer size limit
     const VIEW_BUFFER_THRESHOLD: usize = 1000;
 

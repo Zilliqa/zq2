@@ -151,7 +151,7 @@ impl Sync {
     // Timeout for passive-sync/prune
     const PRUNE_TIMEOUT_MS: u128 = 1000;
     // Do not overflow libp2p::request-response::cbor::codec::RESPONSE_SIZE_MAXIMUM = 10MB (default)
-    const RESPONSE_SIZE_THRESHOLD: usize = 8 * 1024 * 1024;
+    const RESPONSE_SIZE_THRESHOLD: usize = crate::constants::SYNC_THRESHOLD;
     // periodic vacuum interval
     const VACUUM_INTERVAL: u64 = 604800; // 'weekly'
 
