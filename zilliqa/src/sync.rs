@@ -1833,24 +1833,13 @@ struct SyncSegments {
 
 impl SyncSegments {
     fn new() -> Self {
-        let path = tempdir().unwrap();
-        tracing::info!("Sync-db {}", path.path().display());
-        let counter: usize = 0;
-
-        // the choice of SLED is purely ergonomics; any key-value store will do.
-        let db = sled::open(path.into_path().as_os_str()).unwrap();
-        let markers = db.open_tree("markers").unwrap();
-
-        // forcibly insert a 0-th marker, because the code below assumes that it defaults to 0
-        let marker = SyncMarker {
-            hash: Hash::ZERO,
-            peer: PeerId::random(),
+        let mut sync = SyncSegments {
+            counter: 0,
+            // use an in-memory database first, as it will be replaced with a persistent one later
+            db: sled::Config::new().temporary(true).open().unwrap(),
         };
-
-        // the choice of cbor4ii is purely ergonomics; any serializer will do.
-        let marker = cbor4ii::serde::to_vec(Vec::with_capacity(1024), &marker).unwrap_or_default();
-        markers.insert(counter.to_be_bytes(), marker).unwrap();
-        SyncSegments { counter, db }
+        sync.empty_sync_metadata().unwrap();
+        sync
     }
 
     /// Returns the number of stored sync segments
@@ -1948,10 +1937,21 @@ impl SyncSegments {
     /// Empty the metadata table.
     fn empty_sync_metadata(&mut self) -> Result<()> {
         self.counter = 0;
-        let markers = self.db.open_tree("markers")?;
-        let zero = markers.get(self.counter.to_be_bytes())?.unwrap_or_default();
-        self.db.drop_tree("headers")?;
-        self.db.drop_tree("markers")?;
+
+        // drop existing db, reopen new one, to free up disk space
+        let path = tempdir().unwrap();
+        self.db = sled::Config::new()
+            .path(path.into_path())
+            .mode(sled::Mode::LowSpace)
+            .temporary(true)
+            .open()?;
+
+        // forcibly insert a 0-th marker
+        let marker = SyncMarker {
+            hash: Hash::ZERO,
+            peer: PeerId::random(),
+        };
+        let zero = cbor4ii::serde::to_vec(Vec::with_capacity(1024), &marker).unwrap_or_default();
         let markers = self.db.open_tree("markers")?;
         markers.insert(self.counter.to_be_bytes(), zero)?;
         Ok(())
