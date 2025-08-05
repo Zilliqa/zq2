@@ -1947,8 +1947,13 @@ impl SyncSegments {
 
     /// Empty the metadata table.
     fn empty_sync_metadata(&mut self) -> Result<()> {
-        self.db.drop_tree("markers")?;
+        self.counter = 0;
+        let markers = self.db.open_tree("markers")?;
+        let zero = markers.get(self.counter.to_be_bytes())?.unwrap_or_default();
         self.db.drop_tree("headers")?;
+        self.db.drop_tree("markers")?;
+        let markers = self.db.open_tree("markers")?;
+        markers.insert(self.counter.to_be_bytes(), zero)?;
         Ok(())
     }
 
