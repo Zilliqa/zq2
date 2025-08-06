@@ -224,8 +224,6 @@ pub struct BlockAndReceiptsAndTransactions {
     pub transactions: Vec<VerifiedTransaction>,
 }
 
-const CHECKPOINT_HEADER_BYTES: [u8; 8] = *b"ZILCHKPT";
-
 /// Version string that is written to disk along with the persisted database. This should be bumped whenever we make a
 /// backwards incompatible change to our database format. This should be done rarely, since it forces all node
 /// operators to re-sync.
@@ -550,68 +548,20 @@ impl Db {
         hash: &Hash,
         our_shard_id: u64,
     ) -> Result<Option<(Block, Vec<SignedTransaction>, Block)>> {
-        // For now, only support a single version: you want to load the latest checkpoint, anyway.
-        const SUPPORTED_VERSION: u32 = 3;
-
-        // Decompress file and write to temp file
+        // Decompress the file for processing
         let input_file = File::open(path.as_ref())?;
         let buf_reader: BufReader<File> = BufReader::with_capacity(128 * 1024 * 1024, input_file);
         let mut reader = Decoder::new(buf_reader)?;
+
+        let Some((block, transactions, parent)) =
+            crate::checkpoint::get_checkpoint_block(&mut reader, hash, our_shard_id)?
+        else {
+            return Err(anyhow!("invalid checkpoint file"));
+        };
+
+        // Process the State Trie
         let trie_storage = Arc::new(self.state_trie()?);
         let mut state_trie = EthTrie::new(trie_storage.clone());
-
-        // Decode and validate header
-        let mut header: [u8; 21] = [0u8; 21];
-        reader.read_exact(&mut header)?;
-        let header = header;
-        if header[0..8] != CHECKPOINT_HEADER_BYTES // magic bytes
-            || header[20] != b'\n'
-        // header must end in newline
-        {
-            return Err(anyhow!("Invalid checkpoint file: invalid header"));
-        }
-        let version = u32::from_be_bytes(header[8..12].try_into()?);
-        // Only support a single version right now.
-        if version != SUPPORTED_VERSION {
-            return Err(anyhow!("Invalid checkpoint file: unsupported version."));
-        }
-        let shard_id = u64::from_be_bytes(header[12..20].try_into()?);
-        if shard_id != our_shard_id {
-            return Err(anyhow!("Invalid checkpoint file: wrong shard ID."));
-        }
-
-        // Decode and validate checkpoint block, its transactions and parent block
-        let mut block_len_buf = [0u8; std::mem::size_of::<u64>()];
-        reader.read_exact(&mut block_len_buf)?;
-        let mut block_ser = vec![0u8; usize::try_from(u64::from_be_bytes(block_len_buf))?];
-        reader.read_exact(&mut block_ser)?;
-        let block: Block =
-            bincode::serde::decode_from_slice(&block_ser, bincode::config::legacy())?.0;
-        if block.hash() != *hash {
-            return Err(anyhow!("Checkpoint does not match trusted hash"));
-        }
-        block.verify_hash()?;
-
-        let mut transactions_len_buf = [0u8; std::mem::size_of::<u64>()];
-        reader.read_exact(&mut transactions_len_buf)?;
-        let mut transactions_ser =
-            vec![0u8; usize::try_from(u64::from_be_bytes(transactions_len_buf))?];
-        reader.read_exact(&mut transactions_ser)?;
-        let transactions =
-            bincode::serde::decode_from_slice(&transactions_ser, bincode::config::legacy())?.0;
-
-        let mut parent_len_buf = [0u8; std::mem::size_of::<u64>()];
-        reader.read_exact(&mut parent_len_buf)?;
-        let mut parent_ser = vec![0u8; usize::try_from(u64::from_be_bytes(parent_len_buf))?];
-        reader.read_exact(&mut parent_ser)?;
-        let parent: Block =
-            bincode::serde::decode_from_slice(&parent_ser, bincode::config::legacy())?.0;
-        if block.parent_hash() != parent.hash() {
-            return Err(anyhow!(
-                "Invalid checkpoint file: parent's blockhash does not correspond to checkpoint block"
-            ));
-        }
-
         if state_trie.iter().next().is_some()
             || self.get_highest_canonical_block_number()?.is_some()
         {
@@ -1400,7 +1350,7 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
     let mut writer = BufWriter::with_capacity(128 * 1024 * 1024, outfile_temp); // 128 MiB chunks
 
     // write the header:
-    writer.write_all(&CHECKPOINT_HEADER_BYTES)?; // file identifier
+    writer.write_all(&crate::checkpoint::CHECKPOINT_HEADER_BYTES)?; // file identifier
     writer.write_all(&VERSION.to_be_bytes())?; // 4 BE bytes for version
     writer.write_all(&shard_id.to_be_bytes())?; // 8 BE bytes for shard ID
     writer.write_all(b"\n")?;
