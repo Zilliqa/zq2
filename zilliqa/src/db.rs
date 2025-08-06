@@ -332,14 +332,14 @@ impl Db {
             "PRAGMA"
         );
 
-        // Add tracing - logs all SQL statements
+        // Add tracing - logs SQL statements
         connection.trace_v2(
             rusqlite::trace::TraceEventCodes::SQLITE_TRACE_PROFILE,
             Some(|profile_event| {
                 if let rusqlite::trace::TraceEvent::Profile(statement, duration) = profile_event {
                     let statement_txt = statement.expanded_sql();
                     let duration_secs = duration.as_secs();
-                    tracing::trace!(duration_secs, statement_txt, "sql executed");
+                    // tracing::trace!(duration_secs, statement_txt, "sql executed");
                     if duration_secs > 5 {
                         tracing::warn!(duration_secs, statement_txt, "sql execution took > 5s");
                     }
