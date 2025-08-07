@@ -1,3 +1,10 @@
+/// cargo run --bin convert-ckpt -- \
+/// --input 001641600.dat \
+/// --output 001641600.ckpt \
+/// --hash 2ec445e87624dd05d5ccfdd38382ab41c3b1e18893297ce7f43c89037a315693 \
+/// --id 33469
+/// --verify
+///
 use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Result;
@@ -31,16 +38,44 @@ struct Args {
     verify: bool,
 }
 
+fn validate_args(args: &Args) -> Result<()> {
+    if !args.input.ends_with(".dat") {
+        return Err(anyhow::anyhow!("Input file name must end with .dat"));
+    }
+    if args.hash.len() != 64 {
+        return Err(anyhow::anyhow!("Checkpoint block hash must be 256-bits"));
+    }
+    if args.id == 0 {
+        return Err(anyhow::anyhow!("Shard ID must be greater than 0"));
+    }
+    if !args.output.ends_with(".ckpt") {
+        return Err(anyhow::anyhow!("Output file name must end with .ckpt"));
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     println!("Checkpoint Converter");
     let args = Args::parse();
+    validate_args(&args)?;
 
-    let zipfile = std::fs::File::create_new(args.output.clone())?;
+    let zipfile = match std::fs::File::create_new(args.output.clone()) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            eprintln!("Output file already exists");
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("Failed to create output file: {}", e);
+            std::process::exit(1);
+        }
+    };
     let hash = Hash::from_bytes(hex::decode(args.hash.as_bytes())?)?;
 
-    println!("Reading {}", args.input);
+    let dbpath = tempdir()?.into_path();
+    println!("READ {} -> {}", args.input, dbpath.display());
     let path = PathBuf::from(args.input);
-    let db = Db::new::<PathBuf>(Some(tempdir()?.into_path()), args.id, 0, None)?;
+    let db = Db::new::<PathBuf>(Some(dbpath), args.id, 0, None)?;
     let db = Arc::new(db);
 
     // let state = State::new_with_genesis(db.state_trie()?, config, db.clone());
@@ -49,7 +84,7 @@ fn main() -> Result<()> {
         return Err(anyhow::anyhow!("Input checkpoint error"));
     };
 
-    println!("Writing {}", args.output);
+    println!("WRITE {}", args.output);
     let bincfg = bincode::config::standard();
     let options = zip::write::SimpleFileOptions::default()
         .large_file(true)
@@ -106,7 +141,7 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    println!("Verifying");
+    println!("VERIFY");
     // READ TEST
     {
         let mut file = zipreader.by_name("block.bin")?;
