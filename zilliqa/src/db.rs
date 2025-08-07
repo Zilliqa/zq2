@@ -224,6 +224,11 @@ pub struct BlockAndReceiptsAndTransactions {
     pub transactions: Vec<VerifiedTransaction>,
 }
 
+#[derive(Serialize, Debug)]
+pub struct KV {
+    pub key: Vec<u8>,
+    pub value: Vec<u8>,
+}
 const CHECKPOINT_HEADER_BYTES: [u8; 8] = *b"ZILCHKPT";
 
 /// Version string that is written to disk along with the persisted database. This should be bumped whenever we make a
@@ -489,6 +494,21 @@ impl Db {
         }
 
         Ok(())
+    }
+
+    pub fn dump_state_trie(&self, offset: usize) -> Result<Vec<KV>> {
+        let db = self.db.lock().unwrap();
+        let mut stmt =
+            db.prepare("SELECT key, value FROM state_trie ORDER BY key ASC LIMIT 10000 OFFSET ?1")?;
+        let rows = stmt
+            .query_and_then([offset * 10000], |row| {
+                // .query_map([offset], |row| {
+                let key: Vec<u8> = row.get(0)?;
+                let value: Vec<u8> = row.get(1)?;
+                Ok(KV { key, value })
+            })?
+            .collect::<Result<Vec<KV>>>();
+        rows
     }
 
     pub fn get_value_from_aux_table(&self, key: &str) -> Result<Option<Vec<u8>>> {
