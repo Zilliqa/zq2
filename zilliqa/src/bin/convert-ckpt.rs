@@ -2,7 +2,8 @@ use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Result;
 use clap::Parser;
-use eth_trie::EthTrie;
+use eth_trie::{EthTrie, MemoryDB, Trie};
+use revm::primitives::FixedBytes;
 use tempfile::tempdir;
 use zilliqa::{crypto::Hash, db::Db, state::Account};
 
@@ -24,36 +25,38 @@ struct Args {
     /// Output file name e.g. 008099089.ckpt
     #[arg(long)]
     output: String,
+
+    /// Verify
+    #[arg(long, default_value_t = false)]
+    verify: bool,
 }
 
 fn main() -> Result<()> {
     println!("Checkpoint Converter");
     let args = Args::parse();
 
+    let zipfile = std::fs::File::create_new(args.output.clone())?;
     let hash = Hash::from_bytes(hex::decode(args.hash.as_bytes())?)?;
-    let path = PathBuf::from(args.input);
 
+    println!("Reading {}", args.input);
+    let path = PathBuf::from(args.input);
     let db = Db::new::<PathBuf>(Some(tempdir()?.into_path()), args.id, 0, None)?;
     let db = Arc::new(db);
 
     // let state = State::new_with_genesis(db.state_trie()?, config, db.clone());
-
     let Some((block, transactions, parent)) = db.load_trusted_checkpoint(path, &hash, args.id)?
     else {
         return Err(anyhow::anyhow!("Input checkpoint error"));
     };
 
-    println!("{:?}", zip::SUPPORTED_COMPRESSION_METHODS);
-
+    println!("Writing {}", args.output);
     let bincfg = bincode::config::standard();
-
     let options = zip::write::SimpleFileOptions::default()
         .large_file(true)
-        .with_aes_encryption(zip::AesMode::Aes256, &args.hash)
+        // .with_aes_encryption(zip::AesMode::Aes256, &args.hash)
         .compression_method(zip::CompressionMethod::Bzip2);
-    let mut zipwriter = zip::ZipWriter::new(std::fs::File::create(args.output)?);
 
-    println!("{:?}", options.get_compression_level());
+    let mut zipwriter = zip::ZipWriter::new(zipfile);
 
     // write block.json
     zipwriter.start_file("block.bin", options)?;
@@ -69,31 +72,88 @@ fn main() -> Result<()> {
 
     zipwriter.start_file("state_trie.bin", options)?;
     let state_trie_storage = Arc::new(db.state_trie()?);
+
     let accounts =
         EthTrie::new(state_trie_storage.clone()).at_root(parent.state_root_hash().into());
-    let account_storage = EthTrie::new(state_trie_storage);
+    let account_storage = EthTrie::new(state_trie_storage.clone());
 
     for (key, serialised_account) in accounts.iter() {
-        bincode::serde::encode_into_std_write(&key, &mut zipwriter, bincfg)?;
-        bincode::serde::encode_into_std_write(&serialised_account, &mut zipwriter, bincfg)?;
+        bincode::encode_into_std_write(&key, &mut zipwriter, bincfg)?;
+        bincode::encode_into_std_write(&serialised_account, &mut zipwriter, bincfg)?;
 
-        let account_storage = account_storage.at_root(
-            bincode::serde::decode_from_slice::<Account, _>(
-                &serialised_account,
-                bincode::config::legacy(),
-            )?
-            .0
-            .storage_root,
-        );
+        let account_root = bincode::serde::decode_from_slice::<Account, _>(
+            &serialised_account,
+            bincode::config::legacy(),
+        )?
+        .0
+        .storage_root;
+        bincode::serde::encode_into_std_write(&account_root, &mut zipwriter, bincfg)?;
+        let account_storage = account_storage.at_root(account_root);
 
         for (storage_key, storage_val) in account_storage.iter() {
-            bincode::serde::encode_into_std_write(&storage_key, &mut zipwriter, bincfg)?;
-            bincode::serde::encode_into_std_write(&storage_val, &mut zipwriter, bincfg)?;
+            bincode::encode_into_std_write(&storage_key, &mut zipwriter, bincfg)?;
+            bincode::encode_into_std_write(&storage_val, &mut zipwriter, bincfg)?;
         }
     }
 
     zipwriter.set_comment("ZILCHKPT");
     zipwriter.set_zip64_comment(Some(args.hash));
-    zipwriter.finish()?;
+    // zipwriter.finish()?;
+
+    let mut zipreader = zipwriter.finish_into_readable()?;
+
+    if !args.verify {
+        return Ok(());
+    }
+
+    println!("Verifying");
+    // READ TEST
+    {
+        let mut file = zipreader.by_name("block.bin")?;
+        let block: zilliqa::message::Block =
+            bincode::serde::decode_from_std_read(&mut file, bincfg)?;
+        assert!(block.verify_hash().is_ok(), "Block hash mismatch");
+    }
+    {
+        let mut file = zipreader.by_name("parent.bin")?;
+        let block: zilliqa::message::Block =
+            bincode::serde::decode_from_std_read(&mut file, bincfg)?;
+        assert!(block.verify_hash().is_ok(), "Parent hash mismatch");
+    }
+    {
+        let mem_storage = Arc::new(MemoryDB::default());
+        let mut account_storage = EthTrie::new(mem_storage.clone());
+
+        let mut reader = zipreader.by_name("state_trie.bin")?;
+        loop {
+            // let account_hash: Vec<u8> = match bincode::serde::decode_from_std_read(&mut reader, bincfg)
+            let account_hash: Vec<u8> = match bincode::decode_from_std_read(&mut reader, bincfg) {
+                Ok(h) => h,
+                Err(_e) => {
+                    break;
+                }
+            };
+            let account_val: Vec<u8> = bincode::decode_from_std_read(&mut reader, bincfg)?;
+
+            let account_trie_root: FixedBytes<32> =
+                bincode::serde::decode_from_std_read(&mut reader, bincfg)?;
+
+            let mut account_trie = EthTrie::new(mem_storage.clone());
+            while account_trie.root_hash()? != account_trie_root {
+                let storage_key: Vec<u8> = bincode::decode_from_std_read(&mut reader, bincfg)?;
+                let storage_val: Vec<u8> = bincode::decode_from_std_read(&mut reader, bincfg)?;
+
+                account_trie.insert(storage_key.as_slice(), storage_val.as_slice())?;
+            }
+
+            account_storage.insert(account_hash.as_slice(), account_val.as_slice())?;
+        }
+        assert_eq!(
+            account_storage.root_hash()?.0,
+            parent.state_root_hash().0,
+            "State root hash mismatch"
+        );
+    }
+
     Ok(())
 }
