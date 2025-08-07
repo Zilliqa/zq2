@@ -55,7 +55,7 @@ fn validate_args(args: &Args) -> Result<()> {
 }
 
 fn main() -> Result<()> {
-    println!("Checkpoint Converter");
+    println!("ZILLIQA 2.0 Checkpoint Converter");
     let args = Args::parse();
     validate_args(&args)?;
 
@@ -131,7 +131,7 @@ fn main() -> Result<()> {
         }
     }
 
-    zipwriter.set_comment("ZILCHKPT");
+    zipwriter.set_comment("ZILCHKPT/2.0");
     zipwriter.set_zip64_comment(Some(args.hash));
     // zipwriter.finish()?;
 
@@ -160,14 +160,9 @@ fn main() -> Result<()> {
         let mut account_storage = EthTrie::new(mem_storage.clone());
 
         let mut reader = zipreader.by_name("state_trie.bin")?;
-        loop {
-            // let account_hash: Vec<u8> = match bincode::serde::decode_from_std_read(&mut reader, bincfg)
-            let account_hash: Vec<u8> = match bincode::decode_from_std_read(&mut reader, bincfg) {
-                Ok(h) => h,
-                Err(_e) => {
-                    break;
-                }
-            };
+        while let Ok(account_key) =
+            bincode::decode_from_std_read::<Vec<u8>, _, _>(&mut reader, bincfg)
+        {
             let account_val: Vec<u8> = bincode::decode_from_std_read(&mut reader, bincfg)?;
 
             let account_trie_root: FixedBytes<32> =
@@ -175,13 +170,13 @@ fn main() -> Result<()> {
 
             let mut account_trie = EthTrie::new(mem_storage.clone());
             while account_trie.root_hash()? != account_trie_root {
-                let storage_key: Vec<u8> = bincode::decode_from_std_read(&mut reader, bincfg)?;
-                let storage_val: Vec<u8> = bincode::decode_from_std_read(&mut reader, bincfg)?;
+                let key: Vec<u8> = bincode::decode_from_std_read(&mut reader, bincfg)?;
+                let val: Vec<u8> = bincode::decode_from_std_read(&mut reader, bincfg)?;
 
-                account_trie.insert(storage_key.as_slice(), storage_val.as_slice())?;
+                account_trie.insert(key.as_slice(), val.as_slice())?;
             }
 
-            account_storage.insert(account_hash.as_slice(), account_val.as_slice())?;
+            account_storage.insert(account_key.as_slice(), account_val.as_slice())?;
         }
         assert_eq!(
             account_storage.root_hash()?.0,
