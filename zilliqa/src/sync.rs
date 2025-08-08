@@ -26,6 +26,7 @@ use crate::{
     },
     node::{MessageSender, OutgoingMessageFailure, RequestId},
     time::SystemTime,
+    transaction::SignedTransaction,
 };
 
 // Syncing Algorithm
@@ -140,6 +141,8 @@ pub struct Sync {
     ignore_passive: bool,
     // periodic vacuum
     vacuum_at: u64,
+    // checkpoint sync
+    checkpoint_at: u64,
 }
 
 impl Sync {
@@ -162,6 +165,7 @@ impl Sync {
         latest_block: &Option<Block>,
         message_sender: MessageSender,
         peers: Arc<SyncPeers>,
+        checkpoint_data: &Option<(Block, Vec<SignedTransaction>, Block)>,
     ) -> Result<Self> {
         let peer_id = message_sender.our_peer_id;
         let max_batch_size = config
@@ -204,6 +208,11 @@ impl Sync {
             u64::MAX
         };
 
+        // Store the checkpoint address
+        let checkpoint_at = checkpoint_data
+            .as_ref()
+            .map_or_else(|| u64::MAX, |(block, _, _)| block.number());
+
         Ok(Self {
             db,
             message_sender,
@@ -234,6 +243,7 @@ impl Sync {
             zq2_floor_height,
             ignore_passive,
             vacuum_at,
+            checkpoint_at,
         })
     }
 
@@ -413,7 +423,7 @@ impl Sync {
         let range = self.db.available_range()?;
 
         match (*range.start()).cmp(&self.sync_base_height) {
-            // done, turn off passive-sync
+            // checkpoint-sync
             Ordering::Equal => {
                 self.sync_base_height = u64::MAX;
             }
