@@ -1384,12 +1384,10 @@ impl TrieStorage {
                 .unwrap()
                 .prepare_cached(&query)?
                 .execute(rusqlite::params_from_iter(params))?;
+            // take lock once
+            let mut cache = self.cache.lock().unwrap();
             for (key, value) in keys.iter().zip(values) {
-                let _ = self
-                    .cache
-                    .lock()
-                    .unwrap()
-                    .insert(key.to_vec(), value.to_vec());
+                let _ = cache.insert(key.to_vec(), value.to_vec());
             }
         }
         Ok(())
