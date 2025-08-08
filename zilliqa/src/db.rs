@@ -610,13 +610,11 @@ impl Db {
                 // if the parent block exists, but the corresponding state is missing
                 tracing::info!("Loading checkpoint history");
                 crate::checkpoint::load_state_trie(&mut reader, trie_storage, &ckpt_parent)?;
-                return Ok(Some((ckpt_block, transactions, ckpt_parent)));
             }
+            return Ok(Some((ckpt_block, transactions, ckpt_parent)));
         } else {
             return Err(anyhow!("Checkpoint parent missing"));
         };
-
-        Ok(None)
     }
 
     pub fn state_trie(&self) -> Result<TrieStorage> {
