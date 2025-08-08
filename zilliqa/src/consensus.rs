@@ -3,6 +3,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     error::Error,
     fmt::Display,
+    ops::RangeInclusive,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -3468,6 +3469,12 @@ impl Consensus {
     pub fn get_num_transactions(&self) -> Result<usize> {
         let count = self.db.get_total_transaction_count()?;
         Ok(count)
+    }
+
+    pub fn get_block_range(&self) -> Result<(RangeInclusive<u64>, Option<u64>)> {
+        let range = self.db.available_range()?;
+        let checkpoint = self.sync.checkpoint_at();
+        Ok((range, checkpoint))
     }
 
     pub fn get_sync_data(&self) -> Result<Option<SyncingStruct>> {
