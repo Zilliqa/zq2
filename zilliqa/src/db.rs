@@ -11,7 +11,7 @@ use std::{
 
 use alloy::primitives::Address;
 use anyhow::{Context, Result, anyhow};
-use eth_trie::{DB, EthTrie, MemoryDB, Trie};
+use eth_trie::EthTrie;
 use itertools::Itertools;
 use lru_mem::LruCache;
 use lz4::{Decoder, EncoderBuilder};
@@ -538,11 +538,20 @@ impl Db {
             .unwrap_or_default();
         Ok(min..=max)
     }
-
     /// Fetch checkpoint data from file and initialise db state
     /// Return checkpointed block and transactions which must be executed after this function
     /// Return None if checkpoint already loaded
     pub fn load_trusted_checkpoint<P: AsRef<Path>>(
+        &self,
+        path: P,
+        hash: &Hash,
+        our_shard_id: u64,
+    ) -> Result<Option<(Block, Vec<SignedTransaction>, Block)>> {
+        tracing::info!(%hash, "Loading trusted checkpoint");
+        self.load_trusted_checkpoint_inner(path, hash, our_shard_id)
+    }
+
+    pub fn load_trusted_checkpoint_inner<P: AsRef<Path>>(
         &self,
         path: P,
         hash: &Hash,
@@ -559,9 +568,9 @@ impl Db {
             return Err(anyhow!("invalid checkpoint file"));
         };
 
-        // Process the State Trie
+        // Sanity checks
         let trie_storage = Arc::new(self.state_trie()?);
-        let mut state_trie = EthTrie::new(trie_storage.clone());
+        let state_trie = EthTrie::new(trie_storage.clone());
         if state_trie.iter().next().is_some()
             || self.get_highest_canonical_block_number()?.is_some()
         {
@@ -594,109 +603,8 @@ impl Db {
             }
         }
 
-        // Helper function used for inserting entries from memory (which backs storage trie) into persistent storage
-        let db_flush = |db: Arc<TrieStorage>, cache: Arc<MemoryDB>| -> Result<()> {
-            let mut cache_storage = cache.storage.write();
-            let (keys, values): (Vec<_>, Vec<_>) = cache_storage.drain().unzip();
-            debug!("Doing write to db with total items {}", keys.len());
-            db.insert_batch(keys, values)?;
-            Ok(())
-        };
-
-        let mut processed_accounts = 0;
-        let mut processed_storage_items = 0;
-        // This is taken directly from batch_write. However, this can be as big as we think it's reasonable to be
-        // (ideally multiples of `32766 / 2` so that batch writes are fully utilized)
-        // TODO: consider putting this const somewhere else as long as we use sql-lite
-        // Also see: https://www.sqlite.org/limits.html#max_variable_number
-        let maximum_sql_parameters = 32766 / 2;
-        const COMPUTE_ROOT_HASH_EVERY_ACCOUNTS: usize = 10000;
-        let mem_storage = Arc::new(MemoryDB::new(true));
-
-        // then decode state
-        loop {
-            // Read account key and the serialised Account
-            let mut account_hash = [0u8; 32];
-            match reader.read_exact(&mut account_hash) {
-                // Read successful
-                Ok(_) => (),
-                // Break loop here if weve reached the end of the file
-                Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                    break;
-                }
-                Err(e) => return Err(e.into()),
-            };
-
-            let mut serialised_account_len_buf = [0u8; std::mem::size_of::<u64>()];
-            reader.read_exact(&mut serialised_account_len_buf)?;
-            let mut serialised_account =
-                vec![0u8; usize::try_from(u64::from_be_bytes(serialised_account_len_buf))?];
-            reader.read_exact(&mut serialised_account)?;
-
-            // Read entire account storage as a buffer
-            let mut account_storage_len_buf = [0u8; std::mem::size_of::<u64>()];
-            reader.read_exact(&mut account_storage_len_buf)?;
-            let account_storage_len = usize::try_from(u64::from_be_bytes(account_storage_len_buf))?;
-            let mut account_storage = vec![0u8; account_storage_len];
-            reader.read_exact(&mut account_storage)?;
-
-            // Pull out each storage key and value
-            let mut account_trie = EthTrie::new(mem_storage.clone());
-            let mut pointer: usize = 0;
-            while account_storage_len > pointer {
-                let storage_key_len_buf: &[u8] =
-                    &account_storage[pointer..(pointer + std::mem::size_of::<u64>())];
-                let storage_key_len =
-                    usize::try_from(u64::from_be_bytes(storage_key_len_buf.try_into()?))?;
-                pointer += std::mem::size_of::<u64>();
-                let storage_key: &[u8] = &account_storage[pointer..(pointer + storage_key_len)];
-                pointer += storage_key_len;
-
-                let storage_val_len_buf: &[u8] =
-                    &account_storage[pointer..(pointer + std::mem::size_of::<u64>())];
-                let storage_val_len =
-                    usize::try_from(u64::from_be_bytes(storage_val_len_buf.try_into()?))?;
-                pointer += std::mem::size_of::<u64>();
-                let storage_val: &[u8] = &account_storage[pointer..(pointer + storage_val_len)];
-                pointer += storage_val_len;
-
-                account_trie.insert(storage_key, storage_val)?;
-
-                processed_storage_items += 1;
-            }
-
-            let account_trie_root = bincode::serde::decode_from_slice::<Account, _>(
-                &serialised_account,
-                bincode::config::legacy(),
-            )?
-            .0
-            .storage_root;
-            if account_trie.root_hash()?.as_slice() != account_trie_root {
-                return Err(anyhow!(
-                    "Invalid checkpoint file: account trie root hash mismatch: calculated {}, checkpoint file contained {}",
-                    hex::encode(account_trie.root_hash()?.as_slice()),
-                    hex::encode(account_trie_root)
-                ));
-            }
-            if processed_storage_items > maximum_sql_parameters {
-                db_flush(trie_storage.clone(), mem_storage.clone())?;
-                processed_storage_items = 0;
-            }
-
-            state_trie.insert(&account_hash, &serialised_account)?;
-
-            processed_accounts += 1;
-            // Occasionally flush the cached state changes to disk to minimise memory usage.
-            if processed_accounts % COMPUTE_ROOT_HASH_EVERY_ACCOUNTS == 0 {
-                let _ = state_trie.root_hash()?;
-            }
-        }
-
-        db_flush(trie_storage.clone(), mem_storage.clone())?;
-
-        if state_trie.root_hash()? != parent.state_root_hash().0 {
-            return Err(anyhow!("Invalid checkpoint file: state root hash mismatch"));
-        }
+        // Process the State Trie
+        crate::checkpoint::load_state_trie(&mut reader, trie_storage, &parent)?;
 
         let parent_ref: &Block = &parent; // for moving into the closure
         self.with_sqlite_tx(move |tx| {
