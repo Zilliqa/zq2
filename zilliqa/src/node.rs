@@ -357,6 +357,26 @@ impl Node {
         Ok(())
     }
 
+    pub fn handle_execute_proposal(&mut self, proposal: Proposal) -> Result<()> {
+        let prev_root_hash = self.consensus.state_mut().root_hash()?;
+        let (block, transactions) = proposal.into_parts();
+        let parent = self
+            .db
+            .get_block(BlockFilter::Hash(block.parent_hash()))?
+            .unwrap();
+        self.consensus
+            .state_mut()
+            .set_to_root(parent.state_root_hash().into());
+        let stakers = self.consensus.state_mut().get_stakers(block.header)?;
+        self.consensus
+            .execute_block(None, &block, transactions, stakers.as_slice(), true)?;
+        // restore previous state
+        self.consensus
+            .state_mut()
+            .set_to_root(prev_root_hash.into());
+        Ok(())
+    }
+
     pub fn handle_request_failure(
         &mut self,
         to: PeerId,
