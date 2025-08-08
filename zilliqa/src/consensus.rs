@@ -362,6 +362,7 @@ impl Consensus {
             &latest_block,
             message_sender.clone(),
             peers.clone(),
+            &checkpoint_data,
         )?;
 
         let enable_ots_indices = config.enable_ots_indices;
