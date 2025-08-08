@@ -2,6 +2,7 @@ pub mod api;
 mod aux;
 mod blockhooks;
 pub mod cfg;
+pub mod checkpoint;
 pub mod consensus;
 pub mod constants;
 pub mod contracts;

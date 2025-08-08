@@ -3,6 +3,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     error::Error,
     fmt::Display,
+    ops::RangeInclusive,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -362,6 +363,7 @@ impl Consensus {
             &latest_block,
             message_sender.clone(),
             peers.clone(),
+            &checkpoint_data,
         )?;
 
         let enable_ots_indices = config.enable_ots_indices;
@@ -410,6 +412,7 @@ impl Consensus {
 
         // If we started from a checkpoint, execute the checkpointed block now
         if let Some((block, transactions, parent)) = checkpoint_data {
+            consensus.state.set_to_root(parent.state_root_hash().into());
             consensus.execute_block(
                 None,
                 &block,
@@ -418,7 +421,7 @@ impl Consensus {
                     .state
                     .at_root(parent.state_root_hash().into())
                     .get_stakers(block.header)?,
-                false,
+                true,
             )?;
         }
 
@@ -3039,7 +3042,7 @@ impl Consensus {
         Ok(())
     }
 
-    fn execute_block(
+    pub fn execute_block(
         &mut self,
         from: Option<PeerId>,
         block: &Block,
@@ -3263,7 +3266,7 @@ impl Consensus {
         self.state = state;
 
         if self.state.root_hash()? != block.state_root_hash() {
-            warn!(
+            error!(
                 "State root hash mismatch! Our state hash: {}, block hash: {:?} block prop: {:?}",
                 self.state.root_hash()?,
                 block.state_root_hash(),
@@ -3467,6 +3470,12 @@ impl Consensus {
     pub fn get_num_transactions(&self) -> Result<usize> {
         let count = self.db.get_total_transaction_count()?;
         Ok(count)
+    }
+
+    pub fn get_block_range(&self) -> Result<(RangeInclusive<u64>, Option<u64>)> {
+        let range = self.db.available_range()?;
+        let checkpoint = self.sync.checkpoint_at();
+        Ok((range, checkpoint))
     }
 
     pub fn get_sync_data(&self) -> Result<Option<SyncingStruct>> {

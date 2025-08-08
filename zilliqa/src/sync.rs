@@ -7,6 +7,7 @@ use std::{
 };
 
 use anyhow::Result;
+use eth_trie::DB;
 use itertools::Itertools;
 use libp2p::PeerId;
 use rand::Rng;
@@ -21,11 +22,12 @@ use crate::{
     db::{BlockFilter, Db},
     message::{
         Block, BlockHeader, BlockRequest, BlockResponse, BlockTransactionsReceipts,
-        ExternalMessage, InjectedProposal, Proposal, RequestBlocksByHash, RequestBlocksByHeight,
-        SyncBlockHeader,
+        ExternalMessage, InjectedProposal, InternalMessage, Proposal, RequestBlocksByHash,
+        RequestBlocksByHeight, SyncBlockHeader,
     },
     node::{MessageSender, OutgoingMessageFailure, RequestId},
     time::SystemTime,
+    transaction::SignedTransaction,
 };
 
 // Syncing Algorithm
@@ -140,6 +142,8 @@ pub struct Sync {
     ignore_passive: bool,
     // periodic vacuum
     vacuum_at: u64,
+    // checkpoint sync
+    checkpoint_at: u64,
 }
 
 impl Sync {
@@ -162,6 +166,7 @@ impl Sync {
         latest_block: &Option<Block>,
         message_sender: MessageSender,
         peers: Arc<SyncPeers>,
+        checkpoint_data: &Option<(Block, Vec<SignedTransaction>, Block)>,
     ) -> Result<Self> {
         let peer_id = message_sender.our_peer_id;
         let max_batch_size = config
@@ -204,6 +209,11 @@ impl Sync {
             u64::MAX
         };
 
+        // Store the checkpoint address
+        let checkpoint_at = checkpoint_data
+            .as_ref()
+            .map_or_else(|| u64::MAX, |(block, _, _)| block.number());
+
         Ok(Self {
             db,
             message_sender,
@@ -234,6 +244,7 @@ impl Sync {
             zq2_floor_height,
             ignore_passive,
             vacuum_at,
+            checkpoint_at,
         })
     }
 
@@ -372,10 +383,76 @@ impl Sync {
                 self.retry_phase1()?;
             }
             SyncState::Phase4(_) => self.request_passive_sync()?,
+            SyncState::Phase5(_) if self.in_pipeline == 0 => {
+                self.state = SyncState::Phase0;
+            }
             _ => {
                 debug!(in_pipeline = %self.in_pipeline, "DoSync : syncing");
             }
         }
+        Ok(())
+    }
+
+    pub fn checkpoint_at(&self) -> Option<u64> {
+        if self.checkpoint_at < u64::MAX {
+            Some(self.checkpoint_at)
+        } else {
+            None
+        }
+    }
+
+    /// Replay the checkpoint to the highest block height.
+    fn replay_checkpoint(&mut self, highest_at: u64) -> Result<()> {
+        let mut checkpoint_at = match self.state {
+            SyncState::Phase5(n) => n,
+            _ => unimplemented!("ReplayCheckpoint: invalid state"),
+        };
+
+        // collect any proposals to replay
+        let start_now = Instant::now();
+        let mut proposals = Vec::with_capacity(10 * 1024 * 1024);
+        let trie_storage = Arc::new(self.db.state_trie()?);
+        while checkpoint_at < highest_at
+            && proposals.len() < self.max_batch_size
+            && start_now.elapsed().as_millis() < 500
+        {
+            let Some(block) = self.db.get_block(BlockFilter::Height(checkpoint_at))? else {
+                unimplemented!("ReplayCheckpoint: missing block");
+            };
+
+            // if block state root hash is not in state trie, inject proposal
+            if trie_storage
+                .get(block.state_root_hash().as_bytes())?
+                .is_none()
+            {
+                if let Some(brt) = self
+                    .db
+                    .get_block_and_receipts_and_transactions(BlockFilter::Height(checkpoint_at))?
+                {
+                    let prop = self.brt_to_proposal(brt);
+                    proposals.push(prop);
+                };
+            }
+
+            checkpoint_at = checkpoint_at.saturating_add(1);
+        }
+
+        // inject any replayed proposals
+        if !proposals.is_empty() {
+            let range = self.checkpoint_at..checkpoint_at;
+            tracing::info!(len=%proposals.len(), ?range, "ReplayCheckpoint: replaying");
+            for p in proposals {
+                self.message_sender
+                    .send_message_to_coordinator(InternalMessage::ExecuteProposal(p))?;
+            }
+        }
+
+        self.checkpoint_at = if checkpoint_at < highest_at {
+            checkpoint_at
+        } else {
+            u64::MAX
+        };
+
         Ok(())
     }
 
@@ -413,9 +490,15 @@ impl Sync {
         let range = self.db.available_range()?;
 
         match (*range.start()).cmp(&self.sync_base_height) {
-            // done, turn off passive-sync
+            // checkpoint-sync
             Ordering::Equal => {
-                self.sync_base_height = u64::MAX;
+                // self.sync_base_height = u64::MAX;
+                if self.checkpoint_at < *range.end() {
+                    self.state = SyncState::Phase5(self.checkpoint_at);
+                    self.replay_checkpoint(*range.end())?;
+                } else {
+                    self.sync_base_height = u64::MAX;
+                }
             }
             // passive-sync above sync-base-height
             Ordering::Greater => {
@@ -1798,6 +1881,7 @@ enum SyncState {
     Phase3,
     Retry1((RangeInclusive<u64>, BlockHeader)),
     Phase4((u64, Hash)),
+    Phase5(u64),
 }
 
 impl std::fmt::Display for SyncState {
@@ -1809,6 +1893,7 @@ impl std::fmt::Display for SyncState {
             SyncState::Phase3 => write!(f, "phase3"),
             SyncState::Retry1(_) => write!(f, "retry1"),
             SyncState::Phase4(_) => write!(f, "phase4"),
+            SyncState::Phase5(_) => write!(f, "phase5"),
         }
     }
 }

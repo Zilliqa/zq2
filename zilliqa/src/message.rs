@@ -391,6 +391,8 @@ pub enum InternalMessage {
     SubscribeToGossipSubTopic(GossipSubTopic),
     /// Notify p2p cordinator to unsubscribe from a particular gossipsub topic
     UnsubscribeFromGossipSubTopic(GossipSubTopic),
+    /// 0.18.0
+    ExecuteProposal(Proposal),
 }
 
 #[derive(Debug, Clone)]
@@ -416,6 +418,9 @@ impl Display for InternalMessage {
             }
             InternalMessage::UnsubscribeFromGossipSubTopic(topic) => {
                 write!(f, "UnsubscribeFromGossipSubTopic({:?})", topic)
+            }
+            InternalMessage::ExecuteProposal(proposal) => {
+                write!(f, "ExecuteProposal({})", proposal.view())
             }
         }
     }
