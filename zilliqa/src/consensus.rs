@@ -412,6 +412,7 @@ impl Consensus {
 
         // If we started from a checkpoint, execute the checkpointed block now
         if let Some((block, transactions, parent)) = checkpoint_data {
+            consensus.state.set_to_root(parent.state_root_hash().into());
             consensus.execute_block(
                 None,
                 &block,
@@ -420,7 +421,7 @@ impl Consensus {
                     .state
                     .at_root(parent.state_root_hash().into())
                     .get_stakers(block.header)?,
-                false,
+                true,
             )?;
         }
 
@@ -3265,7 +3266,7 @@ impl Consensus {
         self.state = state;
 
         if self.state.root_hash()? != block.state_root_hash() {
-            warn!(
+            error!(
                 "State root hash mismatch! Our state hash: {}, block hash: {:?} block prop: {:?}",
                 self.state.root_hash()?,
                 block.state_root_hash(),
