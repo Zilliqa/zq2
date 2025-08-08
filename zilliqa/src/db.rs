@@ -11,7 +11,7 @@ use std::{
 
 use alloy::primitives::Address;
 use anyhow::{Context, Result, anyhow};
-use eth_trie::{EthTrie, Trie};
+use eth_trie::{DB, EthTrie};
 use itertools::Itertools;
 use lru_mem::LruCache;
 use lz4::{Decoder, EncoderBuilder};
@@ -603,7 +603,10 @@ impl Db {
         if let Some(ckpt_parent) = self.get_block(parent.hash().into())? {
             if ckpt_parent.parent_hash() != parent.parent_hash() {
                 return Err(anyhow!("Checkpoint ancestor mismatch"));
-            } else if !state_trie.contains(ckpt_parent.state_root_hash().as_bytes())? {
+            } else if trie_storage
+                .get(ckpt_parent.state_root_hash().as_bytes())?
+                .is_none()
+            {
                 // if the parent block exists, but the corresponding state is missing
                 tracing::info!("Loading checkpoint history");
                 crate::checkpoint::load_state_trie(&mut reader, trie_storage, &ckpt_parent)?;

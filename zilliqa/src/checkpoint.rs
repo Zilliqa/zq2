@@ -119,16 +119,16 @@ pub fn get_checkpoint_block(
            || header[20] != b'\n'
     // header must end in newline
     {
-        return Err(anyhow!("Invalid checkpoint file: invalid header"));
+        return Err(anyhow!("Invalid header"));
     }
     let version = u32::from_be_bytes(header[8..12].try_into()?);
     // Only support a single version right now.
     if version != SUPPORTED_VERSION {
-        return Err(anyhow!("Invalid checkpoint file: unsupported version."));
+        return Err(anyhow!("Invalid checkpoint version."));
     }
     let shard_id = u64::from_be_bytes(header[12..20].try_into()?);
     if shard_id != our_shard_id {
-        return Err(anyhow!("Invalid checkpoint file: wrong shard ID."));
+        return Err(anyhow!("Invalid checkpoint shard ID."));
     }
 
     // Decode and validate checkpoint block, its transactions and parent block
@@ -157,9 +157,7 @@ pub fn get_checkpoint_block(
     let parent: Block =
         bincode::serde::decode_from_slice(&parent_ser, bincode::config::legacy())?.0;
     if block.parent_hash() != parent.hash() {
-        return Err(anyhow!(
-            "Invalid checkpoint file: parent's blockhash does not correspond to checkpoint block"
-        ));
+        return Err(anyhow!("Invalid checkpoint parent blockhash"));
     }
 
     Ok(Some((block, transactions, parent)))
