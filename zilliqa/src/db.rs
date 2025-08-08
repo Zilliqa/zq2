@@ -11,7 +11,7 @@ use std::{
 
 use alloy::primitives::Address;
 use anyhow::{Context, Result, anyhow};
-use eth_trie::EthTrie;
+use eth_trie::{EthTrie, Trie};
 use itertools::Itertools;
 use lru_mem::LruCache;
 use lz4::{Decoder, EncoderBuilder};
@@ -571,51 +571,46 @@ impl Db {
         // Sanity checks
         let trie_storage = Arc::new(self.state_trie()?);
         let state_trie = EthTrie::new(trie_storage.clone());
-        if state_trie.iter().next().is_some()
-            || self.get_highest_canonical_block_number()?.is_some()
+
+        // If no state trie exists and no blocks are known, then we are in a fresh database.
+        // We can safely load the checkpoint.
+        if state_trie.iter().next().is_none()
+            && self.get_highest_canonical_block_number()?.is_none()
         {
-            // If checkpointed block already exists then assume checkpoint load already complete. Return None
-            if self.get_block(block.hash().into())?.is_some() {
-                return Ok(None);
-            }
-            // This may not be strictly necessary, as in theory old values will, at worst, be orphaned
-            // values not part of any state trie of any known block. With some effort, this could
-            // even be supported.
-            // However, without such explicit support, having old blocks MAY in fact cause
-            // unexpected and unwanted behaviour. Thus we currently forbid loading a checkpoint in
-            // a node that already contains previous state, until (and unless) there's ever a
-            // usecase for going through the effort to support it and ensure it works as expected.
-            if let Some(db_block) = self.get_block(parent.hash().into())? {
-                if db_block.parent_hash() != parent.parent_hash() {
-                    return Err(anyhow!(
-                        "Inconsistent checkpoint file: block loaded from checkpoint and block stored in database with same hash have differing parent hashes"
-                    ));
-                } else {
-                    // In this case, the database already has the block contained in this checkpoint. We assume the
-                    // database contains the full state for that block too and thus return early, without actually
-                    // loading the checkpoint file.
-                    return Ok(Some((block, transactions, parent)));
-                }
-            } else {
-                return Err(anyhow!(
-                    "Inconsistent checkpoint file: block loaded from checkpoint file does not exist in non-empty database"
-                ));
-            }
+            crate::checkpoint::load_state_trie(&mut reader, trie_storage, &parent)?;
+
+            let parent_ref: &Block = &parent; // for moving into the closure
+            self.with_sqlite_tx(move |tx| {
+                self.insert_block_with_db_tx(tx, parent_ref)?;
+                self.set_finalized_view_with_db_tx(tx, parent_ref.view())?;
+                self.set_high_qc_with_db_tx(tx, block.header.qc)?;
+                self.set_view_with_db_tx(tx, parent_ref.view() + 1, false)?;
+                Ok(())
+            })?;
+
+            return Ok(Some((block, transactions, parent)));
         }
 
-        // Process the State Trie
-        crate::checkpoint::load_state_trie(&mut reader, trie_storage, &parent)?;
+        // Check if the parent block is a fork
+        if let Some(parent_block) = self.get_block(parent.hash().into())? {
+            if parent_block.parent_hash() != parent.parent_hash() {
+                return Err(anyhow!("Checkpoint ancestor mismatch"));
+            }
+        } else {
+            return Err(anyhow!("Checkpoint parent mismatch"));
+        };
 
-        let parent_ref: &Block = &parent; // for moving into the closure
-        self.with_sqlite_tx(move |tx| {
-            self.insert_block_with_db_tx(tx, parent_ref)?;
-            self.set_finalized_view_with_db_tx(tx, parent_ref.view())?;
-            self.set_high_qc_with_db_tx(tx, block.header.qc)?;
-            self.set_view_with_db_tx(tx, parent_ref.view() + 1, false)?;
-            Ok(())
-        })?;
+        // Check if checkpoint block is invalid
+        let Some(ckpt_block) = self.get_block(block.hash().into())? else {
+            return Err(anyhow!("Checkpoint block mismatch"));
+        };
 
-        Ok(Some((block, transactions, parent)))
+        if state_trie.contains(ckpt_block.state_root_hash().as_bytes())? {
+            // run checkpoint sync
+            tracing::info!("Checkpoint sync started");
+        }
+
+        Ok(None)
     }
 
     pub fn state_trie(&self) -> Result<TrieStorage> {
