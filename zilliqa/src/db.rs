@@ -11,7 +11,7 @@ use std::{
 
 use alloy::primitives::Address;
 use anyhow::{Context, Result, anyhow};
-use eth_trie::EthTrie;
+use eth_trie::{EthTrie, Trie};
 use itertools::Itertools;
 use lru_mem::LruCache;
 use lz4::{Decoder, EncoderBuilder};
@@ -600,29 +600,18 @@ impl Db {
         };
 
         // Check if the parent block is a fork
-        if let Some(parent_block) = self.get_block(parent.hash().into())? {
-            if parent_block.parent_hash() != parent.parent_hash() {
+        if let Some(ckpt_parent) = self.get_block(parent.hash().into())? {
+            if ckpt_parent.parent_hash() != parent.parent_hash() {
                 return Err(anyhow!("Checkpoint ancestor mismatch"));
+            } else if !state_trie.contains(ckpt_parent.state_root_hash().as_bytes())? {
+                // if the parent block exists, but the corresponding state is missing
+                tracing::info!("Loading checkpoint history");
+                crate::checkpoint::load_state_trie(&mut reader, trie_storage, &ckpt_parent)?;
+                return Ok(Some((ckpt_block, transactions, ckpt_parent)));
             }
         } else {
             return Err(anyhow!("Checkpoint parent missing"));
         };
-
-        // // CHECKPOINT SYNC
-        // if !state_trie.contains(ckpt_block.state_root_hash().as_bytes())? {
-        //     // pre-load old state if the block already exists
-        //     tracing::info!("Loading checkpoint history");
-        //     crate::checkpoint::load_state_trie(&mut reader, trie_storage, &parent)?;
-        // }
-
-        // // REPLAY BLOCKS
-        // let Some(highest_at) = self.get_highest_canonical_block_number()? else {
-        //     return Err(anyhow!("No highest block found"));
-        // };
-
-        // if highest_at < ckpt_block.number() {
-        //     return Err(anyhow!("Checkpoint block is too new"));
-        // }
 
         Ok(None)
     }
