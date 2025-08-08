@@ -22,8 +22,8 @@ use crate::{
     db::{BlockFilter, Db},
     message::{
         Block, BlockHeader, BlockRequest, BlockResponse, BlockTransactionsReceipts,
-        ExternalMessage, InjectedProposal, Proposal, RequestBlocksByHash, RequestBlocksByHeight,
-        SyncBlockHeader,
+        ExternalMessage, InjectedProposal, InternalMessage, Proposal, RequestBlocksByHash,
+        RequestBlocksByHeight, SyncBlockHeader,
     },
     node::{MessageSender, OutgoingMessageFailure, RequestId},
     time::SystemTime,
@@ -438,11 +438,14 @@ impl Sync {
         }
 
         // inject any replayed proposals
-        // if !proposals.is_empty() {
-        let range = self.checkpoint_at..checkpoint_at;
-        tracing::info!(len=%proposals.len(), ?range, "ReplayCheckpoint: replaying");
-        self.inject_proposals(proposals)?;
-        // }
+        if !proposals.is_empty() {
+            let range = self.checkpoint_at..checkpoint_at;
+            tracing::info!(len=%proposals.len(), ?range, "ReplayCheckpoint: replaying");
+            for p in proposals {
+                self.message_sender
+                    .send_message_to_coordinator(InternalMessage::ExecuteProposal(p))?;
+            }
+        }
 
         self.checkpoint_at = if checkpoint_at < highest_at {
             checkpoint_at
@@ -493,6 +496,8 @@ impl Sync {
                 if self.checkpoint_at < *range.end() {
                     self.state = SyncState::Phase5(self.checkpoint_at);
                     self.replay_checkpoint(*range.end())?;
+                } else {
+                    self.sync_base_height = u64::MAX;
                 }
             }
             // passive-sync above sync-base-height

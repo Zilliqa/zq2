@@ -3042,7 +3042,7 @@ impl Consensus {
         Ok(())
     }
 
-    fn execute_block(
+    pub fn execute_block(
         &mut self,
         from: Option<PeerId>,
         block: &Block,
