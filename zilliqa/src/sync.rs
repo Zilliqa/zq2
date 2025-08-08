@@ -393,6 +393,14 @@ impl Sync {
         Ok(())
     }
 
+    pub fn checkpoint_at(&self) -> Option<u64> {
+        if self.checkpoint_at < u64::MAX {
+            Some(self.checkpoint_at)
+        } else {
+            None
+        }
+    }
+
     /// Replay the checkpoint to the highest block height.
     fn replay_checkpoint(&mut self, highest_at: u64) -> Result<()> {
         let mut checkpoint_at = match self.state {
@@ -430,11 +438,11 @@ impl Sync {
         }
 
         // inject any replayed proposals
-        if !proposals.is_empty() {
-            let range = self.checkpoint_at..checkpoint_at;
-            tracing::info!(?range, len=%proposals.len(), "ReplayCheckpoint: replaying");
-            self.inject_proposals(proposals)?;
-        }
+        // if !proposals.is_empty() {
+        let range = self.checkpoint_at..checkpoint_at;
+        tracing::info!(len=%proposals.len(), ?range, "ReplayCheckpoint: replaying");
+        self.inject_proposals(proposals)?;
+        // }
 
         self.checkpoint_at = if checkpoint_at < highest_at {
             checkpoint_at
