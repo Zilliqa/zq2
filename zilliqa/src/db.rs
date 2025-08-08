@@ -11,7 +11,7 @@ use std::{
 
 use alloy::primitives::Address;
 use anyhow::{Context, Result, anyhow};
-use eth_trie::{EthTrie, Trie};
+use eth_trie::EthTrie;
 use itertools::Itertools;
 use lru_mem::LruCache;
 use lz4::{Decoder, EncoderBuilder};
@@ -547,7 +547,7 @@ impl Db {
         hash: &Hash,
         our_shard_id: u64,
     ) -> Result<Option<(Block, Vec<SignedTransaction>, Block)>> {
-        tracing::info!(%hash, "Loading trusted checkpoint");
+        tracing::info!(%hash, "Checkpoint");
         self.load_trusted_checkpoint_inner(path, hash, our_shard_id)
     }
 
@@ -562,21 +562,23 @@ impl Db {
         let buf_reader: BufReader<File> = BufReader::with_capacity(128 * 1024 * 1024, input_file);
         let mut reader = Decoder::new(buf_reader)?;
 
+        tracing::info!(%hash, "Loading checkpoint blocks");
         let Some((block, transactions, parent)) =
             crate::checkpoint::get_checkpoint_block(&mut reader, hash, our_shard_id)?
         else {
-            return Err(anyhow!("invalid checkpoint file"));
+            return Err(anyhow!("Checkpoint file is invalid"));
         };
 
-        // Sanity checks
         let trie_storage = Arc::new(self.state_trie()?);
         let state_trie = EthTrie::new(trie_storage.clone());
 
+        // INITIAL CHECKPOINT LOAD
         // If no state trie exists and no blocks are known, then we are in a fresh database.
         // We can safely load the checkpoint.
         if state_trie.iter().next().is_none()
             && self.get_highest_canonical_block_number()?.is_none()
         {
+            tracing::info!("Loading checkpoint state");
             crate::checkpoint::load_state_trie(&mut reader, trie_storage, &parent)?;
 
             let parent_ref: &Block = &parent; // for moving into the closure
@@ -591,24 +593,36 @@ impl Db {
             return Ok(Some((block, transactions, parent)));
         }
 
+        // OTHER SANITY CHECKS
+        // Check if checkpoint block is invalid
+        let Some(ckpt_block) = self.get_block(block.hash().into())? else {
+            return Err(anyhow!("Checkpoint block missing"));
+        };
+
         // Check if the parent block is a fork
         if let Some(parent_block) = self.get_block(parent.hash().into())? {
             if parent_block.parent_hash() != parent.parent_hash() {
                 return Err(anyhow!("Checkpoint ancestor mismatch"));
             }
         } else {
-            return Err(anyhow!("Checkpoint parent mismatch"));
+            return Err(anyhow!("Checkpoint parent missing"));
         };
 
-        // Check if checkpoint block is invalid
-        let Some(ckpt_block) = self.get_block(block.hash().into())? else {
-            return Err(anyhow!("Checkpoint block mismatch"));
-        };
+        // // CHECKPOINT SYNC
+        // if !state_trie.contains(ckpt_block.state_root_hash().as_bytes())? {
+        //     // pre-load old state if the block already exists
+        //     tracing::info!("Loading checkpoint history");
+        //     crate::checkpoint::load_state_trie(&mut reader, trie_storage, &parent)?;
+        // }
 
-        if state_trie.contains(ckpt_block.state_root_hash().as_bytes())? {
-            // run checkpoint sync
-            tracing::info!("Checkpoint sync started");
-        }
+        // // REPLAY BLOCKS
+        // let Some(highest_at) = self.get_highest_canonical_block_number()? else {
+        //     return Err(anyhow!("No highest block found"));
+        // };
+
+        // if highest_at < ckpt_block.number() {
+        //     return Err(anyhow!("Checkpoint block is too new"));
+        // }
 
         Ok(None)
     }
