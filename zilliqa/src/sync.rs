@@ -144,7 +144,7 @@ pub struct Sync {
     // periodic vacuum
     vacuum_at: u64,
     // checkpoint sync
-    checkpoint_at: u64,
+    checkpoint_at: Option<u64>,
 }
 
 impl Sync {
@@ -209,9 +209,7 @@ impl Sync {
         };
 
         // Store the checkpoint address
-        let checkpoint_at = checkpoint_data
-            .as_ref()
-            .map_or_else(|| u64::MAX, |(block, _, _)| block.number());
+        let checkpoint_at = checkpoint_data.as_ref().map(|(block, _, _)| block.number());
 
         // Idle duration
         let max_idle_duration = config.consensus.block_time / 2;
@@ -396,17 +394,14 @@ impl Sync {
         Ok(())
     }
 
+    #[inline]
     pub fn checkpoint_at(&self) -> Option<u64> {
-        if self.checkpoint_at < u64::MAX {
-            Some(self.checkpoint_at)
-        } else {
-            None
-        }
+        self.checkpoint_at
     }
 
     pub fn mark_replayed(&mut self, number: u64) {
         trace!(%number, "MarkReplayed");
-        if number == self.checkpoint_at {
+        if number == self.checkpoint_at.unwrap_or_default() {
             self.state = SyncState::Phase0;
         }
     }
@@ -456,19 +451,19 @@ impl Sync {
         // inject any replayed proposals
         if !proposals.is_empty() {
             let checkpoint_at = proposals.last().unwrap().number();
-            let range = self.checkpoint_at..=checkpoint_at;
+            let range = self.checkpoint_at.unwrap()..=checkpoint_at;
             tracing::info!(len=%proposals.len(), ?range, "ReplayCheckpoint: replaying");
-            self.checkpoint_at = checkpoint_at;
+            self.checkpoint_at = Some(checkpoint_at);
             for p in proposals {
                 self.message_sender
                     .send_message_to_coordinator(InternalMessage::ExecuteProposal(p))?;
             }
         } else {
             // nothing to replay; progress the checkpoint
-            let range = self.checkpoint_at..=checkpoint_at;
+            let range = self.checkpoint_at.unwrap()..=checkpoint_at;
             tracing::info!(len=%proposals.len(), ?range, "ReplayCheckpoint: skipping");
-            self.checkpoint_at = checkpoint_at;
             self.state = SyncState::Phase0;
+            self.checkpoint_at = Some(checkpoint_at);
         }
         Ok(())
     }
@@ -509,9 +504,8 @@ impl Sync {
         match (*range.start()).cmp(&self.sync_base_height) {
             // checkpoint-sync
             Ordering::Equal => {
-                // self.sync_base_height = u64::MAX;
-                if self.checkpoint_at < *range.end() {
-                    self.state = SyncState::Phase5(self.checkpoint_at);
+                if self.checkpoint_at.unwrap_or(u64::MAX) < *range.end() {
+                    self.state = SyncState::Phase5(self.checkpoint_at.unwrap());
                     self.replay_checkpoint(*range.end())?;
                 } else {
                     self.sync_base_height = u64::MAX;
