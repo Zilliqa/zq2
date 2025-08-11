@@ -600,21 +600,22 @@ impl Db {
         };
 
         // Check if the parent block is a fork
-        if let Some(ckpt_parent) = self.get_block(parent.hash().into())? {
-            if ckpt_parent.parent_hash() != parent.parent_hash() {
-                return Err(anyhow!("Checkpoint ancestor mismatch"));
-            } else if trie_storage
-                .get(ckpt_parent.state_root_hash().as_bytes())?
-                .is_none()
-            {
-                // if the parent block exists, but the corresponding state is missing
-                tracing::info!("Loading checkpoint history");
-                crate::checkpoint::load_state_trie(&mut reader, trie_storage, &ckpt_parent)?;
-            }
-            return Ok(Some((ckpt_block, transactions, ckpt_parent)));
-        } else {
+        let Some(ckpt_parent) = self.get_block(parent.hash().into())? else {
             return Err(anyhow!("Checkpoint parent missing"));
         };
+
+        if ckpt_parent.parent_hash() != parent.parent_hash() {
+            return Err(anyhow!("Checkpoint ancestor mismatch"));
+        };
+        if trie_storage
+            .get(ckpt_parent.state_root_hash().as_bytes())?
+            .is_none()
+        {
+            // if the parent block exists, but the corresponding state is missing
+            tracing::info!("Loading checkpoint history");
+            crate::checkpoint::load_state_trie(&mut reader, trie_storage, &ckpt_parent)?;
+        }
+        Ok(Some((ckpt_block, transactions, ckpt_parent)))
     }
 
     pub fn state_trie(&self) -> Result<TrieStorage> {

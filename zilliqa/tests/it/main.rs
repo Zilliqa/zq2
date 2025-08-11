@@ -1031,6 +1031,16 @@ impl Network {
                     InternalMessage::UnsubscribeFromGossipSubTopic(topic) => {
                         debug!("unsubscribing from topic {:?}", topic);
                     }
+                    InternalMessage::ExecuteProposal(p) => {
+                        let (destination, _) = destination.expect("Local messages are intended to always have the node's own peerid as destination within in the test harness");
+                        let idx_node = self.find_node(destination);
+                        if let Some((_, node)) = idx_node {
+                            node.inner
+                                .write()
+                                .handle_execute_proposal(p.to_owned())
+                                .unwrap();
+                        }
+                    }
                 }
             }
             AnyMessage::External(external_message) => {
