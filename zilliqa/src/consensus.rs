@@ -245,7 +245,7 @@ pub struct Consensus {
 
 impl Consensus {
     // determined empirically
-    const PROP_SIZE_THRESHOLD: usize = 921 * 1024; // 90% of 1MB
+    const PROP_SIZE_THRESHOLD: usize = crate::constants::PROPOSAL_THRESHOLD;
     // view buffer size limit
     const VIEW_BUFFER_THRESHOLD: usize = 1000;
 
@@ -443,6 +443,7 @@ impl Consensus {
                     .state
                     .at_root(parent.state_root_hash().into())
                     .get_stakers(block.header)?,
+                false,
             )?;
         }
 
@@ -866,7 +867,7 @@ impl Consensus {
             // It is possible to source Proposals from own storage during sync, which alters the source of the Proposal.
             // Only allow from == self, for fast-forwarding, in normal case but not during sync
             let from = (self.peer_id() != from || !during_sync).then_some(from);
-            self.execute_block(from, &block, transactions, &stakers)?;
+            self.execute_block(from, &block, transactions, &stakers, during_sync)?;
 
             if view != proposal_view + 1 {
                 view = proposal_view + 1;
@@ -3082,7 +3083,7 @@ impl Consensus {
                 .state
                 .at_root(parent.state_root_hash().into())
                 .get_stakers(block_pointer.header)?;
-            self.execute_block(None, &block_pointer, transactions, &committee)?;
+            self.execute_block(None, &block_pointer, transactions, &committee, false)?;
         }
 
         Ok(())
@@ -3094,6 +3095,7 @@ impl Consensus {
         block: &Block,
         transactions: Vec<SignedTransaction>,
         committee: &[NodePublicKey],
+        during_sync: bool,
     ) -> Result<()> {
         debug!("Executing block: {:?}", block.header);
 
@@ -3165,7 +3167,8 @@ impl Consensus {
                             return Ok(());
                         }
 
-                        if fork.check_minimum_gas_price {
+                        // bypass this check during sync - since the txn has already been executed
+                        if fork.check_minimum_gas_price && !during_sync {
                             let Ok(acc) = self.state.get_account(verified.signer) else {
                                 warn!(
                                     "Sender doesn't exist in recovered transaction from given block!"

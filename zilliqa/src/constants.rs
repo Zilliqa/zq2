@@ -81,5 +81,14 @@ pub const EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER: f32 = 1.25f32;
 // priority fee_per_gas: gas_price
 pub const BASE_FEE_PER_GAS: u128 = 0;
 
+/// P2P Configurations
+pub const MAX_GOSSIP_SIZE: usize = 2 * 1024 * 1024;
+pub const MAX_RESPONSE_SIZE: usize = 10 * 1024 * 1024;
+pub const MAX_REQUEST_SIZE: usize = 1024 * 1024;
+
+/// Size thresholds
+pub const PROPOSAL_THRESHOLD: usize = MAX_GOSSIP_SIZE * 8 / 10; // 80%
+pub const SYNC_THRESHOLD: usize = MAX_RESPONSE_SIZE - MAX_GOSSIP_SIZE;
+
 // Max age of the items in the missed view history
 pub const MAX_MISSED_VIEW_AGE: u64 = 100;

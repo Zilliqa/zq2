@@ -81,7 +81,7 @@ sync.ignore_passive = true
 
 consensus.genesis_fork = { at_height = 0, executable_blocks = false, call_mode_1_sets_caller_to_parent_caller = true, failed_scilla_call_from_gas_exempt_caller_causes_revert = true, scilla_messages_can_call_evm_contracts = true, scilla_contract_creation_increments_account_balance = true, scilla_json_preserve_order = true, scilla_call_respects_evm_state_changes = true, only_mutated_accounts_update_state = true, scilla_call_gas_exempt_addrs = [
 ], scilla_block_number_returns_current_block = true, scilla_maps_are_encoded_correctly = true, transfer_gas_fee_to_zero_account = true, apply_state_changes_only_if_transaction_succeeds = true, apply_scilla_delta_when_evm_succeeded = true, scilla_deduct_funds_from_actual_sender = true, fund_accounts_from_zero_account = [
-], scilla_delta_maps_are_applied_correctly = true, scilla_server_unlimited_response_size = true, scilla_failed_txn_correct_balance_deduction = false, scilla_transition_proper_order = false, evm_to_scilla_value_transfer_zero = false, restore_xsgd_contract = false, evm_exec_failure_causes_scilla_precompile_to_fail = false, revert_restore_xsgd_contract = false, scilla_fix_contract_code_removal_on_evm_tx = false, restore_ignite_wallet_contracts = false, prevent_zil_transfer_from_evm_to_scilla_contract = false, scilla_failed_txn_correct_gas_fee_charged = false, check_minimum_gas_price = false, inject_access_list = false, use_max_gas_priority_fee = false }
+], scilla_delta_maps_are_applied_correctly = false, scilla_server_unlimited_response_size = false, scilla_failed_txn_correct_balance_deduction = false, scilla_transition_proper_order = false, evm_to_scilla_value_transfer_zero = false, restore_xsgd_contract = false, evm_exec_failure_causes_scilla_precompile_to_fail = false, revert_restore_xsgd_contract = false, scilla_fix_contract_code_removal_on_evm_tx = false, restore_ignite_wallet_contracts = false, prevent_zil_transfer_from_evm_to_scilla_contract = false, scilla_failed_txn_correct_gas_fee_charged = false, check_minimum_gas_price = false, inject_access_list = false, use_max_gas_priority_fee = false }
 api_servers = [
     { port = 4201, enabled_apis = [
         { namespace = "eth", apis = [
@@ -103,6 +103,7 @@ api_servers = [
 ]
 consensus.forks = [
     { at_height = 8099088, executable_blocks = true },
+    { at_height = 8371376, scilla_delta_maps_are_applied_correctly = true },
     { at_height = 8377200, scilla_call_gas_exempt_addrs = [
         "0x60E6b5b1B8D3E373E1C04dC0b4f5624776bcBB60",
         "0x7013Da2653453299Efb867EfcCCcB1A6d5FE1384",
@@ -117,8 +118,9 @@ consensus.forks = [
         "0x453b11386FBd54bC532892c0217BBc316fc7b918",
         "0xaD581eC62eA08831c8FE2Cd7A1113473fE40A057",
     ] },
+    { at_height = 9340000, scilla_server_unlimited_response_size = true },
     { at_height = 9341630, scilla_failed_txn_correct_balance_deduction = true, scilla_transition_proper_order = true, evm_to_scilla_value_transfer_zero = true, restore_xsgd_contract = true },
-    { at_height = 9489500, evm_exec_failure_causes_scilla_precompile_to_fail = true },
+    { at_height = 9500000, evm_exec_failure_causes_scilla_precompile_to_fail = true },
     { at_height = 9780700, revert_restore_xsgd_contract = true, scilla_fix_contract_code_removal_on_evm_tx = true },
     { at_height = 10109366, prevent_zil_transfer_from_evm_to_scilla_contract = true },
     { at_height = 10854709, scilla_failed_txn_correct_gas_fee_charged = true, check_minimum_gas_price = true },
