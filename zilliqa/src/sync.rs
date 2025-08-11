@@ -383,8 +383,8 @@ impl Sync {
                 self.retry_phase1()?;
             }
             SyncState::Phase4(_) => self.request_passive_sync()?,
-            SyncState::Phase5(_) if self.in_pipeline == 0 => {
-                self.state = SyncState::Phase0;
+            SyncState::Phase5(_) => {
+                // wait for mark_replayed to run
             }
             _ => {
                 debug!(in_pipeline = %self.in_pipeline, "DoSync : syncing");
@@ -401,6 +401,13 @@ impl Sync {
         }
     }
 
+    pub fn mark_replayed(&mut self, number: u64) {
+        trace!(%number, "MarkReplayed");
+        if number == self.checkpoint_at {
+            self.state = SyncState::Phase0;
+        }
+    }
+
     /// Replay the checkpoint to the highest block height.
     fn replay_checkpoint(&mut self, highest_at: u64) -> Result<()> {
         let mut checkpoint_at = match self.state {
@@ -409,6 +416,8 @@ impl Sync {
         };
 
         // collect any proposals to replay
+        // We only need to replay proposals that mutate state_trie.
+        // Other intermediate blocks e.g. empty blocks are not needed.
         let start_now = Instant::now();
         let mut proposals = Vec::with_capacity(10 * 1024 * 1024);
         let trie_storage = Arc::new(self.db.state_trie()?);
@@ -417,45 +426,47 @@ impl Sync {
             && proposals.len() < self.max_batch_size
             && start_now.elapsed().as_millis() < 500
         {
-            let Some(block) = self.db.get_block(BlockFilter::Height(checkpoint_at))? else {
+            if let Some(block) = self.db.get_block(BlockFilter::Height(checkpoint_at))? {
+                // if block state root hash is not in state_trie, and state_root_hash is different, inject proposal
+                if !changes.contains(&block.state_root_hash())
+                    && trie_storage
+                        .get(block.state_root_hash().as_bytes())?
+                        .is_none()
+                {
+                    let brt = self
+                        .db
+                        .get_block_and_receipts_and_transactions(BlockFilter::Height(
+                            checkpoint_at,
+                        ))?
+                        .expect("block must exist due to above check");
+
+                    let prop = self.brt_to_proposal(brt);
+                    proposals.push(prop);
+                    changes.insert(block.state_root_hash());
+                }
+            } else {
                 unimplemented!("ReplayCheckpoint: missing block");
             };
-
-            // if block state root hash is not in state trie, and state_root_hash is different, inject proposal
-            if !changes.contains(&block.state_root_hash())
-                && trie_storage
-                    .get(block.state_root_hash().as_bytes())?
-                    .is_none()
-            {
-                let brt = self
-                    .db
-                    .get_block_and_receipts_and_transactions(BlockFilter::Height(checkpoint_at))?
-                    .unwrap(); // block MUST exist
-
-                let prop = self.brt_to_proposal(brt);
-                proposals.push(prop);
-                changes.insert(block.state_root_hash());
-            }
-
             checkpoint_at = checkpoint_at.saturating_add(1);
         }
 
         // inject any replayed proposals
         if !proposals.is_empty() {
-            let range = self.checkpoint_at..checkpoint_at;
+            let checkpoint_at = proposals.last().unwrap().number();
+            let range = self.checkpoint_at..=checkpoint_at;
             tracing::info!(len=%proposals.len(), ?range, "ReplayCheckpoint: replaying");
+            self.checkpoint_at = checkpoint_at;
             for p in proposals {
                 self.message_sender
                     .send_message_to_coordinator(InternalMessage::ExecuteProposal(p))?;
             }
-        }
-
-        self.checkpoint_at = if checkpoint_at < highest_at {
-            checkpoint_at
         } else {
-            u64::MAX
-        };
-
+            // nothing to replay; progress the checkpoint
+            let range = self.checkpoint_at..=checkpoint_at;
+            tracing::info!(len=%proposals.len(), ?range, "ReplayCheckpoint: skipping");
+            self.checkpoint_at = checkpoint_at;
+            self.state = SyncState::Phase0;
+        }
         Ok(())
     }
 

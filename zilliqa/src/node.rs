@@ -363,6 +363,8 @@ impl Node {
             .get_block(BlockFilter::Hash(proposal.header.qc.block_hash))?
             .unwrap()
             .state_root_hash();
+        let number = proposal.number();
+        self.consensus.sync.mark_replayed(number);
         self.consensus.replay_proposal(proposal, parent_state)?;
         Ok(())
     }
