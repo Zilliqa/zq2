@@ -1,6 +1,6 @@
 use std::{
     cmp::{Ordering, Reverse},
-    collections::{BTreeMap, BinaryHeap, HashMap, VecDeque},
+    collections::{BTreeMap, BinaryHeap, HashMap, HashSet, VecDeque},
     ops::RangeInclusive,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -412,6 +412,7 @@ impl Sync {
         let start_now = Instant::now();
         let mut proposals = Vec::with_capacity(10 * 1024 * 1024);
         let trie_storage = Arc::new(self.db.state_trie()?);
+        let mut changes = HashSet::new();
         while checkpoint_at < highest_at
             && proposals.len() < self.max_batch_size
             && start_now.elapsed().as_millis() < 500
@@ -420,18 +421,20 @@ impl Sync {
                 unimplemented!("ReplayCheckpoint: missing block");
             };
 
-            // if block state root hash is not in state trie, inject proposal
-            if trie_storage
-                .get(block.state_root_hash().as_bytes())?
-                .is_none()
+            // if block state root hash is not in state trie, and state_root_hash is different, inject proposal
+            if !changes.contains(&block.state_root_hash())
+                && trie_storage
+                    .get(block.state_root_hash().as_bytes())?
+                    .is_none()
             {
-                if let Some(brt) = self
+                let brt = self
                     .db
                     .get_block_and_receipts_and_transactions(BlockFilter::Height(checkpoint_at))?
-                {
-                    let prop = self.brt_to_proposal(brt);
-                    proposals.push(prop);
-                };
+                    .unwrap(); // block MUST exist
+
+                let prop = self.brt_to_proposal(brt);
+                proposals.push(prop);
+                changes.insert(block.state_root_hash());
             }
 
             checkpoint_at = checkpoint_at.saturating_add(1);
