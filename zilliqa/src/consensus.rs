@@ -2731,6 +2731,17 @@ impl Consensus {
             .ok_or_else(|| anyhow!("no qcs in agg"))
     }
 
+    pub fn replay_proposal(&mut self, proposal: Proposal, parent_state: Hash) -> Result<()> {
+        let prev_root_hash = self.state.root_hash()?;
+        let (block, transactions) = proposal.into_parts();
+        self.state.set_to_root(parent_state.into());
+        let stakers = self.state.get_stakers(block.header)?;
+        self.execute_block(None, &block, transactions, stakers.as_slice(), true)?;
+        // restore previous state
+        self.state.set_to_root(prev_root_hash.into());
+        Ok(())
+    }
+
     fn verify_qc_signature(
         &self,
         qc: &QuorumCertificate,
@@ -3042,7 +3053,7 @@ impl Consensus {
         Ok(())
     }
 
-    pub fn execute_block(
+    fn execute_block(
         &mut self,
         from: Option<PeerId>,
         block: &Block,

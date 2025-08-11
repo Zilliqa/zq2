@@ -358,22 +358,12 @@ impl Node {
     }
 
     pub fn handle_execute_proposal(&mut self, proposal: Proposal) -> Result<()> {
-        let prev_root_hash = self.consensus.state_mut().root_hash()?;
-        let (block, transactions) = proposal.into_parts();
-        let parent = self
+        let parent_state = self
             .db
-            .get_block(BlockFilter::Hash(block.parent_hash()))?
-            .unwrap();
-        self.consensus
-            .state_mut()
-            .set_to_root(parent.state_root_hash().into());
-        let stakers = self.consensus.state_mut().get_stakers(block.header)?;
-        self.consensus
-            .execute_block(None, &block, transactions, stakers.as_slice(), true)?;
-        // restore previous state
-        self.consensus
-            .state_mut()
-            .set_to_root(prev_root_hash.into());
+            .get_block(BlockFilter::Hash(proposal.header.qc.block_hash))?
+            .unwrap()
+            .state_root_hash();
+        self.consensus.replay_proposal(proposal, parent_state)?;
         Ok(())
     }
 
