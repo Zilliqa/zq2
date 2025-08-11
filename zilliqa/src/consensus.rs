@@ -261,15 +261,12 @@ impl Consensus {
         );
 
         // Start chain from checkpoint. Load data file and initialise data in tables
-        let mut checkpoint_data = None;
-        if let Some(checkpoint) = &config.load_checkpoint {
+        let checkpoint_data = if let Some(checkpoint) = &config.load_checkpoint {
             trace!("Loading state from checkpoint: {:?}", checkpoint);
-            checkpoint_data = db.load_trusted_checkpoint(
-                &checkpoint.file,
-                &checkpoint.hash,
-                config.eth_chain_id,
-            )?;
-        }
+            db.load_trusted_checkpoint(&checkpoint.file, &checkpoint.hash, config.eth_chain_id)?
+        } else {
+            None
+        };
 
         let latest_block = db
             .get_finalized_view()?

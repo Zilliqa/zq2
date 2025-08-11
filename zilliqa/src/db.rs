@@ -595,16 +595,10 @@ impl Db {
         }
 
         // OTHER SANITY CHECKS
-        // Check if checkpoint block is invalid
-        let Some(ckpt_block) = self.get_block(block.hash().into())? else {
-            return Err(anyhow!("Checkpoint block missing"));
-        };
-
-        // Check if the parent block is a fork
+        // Check if the parent block is sane
         let Some(ckpt_parent) = self.get_block(parent.hash().into())? else {
             return Err(anyhow!("Checkpoint parent missing"));
         };
-
         if ckpt_parent.parent_hash() != parent.parent_hash() {
             return Err(anyhow!("Checkpoint ancestor mismatch"));
         };
@@ -612,11 +606,11 @@ impl Db {
             .get(ckpt_parent.state_root_hash().as_bytes())?
             .is_none()
         {
-            // if the parent block exists, but the corresponding state is missing
+            // If the corresponding state is missing, load it from the checkpoint
             tracing::info!("Loading checkpoint history");
             crate::checkpoint::load_state_trie(&mut reader, trie_storage, &ckpt_parent)?;
         }
-        Ok(Some((ckpt_block, transactions, ckpt_parent)))
+        Ok(Some((block, transactions, ckpt_parent)))
     }
 
     pub fn state_trie(&self) -> Result<TrieStorage> {
@@ -1645,7 +1639,7 @@ mod tests {
         assert_eq!(checkpoint_transactions, transactions);
         assert_eq!(checkpoint_parent, parent);
 
-        // Return None if checkpointed block already executed
+        // Always return Some, even if checkpointed block already executed
         db.insert_block(&checkpoint_block).unwrap();
         let result = db
             .load_trusted_checkpoint(
@@ -1654,6 +1648,6 @@ mod tests {
                 SHARD_ID,
             )
             .unwrap();
-        assert!(result.is_none());
+        assert!(result.is_some());
     }
 }
