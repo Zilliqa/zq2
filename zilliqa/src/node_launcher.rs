@@ -311,7 +311,7 @@ impl NodeLauncher {
                     let start = SystemTime::now();
                     if let Err(e) = match message {
                         InternalMessage::ExecuteProposal(p) => {
-                            self.node.write().handle_execute_proposal(p)
+                            self.node.write().handle_execute_proposal(*p)
                         },
                         _ => todo!("Local messages will need to be handled once cross-shard messaging is implemented"),
                     }

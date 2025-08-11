@@ -444,7 +444,7 @@ impl Sync {
                         .expect("block must exist due to above check");
 
                     let prop = self.brt_to_proposal(brt);
-                    proposals.push(prop);
+                    proposals.push(Box::new(prop));
                     changes.insert(block.state_root_hash());
                 }
             } else {

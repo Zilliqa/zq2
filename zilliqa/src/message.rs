@@ -392,7 +392,7 @@ pub enum InternalMessage {
     /// Notify p2p cordinator to unsubscribe from a particular gossipsub topic
     UnsubscribeFromGossipSubTopic(GossipSubTopic),
     /// 0.18.0
-    ExecuteProposal(Proposal),
+    ExecuteProposal(Box<Proposal>),
 }
 
 #[derive(Debug, Clone)]

@@ -1,14 +1,16 @@
-use anyhow::{Result, anyhow};
-use eth_trie::{DB, EthTrie, MemoryDB, Trie};
-use lz4::Decoder;
 use std::{
     fs::File,
     io::{BufReader, Read},
     sync::Arc,
 };
 
-use crate::{crypto::Hash, db::TrieStorage, state::Account};
-use crate::{message::Block, transaction::SignedTransaction};
+use anyhow::{Result, anyhow};
+use eth_trie::{DB, EthTrie, MemoryDB, Trie};
+use lz4::Decoder;
+
+use crate::{
+    crypto::Hash, db::TrieStorage, message::Block, state::Account, transaction::SignedTransaction,
+};
 
 pub const CHECKPOINT_HEADER_BYTES: [u8; 8] = *b"ZILCHKPT";
 

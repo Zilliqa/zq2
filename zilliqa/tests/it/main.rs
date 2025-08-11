@@ -1037,7 +1037,7 @@ impl Network {
                         if let Some((_, node)) = idx_node {
                             node.inner
                                 .write()
-                                .handle_execute_proposal(p.to_owned())
+                                .handle_execute_proposal(*p.to_owned())
                                 .unwrap();
                         }
                     }

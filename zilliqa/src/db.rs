@@ -11,7 +11,8 @@ use std::{
 
 use alloy::primitives::Address;
 use anyhow::{Context, Result, anyhow};
-use eth_trie::{DB, EthTrie};
+#[allow(unused_imports)]
+use eth_trie::{DB, EthTrie, MemoryDB, Trie};
 use itertools::Itertools;
 use lru_mem::LruCache;
 use lz4::{Decoder, EncoderBuilder};
