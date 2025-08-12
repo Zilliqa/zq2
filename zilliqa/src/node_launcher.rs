@@ -300,8 +300,7 @@ impl NodeLauncher {
                         &attributes,
                     );
                 }
-                message = self.local_messages.next() => {
-                    let (_source, _message) = message.expect("message stream should be infinite");
+                _message = self.local_messages.next() => {
                     todo!("Local messages will need to be handled once cross-shard messaging is implemented");
                 }
                 () = &mut consensus_sleep => {

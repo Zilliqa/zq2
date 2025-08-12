@@ -112,6 +112,7 @@ pub struct Sync {
     prune_interval: u64,
     // how many blocks to inject into the queue
     max_blocks_in_flight: usize,
+    max_idle_duration: Duration,
     // count of proposals pending in the pipeline
     in_pipeline: usize,
     // our peer id
@@ -149,8 +150,6 @@ impl Sync {
     const MAX_BATCH_SIZE: usize = 100;
     // Cache recent block sizes
     const MAX_CACHE_SIZE: usize = 100_000;
-    // Timeout for passive-sync/prune
-    const PRUNE_TIMEOUT_MS: u128 = 1000;
     // Do not overflow libp2p::request-response::cbor::codec::RESPONSE_SIZE_MAXIMUM = 10MB (default)
     const RESPONSE_SIZE_THRESHOLD: usize = crate::constants::SYNC_THRESHOLD;
     // periodic vacuum interval
@@ -204,6 +203,9 @@ impl Sync {
             u64::MAX
         };
 
+        // Idle duration
+        let max_idle_duration = config.consensus.block_time / 2;
+
         Ok(Self {
             db,
             message_sender,
@@ -211,6 +213,7 @@ impl Sync {
             peers,
             max_batch_size,
             max_blocks_in_flight,
+            max_idle_duration,
             in_flight: VecDeque::with_capacity(Self::MAX_CONCURRENT_PEERS),
             in_pipeline: usize::MIN,
             state: SyncState::Phase0,
@@ -413,7 +416,6 @@ impl Sync {
         let range = self.db.available_range()?;
 
         match (*range.start()).cmp(&self.sync_base_height) {
-            // done, turn off passive-sync
             Ordering::Equal => {
                 self.sync_base_height = u64::MAX;
             }
@@ -470,7 +472,7 @@ impl Sync {
         let start_now = Instant::now();
         for number in *range.start()..prune_ceil {
             // check if we have time to prune
-            if start_now.elapsed().as_millis() > Self::PRUNE_TIMEOUT_MS {
+            if start_now.elapsed() > self.max_idle_duration {
                 return Ok(number);
             }
             // remove canonical block and transactions
@@ -635,8 +637,8 @@ impl Sync {
         let mut metas = Vec::new();
         let mut hash = request.hash;
         let mut size = 0;
-        // return as much as possible
-        while started_at.elapsed().as_millis() < Self::PRUNE_TIMEOUT_MS {
+        // return as much as possible within idle time
+        while started_at.elapsed() < self.max_idle_duration {
             let Some(brt) = self
                 .db
                 .get_block_and_receipts_and_transactions(hash.into())?
