@@ -39,4 +39,4 @@ curl -d '{
 | `id`      | string | Required | `"1"`                       |
 | `jsonrpc` | string | Required | `"2.0"`                     |
 | `method`  | string | Required | `"eth_getTransactionCount"` |
-| `params`  | array  | Requred  | `[ address, block_number]`  |
+| `params`  | array  | Required | `[ address, block_number]`  |

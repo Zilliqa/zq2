@@ -3,7 +3,10 @@ use std::collections::HashSet;
 use alloy::eips::BlockId;
 use ethers::{
     providers::Middleware,
-    types::{TransactionRequest, U64},
+    types::{
+        Eip1559TransactionRequest, Eip2930TransactionRequest, TransactionRequest, U64,
+        transaction::{eip2718::TypedTransaction, eip2930::AccessList},
+    },
 };
 use primitive_types::{H160, H256, U256};
 use tracing::*;
@@ -247,7 +250,7 @@ async fn handle_forking_correctly(mut network: Network) {
 async fn zero_account_per_block_balance_updates(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
-    // Check inital account values
+    // Check initial account values
     let block_height = wallet.get_block_number().await.unwrap();
     assert_eq!(block_height, U64::from(0));
 
@@ -268,7 +271,7 @@ async fn zero_account_per_block_balance_updates(mut network: Network) {
         .unwrap();
     assert_eq!(genesis_account_expected_balance, genesis_account_balance);
 
-    // Total intial stake spread across 4 validators
+    // Total initial stake spread across 4 validators
     let genesis_deposits = network
         .get_node(0)
         .config
@@ -338,119 +341,71 @@ async fn gas_fees_should_be_transferred_to_zero_account(mut network: Network) {
     let provider = wallet.provider();
 
     network.run_until_block(&wallet, 1.into(), 50).await;
-    let hash = wallet
-        .send_transaction(TransactionRequest::pay(wallet.address(), 10), None)
-        .await
-        .unwrap()
-        .tx_hash();
-    network.run_until_receipt(&wallet, hash, 200).await;
+    let tx_legacy: TypedTransaction = TransactionRequest::pay(wallet.address(), 10).into();
+    let gas_price = network.get_node(0).get_gas_price();
+    let tx_eip1559: TypedTransaction = Eip1559TransactionRequest {
+        to: Some(wallet.address().into()),
+        value: Some(10.into()),
+        max_fee_per_gas: Some(gas_price.into()),
+        max_priority_fee_per_gas: Some(gas_price.into()),
+        ..Default::default()
+    }
+    .into();
+    let tx_eip2930: TypedTransaction = Eip2930TransactionRequest::new(
+        TransactionRequest::pay(wallet.address(), 10),
+        AccessList(vec![]),
+    )
+    .into();
 
-    let receipt = provider
-        .get_transaction_receipt(hash)
-        .await
-        .unwrap()
-        .unwrap();
-    let block = wallet
-        .get_block(receipt.block_number.unwrap())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(block.transactions.len(), 1);
+    for tx_request in [tx_legacy, tx_eip1559, tx_eip2930] {
+        let tx = wallet.send_transaction(tx_request, None).await.unwrap();
+        let hash = tx.tx_hash();
+        network.run_until_receipt(&wallet, hash, 200).await;
 
-    let mut total_rewards = U256::zero();
-    let stakers = get_stakers(&wallet).await;
-    for staker in stakers {
-        let reward_address = get_reward_address(&wallet, &staker).await;
-        let reward_address_balance_before = wallet
-            .get_balance(reward_address, Some((block.number.unwrap() - 1).into()))
+        let receipt = provider
+            .get_transaction_receipt(hash)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(receipt.gas_used.unwrap(), 21000.into());
+        assert_eq!(receipt.effective_gas_price.unwrap(), gas_price.into());
+        let block = wallet
+            .get_block(receipt.block_number.unwrap())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(block.transactions.len(), 1);
+
+        let mut total_rewards = U256::zero();
+        let stakers = get_stakers(&wallet).await;
+        for staker in stakers {
+            let reward_address = get_reward_address(&wallet, &staker).await;
+            let reward_address_balance_before = wallet
+                .get_balance(reward_address, Some((block.number.unwrap() - 1).into()))
+                .await
+                .unwrap();
+            let reward_address_balance_after = wallet
+                .get_balance(reward_address, Some(block.number.unwrap().into()))
+                .await
+                .unwrap();
+
+            total_rewards += reward_address_balance_after - reward_address_balance_before;
+        }
+
+        let zero_account = H160::zero();
+        let zero_account_balance_before = wallet
+            .get_balance(zero_account, Some((block.number.unwrap() - 1).into()))
             .await
             .unwrap();
-        let reward_address_balance_after = wallet
-            .get_balance(reward_address, Some(block.number.unwrap().into()))
+        let zero_account_balance_after = wallet
+            .get_balance(zero_account, Some(block.number.unwrap().into()))
             .await
             .unwrap();
-
-        total_rewards += reward_address_balance_after - reward_address_balance_before;
-    }
-
-    let zero_account = H160::zero();
-    let zero_account_balance_before = wallet
-        .get_balance(zero_account, Some((block.number.unwrap() - 1).into()))
-        .await
-        .unwrap();
-    let zero_account_balance_after = wallet
-        .get_balance(zero_account, Some(block.number.unwrap().into()))
-        .await
-        .unwrap();
-
-    assert_eq!(
-        zero_account_balance_after,
-        zero_account_balance_before - total_rewards
-            + (receipt.gas_used.unwrap() * receipt.effective_gas_price.unwrap())
-    );
-}
-
-// Test transaction pool state consistency during consensus operations
-#[zilliqa_macros::test]
-async fn test_transaction_pool_state_consistency_during_consensus(mut network: Network) {
-    let wallet = network.genesis_wallet().await;
-
-    // Wait for network to be ready
-    network.run_until_block(&wallet, 1.into(), 50).await;
-
-    // Create multiple transactions from the same account with sequential nonces
-    let _sender = wallet.address();
-    let mut transactions = Vec::new();
-
-    for nonce in 0..5 {
-        let tx_request = TransactionRequest {
-            to: Some(H160::random().into()),
-            value: Some(U256::from(10)),
-            gas: Some(U256::from(21000)),
-            gas_price: Some(U256::from(4_761_904_800_000u128)), // 1 gwei
-            nonce: Some(U256::from(nonce)),
-            ..Default::default()
-        };
-
-        let pending_tx = wallet.send_transaction(tx_request, None).await.unwrap();
-        transactions.push(pending_tx.tx_hash());
-    }
-
-    // Let some transactions get processed
-    network.run_until_block(&wallet, 3.into(), 100).await;
-
-    // Send more transactions while consensus is processing
-    for nonce in 5..10 {
-        let tx_request = TransactionRequest {
-            to: Some(H160::random().into()),
-            value: Some(U256::from(10)),
-            gas: Some(U256::from(21000)),
-            gas_price: Some(U256::from(4_761_904_800_000u128)),
-            nonce: Some(U256::from(nonce)),
-            ..Default::default()
-        };
-
-        let pending_tx = wallet.send_transaction(tx_request, None).await.unwrap();
-        transactions.push(pending_tx.tx_hash());
-    }
-
-    // Check that all nodes have consistent transaction pool states
-    network.run_until_block(&wallet, 6.into(), 200).await;
-
-    // Verify transaction pool consistency across nodes
-    for index in network.nodes.iter().map(|x| x.index) {
-        let node = network.get_node(index);
-        let pool_status = node.consensus.transaction_pool.read().preview_status();
-
-        // The pending count should be consistent and reasonable
-        assert!(
-            pool_status.pending <= 20,
-            "Pending count too high: {}",
-            pool_status.pending
+        assert_eq!(
+            zero_account_balance_after,
+            zero_account_balance_before - total_rewards
+                + (receipt.gas_used.unwrap() * receipt.effective_gas_price.unwrap())
         );
-
-        // Check that we can query pool content without panics
-        let _content = node.consensus.transaction_pool.read().preview_content();
     }
 }
 

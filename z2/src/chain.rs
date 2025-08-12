@@ -119,8 +119,8 @@ impl Chain {
                 "apply_scilla_delta_when_evm_succeeded" : true,
                 "scilla_deduct_funds_from_actual_sender": true,
                 "fund_accounts_from_zero_account": [],
-                "scilla_delta_maps_are_applied_correctly": true,
-                "scilla_server_unlimited_response_size": true,
+                "scilla_delta_maps_are_applied_correctly": false, // differs from default
+                "scilla_server_unlimited_response_size": false, // differs from default
                 "scilla_failed_txn_correct_balance_deduction": false,
                 "scilla_transition_proper_order": false,
                 "evm_to_scilla_value_transfer_zero": false,
@@ -132,6 +132,8 @@ impl Chain {
                 "prevent_zil_transfer_from_evm_to_scilla_contract": false,
                 "scilla_failed_txn_correct_gas_fee_charged": false,
                 "check_minimum_gas_price": false,
+                "inject_access_list": false,
+                "use_max_gas_priority_fee": false,
             })),
             Chain::Zq2Mainnet => Some(json!({
                 "at_height": 0,
@@ -163,7 +165,9 @@ impl Chain {
                 "restore_ignite_wallet_contracts": false,
                 "prevent_zil_transfer_from_evm_to_scilla_contract": false,
                 "scilla_failed_txn_correct_gas_fee_charged": false,
-                "check_minimum_gas_price": false
+                "check_minimum_gas_price": false,
+                "inject_access_list": false,
+                "use_max_gas_priority_fee": false,
             })),
             _ => None,
         }
@@ -173,6 +177,7 @@ impl Chain {
         match self {
             Chain::Zq2Testnet => Some(vec![
                 json!({ "at_height": 8099088, "executable_blocks": true }),
+                json!({ "at_height": 8371376, "scilla_delta_maps_are_applied_correctly": true }),
                 // estimated: 2025-06-27T15:05:14Z
                 json!({
                     "at_height": 8377200,
@@ -191,16 +196,19 @@ impl Chain {
                         "0xaD581eC62eA08831c8FE2Cd7A1113473fE40A057",
                     ],
                 }),
+                json!({ "at_height": 9340000, "scilla_server_unlimited_response_size": true }),
                 // estimated: 2025-07-09T07.00.00Z
                 json!({ "at_height": 9341630, "scilla_failed_txn_correct_balance_deduction": true, "scilla_transition_proper_order": true, "evm_to_scilla_value_transfer_zero": true, "restore_xsgd_contract": true }),
                 // estimated: 2025-07-11T07.00.00Z
-                json!({ "at_height": 9489500, "evm_exec_failure_causes_scilla_precompile_to_fail": true }),
+                json!({ "at_height": 9500000, "evm_exec_failure_causes_scilla_precompile_to_fail": true }),
                 // estimated: 2025-07-14T12.00.00Z
                 json!({ "at_height": 9780700, "revert_restore_xsgd_contract": true, "scilla_fix_contract_code_removal_on_evm_tx": true}),
                 // estimated: 2025-07-21T12.00.00Z
                 json!({ "at_height": 10109366, "prevent_zil_transfer_from_evm_to_scilla_contract": true}),
                 // estimated: 2025-07-28T12.00.00Z
                 json!({ "at_height": 10854709, "scilla_failed_txn_correct_gas_fee_charged": true, "check_minimum_gas_price": true}),
+                // estimated: 2025-08-02T12.00.00Z
+                json!({ "at_height": 11300000, "inject_access_list": true, "use_max_gas_priority_fee": true}),
             ]),
             Chain::Zq2Mainnet => Some(vec![
                 json!({ "at_height": 4770088, "executable_blocks": true }),
@@ -239,6 +247,8 @@ impl Chain {
                 json!({ "at_height": 6283082, "prevent_zil_transfer_from_evm_to_scilla_contract": true, "restore_ignite_wallet_contracts": true}),
                 // estimated: 2025-07-29T12.00.00Z
                 json!({ "at_height": 6771996, "scilla_failed_txn_correct_gas_fee_charged": true, "check_minimum_gas_price": true}),
+                // estimated: 2025-08-04T12.00.00Z
+                json!({ "at_height": 7000000, "inject_access_list": true, "use_max_gas_priority_fee": true}),
             ]),
             _ => None,
         }

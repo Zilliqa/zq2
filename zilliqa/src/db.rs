@@ -332,14 +332,14 @@ impl Db {
             "PRAGMA"
         );
 
-        // Add tracing - logs all SQL statements
+        // Add tracing - logs SQL statements
         connection.trace_v2(
             rusqlite::trace::TraceEventCodes::SQLITE_TRACE_PROFILE,
             Some(|profile_event| {
                 if let rusqlite::trace::TraceEvent::Profile(statement, duration) = profile_event {
                     let statement_txt = statement.expanded_sql();
                     let duration_secs = duration.as_secs();
-                    tracing::trace!(duration_secs, statement_txt, "sql executed");
+                    // tracing::trace!(duration_secs, statement_txt, "sql executed");
                     if duration_secs > 5 {
                         tracing::warn!(duration_secs, statement_txt, "sql execution took > 5s");
                     }
@@ -1258,7 +1258,7 @@ impl Db {
             .lock()
             .unwrap()
             .prepare_cached(
-                "SELECT data, transactions.tx_hash FROM transactions INNER JOIN receipts ON transactions.tx_hash = receipts.tx_hash WHERE receipts.block_hash = ?1",
+                "SELECT data, transactions.tx_hash FROM transactions INNER JOIN receipts ON transactions.tx_hash = receipts.tx_hash WHERE receipts.block_hash = ?1 ORDER BY receipts.tx_index ASC",
             )?
             .query_map([block.header.hash], |row| {
                 let txn: SignedTransaction = row.get(0)?;
@@ -1666,7 +1666,7 @@ mod tests {
             "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE is_canonical = true AND height = (SELECT MAX(height) FROM blocks WHERE is_canonical = TRUE)",
             "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE height = (SELECT MAX(height) FROM blocks) LIMIT 1",
             // "SELECT block_hash, blocks.view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks INNER JOIN tip_info ON blocks.view = tip_info.finalized_view", // tip_info is one record so scanning is fine
-            "SELECT data FROM transactions INNER JOIN receipts ON transactions.tx_hash = receipts.tx_hash WHERE receipts.block_hash = ?1",
+            "SELECT data, transactions.tx_hash FROM transactions INNER JOIN receipts ON transactions.tx_hash = receipts.tx_hash WHERE receipts.block_hash = ?1 ORDER BY receipts.tx_index ASC",
             // TODO: Add more queries
         ];
 

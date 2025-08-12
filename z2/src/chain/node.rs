@@ -662,7 +662,6 @@ impl ChainNode {
         let bootstrap_nodes = self.chain.nodes_by_role(NodeRole::Bootstrap).await?;
         let subdomain = self.chain()?.get_subdomain()?;
         let keys_config = self.get_keys_config()?;
-        let gzil_node_prefix = &format!("{}-gzil", self.chain.name());
 
         if bootstrap_nodes.is_empty() {
             return Err(anyhow!(
@@ -704,9 +703,7 @@ impl ChainNode {
         let eth_chain_id = self.eth_chain_id.to_string();
         let contract_upgrades = self.chain()?.get_contract_upgrades_block_heights();
         // 4201 is the publically exposed port - We don't expose everything there.
-        let public_api = if self.role == NodeRole::Api
-            || (self.role == NodeRole::PrivateApi && !self.name().starts_with(gzil_node_prefix))
-        {
+        let public_api = if self.role == NodeRole::Api || self.role == NodeRole::PrivateApi {
             // Enable all APIs, except `admin_` for API nodes.
             json!({
                 "port": 4201,
@@ -748,7 +745,7 @@ impl ChainNode {
 
         // Enable Otterscan indices on API and persistence nodes.
         let enable_ots_indices = self.role == NodeRole::Api
-            || (self.role == NodeRole::PrivateApi && !self.name().starts_with(gzil_node_prefix))
+            || self.role == NodeRole::PrivateApi
             || self.role == NodeRole::Persistence;
 
         let mut ctx = Context::new();

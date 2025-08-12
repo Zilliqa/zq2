@@ -19,8 +19,8 @@ use libp2p::PeerId;
 use revm::{
     Database, DatabaseRef, Evm, GetInspector, Inspector, JournaledState, inspector_handle_register,
     primitives::{
-        AccountInfo, B256, BlockEnv, Bytecode, Env, ExecutionResult, HaltReason, HandlerCfg,
-        KECCAK_EMPTY, Output, ResultAndState, SpecId, TxEnv,
+        AccessListItem, AccountInfo, B256, BlockEnv, Bytecode, Env, ExecutionResult, HaltReason,
+        HandlerCfg, KECCAK_EMPTY, Output, ResultAndState, SpecId, TxEnv,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -62,7 +62,6 @@ pub struct ExtraOpts {
 type ScillaResultAndState = (ScillaResult, HashMap<Address, PendingAccount>);
 
 /// Data returned after applying a [Transaction] to [State].
-
 #[derive(Clone)]
 pub enum TransactionApplyResult {
     Evm(ResultAndState, Box<Env>),
@@ -466,9 +465,11 @@ impl State {
             Address::ZERO,
             None,
             0,
+            None,
             self.block_gas_limit,
             amount,
             creation_bytecode,
+            None,
             None,
             current_block,
             inspector::noop(),
@@ -529,10 +530,12 @@ impl State {
         from_addr: Address,
         to_addr: Option<Address>,
         gas_price: u128,
+        max_priority_fee_per_gas: Option<u128>,
         gas_limit: EvmGas,
         amount: u128,
         payload: Vec<u8>,
         nonce: Option<u64>,
+        access_list: Option<Vec<AccessListItem>>,
         current_block: BlockHeader,
         inspector: I,
         enable_inspector: bool,
@@ -550,6 +553,16 @@ impl State {
             callers: vec![from_addr],
             has_evm_failed: false,
             has_called_scilla_precompile: false,
+        };
+        let access_list = if fork.inject_access_list {
+            access_list.unwrap_or_default()
+        } else {
+            vec![]
+        };
+        let gas_priority_fee = if fork.use_max_gas_priority_fee {
+            max_priority_fee_per_gas.map(U256::from)
+        } else {
+            None
         };
         let pending_state = PendingState::new(self.clone(), fork.clone());
         let mut evm = Evm::builder()
@@ -590,8 +603,8 @@ impl State {
                 data: payload.clone().into(),
                 nonce,
                 chain_id: Some(self.chain_id.eth),
-                access_list: vec![],
-                gas_priority_fee: None,
+                access_list,
+                gas_priority_fee,
                 blob_hashes: vec![],
                 max_fee_per_blob_gas: None,
                 authorization_list: None,
@@ -804,10 +817,12 @@ impl State {
                     from_addr,
                     txn.to_addr(),
                     txn.max_fee_per_gas(),
+                    txn.max_priority_fee_per_gas(),
                     txn.gas_limit(),
                     txn.amount(),
                     txn.payload().to_vec(),
                     txn.nonce(),
+                    txn.access_list(),
                     current_block,
                     inspector,
                     enable_inspector,
@@ -1191,6 +1206,7 @@ impl State {
         gas: Option<EvmGas>,
         gas_price: Option<u128>,
         value: u128,
+        access_list: Option<Vec<AccessListItem>>,
     ) -> Result<u64> {
         let gas_price = gas_price.unwrap_or(self.gas_price);
 
@@ -1208,6 +1224,7 @@ impl State {
             EvmGas(upper_bound),
             gas_price,
             value,
+            access_list.clone(),
         )?;
 
         // Execute the while loop iff (max - min)/max < MINIMUM_PERCENT_RATIO [%]
@@ -1225,10 +1242,12 @@ impl State {
                 from_addr,
                 to_addr,
                 gas_price,
+                None,
                 EvmGas(mid),
                 value,
                 data.clone(),
                 None,
+                access_list.clone(),
                 current_block,
                 inspector::noop(),
                 false,
@@ -1261,15 +1280,18 @@ impl State {
         gas: EvmGas,
         gas_price: u128,
         value: u128,
+        access_list: Option<Vec<AccessListItem>>,
     ) -> Result<u64> {
         let (ResultAndState { result, .. }, ..) = self.apply_transaction_evm(
             from_addr,
             to_addr,
             gas_price,
+            None,
             gas,
             value,
             data.clone(),
             None,
+            access_list,
             current_block,
             inspector::noop(),
             false,
@@ -1299,9 +1321,11 @@ impl State {
             from_addr,
             to_addr,
             0,
+            None,
             self.block_gas_limit,
             amount,
             data,
+            None,
             None,
             current_block,
             inspector::noop(),
@@ -1330,9 +1354,11 @@ impl State {
             from_addr,
             to_addr,
             0,
+            None,
             self.block_gas_limit,
             amount,
             data,
+            None,
             None,
             current_block,
             inspector::noop(),

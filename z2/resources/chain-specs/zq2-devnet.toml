@@ -2,44 +2,49 @@ network = "zq2-devnet"
 p2p_port = 3333
 
 bootstrap_address = [
-  "12D3KooWFPfLCWc3dTMM4FFBFKQGACjPEKG5juyQW9CzJdUQ7v8e",
-  "/dns/bootstrap.zq2-devnet.zilliqa.com/tcp/3333"
+    "12D3KooWFPfLCWc3dTMM4FFBFKQGACjPEKG5juyQW9CzJdUQ7v8e",
+    "/dns/bootstrap.zq2-devnet.zilliqa.com/tcp/3333",
 ]
 
 [[nodes]]
 eth_chain_id = 33469
 allowed_timestamp_skew = { secs = 60, nanos = 0 }
 data_dir = "/data"
-consensus.genesis_accounts = [ ["0xe4e8c170f79c8e155e3680fca3ff34a7f9d4001d", "900_000_000_000_000_000_000_000_000" ] ]
+consensus.genesis_accounts = [
+    [
+        "0xe4e8c170f79c8e155e3680fca3ff34a7f9d4001d",
+        "900_000_000_000_000_000_000_000_000",
+    ],
+]
 consensus.genesis_deposits = [
-  [
-    "97cb791639a2a441fb62c2dbecc7349f9f6cbba1add3ebd43467aefc21492cfe425f1194ee6ce92cd5ed425f4c400875",
-    "12D3KooW9smiqhQLyy1dxVetgPps6JekzPxfaUyBFC4UrC3s66Hu",
-    "20_000_000_000_000_000_000_000_000",
-    "0x0000000000000000000000000000000000000000",
-    "0xe4e8c170f79c8e155e3680fca3ff34a7f9d4001d"
-  ],
-  [
-    "adbfec62c8bbf2536f0ac6edcd4b6753c9f90c4345761b0ac48f1420b79f59ae78c94ccd0c0b03d12e131c1033e18367",
-    "12D3KooWNsGCpys1vkat5snimm1r8UmndRPd8bzR12xp4WzBAX1U",
-    "20_000_000_000_000_000_000_000_000",
-    "0x0000000000000000000000000000000000000000",
-    "0xe4e8c170f79c8e155e3680fca3ff34a7f9d4001d"
-  ],
-  [
-    "8c3dc1e5ba40ed321d5e9a852b5bf39dbc6de318afd52e8913616cd7e675775afca6456d1b27b31fa6b49b3fcd43416e",
-    "12D3KooWSqaCxuoRU3dVjDBHQg6MGkD53S8UyiCWUg6HCgy8mcx5",
-    "20_000_000_000_000_000_000_000_000",
-    "0x0000000000000000000000000000000000000000",
-    "0xe4e8c170f79c8e155e3680fca3ff34a7f9d4001d"
-  ],
-  [
-    "805bf04b8b442f19ae5a20e09b9ada17fcf9a3d2329b3a6b214dfbda17d071ff056e30491267261e27651e2f95ca1e97",
-    "12D3KooWMiwhBUgxUwDmD8Pms4VC2MA2QFbch4vLqffwWDVFNYij",
-    "20_000_000_000_000_000_000_000_000",
-    "0x0000000000000000000000000000000000000000",
-    "0xe4e8c170f79c8e155e3680fca3ff34a7f9d4001d"
-  ]
+    [
+        "97cb791639a2a441fb62c2dbecc7349f9f6cbba1add3ebd43467aefc21492cfe425f1194ee6ce92cd5ed425f4c400875",
+        "12D3KooW9smiqhQLyy1dxVetgPps6JekzPxfaUyBFC4UrC3s66Hu",
+        "20_000_000_000_000_000_000_000_000",
+        "0x0000000000000000000000000000000000000000",
+        "0xe4e8c170f79c8e155e3680fca3ff34a7f9d4001d",
+    ],
+    [
+        "adbfec62c8bbf2536f0ac6edcd4b6753c9f90c4345761b0ac48f1420b79f59ae78c94ccd0c0b03d12e131c1033e18367",
+        "12D3KooWNsGCpys1vkat5snimm1r8UmndRPd8bzR12xp4WzBAX1U",
+        "20_000_000_000_000_000_000_000_000",
+        "0x0000000000000000000000000000000000000000",
+        "0xe4e8c170f79c8e155e3680fca3ff34a7f9d4001d",
+    ],
+    [
+        "8c3dc1e5ba40ed321d5e9a852b5bf39dbc6de318afd52e8913616cd7e675775afca6456d1b27b31fa6b49b3fcd43416e",
+        "12D3KooWSqaCxuoRU3dVjDBHQg6MGkD53S8UyiCWUg6HCgy8mcx5",
+        "20_000_000_000_000_000_000_000_000",
+        "0x0000000000000000000000000000000000000000",
+        "0xe4e8c170f79c8e155e3680fca3ff34a7f9d4001d",
+    ],
+    [
+        "805bf04b8b442f19ae5a20e09b9ada17fcf9a3d2329b3a6b214dfbda17d071ff056e30491267261e27651e2f95ca1e97",
+        "12D3KooWMiwhBUgxUwDmD8Pms4VC2MA2QFbch4vLqffwWDVFNYij",
+        "20_000_000_000_000_000_000_000_000",
+        "0x0000000000000000000000000000000000000000",
+        "0xe4e8c170f79c8e155e3680fca3ff34a7f9d4001d",
+    ],
 ]
 
 # Reward parameters
@@ -53,4 +58,22 @@ consensus.contract_upgrades = { deposit_v5 = { height = 0, reinitialise_params =
 consensus.new_view_broadcast_interval = { secs = 30, nanos = 0 }
 sync.ignore_passive = true
 
-api_servers = [{ port = 4201, enabled_apis = [{ namespace = "eth", apis = ["blockNumber"] }] }, { port = 4202, enabled_apis = ["admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] }]
+api_servers = [
+    { port = 4201, enabled_apis = [
+        { namespace = "eth", apis = [
+            "blockNumber",
+        ] },
+    ] },
+    { port = 4202, enabled_apis = [
+        "admin",
+        "debug",
+        "erigon",
+        "eth",
+        "net",
+        "ots",
+        "trace",
+        "txpool",
+        "web3",
+        "zilliqa",
+    ] },
+]

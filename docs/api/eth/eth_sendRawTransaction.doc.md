@@ -40,4 +40,4 @@ curl -d '{
 | `id`      | string | Required | `"1"`                      |
 | `jsonrpc` | string | Required | `"2.0"`                    |
 | `method`  | string | Required | `"eth_sendRawTransaction"` |
-| `params`  | array  | Requred  | `[ data ]`           |
+| `params`  | array  | Required | `[ data ]`           |

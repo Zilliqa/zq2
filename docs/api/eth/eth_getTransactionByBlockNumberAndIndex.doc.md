@@ -70,5 +70,5 @@ A transaction, or `null` if no such transaction is known to this node.
 | `id`      | string | Required | `"1"`                                     |
 | `jsonrpc` | string | Required | `"2.0"`                                   |
 | `method`  | string | Required | `"eth_getTransactionByBlockHashAndIndex"` |
-| `params`  | array  | Requred  | `[ block_number, index]`                  |
+| `params`  | array  | Required | `[ block_number, index]`                  |
 
