@@ -10,7 +10,7 @@ use alloy::primitives::{Address, B256};
 use anyhow::{Context, Result, anyhow};
 use blsful::{
     AggregateSignature, Bls12381G2, Bls12381G2Impl, MultiPublicKey, MultiSignature, PublicKey,
-    Signature, inner_types::Group, vsss_rs::ShareIdentifier,
+    Signature, inner_types::Group,
 };
 use itertools::Itertools;
 use k256::ecdsa::{Signature as EcdsaSignature, VerifyingKey, signature::hazmat::PrehashVerifier};
@@ -275,7 +275,7 @@ impl SecretKey {
         let mut message = [0u8; 76];
         message[..48].copy_from_slice(&self.as_bls().public_key().0.to_compressed());
         message[48..56].copy_from_slice(&chain_id.to_be_bytes());
-        message[56..].copy_from_slice(&address.0.to_vec());
+        message[56..].copy_from_slice(address.0.as_ref());
         self.sign(&message)
     }
 
