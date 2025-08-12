@@ -549,15 +549,6 @@ impl Db {
         our_shard_id: u64,
     ) -> Result<Option<(Block, Vec<SignedTransaction>, Block)>> {
         tracing::info!(%hash, "Checkpoint");
-        self.load_trusted_checkpoint_inner(path, hash, our_shard_id)
-    }
-
-    pub fn load_trusted_checkpoint_inner<P: AsRef<Path>>(
-        &self,
-        path: P,
-        hash: &Hash,
-        our_shard_id: u64,
-    ) -> Result<Option<(Block, Vec<SignedTransaction>, Block)>> {
         // Decompress the file for processing
         let input_file = File::open(path.as_ref())?;
         let buf_reader: BufReader<File> = BufReader::with_capacity(128 * 1024 * 1024, input_file);
