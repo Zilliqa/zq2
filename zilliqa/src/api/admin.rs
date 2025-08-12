@@ -56,8 +56,11 @@ struct RangeInfo {
 }
 
 fn admin_block_range(_params: Params, node: &Arc<RwLock<Node>>) -> Result<RangeInfo> {
-    let (range, checkpoint) = node.read().consensus.get_block_range()?;
-    Ok(RangeInfo { range, checkpoint })
+    let range = node.read().consensus.get_block_range()?;
+    Ok(RangeInfo {
+        range,
+        checkpoint: None,
+    })
 }
 
 fn consensus_info(_: Params, node: &Arc<RwLock<Node>>) -> Result<ConsensusInfo> {

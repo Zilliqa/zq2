@@ -300,29 +300,8 @@ impl NodeLauncher {
                         &attributes,
                     );
                 }
-                message = self.local_messages.next() => {
-                    let (_source, message) = message.expect("message stream should be infinite");
-                    let mut attributes = vec![
-                        KeyValue::new(MESSAGING_OPERATION_NAME, "handle"),
-                        KeyValue::new(MESSAGING_SYSTEM, "tokio_channel"),
-                        KeyValue::new(MESSAGING_DESTINATION_NAME, "response"),
-                    ];
-
-                    let start = SystemTime::now();
-                    if let Err(e) = match message {
-                        InternalMessage::ExecuteProposal(p) => {
-                            self.node.write().handle_execute_proposal(*p)
-                        },
-                        _ => todo!("Local messages will need to be handled once cross-shard messaging is implemented"),
-                    }
-                    {
-                        attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));
-                        error!("Failed to process request message: {e}");
-                    }
-                    messaging_process_duration.record(
-                        start.elapsed().map_or(0.0, |d| d.as_secs_f64()),
-                        &attributes,
-                    );
+                _message = self.local_messages.next() => {
+                    todo!("Local messages will need to be handled once cross-shard messaging is implemented");
                 }
                 () = &mut consensus_sleep => {
                     let attributes = vec![

@@ -357,18 +357,6 @@ impl Node {
         Ok(())
     }
 
-    pub fn handle_execute_proposal(&mut self, proposal: Proposal) -> Result<()> {
-        let parent_state = self
-            .db
-            .get_block(BlockFilter::Hash(proposal.header.qc.block_hash))?
-            .unwrap()
-            .state_root_hash();
-        let number = proposal.number();
-        self.consensus.sync.mark_replayed(number);
-        self.consensus.replay_proposal(proposal, parent_state)?;
-        Ok(())
-    }
-
     pub fn handle_request_failure(
         &mut self,
         to: PeerId,

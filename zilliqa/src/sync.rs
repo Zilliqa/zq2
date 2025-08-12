@@ -1,13 +1,12 @@
 use std::{
     cmp::{Ordering, Reverse},
-    collections::{BTreeMap, BinaryHeap, HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, BinaryHeap, HashMap, VecDeque},
     ops::RangeInclusive,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
 use anyhow::Result;
-use eth_trie::DB;
 use itertools::Itertools;
 use libp2p::PeerId;
 use rand::Rng;
@@ -22,12 +21,11 @@ use crate::{
     db::{BlockFilter, Db},
     message::{
         Block, BlockHeader, BlockRequest, BlockResponse, BlockTransactionsReceipts,
-        ExternalMessage, InjectedProposal, InternalMessage, Proposal, RequestBlocksByHash,
-        RequestBlocksByHeight, SyncBlockHeader,
+        ExternalMessage, InjectedProposal, Proposal, RequestBlocksByHash, RequestBlocksByHeight,
+        SyncBlockHeader,
     },
     node::{MessageSender, OutgoingMessageFailure, RequestId},
     time::SystemTime,
-    transaction::SignedTransaction,
 };
 
 // Syncing Algorithm
@@ -143,8 +141,6 @@ pub struct Sync {
     ignore_passive: bool,
     // periodic vacuum
     vacuum_at: u64,
-    // checkpoint sync
-    checkpoint_at: Option<u64>,
 }
 
 impl Sync {
@@ -165,7 +161,6 @@ impl Sync {
         latest_block: &Option<Block>,
         message_sender: MessageSender,
         peers: Arc<SyncPeers>,
-        checkpoint_data: &Option<(Block, Vec<SignedTransaction>, Block)>,
     ) -> Result<Self> {
         let peer_id = message_sender.our_peer_id;
         let max_batch_size = config
@@ -208,9 +203,6 @@ impl Sync {
             u64::MAX
         };
 
-        // Store the checkpoint address
-        let checkpoint_at = checkpoint_data.as_ref().map(|(block, _, _)| block.number());
-
         // Idle duration
         let max_idle_duration = config.consensus.block_time / 2;
 
@@ -245,7 +237,6 @@ impl Sync {
             zq2_floor_height,
             ignore_passive,
             vacuum_at,
-            checkpoint_at,
         })
     }
 
@@ -384,86 +375,9 @@ impl Sync {
                 self.retry_phase1()?;
             }
             SyncState::Phase4(_) => self.request_passive_sync()?,
-            SyncState::Phase5(_) => {
-                // wait for mark_replayed to run
-            }
             _ => {
                 debug!(in_pipeline = %self.in_pipeline, "DoSync : syncing");
             }
-        }
-        Ok(())
-    }
-
-    #[inline]
-    pub fn checkpoint_at(&self) -> Option<u64> {
-        self.checkpoint_at
-    }
-
-    pub fn mark_replayed(&mut self, number: u64) {
-        trace!(%number, "MarkReplayed");
-        if number == self.checkpoint_at.unwrap_or_default() {
-            self.state = SyncState::Phase0;
-        }
-    }
-
-    /// Replay the checkpoint to the highest block height.
-    fn replay_checkpoint(&mut self, highest_at: u64) -> Result<()> {
-        let mut checkpoint_at = match self.state {
-            SyncState::Phase5(n) => n,
-            _ => unimplemented!("ReplayCheckpoint: invalid state"),
-        };
-
-        // Collect some proposals to replay.
-        // We only need to replay proposals that mutate state_trie.
-        // Other intermediate blocks e.g. empty blocks are not needed.
-        let start_now = Instant::now();
-        let mut proposals = Vec::with_capacity(1024 * 1024);
-        let trie_storage = Arc::new(self.db.state_trie()?);
-        let mut changes = HashSet::new();
-        while checkpoint_at < highest_at
-            && proposals.len() < self.max_batch_size
-            && start_now.elapsed() < self.max_idle_duration
-        {
-            if let Some(block) = self.db.get_block(BlockFilter::Height(checkpoint_at))? {
-                // if block state root hash is not in state_trie, and state_root_hash is different, replay the proposal
-                if !changes.contains(&block.state_root_hash())
-                    && trie_storage
-                        .get(block.state_root_hash().as_bytes())?
-                        .is_none()
-                {
-                    let brt = self
-                        .db
-                        .get_block_and_receipts_and_transactions(BlockFilter::Height(
-                            checkpoint_at,
-                        ))?
-                        .expect("block must exist due to above check");
-
-                    let prop = self.brt_to_proposal(brt);
-                    proposals.push(Box::new(prop));
-                    changes.insert(block.state_root_hash());
-                }
-            } else {
-                unimplemented!("ReplayCheckpoint: missing block");
-            };
-            checkpoint_at = checkpoint_at.saturating_add(1);
-        }
-
-        // inject any replayed proposals
-        if !proposals.is_empty() {
-            let checkpoint_at = proposals.last().unwrap().number();
-            let range = self.checkpoint_at.unwrap()..=checkpoint_at;
-            tracing::info!(len=%proposals.len(), ?range, "ReplayCheckpoint: replaying");
-            self.checkpoint_at = Some(checkpoint_at);
-            for p in proposals {
-                self.message_sender
-                    .send_message_to_coordinator(InternalMessage::ExecuteProposal(p))?;
-            }
-        } else {
-            // nothing to replay; progress the checkpoint
-            let range = self.checkpoint_at.unwrap()..=checkpoint_at;
-            tracing::info!(len=%proposals.len(), ?range, "ReplayCheckpoint: skipping");
-            self.state = SyncState::Phase0;
-            self.checkpoint_at = Some(checkpoint_at);
         }
         Ok(())
     }
@@ -502,14 +416,8 @@ impl Sync {
         let range = self.db.available_range()?;
 
         match (*range.start()).cmp(&self.sync_base_height) {
-            // checkpoint-sync
             Ordering::Equal => {
-                if self.checkpoint_at.unwrap_or(u64::MAX) < *range.end() {
-                    self.state = SyncState::Phase5(self.checkpoint_at.unwrap());
-                    self.replay_checkpoint(*range.end())?;
-                } else {
-                    self.sync_base_height = u64::MAX;
-                }
+                self.sync_base_height = u64::MAX;
             }
             // passive-sync above sync-base-height
             Ordering::Greater => {
@@ -1892,7 +1800,6 @@ enum SyncState {
     Phase3,
     Retry1((RangeInclusive<u64>, BlockHeader)),
     Phase4((u64, Hash)),
-    Phase5(u64),
 }
 
 impl std::fmt::Display for SyncState {
@@ -1904,7 +1811,6 @@ impl std::fmt::Display for SyncState {
             SyncState::Phase3 => write!(f, "phase3"),
             SyncState::Retry1(_) => write!(f, "retry1"),
             SyncState::Phase4(_) => write!(f, "phase4"),
-            SyncState::Phase5(_) => write!(f, "phase5"),
         }
     }
 }

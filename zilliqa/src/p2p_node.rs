@@ -477,9 +477,6 @@ impl P2pNode {
                                 self.swarm.behaviour_mut().gossipsub.unsubscribe(&Self::validator_topic(shard_id));
                             }
                         }
-                        InternalMessage::ExecuteProposal(_) => {
-                            self.send_to(&Self::shard_id_to_topic(destination, None).hash(), |c| c.local_messages.send((source, message)))?;
-                        }
                     }
                 },
                 message = self.request_responses_receiver.next() => {

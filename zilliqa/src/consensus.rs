@@ -360,7 +360,6 @@ impl Consensus {
             &latest_block,
             message_sender.clone(),
             peers.clone(),
-            &None,
         )?;
 
         let enable_ots_indices = config.enable_ots_indices;
@@ -455,14 +454,10 @@ impl Consensus {
                             ))?
                             .expect("block must exist due to check above");
                         let transactions = brt.transactions.into_iter().map(|tx| tx.tx).collect();
-                        consensus.state.set_to_root(parent.state_root_hash().into());
-                        let committee = consensus.state.get_stakers(block.header)?;
-                        consensus.execute_block(
-                            None,
-                            &brt.block,
+                        consensus.replay_proposal(
+                            brt.block,
                             transactions,
-                            &committee,
-                            true,
+                            parent.state_root_hash(),
                         )?;
                         parent = block;
                     }
@@ -2776,9 +2771,13 @@ impl Consensus {
             .ok_or_else(|| anyhow!("no qcs in agg"))
     }
 
-    pub fn replay_proposal(&mut self, proposal: Proposal, parent_state: Hash) -> Result<()> {
+    pub fn replay_proposal(
+        &mut self,
+        block: Block,
+        transactions: Vec<SignedTransaction>,
+        parent_state: Hash,
+    ) -> Result<()> {
         let prev_root_hash = self.state.root_hash()?;
-        let (block, transactions) = proposal.into_parts();
         self.state.set_to_root(parent_state.into());
         let stakers = self.state.get_stakers(block.header)?;
         self.execute_block(None, &block, transactions, stakers.as_slice(), true)?;
@@ -3528,10 +3527,9 @@ impl Consensus {
         Ok(count)
     }
 
-    pub fn get_block_range(&self) -> Result<(RangeInclusive<u64>, Option<u64>)> {
+    pub fn get_block_range(&self) -> Result<RangeInclusive<u64>> {
         let range = self.db.available_range()?;
-        let checkpoint = self.sync.checkpoint_at();
-        Ok((range, checkpoint))
+        Ok(range)
     }
 
     pub fn get_sync_data(&self) -> Result<Option<SyncingStruct>> {
