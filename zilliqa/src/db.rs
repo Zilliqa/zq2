@@ -556,7 +556,7 @@ impl Db {
         let Some((block, transactions, parent)) =
             crate::checkpoint::get_checkpoint_block(&mut reader, hash, our_shard_id)?
         else {
-            return Err(anyhow!("Checkpoint file is invalid"));
+            return Err(anyhow!("Invalid checkpoint file"));
         };
 
         let trie_storage = Arc::new(self.state_trie()?);
@@ -568,7 +568,7 @@ impl Db {
         if state_trie.iter().next().is_none()
             && self.get_highest_canonical_block_number()?.is_none()
         {
-            tracing::info!("Loading checkpoint state");
+            tracing::info!(state = %parent.state_root_hash(), "Restoring checkpoint");
             crate::checkpoint::load_state_trie(&mut reader, trie_storage, &parent)?;
 
             let parent_ref: &Block = &parent; // for moving into the closure
@@ -586,17 +586,17 @@ impl Db {
         // OTHER SANITY CHECKS
         // Check if the parent block is sane
         let Some(ckpt_parent) = self.get_block(parent.hash().into())? else {
-            return Err(anyhow!("Checkpoint parent missing"));
+            return Err(anyhow!("Invalid checkpoint attempt"));
         };
         if ckpt_parent.parent_hash() != parent.parent_hash() {
-            return Err(anyhow!("Checkpoint ancestor mismatch"));
+            return Err(anyhow!("Critical checkpoint error"));
         };
         if trie_storage
             .get(ckpt_parent.state_root_hash().as_bytes())?
             .is_none()
         {
             // If the corresponding state is missing, load it from the checkpoint
-            tracing::info!(state_root = %ckpt_parent.state_root_hash(), "Loading checkpoint history");
+            tracing::info!(state = %ckpt_parent.state_root_hash(), "Syncing checkpoint");
             crate::checkpoint::load_state_trie(&mut reader, trie_storage, &ckpt_parent)?;
         }
         Ok(Some((block, transactions, ckpt_parent)))

@@ -439,6 +439,8 @@ impl Consensus {
                         break;
                     };
 
+                    // check that the block mutates state; and
+                    // the state is not already present in the db.
                     if mutations.insert(block.state_root_hash())
                         && consensus
                             .db

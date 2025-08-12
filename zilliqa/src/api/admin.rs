@@ -49,18 +49,8 @@ struct ConsensusInfo {
     milliseconds_until_next_view_change: u64,
 }
 
-#[derive(Clone, Debug, Serialize)]
-struct RangeInfo {
-    pub range: RangeInclusive<u64>,
-    pub checkpoint: Option<u64>,
-}
-
-fn admin_block_range(_params: Params, node: &Arc<RwLock<Node>>) -> Result<RangeInfo> {
-    let range = node.read().consensus.get_block_range()?;
-    Ok(RangeInfo {
-        range,
-        checkpoint: None,
-    })
+fn admin_block_range(_params: Params, node: &Arc<RwLock<Node>>) -> Result<RangeInclusive<u64>> {
+    node.read().consensus.get_block_range()
 }
 
 fn consensus_info(_: Params, node: &Arc<RwLock<Node>>) -> Result<ConsensusInfo> {
