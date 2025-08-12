@@ -14,8 +14,8 @@ use std::{
 use alloy::primitives::{Address, U256};
 use anyhow::{Context, Result, anyhow};
 use bitvec::{bitarr, order::Msb0};
-use dashmap::DashMap;
-use eth_trie::{EthTrie, MemoryDB, Trie};
+use dashmap::{DashMap, DashSet};
+use eth_trie::{DB, EthTrie, MemoryDB, Trie};
 use itertools::Itertools;
 use k256::pkcs8::der::DateTime;
 use libp2p::PeerId;
@@ -360,7 +360,7 @@ impl Consensus {
             &latest_block,
             message_sender.clone(),
             peers.clone(),
-            &checkpoint_data,
+            &None,
         )?;
 
         let enable_ots_indices = config.enable_ots_indices;
@@ -408,18 +408,66 @@ impl Consensus {
         }
 
         // If we started from a checkpoint, execute the checkpointed block now
-        if let Some((block, transactions, parent)) = checkpoint_data {
-            consensus.state.set_to_root(parent.state_root_hash().into());
-            consensus.execute_block(
-                None,
-                &block,
-                transactions,
-                &consensus
-                    .state
-                    .at_root(parent.state_root_hash().into())
-                    .get_stakers(block.header)?,
-                true,
-            )?;
+        if let Some((block, transactions, mut parent)) = checkpoint_data {
+            if consensus
+                .db
+                .get_block(BlockFilter::Hash(block.hash()))?
+                .is_none()
+            {
+                // if block is missing, execute the block
+                consensus.state.set_to_root(parent.state_root_hash().into());
+                consensus.execute_block(
+                    None,
+                    &block,
+                    transactions,
+                    &consensus
+                        .state
+                        .at_root(parent.state_root_hash().into())
+                        .get_stakers(block.header)?,
+                    true,
+                )?;
+            } else if let Some(latest_block) = latest_block {
+                // if block is present, perform state-sync
+                let mutations = DashSet::new();
+                let range = block.number()..latest_block.number();
+                tracing::info!(?range, "Syncing state from checkpoint");
+                for number in range {
+                    let Some(block) = consensus
+                        .db
+                        .get_transactionless_block(BlockFilter::Height(number))?
+                    else {
+                        tracing::error!("Block not found {number}");
+                        break;
+                    };
+
+                    if mutations.insert(block.state_root_hash())
+                        && consensus
+                            .db
+                            .state_trie()?
+                            .get(block.state_root_hash().as_bytes())?
+                            .is_none()
+                    {
+                        tracing::info!(number = %block.number(), state=%block.state_root_hash(), "Syncing state from block");
+                        let brt = consensus
+                            .db
+                            .get_block_and_receipts_and_transactions(BlockFilter::Hash(
+                                block.hash(),
+                            ))?
+                            .expect("block must exist due to check above");
+                        let transactions = brt.transactions.into_iter().map(|tx| tx.tx).collect();
+                        consensus.state.set_to_root(parent.state_root_hash().into());
+                        let committee = consensus.state.get_stakers(block.header)?;
+                        consensus.execute_block(
+                            None,
+                            &brt.block,
+                            transactions,
+                            &committee,
+                            true,
+                        )?;
+                        parent = block;
+                    }
+                }
+            }
         }
 
         // If timestamp of when current high_qc was written exists then use it to estimate the minimum number of blocks the network has moved on since shut down

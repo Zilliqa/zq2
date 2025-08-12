@@ -562,8 +562,6 @@ impl Db {
         let input_file = File::open(path.as_ref())?;
         let buf_reader: BufReader<File> = BufReader::with_capacity(128 * 1024 * 1024, input_file);
         let mut reader = Decoder::new(buf_reader)?;
-
-        tracing::info!(%hash, "Loading checkpoint blocks");
         let Some((block, transactions, parent)) =
             crate::checkpoint::get_checkpoint_block(&mut reader, hash, our_shard_id)?
         else {
@@ -607,7 +605,7 @@ impl Db {
             .is_none()
         {
             // If the corresponding state is missing, load it from the checkpoint
-            tracing::info!("Loading checkpoint history");
+            tracing::info!(state_root = %ckpt_parent.state_root_hash(), "Loading checkpoint history");
             crate::checkpoint::load_state_trie(&mut reader, trie_storage, &ckpt_parent)?;
         }
         Ok(Some((block, transactions, ckpt_parent)))
