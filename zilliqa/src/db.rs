@@ -1394,29 +1394,45 @@ impl eth_trie::DB for TrieStorage {
             .query_row([key], |row| row.get(0))
             .optional()?;
 
-        let mut cache = self.cache.lock().unwrap();
-        if !cache.contains(key) {
-            if let Some(value) = &value {
-                let _ = cache.insert(key.to_vec(), value.clone());
-            }
+        if let Some(value) = value {
+            self.insert(key, value.clone())?;
+            Ok(Some(value))
+        } else {
+            Ok(None)
         }
-
-        Ok(value)
     }
 
     fn insert(&self, key: &[u8], value: Vec<u8>) -> Result<(), Self::Error> {
-        self.db
-            .lock()
-            .unwrap()
-            .prepare_cached("INSERT OR REPLACE INTO state_trie (key, value) VALUES (?1, ?2)")?
-            .execute((key, &value))?;
-        let _ = self.cache.lock().unwrap().insert(key.to_vec(), value);
+        let mut cache = self.cache.lock().unwrap();
+
+        let entry_size = lru_mem::entry_size(&key.to_vec(), &value);
+        // write-back cache
+        while cache.current_size().saturating_add(entry_size) >= cache.max_size() {
+            if let Some((k, v)) = cache.remove_lru() {
+                self.db
+                    .lock()
+                    .unwrap()
+                    .prepare_cached(
+                        "INSERT OR REPLACE INTO state_trie (key, value) VALUES (?1, ?2)",
+                    )?
+                    .execute((k, v))?;
+            } else {
+                // Nothing to evict, i.e. too big to fit
+                tracing::error!("Failed to evict LRU entry");
+                return Err(rusqlite::Error::ExecuteReturnedResults);
+            }
+        }
+
+        cache.insert(key.to_vec(), value).map_err(|_e| {
+            tracing::error!("Failed to insert entry into cache: {}", _e);
+            rusqlite::Error::InvalidQuery
+        })?;
         Ok(())
     }
 
-    fn insert_batch(&self, keys: Vec<Vec<u8>>, values: Vec<Vec<u8>>) -> Result<(), Self::Error> {
-        self.write_batch(keys, values)
-    }
+    // fn insert_batch(&self, keys: Vec<Vec<u8>>, values: Vec<Vec<u8>>) -> Result<(), Self::Error> {
+    //     self.write_batch(keys, values)
+    // }
 
     fn remove(&self, _key: &[u8]) -> Result<(), Self::Error> {
         // we keep old state to function as an archive node, therefore no-op
@@ -1426,6 +1442,15 @@ impl eth_trie::DB for TrieStorage {
     fn remove_batch(&self, _: &[Vec<u8>]) -> Result<(), Self::Error> {
         // we keep old state to function as an archive node, therefore no-op
         Ok(())
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> Result<usize, Self::Error> {
+        Ok(self.cache.lock().unwrap().len())
+    }
+    #[cfg(test)]
+    fn is_empty(&self) -> Result<bool, Self::Error> {
+        Ok(self.cache.lock().unwrap().is_empty())
     }
 }
 
