@@ -407,7 +407,7 @@ impl Consensus {
         }
 
         // If we started from a checkpoint, execute the checkpointed block now
-        if let Some((block, transactions, mut parent)) = checkpoint_data {
+        if let Some((block, transactions, parent)) = checkpoint_data {
             if consensus
                 .db
                 .get_block(BlockFilter::Hash(block.hash()))?
@@ -425,44 +425,33 @@ impl Consensus {
                         .get_stakers(block.header)?,
                     true,
                 )?;
-            } else if let Some(latest_block) = latest_block {
+            } else if let Some(latest_block) = &latest_block {
                 // if block is present, perform state-sync
-                let mutations = DashSet::new();
-                let range = block.number()..latest_block.number();
+                let range = block.number()..=latest_block.number();
                 tracing::info!(?range, "Syncing state from checkpoint");
-                for number in range {
-                    let Some(block) = consensus
-                        .db
-                        .get_transactionless_block(BlockFilter::Height(number))?
-                    else {
-                        tracing::error!("Block not found {number}");
-                        break;
-                    };
+                consensus.replay_range(range, parent)?;
+            }
+        }
 
-                    // check that the block mutates state; and
-                    // the state is not already present in the db.
-                    if mutations.insert(block.state_root_hash())
-                        && consensus
-                            .db
-                            .state_trie()?
-                            .get(block.state_root_hash().as_bytes())?
-                            .is_none()
-                    {
-                        tracing::info!(number = %block.number(), state=%block.state_root_hash(), "Syncing state from block");
-                        let brt = consensus
-                            .db
-                            .get_block_and_receipts_and_transactions(BlockFilter::Hash(
-                                block.hash(),
-                            ))?
-                            .expect("block must exist due to check above");
-                        let transactions = brt.transactions.into_iter().map(|tx| tx.tx).collect();
-                        consensus.replay_proposal(
-                            brt.block,
-                            transactions,
-                            parent.state_root_hash(),
-                        )?;
-                        parent = block;
+        // recover any missing state in recent blocks, due to write-back cache
+        if let Some(latest_block) = &latest_block {
+            for number in (0..=latest_block.number()).rev() {
+                let block = consensus
+                    .db
+                    .get_transactionless_block(BlockFilter::Height(number))?
+                    .expect("Block must exist");
+                if consensus
+                    .db
+                    .state_trie()?
+                    .get(block.state_root_hash().as_bytes())?
+                    .is_some()
+                {
+                    if number < latest_block.number() {
+                        let range = number.saturating_add(1)..=latest_block.number();
+                        tracing::info!(?range, "Recovering recent state");
+                        consensus.replay_range(range, block)?;
                     }
+                    break;
                 }
             }
         }
@@ -2773,7 +2762,7 @@ impl Consensus {
             .ok_or_else(|| anyhow!("no qcs in agg"))
     }
 
-    pub fn replay_proposal(
+    fn replay_proposal(
         &mut self,
         block: Block,
         transactions: Vec<SignedTransaction>,
@@ -2785,6 +2774,40 @@ impl Consensus {
         self.execute_block(None, &block, transactions, stakers.as_slice(), true)?;
         // restore previous state
         self.state.set_to_root(prev_root_hash.into());
+        Ok(())
+    }
+
+    fn replay_range(&mut self, range: RangeInclusive<u64>, mut parent: Block) -> Result<()> {
+        let mutations = DashSet::new();
+        for number in range {
+            let Some(block) = self
+                .db
+                .get_transactionless_block(BlockFilter::Height(number))?
+            else {
+                tracing::error!("Block not found {number}");
+                break;
+            };
+
+            // check that the block mutates state; and
+            // the state is not already present in the db.
+            if mutations.insert(block.state_root_hash())
+                && self
+                    .db
+                    .state_trie()?
+                    .get(block.state_root_hash().as_bytes())?
+                    .is_none()
+            {
+                tracing::info!(number = %block.number(), state=%block.state_root_hash(), "Syncing state from block");
+                let brt = self
+                    .db
+                    .get_block_and_receipts_and_transactions(BlockFilter::Hash(block.hash()))?
+                    .expect("block must exist due to check above");
+                let transactions = brt.transactions.into_iter().map(|tx| tx.tx).collect();
+                self.replay_proposal(brt.block, transactions, parent.state_root_hash())?;
+                parent = block;
+            }
+        }
+        // self.db.state_trie()?.commit()?;
         Ok(())
     }
 
