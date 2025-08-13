@@ -1331,7 +1331,28 @@ pub struct TrieStorage {
     cache: Arc<Mutex<LruCache<Vec<u8>, Vec<u8>>>>,
 }
 
+impl Drop for TrieStorage {
+    fn drop(&mut self) {
+        tracing::info!("Flushing state trie to DB");
+        self.commit().unwrap();
+    }
+}
+
 impl TrieStorage {
+    pub fn commit(&self) -> Result<(), rusqlite::Error> {
+        // flush the entire cache to the database
+        let cache = self.cache.lock().unwrap();
+        let mut db = self.db.lock().unwrap();
+        let transaction = db.transaction()?;
+        for (key, value) in cache.iter() {
+            transaction
+                .prepare_cached("INSERT OR REPLACE INTO state_trie (key, value) VALUES (?1, ?2)")?
+                .execute([key, value])?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
     pub fn write_batch(
         &self,
         keys: Vec<Vec<u8>>,

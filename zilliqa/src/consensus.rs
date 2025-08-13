@@ -2807,7 +2807,7 @@ impl Consensus {
                 parent = block;
             }
         }
-        // self.db.state_trie()?.commit()?;
+        self.db.state_trie()?.commit()?;
         Ok(())
     }
 
