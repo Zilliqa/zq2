@@ -429,7 +429,7 @@ impl Consensus {
                 // if block is present, perform state-sync
                 let range = block.number()..=latest_block.number();
                 tracing::info!(?range, "Syncing state from checkpoint");
-                consensus.replay_range(range, parent)?;
+                consensus.restore_range(range, parent)?;
             }
         }
 
@@ -449,7 +449,7 @@ impl Consensus {
                     if number < latest_block.number() {
                         let range = number.saturating_add(1)..=latest_block.number();
                         tracing::info!(?range, "Recovering recent state");
-                        consensus.replay_range(range, block)?;
+                        consensus.restore_range(range, block)?;
                     }
                     break;
                 }
@@ -2768,6 +2768,7 @@ impl Consensus {
         transactions: Vec<SignedTransaction>,
         parent_state: Hash,
     ) -> Result<()> {
+        // store previous state
         let prev_root_hash = self.state.root_hash()?;
         self.state.set_to_root(parent_state.into());
         let stakers = self.state.get_stakers(block.header)?;
@@ -2777,7 +2778,7 @@ impl Consensus {
         Ok(())
     }
 
-    fn replay_range(&mut self, range: RangeInclusive<u64>, mut parent: Block) -> Result<()> {
+    fn restore_range(&mut self, range: RangeInclusive<u64>, mut parent: Block) -> Result<()> {
         let mutations = DashSet::new();
         for number in range {
             let Some(block) = self
@@ -2788,12 +2789,11 @@ impl Consensus {
                 break;
             };
 
+            let trie_storage = self.db.state_trie()?;
             // check that the block mutates state; and
             // the state is not already present in the db.
             if mutations.insert(block.state_root_hash())
-                && self
-                    .db
-                    .state_trie()?
+                && trie_storage
                     .get(block.state_root_hash().as_bytes())?
                     .is_none()
             {
