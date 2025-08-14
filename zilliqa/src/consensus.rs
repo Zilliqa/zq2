@@ -1080,7 +1080,7 @@ impl Consensus {
         pool.preview_content()
     }
 
-    pub fn txpool_content_from(&mut self, address: &Address) -> TxPoolContentFrom {
+    pub fn txpool_content_from(&self, address: &Address) -> TxPoolContentFrom {
         let pool = self.transaction_pool.read();
         pool.preview_content_from(address)
     }

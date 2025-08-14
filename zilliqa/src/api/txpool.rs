@@ -74,7 +74,7 @@ fn txpool_content_from(
 ) -> Result<types::txpool::TxPoolContent> {
     let address: super::zilliqa::ZilAddress = params.one()?;
     let address: Address = address.into();
-    let mut node = node.write();
+    let mut node = node.read();
     let content = node.txpool_content_from(&address);
 
     let mut result = types::txpool::TxPoolContent {

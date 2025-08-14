@@ -1022,7 +1022,7 @@ impl Node {
         self.consensus.txpool_content()
     }
 
-    pub fn txpool_content_from(&mut self, address: &Address) -> crate::pool::TxPoolContentFrom {
+    pub fn txpool_content_from(&self, address: &Address) -> crate::pool::TxPoolContentFrom {
         self.consensus.txpool_content_from(address)
     }
 
