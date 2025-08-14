@@ -1075,7 +1075,7 @@ impl Consensus {
         Ok(Some(result))
     }
 
-    pub fn txpool_content(&mut self) -> TxPoolContent {
+    pub fn txpool_content(&self) -> TxPoolContent {
         let pool = self.transaction_pool.read();
         pool.preview_content()
     }

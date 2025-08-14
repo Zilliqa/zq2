@@ -1018,7 +1018,7 @@ impl Node {
         self.consensus.get_transaction_by_hash(hash)
     }
 
-    pub fn txpool_content(&mut self) -> crate::pool::TxPoolContent {
+    pub fn txpool_content(&self) -> crate::pool::TxPoolContent {
         self.consensus.txpool_content()
     }
 

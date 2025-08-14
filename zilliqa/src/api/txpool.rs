@@ -29,7 +29,7 @@ fn txpool_content(
     _params: Params,
     node: &Arc<RwLock<Node>>,
 ) -> Result<Option<types::txpool::TxPoolContent>> {
-    let mut node = node.write();
+    let mut node = node.read();
     let content = node.txpool_content();
 
     let pending: HashMap<Address, HashMap<u64, Transaction>> = content
