@@ -1018,15 +1018,15 @@ impl Node {
         self.consensus.get_transaction_by_hash(hash)
     }
 
-    pub fn txpool_content(&mut self) -> crate::pool::TxPoolContent {
+    pub fn txpool_content(&self) -> crate::pool::TxPoolContent {
         self.consensus.txpool_content()
     }
 
-    pub fn txpool_content_from(&mut self, address: &Address) -> crate::pool::TxPoolContentFrom {
+    pub fn txpool_content_from(&self, address: &Address) -> crate::pool::TxPoolContentFrom {
         self.consensus.txpool_content_from(address)
     }
 
-    pub fn txpool_status(&mut self) -> crate::pool::TxPoolStatus {
+    pub fn txpool_status(&self) -> crate::pool::TxPoolStatus {
         self.consensus.txpool_status()
     }
 

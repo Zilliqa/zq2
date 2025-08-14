@@ -1075,17 +1075,17 @@ impl Consensus {
         Ok(Some(result))
     }
 
-    pub fn txpool_content(&mut self) -> TxPoolContent {
+    pub fn txpool_content(&self) -> TxPoolContent {
         let pool = self.transaction_pool.read();
         pool.preview_content()
     }
 
-    pub fn txpool_content_from(&mut self, address: &Address) -> TxPoolContentFrom {
+    pub fn txpool_content_from(&self, address: &Address) -> TxPoolContentFrom {
         let pool = self.transaction_pool.read();
         pool.preview_content_from(address)
     }
 
-    pub fn txpool_status(&mut self) -> TxPoolStatus {
+    pub fn txpool_status(&self) -> TxPoolStatus {
         let pool = self.transaction_pool.read();
         pool.preview_status()
     }
