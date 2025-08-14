@@ -1026,7 +1026,7 @@ impl Node {
         self.consensus.txpool_content_from(address)
     }
 
-    pub fn txpool_status(&mut self) -> crate::pool::TxPoolStatus {
+    pub fn txpool_status(&self) -> crate::pool::TxPoolStatus {
         self.consensus.txpool_status()
     }
 

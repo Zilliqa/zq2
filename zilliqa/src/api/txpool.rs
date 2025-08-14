@@ -149,7 +149,7 @@ fn txpool_inspect(
 
 /// txpool_status
 fn txpool_status(_params: Params, node: &Arc<RwLock<Node>>) -> Result<types::txpool::TxPoolStatus> {
-    let mut node = node.write();
+    let node = node.read();
     let content = node.txpool_status();
 
     Ok(types::txpool::TxPoolStatus {

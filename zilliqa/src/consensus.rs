@@ -1085,7 +1085,7 @@ impl Consensus {
         pool.preview_content_from(address)
     }
 
-    pub fn txpool_status(&mut self) -> TxPoolStatus {
+    pub fn txpool_status(&self) -> TxPoolStatus {
         let pool = self.transaction_pool.read();
         pool.preview_status()
     }
