@@ -299,15 +299,7 @@ impl Transaction {
             s,
             chain_id: transaction.chain_id(),
             access_list,
-            transaction_type: match transaction {
-                transaction::Transaction::Legacy(_) => 0,
-                transaction::Transaction::Eip2930(_) => 1,
-                transaction::Transaction::Eip1559(_) => 2,
-                // Set Zilliqa transaction types to a unique number. This is "ZIL" encoded in ASCII.
-                transaction::Transaction::Zilliqa(_) => 90_73_76,
-                // Set intershard transactions as unique, too. This is ZIL + 1.
-                transaction::Transaction::Intershard(_) => 90_73_77,
-            },
+            transaction_type: transaction.transaction_type(),
         }
     }
 }
