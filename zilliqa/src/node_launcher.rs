@@ -217,7 +217,7 @@ impl NodeLauncher {
 
                     let start = SystemTime::now();
                     if let ExternalMessage::BatchedTransactions(transactions) = message {
-                        let my_peer_id = self.node.write().consensus.peer_id();
+                        let my_peer_id = self.node.read().consensus.peer_id();
 
                         if source != my_peer_id {
                             let mut verified = Vec::with_capacity(transactions.len());
