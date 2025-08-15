@@ -2,70 +2,65 @@ network = "zq2-testnet"
 p2p_port = 3333
 
 bootstrap_address = [
-    "12D3KooWPFzgn8XUdrvRMuJmSPXRZPBBzv2ZmDmeKM8HGE8gKDJP",
-    "/dns/bootstrap.zq2-testnet.zilliqa.com/tcp/3333",
+  "12D3KooWPFzgn8XUdrvRMuJmSPXRZPBBzv2ZmDmeKM8HGE8gKDJP",
+  "/dns/bootstrap.zq2-testnet.zilliqa.com/tcp/3333"
 ]
 
 [[nodes]]
 eth_chain_id = 33101
 allowed_timestamp_skew = { secs = 60, nanos = 0 }
 data_dir = "/data"
-consensus.genesis_accounts = [
-    [
-        "0x214695413d1ea6a4a4453cd24ffd151fbc95496a",
-        "900_000_000_000_000_000_000_000_000",
-    ],
-]
+consensus.genesis_accounts = [ ["0x214695413d1ea6a4a4453cd24ffd151fbc95496a", "900_000_000_000_000_000_000_000_000" ] ]
 consensus.genesis_deposits = [
-    [
-        "94ce9650426f5c5b7eeb8499b94bc2cc6b82b423f3bb235889d3120aedc75a1d8236c2912dda45b75a3226731a776cbf",
-        "12D3KooWQPkr3EGzqiVdRcLTBo3sjBA5J2HRbBR6kcxY3QNCDF1M",
-        "20_000_000_000_000_000_000_000_000",
-        "0x0000000000000000000000000000000000000000",
-        "0x214695413d1ea6a4a4453cd24ffd151fbc95496a",
-    ],
-    [
-        "b2ba01dbc1989399ffca35c1e9c73613bbe678c94740feb035538d7299c4bd8ba98b28292982857534f60289ca2b663c",
-        "12D3KooWRuSPXcoiFHaFkxgfy3P4UnhB5vKtgShkXTWL9xfdVZ1V",
-        "20_000_000_000_000_000_000_000_000",
-        "0x0000000000000000000000000000000000000000",
-        "0x214695413d1ea6a4a4453cd24ffd151fbc95496a",
-    ],
-    [
-        "ae776c587e6869d41331529c6dd0f59c31d1ef4c47f8b5ecb1acc54fa7452d9b2ba6f56bdad08a606d25761c8522b367",
-        "12D3KooWJyH1r2UfcFPiHbEFBYB3xWufR1va8cRK3veMwfUunfRD",
-        "20_000_000_000_000_000_000_000_000",
-        "0x0000000000000000000000000000000000000000",
-        "0x214695413d1ea6a4a4453cd24ffd151fbc95496a",
-    ],
-    [
-        "95de7dae002295bba9c4cffd1b0df70a7ccd0cc68e6b10da06b1b91f8a7e9b305e19431fc42b7413c65a8ab6959e41c6",
-        "12D3KooWM5L182sQtJuARf5Xfg517xVqZRaPM9583BsmLcv5Ma2o",
-        "20_000_000_000_000_000_000_000_000",
-        "0x0000000000000000000000000000000000000000",
-        "0x214695413d1ea6a4a4453cd24ffd151fbc95496a",
-    ],
-    [
-        "ae96338209ec4f1ad446a131e687bde02506207b750465cbc43d1ea4f5b32daa51ff060e8451c903d6de7f1c89951b1d",
-        "12D3KooWQpAM4F19CwJAAhHFgeD7feyQLHDTxzKu2hsVH4BQceSQ",
-        "20_000_000_000_000_000_000_000_000",
-        "0x0000000000000000000000000000000000000000",
-        "0x214695413d1ea6a4a4453cd24ffd151fbc95496a",
-    ],
-    [
-        "a3a2419fba7962021d730f4e1eb087b5bf0d66140ef7d4ba758348b13fb2ffa9a75afbdbef988c65ce625544360dea42",
-        "12D3KooWAWoMVZAXJDkuhyzyBJHGHn2gYFyTbbdZGhHs4BuEN5Fe",
-        "20_000_000_000_000_000_000_000_000",
-        "0x0000000000000000000000000000000000000000",
-        "0x214695413d1ea6a4a4453cd24ffd151fbc95496a",
-    ],
-    [
-        "8093ea6fa4720ca0975559a5f9d3a2694c6ab8e63a8c54e986d11a28f9e958f006420e30a8d6f04d6b2df63fe6e0563d",
-        "12D3KooWNqZxaW4ZirvWUNj9KSRgTp55RsZHSFumDeRdCLZAjNNA",
-        "20_000_000_000_000_000_000_000_000",
-        "0x0000000000000000000000000000000000000000",
-        "0x214695413d1ea6a4a4453cd24ffd151fbc95496a",
-    ],
+  [
+    "94ce9650426f5c5b7eeb8499b94bc2cc6b82b423f3bb235889d3120aedc75a1d8236c2912dda45b75a3226731a776cbf",
+    "12D3KooWQPkr3EGzqiVdRcLTBo3sjBA5J2HRbBR6kcxY3QNCDF1M",
+    "20_000_000_000_000_000_000_000_000",
+    "0x0000000000000000000000000000000000000000",
+    "0x214695413d1ea6a4a4453cd24ffd151fbc95496a"
+  ],
+  [
+    "b2ba01dbc1989399ffca35c1e9c73613bbe678c94740feb035538d7299c4bd8ba98b28292982857534f60289ca2b663c",
+    "12D3KooWRuSPXcoiFHaFkxgfy3P4UnhB5vKtgShkXTWL9xfdVZ1V",
+    "20_000_000_000_000_000_000_000_000",
+    "0x0000000000000000000000000000000000000000",
+    "0x214695413d1ea6a4a4453cd24ffd151fbc95496a"
+  ],
+  [
+    "ae776c587e6869d41331529c6dd0f59c31d1ef4c47f8b5ecb1acc54fa7452d9b2ba6f56bdad08a606d25761c8522b367",
+    "12D3KooWJyH1r2UfcFPiHbEFBYB3xWufR1va8cRK3veMwfUunfRD",
+    "20_000_000_000_000_000_000_000_000",
+    "0x0000000000000000000000000000000000000000",
+    "0x214695413d1ea6a4a4453cd24ffd151fbc95496a"
+  ],
+  [
+    "95de7dae002295bba9c4cffd1b0df70a7ccd0cc68e6b10da06b1b91f8a7e9b305e19431fc42b7413c65a8ab6959e41c6",
+    "12D3KooWM5L182sQtJuARf5Xfg517xVqZRaPM9583BsmLcv5Ma2o",
+    "20_000_000_000_000_000_000_000_000",
+    "0x0000000000000000000000000000000000000000",
+    "0x214695413d1ea6a4a4453cd24ffd151fbc95496a"
+  ],
+  [
+    "ae96338209ec4f1ad446a131e687bde02506207b750465cbc43d1ea4f5b32daa51ff060e8451c903d6de7f1c89951b1d",
+    "12D3KooWQpAM4F19CwJAAhHFgeD7feyQLHDTxzKu2hsVH4BQceSQ",
+    "20_000_000_000_000_000_000_000_000",
+    "0x0000000000000000000000000000000000000000",
+    "0x214695413d1ea6a4a4453cd24ffd151fbc95496a"
+  ],
+  [
+    "a3a2419fba7962021d730f4e1eb087b5bf0d66140ef7d4ba758348b13fb2ffa9a75afbdbef988c65ce625544360dea42",
+    "12D3KooWAWoMVZAXJDkuhyzyBJHGHn2gYFyTbbdZGhHs4BuEN5Fe",
+    "20_000_000_000_000_000_000_000_000",
+    "0x0000000000000000000000000000000000000000",
+    "0x214695413d1ea6a4a4453cd24ffd151fbc95496a"
+  ],
+  [
+    "8093ea6fa4720ca0975559a5f9d3a2694c6ab8e63a8c54e986d11a28f9e958f006420e30a8d6f04d6b2df63fe6e0563d",
+    "12D3KooWNqZxaW4ZirvWUNj9KSRgTp55RsZHSFumDeRdCLZAjNNA",
+    "20_000_000_000_000_000_000_000_000",
+    "0x0000000000000000000000000000000000000000",
+    "0x214695413d1ea6a4a4453cd24ffd151fbc95496a"
+  ]
 ]
 
 # Reward parameters
@@ -79,45 +74,12 @@ consensus.contract_upgrades = { deposit_v5 = { height = 0, reinitialise_params =
 consensus.new_view_broadcast_interval = { secs = 30, nanos = 0 }
 sync.ignore_passive = true
 
-consensus.genesis_fork = { at_height = 0, executable_blocks = false, call_mode_1_sets_caller_to_parent_caller = true, failed_scilla_call_from_gas_exempt_caller_causes_revert = true, scilla_messages_can_call_evm_contracts = true, scilla_contract_creation_increments_account_balance = true, scilla_json_preserve_order = true, scilla_call_respects_evm_state_changes = true, only_mutated_accounts_update_state = true, scilla_call_gas_exempt_addrs = [
-], scilla_block_number_returns_current_block = true, scilla_maps_are_encoded_correctly = true, transfer_gas_fee_to_zero_account = true, apply_state_changes_only_if_transaction_succeeds = true, apply_scilla_delta_when_evm_succeeded = true, scilla_deduct_funds_from_actual_sender = true, fund_accounts_from_zero_account = [
-], scilla_delta_maps_are_applied_correctly = false, scilla_server_unlimited_response_size = false, scilla_failed_txn_correct_balance_deduction = false, scilla_transition_proper_order = false, evm_to_scilla_value_transfer_zero = false, restore_xsgd_contract = false, evm_exec_failure_causes_scilla_precompile_to_fail = false, revert_restore_xsgd_contract = false, scilla_fix_contract_code_removal_on_evm_tx = false, restore_ignite_wallet_contracts = false, prevent_zil_transfer_from_evm_to_scilla_contract = false, scilla_failed_txn_correct_gas_fee_charged = false, check_minimum_gas_price = false, inject_access_list = false, use_max_gas_priority_fee = false }
-api_servers = [
-    { port = 4201, enabled_apis = [
-        { namespace = "eth", apis = [
-            "blockNumber",
-        ] },
-    ] },
-    { port = 4202, enabled_apis = [
-        "admin",
-        "debug",
-        "erigon",
-        "eth",
-        "net",
-        "ots",
-        "trace",
-        "txpool",
-        "web3",
-        "zilliqa",
-    ] },
-]
+api_servers = [{ port = 4201, enabled_apis = [{ namespace = "eth", apis = ["blockNumber"] }] }, { port = 4202, enabled_apis = ["admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] }]
+consensus.genesis_fork = { at_height = 0, executable_blocks = false, call_mode_1_sets_caller_to_parent_caller = true, failed_scilla_call_from_gas_exempt_caller_causes_revert = true, scilla_messages_can_call_evm_contracts = true, scilla_contract_creation_increments_account_balance = true, scilla_json_preserve_order = true, scilla_call_respects_evm_state_changes = true, only_mutated_accounts_update_state = true, scilla_call_gas_exempt_addrs = [], scilla_block_number_returns_current_block = true, scilla_maps_are_encoded_correctly = true, transfer_gas_fee_to_zero_account = true, apply_state_changes_only_if_transaction_succeeds = true, apply_scilla_delta_when_evm_succeeded = true, scilla_deduct_funds_from_actual_sender = true, fund_accounts_from_zero_account = [], scilla_delta_maps_are_applied_correctly = false, scilla_server_unlimited_response_size = false, scilla_failed_txn_correct_balance_deduction = false, scilla_transition_proper_order = false, evm_to_scilla_value_transfer_zero = false, restore_xsgd_contract = false, evm_exec_failure_causes_scilla_precompile_to_fail = false, revert_restore_xsgd_contract = false, scilla_fix_contract_code_removal_on_evm_tx = false, restore_ignite_wallet_contracts = false, prevent_zil_transfer_from_evm_to_scilla_contract = false, scilla_failed_txn_correct_gas_fee_charged = false, check_minimum_gas_price = false, inject_access_list = false, use_max_gas_priority_fee = false, failed_zil_transfers_to_eoa_proper_fee_deduction = false }
 consensus.forks = [
     { at_height = 8099088, executable_blocks = true },
     { at_height = 8371376, scilla_delta_maps_are_applied_correctly = true },
-    { at_height = 8377200, scilla_call_gas_exempt_addrs = [
-        "0x60E6b5b1B8D3E373E1C04dC0b4f5624776bcBB60",
-        "0x7013Da2653453299Efb867EfcCCcB1A6d5FE1384",
-        "0x8618d39a8276D931603c6Bc7306af6A53aD2F1F3",
-        "0xE90Dd366D627aCc5feBEC126211191901A69f8a0",
-        "0x5900Ac075A67742f5eA4204650FEad9E674c664F",
-        "0x28e8d39fc68eaa27c88797eb7d324b4b97d5b844",
-        "0x51b9f3ddb948bcc16b89b48d83b920bc01dbed55",
-        "0x1fD09F6701a1852132A649fe9D07F2A3b991eCfA",
-        "0x878c5008A348A60a5B239844436A7b483fAdb7F2",
-        "0x8895Aa1bEaC254E559A3F91e579CF4a67B70ce02",
-        "0x453b11386FBd54bC532892c0217BBc316fc7b918",
-        "0xaD581eC62eA08831c8FE2Cd7A1113473fE40A057",
-    ] },
+    { at_height = 8377200, scilla_call_gas_exempt_addrs = ["0x60E6b5b1B8D3E373E1C04dC0b4f5624776bcBB60", "0x7013Da2653453299Efb867EfcCCcB1A6d5FE1384", "0x8618d39a8276D931603c6Bc7306af6A53aD2F1F3", "0xE90Dd366D627aCc5feBEC126211191901A69f8a0", "0x5900Ac075A67742f5eA4204650FEad9E674c664F", "0x28e8d39fc68eaa27c88797eb7d324b4b97d5b844", "0x51b9f3ddb948bcc16b89b48d83b920bc01dbed55", "0x1fD09F6701a1852132A649fe9D07F2A3b991eCfA", "0x878c5008A348A60a5B239844436A7b483fAdb7F2", "0x8895Aa1bEaC254E559A3F91e579CF4a67B70ce02", "0x453b11386FBd54bC532892c0217BBc316fc7b918", "0xaD581eC62eA08831c8FE2Cd7A1113473fE40A057"] },
     { at_height = 9340000, scilla_server_unlimited_response_size = true },
     { at_height = 9341630, scilla_failed_txn_correct_balance_deduction = true, scilla_transition_proper_order = true, evm_to_scilla_value_transfer_zero = true, restore_xsgd_contract = true },
     { at_height = 9500000, evm_exec_failure_causes_scilla_precompile_to_fail = true },
@@ -125,4 +87,5 @@ consensus.forks = [
     { at_height = 10109366, prevent_zil_transfer_from_evm_to_scilla_contract = true },
     { at_height = 10854709, scilla_failed_txn_correct_gas_fee_charged = true, check_minimum_gas_price = true },
     { at_height = 11300000, inject_access_list = true, use_max_gas_priority_fee = true },
+    { at_height = 12706907, failed_zil_transfers_to_eoa_proper_fee_deduction = true },
 ]
