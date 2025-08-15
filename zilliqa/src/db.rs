@@ -603,13 +603,18 @@ impl Db {
     }
 
     pub fn state_trie(&self) -> Result<TrieStorage> {
-        let path = self.db.lock().unwrap().path().map_or_else(
-            || tempfile::tempdir().unwrap().into_path().join("state.db"),
-            |s| PathBuf::from(s).parent().unwrap().join("state.db"),
-        );
+        let path = if let Some(s) = self.db.lock().unwrap().path() {
+            if !s.is_empty() {
+                PathBuf::from(s).parent().unwrap().join("state.db")
+            } else {
+                tempfile::tempdir().unwrap().path().join("state.db")
+            }
+        } else {
+            return Err(anyhow!("Database path invalid"));
+        };
         let rdb = Arc::new(rocksdb::DB::open_default(path)?);
         Ok(TrieStorage {
-            _db: self.db.clone(),
+            db: self.db.clone(),
             _cache: self.state_cache.clone(),
             rdb,
         })
@@ -1333,7 +1338,7 @@ fn compress_file<P: AsRef<Path> + Debug>(input_file_path: P, output_file_path: P
 /// An implementor of [eth_trie::DB] which uses a [Connection] to persist data.
 #[derive(Debug, Clone)]
 pub struct TrieStorage {
-    _db: Arc<Mutex<Connection>>,
+    db: Arc<Mutex<Connection>>,
     _cache: Arc<Mutex<LruCache<Vec<u8>, Vec<u8>>>>,
     rdb: Arc<rocksdb::DB>,
 }
@@ -1364,13 +1369,36 @@ impl eth_trie::DB for TrieStorage {
     type Error = rocksdb::Error;
 
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, Self::Error> {
-        self.rdb.get(key)
+        if let Some(value) = self.rdb.get(key)? {
+            tracing::trace!("HIT {}", hex::encode(key));
+            return Ok(Some(value));
+        }
+
+        let value: Option<Vec<u8>> = self
+            .db
+            .lock()
+            .unwrap()
+            .prepare_cached("SELECT value FROM state_trie WHERE key = ?1")
+            .unwrap()
+            .query_row([key], |row| row.get(0))
+            .optional()
+            .unwrap();
+
+        // lazy migration
+        if let Some(value) = value {
+            tracing::trace!("MISS {}", hex::encode(key));
+            self.rdb.put(key, value.as_slice())?;
+            return Ok(Some(value));
+        }
+        Ok(None)
     }
 
+    #[inline]
     fn insert(&self, key: &[u8], value: Vec<u8>) -> Result<(), Self::Error> {
         self.write_batch(vec![key.to_vec()], vec![value])
     }
 
+    #[inline]
     fn insert_batch(&self, keys: Vec<Vec<u8>>, values: Vec<Vec<u8>>) -> Result<(), Self::Error> {
         self.write_batch(keys, values)
     }
