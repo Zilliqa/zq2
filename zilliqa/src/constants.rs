@@ -89,3 +89,6 @@ pub const MAX_REQUEST_SIZE: usize = 1024 * 1024;
 /// Size thresholds
 pub const PROPOSAL_THRESHOLD: usize = MAX_GOSSIP_SIZE * 8 / 10; // 80%
 pub const SYNC_THRESHOLD: usize = MAX_RESPONSE_SIZE - MAX_GOSSIP_SIZE;
+
+// Max age of the items in the missed view history
+pub const MAX_MISSED_VIEW_AGE: u64 = 100;
