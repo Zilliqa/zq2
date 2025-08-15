@@ -15,7 +15,7 @@ use anyhow::{Context, Result, anyhow};
 use eth_trie::{DB, EthTrie, MemoryDB, Trie};
 // use lru_mem::LruCache;
 use lz4::{Decoder, EncoderBuilder};
-use rocksdb::WriteBatchWithTransaction;
+use rocksdb::{DBWithThreadMode, SingleThreaded, WriteBatchWithTransaction};
 use rusqlite::{
     Connection, OptionalExtension, Row, ToSql, named_params,
     types::{FromSql, FromSqlError, ToSqlOutput},
@@ -355,7 +355,7 @@ impl Db {
         } else {
             tempfile::tempdir().unwrap().path().join("state.db")
         };
-        let rdb = rocksdb::DB::open_default(rdb_path)?;
+        let rdb = DBWithThreadMode::<SingleThreaded>::open_default(rdb_path)?;
 
         Ok(Db {
             db: Arc::new(Mutex::new(connection)),
