@@ -1,6 +1,5 @@
 use std::ops::DerefMut;
 
-use blsful::vsss_rs::ShareIdentifier;
 use ethabi::Token;
 use ethers::{
     middleware::SignerMiddleware,
