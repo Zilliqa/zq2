@@ -13,9 +13,9 @@ use alloy::primitives::Address;
 use anyhow::{Context, Result, anyhow};
 #[allow(unused_imports)]
 use eth_trie::{DB, EthTrie, MemoryDB, Trie};
-use itertools::Itertools;
 use lru_mem::LruCache;
 use lz4::{Decoder, EncoderBuilder};
+use rocksdb::WriteBatchWithTransaction;
 use rusqlite::{
     Connection, OptionalExtension, Row, ToSql, named_params,
     types::{FromSql, FromSqlError, ToSqlOutput},
@@ -603,9 +603,15 @@ impl Db {
     }
 
     pub fn state_trie(&self) -> Result<TrieStorage> {
+        let path = self.db.lock().unwrap().path().map_or_else(
+            || tempfile::tempdir().unwrap().into_path().join("state.db"),
+            |s| PathBuf::from(s).parent().unwrap().join("state.db"),
+        );
+        let rdb = Arc::new(rocksdb::DB::open_default(path)?);
         Ok(TrieStorage {
-            db: self.db.clone(),
-            cache: self.state_cache.clone(),
+            _db: self.db.clone(),
+            _cache: self.state_cache.clone(),
+            rdb,
         })
     }
 
@@ -1327,8 +1333,9 @@ fn compress_file<P: AsRef<Path> + Debug>(input_file_path: P, output_file_path: P
 /// An implementor of [eth_trie::DB] which uses a [Connection] to persist data.
 #[derive(Debug, Clone)]
 pub struct TrieStorage {
-    db: Arc<Mutex<Connection>>,
-    cache: Arc<Mutex<LruCache<Vec<u8>, Vec<u8>>>>,
+    _db: Arc<Mutex<Connection>>,
+    _cache: Arc<Mutex<LruCache<Vec<u8>, Vec<u8>>>>,
+    rdb: Arc<rocksdb::DB>,
 }
 
 impl TrieStorage {
@@ -1336,82 +1343,32 @@ impl TrieStorage {
         &self,
         keys: Vec<Vec<u8>>,
         values: Vec<Vec<u8>>,
-    ) -> Result<(), rusqlite::Error> {
+    ) -> Result<(), rocksdb::Error> {
         if keys.is_empty() {
             return Ok(());
         }
 
         assert_eq!(keys.len(), values.len());
 
-        // https://www.sqlite.org/limits.html#max_variable_number
-        let maximum_sql_parameters = 32766;
-        // Each key-value pair needs two parameters.
-        let chunk_size = maximum_sql_parameters / 2;
-
-        let keys = keys.chunks(chunk_size);
-        let values = values.chunks(chunk_size);
-
-        for (keys, values) in keys.zip(values) {
-            // Generate the SQL substring of the form "(?1, ?2), (?3, ?4), (?5, ?6), ...". There will be one pair of
-            // parameters for each key. Note that parameters are one-indexed.
-            #[allow(unstable_name_collisions)]
-            let params_stmt: String = (0..keys.len())
-                .map(|i| format!("(?{}, ?{})", i * 2 + 1, i * 2 + 2))
-                .intersperse(",".to_owned())
-                .collect();
-            let query =
-                format!("INSERT OR REPLACE INTO state_trie (key, value) VALUES {params_stmt}");
-
-            let params = keys.iter().zip(values).flat_map(|(k, v)| [k, v]);
-            self.db
-                .lock()
-                .unwrap()
-                .prepare_cached(&query)?
-                .execute(rusqlite::params_from_iter(params))?;
-            // take lock once
-            let mut cache = self.cache.lock().unwrap();
-            for (key, value) in keys.iter().zip(values) {
-                let _ = cache.insert(key.to_vec(), value.to_vec());
-            }
+        let mut batch = WriteBatchWithTransaction::<false>::default();
+        for (key, value) in keys.into_iter().zip(values.into_iter()) {
+            batch.put(key.as_slice(), value.as_slice());
         }
+        self.rdb.write(batch)?;
+
         Ok(())
     }
 }
 
 impl eth_trie::DB for TrieStorage {
-    type Error = rusqlite::Error;
+    type Error = rocksdb::Error;
 
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, Self::Error> {
-        if let Some(cached) = self.cache.lock().unwrap().get(key).map(|v| v.to_vec()) {
-            return Ok(Some(cached));
-        }
-
-        let value: Option<Vec<u8>> = self
-            .db
-            .lock()
-            .unwrap()
-            .prepare_cached("SELECT value FROM state_trie WHERE key = ?1")?
-            .query_row([key], |row| row.get(0))
-            .optional()?;
-
-        let mut cache = self.cache.lock().unwrap();
-        if !cache.contains(key) {
-            if let Some(value) = &value {
-                let _ = cache.insert(key.to_vec(), value.clone());
-            }
-        }
-
-        Ok(value)
+        self.rdb.get(key)
     }
 
     fn insert(&self, key: &[u8], value: Vec<u8>) -> Result<(), Self::Error> {
-        self.db
-            .lock()
-            .unwrap()
-            .prepare_cached("INSERT OR REPLACE INTO state_trie (key, value) VALUES (?1, ?2)")?
-            .execute((key, &value))?;
-        let _ = self.cache.lock().unwrap().insert(key.to_vec(), value);
-        Ok(())
+        self.write_batch(vec![key.to_vec()], vec![value])
     }
 
     fn insert_batch(&self, keys: Vec<Vec<u8>>, values: Vec<Vec<u8>>) -> Result<(), Self::Error> {
