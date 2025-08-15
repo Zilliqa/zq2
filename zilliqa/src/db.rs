@@ -13,9 +13,11 @@ use alloy::primitives::Address;
 use anyhow::{Context, Result, anyhow};
 #[allow(unused_imports)]
 use eth_trie::{DB, EthTrie, MemoryDB, Trie};
-use itertools::Itertools;
 use lru_mem::LruCache;
 use lz4::{Decoder, EncoderBuilder};
+use rocksdb::{
+    BlockBasedOptions, Cache, DBWithThreadMode, Options, SingleThreaded, WriteBatchWithTransaction,
+};
 use rusqlite::{
     Connection, OptionalExtension, Row, ToSql, named_params,
     types::{FromSql, FromSqlError, ToSqlOutput},
@@ -225,6 +227,11 @@ pub struct BlockAndReceiptsAndTransactions {
     pub transactions: Vec<VerifiedTransaction>,
 }
 
+// ldb --db=data/devnet/33469/state.db/ get "migrate_at" --value_hex
+// 0x0000000000056A5B
+const ROCKSDB_MIGRATE_AT: &str = "migrate_at";
+const ROCKSDB_RESTORE_AT: &str = "restore_at";
+
 /// Version string that is written to disk along with the persisted database. This should be bumped whenever we make a
 /// backwards incompatible change to our database format. This should be done rarely, since it forces all node
 /// operators to re-sync.
@@ -233,11 +240,14 @@ const CURRENT_DB_VERSION: &str = "1";
 #[derive(Debug)]
 pub struct Db {
     db: Arc<Mutex<Connection>>,
-    state_cache: Arc<Mutex<LruCache<Vec<u8>, Vec<u8>>>>,
+    cache: Arc<Mutex<LruCache<Vec<u8>, Vec<u8>>>>,
+    rdb: Arc<rocksdb::DB>,
     path: Option<Box<Path>>,
     /// The block height at which ZQ2 blocks begin.
     /// This value should be required only for proto networks to distinguise between ZQ1 and ZQ2 blocks.
     executable_blocks_height: Option<u64>,
+    // whether to skip active rocksdb migration
+    skip_migrate: bool,
 }
 
 impl Db {
@@ -246,6 +256,7 @@ impl Db {
         shard_id: u64,
         state_cache_size: usize,
         executable_blocks_height: Option<u64>,
+        skip_migrate: bool,
     ) -> Result<Self>
     where
         P: AsRef<Path>,
@@ -348,11 +359,40 @@ impl Db {
 
         Self::ensure_schema(&connection)?;
 
+        // RocksDB
+        let rdb_path = if let Some(s) = path.clone() {
+            s.join("state.db")
+        } else {
+            tempfile::tempdir().unwrap().path().join("state.db")
+        };
+
+        let cache = Cache::new_lru_cache(1 << 28); // same as SQLite in-memory page cache
+        let mut block_opts = BlockBasedOptions::default();
+        block_opts.set_block_cache(&cache);
+
+        let mut rdb_opts = Options::default();
+        rdb_opts.create_if_missing(true);
+        rdb_opts.set_block_based_table_factory(&block_opts);
+
+        // Should be safe in single-threaded mode, since we shouldn't have race conditions
+        // i.e. same entry being read and written to, due to the way that the state-trie is structured.
+        let rdb = DBWithThreadMode::<SingleThreaded>::open(&rdb_opts, rdb_path)?;
+
+        tracing::info!(
+            "State database: {} ({})",
+            rdb.path().display(),
+            rdb.latest_sequence_number()
+        );
+
+        let cache = LruCache::new(state_cache_size);
+
         Ok(Db {
             db: Arc::new(Mutex::new(connection)),
-            state_cache: Arc::new(Mutex::new(LruCache::new(state_cache_size))),
+            cache: Arc::new(Mutex::new(cache)),
+            rdb: Arc::new(rdb),
             path,
             executable_blocks_height,
+            skip_migrate,
         })
     }
 
@@ -490,6 +530,39 @@ impl Db {
         Ok(())
     }
 
+    pub fn init_rocksdb(&self) -> Result<()> {
+        let rdb = self.rdb.clone();
+        if rdb.get(ROCKSDB_MIGRATE_AT)?.is_none() {
+            let n = self
+                .db
+                .lock()
+                .unwrap()
+                .query_row(
+                    "SELECT MAX(height) FROM blocks WHERE is_canonical = 1",
+                    [],
+                    |row| row.get::<_, u64>(0),
+                )
+                .optional()?
+                .unwrap_or_default();
+            rdb.put(ROCKSDB_MIGRATE_AT, n.to_be_bytes())?;
+        }
+        if rdb.get(ROCKSDB_RESTORE_AT)?.is_none() {
+            let n = self
+                .db
+                .lock()
+                .unwrap()
+                .query_row(
+                    "SELECT MAX(height) FROM blocks WHERE is_canonical = 1",
+                    [],
+                    |row| row.get::<_, u64>(0),
+                )
+                .optional()?
+                .unwrap_or(u64::MAX);
+            rdb.put(ROCKSDB_RESTORE_AT, n.to_be_bytes())?;
+        }
+        Ok(())
+    }
+
     pub fn get_value_from_aux_table(&self, key: &str) -> Result<Option<Vec<u8>>> {
         Ok(self
             .db
@@ -605,7 +678,9 @@ impl Db {
     pub fn state_trie(&self) -> Result<TrieStorage> {
         Ok(TrieStorage {
             db: self.db.clone(),
-            cache: self.state_cache.clone(),
+            cache: self.cache.clone(),
+            rdb: self.rdb.clone(),
+            skip_migrate: self.skip_migrate,
         })
     }
 
@@ -1329,102 +1404,201 @@ fn compress_file<P: AsRef<Path> + Debug>(input_file_path: P, output_file_path: P
 pub struct TrieStorage {
     db: Arc<Mutex<Connection>>,
     cache: Arc<Mutex<LruCache<Vec<u8>, Vec<u8>>>>,
+    rdb: Arc<rocksdb::DB>,
+    skip_migrate: bool,
 }
 
 impl TrieStorage {
-    pub fn write_batch(
-        &self,
-        keys: Vec<Vec<u8>>,
-        values: Vec<Vec<u8>>,
-    ) -> Result<(), rusqlite::Error> {
+    // copy state_trie data from rocksdb to sqlite
+    pub fn revert_state(&self) -> Result<(), rocksdb::Error> {
+        self.rdb.cancel_all_background_work(true);
+        let db = self.db.lock().unwrap();
+        let iter = self.rdb.iterator(rocksdb::IteratorMode::Start);
+        for node in iter {
+            let (key, value) = node?;
+            db.prepare_cached("INSERT OR REPLACE INTO state_trie (key, value) VALUES (?1, ?2)")
+                .unwrap()
+                .execute(rusqlite::params![key, value])
+                .unwrap();
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn _get_restore_at(&self) -> Result<u64> {
+        Ok(u64::from_be_bytes(
+            self.rdb
+                .get(ROCKSDB_RESTORE_AT)?
+                .map(|v| v.try_into().expect("must be 8-bytes"))
+                .expect("inserted at constructor"),
+        ))
+    }
+
+    #[inline]
+    fn get_migrate_at(&self) -> Result<u64> {
+        Ok(u64::from_be_bytes(
+            self.rdb
+                .get(ROCKSDB_MIGRATE_AT)?
+                .map(|v| v.try_into().expect("must be 8-bytes"))
+                .expect("inserted at constructor"),
+        ))
+    }
+
+    #[inline]
+    fn get_root_hash(&self, height: u64) -> Result<Hash> {
+        Ok(self
+            .db
+            .lock()
+            .unwrap()
+            .prepare_cached(
+                "SELECT state_root_hash FROM blocks WHERE is_canonical = TRUE AND height = ?1",
+            )?
+            .query_one([height], |row| row.get::<_, Hash>(0))?)
+    }
+
+    // actively migrate state_trie from sqlite to rocksdb,
+    // by iterating over every node in the trie (forced read)
+    pub fn migrate_state_trie(&self) -> Result<()> {
+        if self.skip_migrate {
+            return Ok(());
+        }
+
+        let migrate_at = self.get_migrate_at()?;
+        if migrate_at == 0 {
+            // unlikely that the state_root for block_0 == block_n;
+            // so, if height = 0 it means that we're done.
+            // TODO: drop the sqlite state_trie table
+            return Ok(());
+        }
+        let root_hash = self.get_root_hash(migrate_at)?;
+
+        let trie_store = Arc::new(Self {
+            db: self.db.clone(),
+            cache: self.cache.clone(),
+            rdb: self.rdb.clone(),
+            skip_migrate: self.skip_migrate,
+        });
+
+        // pre-load the entire state_trie at this state_root
+        let mut count = 0;
+        let state_trie = EthTrie::new(trie_store.clone()).at_root(root_hash.into());
+        for (_, v) in state_trie.iter() {
+            // for each account, load its storage trie
+            let account_state = bincode::serde::decode_from_slice::<Account, _>(
+                v.as_slice(),
+                bincode::config::legacy(), // for legacy compatibility
+            )?
+            .0
+            .storage_root;
+            let account_trie = EthTrie::new(trie_store.clone()).at_root(account_state.0.into());
+            // force read account_storage trie
+            count += account_trie.iter().count() + 1;
+        }
+        tracing::debug!(%count, block=%migrate_at, %root_hash, "Migrated");
+
+        // save next migrate_at, fast-reversing past the same states
+        // do this only after successfully migrating the previous migrate_at
+        for n in (0..migrate_at).rev() {
+            let next_root_hash = self.get_root_hash(n)?;
+            if next_root_hash != root_hash {
+                self.rdb.put(ROCKSDB_MIGRATE_AT, n.to_be_bytes())?;
+                break;
+            } else if n == 0 {
+                // migration complete
+                tracing::info!("State migration complete");
+                self.rdb.put(ROCKSDB_MIGRATE_AT, n.to_be_bytes())?;
+                self.db
+                    .lock()
+                    .unwrap()
+                    .execute("ALTER TABLE state_trie RENAME TO state_trie_migrated", [])
+                    .ok(); // ignore errors, can only mean that the table is renamed.
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn write_batch(&self, keys: Vec<Vec<u8>>, values: Vec<Vec<u8>>) -> Result<()> {
         if keys.is_empty() {
             return Ok(());
         }
 
-        assert_eq!(keys.len(), values.len());
+        anyhow::ensure!(keys.len() == values.len(), "Keys != Values");
 
-        // https://www.sqlite.org/limits.html#max_variable_number
-        let maximum_sql_parameters = 32766;
-        // Each key-value pair needs two parameters.
-        let chunk_size = maximum_sql_parameters / 2;
-
-        let keys = keys.chunks(chunk_size);
-        let values = values.chunks(chunk_size);
-
-        for (keys, values) in keys.zip(values) {
-            // Generate the SQL substring of the form "(?1, ?2), (?3, ?4), (?5, ?6), ...". There will be one pair of
-            // parameters for each key. Note that parameters are one-indexed.
-            #[allow(unstable_name_collisions)]
-            let params_stmt: String = (0..keys.len())
-                .map(|i| format!("(?{}, ?{})", i * 2 + 1, i * 2 + 2))
-                .intersperse(",".to_owned())
-                .collect();
-            let query =
-                format!("INSERT OR REPLACE INTO state_trie (key, value) VALUES {params_stmt}");
-
-            let params = keys.iter().zip(values).flat_map(|(k, v)| [k, v]);
-            self.db
-                .lock()
-                .unwrap()
-                .prepare_cached(&query)?
-                .execute(rusqlite::params_from_iter(params))?;
-            // take lock once
-            let mut cache = self.cache.lock().unwrap();
-            for (key, value) in keys.iter().zip(values) {
-                let _ = cache.insert(key.to_vec(), value.to_vec());
-            }
+        let mut batch = WriteBatchWithTransaction::<false>::default();
+        let mut cache = self.cache.lock().unwrap();
+        for (key, value) in keys.into_iter().zip(values.into_iter()) {
+            batch.put(key.as_slice(), value.as_slice());
+            cache.insert(key, value).ok(); // write-thru policy; silent errors
         }
+        self.rdb.write(batch)?;
+
         Ok(())
     }
 }
 
 impl eth_trie::DB for TrieStorage {
-    type Error = rusqlite::Error;
-
+    type Error = eth_trie::TrieError;
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, Self::Error> {
-        if let Some(cached) = self.cache.lock().unwrap().get(key).map(|v| v.to_vec()) {
-            return Ok(Some(cached));
+        // L1 - in-memory cache
+        if let Some(value) = self.cache.lock().unwrap().get(key) {
+            return Ok(Some(value.to_vec()));
         }
 
+        // L2 - RocksDB
+        if let Some(value) = self
+            .rdb
+            .get(key)
+            .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?
+        {
+            self.cache
+                .lock()
+                .unwrap()
+                .insert(key.to_vec(), value.clone())
+                .ok(); // silent errors
+            return Ok(Some(value));
+        }
+
+        // L3 - SQLite
         let value: Option<Vec<u8>> = self
             .db
             .lock()
             .unwrap()
-            .prepare_cached("SELECT value FROM state_trie WHERE key = ?1")?
+            .prepare_cached("SELECT value FROM state_trie WHERE key = ?1")
+            .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?
             .query_row([key], |row| row.get(0))
-            .optional()?;
+            .optional()
+            .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?;
 
-        let mut cache = self.cache.lock().unwrap();
-        if !cache.contains(key) {
-            if let Some(value) = &value {
-                let _ = cache.insert(key.to_vec(), value.clone());
-            }
+        // JIT migration
+        if let Some(value) = value {
+            self.rdb
+                .put(key, value.as_slice())
+                .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?;
+            self.cache
+                .lock()
+                .unwrap()
+                .insert(key.to_vec(), value.clone())
+                .ok(); // silent errors
+            return Ok(Some(value));
         }
-
-        Ok(value)
+        Ok(None)
     }
 
+    #[inline]
     fn insert(&self, key: &[u8], value: Vec<u8>) -> Result<(), Self::Error> {
-        self.db
-            .lock()
-            .unwrap()
-            .prepare_cached("INSERT OR REPLACE INTO state_trie (key, value) VALUES (?1, ?2)")?
-            .execute((key, &value))?;
-        let _ = self.cache.lock().unwrap().insert(key.to_vec(), value);
-        Ok(())
+        self.write_batch(vec![key.to_vec()], vec![value])
+            .map_err(|e| eth_trie::TrieError::DB(e.to_string()))
     }
 
+    #[inline]
     fn insert_batch(&self, keys: Vec<Vec<u8>>, values: Vec<Vec<u8>>) -> Result<(), Self::Error> {
         self.write_batch(keys, values)
+            .map_err(|e| eth_trie::TrieError::DB(e.to_string()))
     }
 
     fn remove(&self, _key: &[u8]) -> Result<(), Self::Error> {
-        // we keep old state to function as an archive node, therefore no-op
-        Ok(())
-    }
-
-    fn remove_batch(&self, _: &[Vec<u8>]) -> Result<(), Self::Error> {
-        // we keep old state to function as an archive node, therefore no-op
+        // do not delete any historical state, due to archive node
         Ok(())
     }
 }
@@ -1446,7 +1620,7 @@ mod tests {
     fn query_planner_stability_guarantee() {
         let base_path = tempdir().unwrap();
         let base_path = base_path.path();
-        let db = Db::new(Some(base_path), 0, 1024, None).unwrap();
+        let db = Db::new(Some(base_path), 0, 1024, None, true).unwrap();
 
         let sql = db.db.lock().unwrap();
 
@@ -1481,8 +1655,8 @@ mod tests {
             "SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1 ORDER BY tx_index",
             "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE is_canonical = true AND height = (SELECT MAX(height) FROM blocks WHERE is_canonical = TRUE)",
             "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE height = (SELECT MAX(height) FROM blocks) LIMIT 1",
-            // "SELECT block_hash, blocks.view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks INNER JOIN tip_info ON blocks.view = tip_info.finalized_view", // tip_info is one record so scanning is fine
             "SELECT data, transactions.tx_hash FROM transactions INNER JOIN receipts ON transactions.tx_hash = receipts.tx_hash WHERE receipts.block_hash = ?1 ORDER BY receipts.tx_index ASC",
+            "SELECT state_root_hash FROM blocks WHERE height = ?1 AND is_canonical = TRUE",
             // TODO: Add more queries
         ];
 
@@ -1510,7 +1684,7 @@ mod tests {
     fn checkpoint_export_import() {
         let base_path = tempdir().unwrap();
         let base_path = base_path.path();
-        let db = Db::new(Some(base_path), 0, 1024, None).unwrap();
+        let db = Db::new(Some(base_path), 0, 1024, None, true).unwrap();
 
         // Seed db with data
         let mut rng = ChaCha8Rng::seed_from_u64(0);
