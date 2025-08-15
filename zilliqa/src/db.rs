@@ -13,7 +13,7 @@ use alloy::primitives::Address;
 use anyhow::{Context, Result, anyhow};
 #[allow(unused_imports)]
 use eth_trie::{DB, EthTrie, MemoryDB, Trie};
-use lru_mem::LruCache;
+// use lru_mem::LruCache;
 use lz4::{Decoder, EncoderBuilder};
 use rocksdb::WriteBatchWithTransaction;
 use rusqlite::{
@@ -233,7 +233,8 @@ const CURRENT_DB_VERSION: &str = "1";
 #[derive(Debug)]
 pub struct Db {
     db: Arc<Mutex<Connection>>,
-    state_cache: Arc<Mutex<LruCache<Vec<u8>, Vec<u8>>>>,
+    rdb: Arc<rocksdb::DB>,
+    // state_cache: Arc<Mutex<LruCache<Vec<u8>, Vec<u8>>>>,
     path: Option<Box<Path>>,
     /// The block height at which ZQ2 blocks begin.
     /// This value should be required only for proto networks to distinguise between ZQ1 and ZQ2 blocks.
@@ -244,7 +245,7 @@ impl Db {
     pub fn new<P>(
         data_dir: Option<P>,
         shard_id: u64,
-        state_cache_size: usize,
+        _state_cache_size: usize,
         executable_blocks_height: Option<u64>,
     ) -> Result<Self>
     where
@@ -348,9 +349,18 @@ impl Db {
 
         Self::ensure_schema(&connection)?;
 
+        // RocksDB
+        let rdb_path = if let Some(s) = path.clone() {
+            s.join("state.db")
+        } else {
+            tempfile::tempdir().unwrap().path().join("state.db")
+        };
+        let rdb = rocksdb::DB::open_default(rdb_path)?;
+
         Ok(Db {
             db: Arc::new(Mutex::new(connection)),
-            state_cache: Arc::new(Mutex::new(LruCache::new(state_cache_size))),
+            // state_cache: Arc::new(Mutex::new(LruCache::new(state_cache_size))),
+            rdb: Arc::new(rdb),
             path,
             executable_blocks_height,
         })
@@ -603,20 +613,10 @@ impl Db {
     }
 
     pub fn state_trie(&self) -> Result<TrieStorage> {
-        let path = if let Some(s) = self.db.lock().unwrap().path() {
-            if !s.is_empty() {
-                PathBuf::from(s).parent().unwrap().join("state.db")
-            } else {
-                tempfile::tempdir().unwrap().path().join("state.db")
-            }
-        } else {
-            return Err(anyhow!("Database path invalid"));
-        };
-        let rdb = Arc::new(rocksdb::DB::open_default(path)?);
         Ok(TrieStorage {
             db: self.db.clone(),
-            _cache: self.state_cache.clone(),
-            rdb,
+            // _cache: self.state_cache.clone(),
+            rdb: self.rdb.clone(),
         })
     }
 
@@ -1339,7 +1339,7 @@ fn compress_file<P: AsRef<Path> + Debug>(input_file_path: P, output_file_path: P
 #[derive(Debug, Clone)]
 pub struct TrieStorage {
     db: Arc<Mutex<Connection>>,
-    _cache: Arc<Mutex<LruCache<Vec<u8>, Vec<u8>>>>,
+    // _cache: Arc<Mutex<LruCache<Vec<u8>, Vec<u8>>>>,
     rdb: Arc<rocksdb::DB>,
 }
 
