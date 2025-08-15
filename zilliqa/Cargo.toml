@@ -133,7 +133,6 @@ dashmap = "6.1.0"
 sled = { version = "0.34.7", features = ["no_logs"] }
 rocksdb = { version = "0.24.0", default-features = false, features = [
     "bindgen-runtime",
-    "multi-threaded-cf",
 ] }
 
 [dev-dependencies]
