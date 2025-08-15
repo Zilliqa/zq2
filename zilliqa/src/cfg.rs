@@ -190,6 +190,9 @@ pub struct NodeConfig {
     /// Sync configuration
     #[serde(default)]
     pub sync: SyncConfig,
+    /// Disable RocksDB active migration
+    #[serde(default)]
+    pub active_state_migration: bool,
 }
 
 impl Default for NodeConfig {
@@ -215,6 +218,7 @@ impl Default for NodeConfig {
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: false,
             max_rpc_response_size: max_rpc_response_size_default(),
+            active_state_migration: false,
         }
     }
 }

@@ -220,6 +220,7 @@ impl Node {
             config.eth_chain_id,
             config.state_cache_size,
             executable_blocks_height,
+            !config.active_state_migration,
         )?);
         let node = Node {
             config: config.clone(),
@@ -475,11 +476,14 @@ impl Node {
 
     // handle timeout - true if something happened
     pub fn handle_timeout(&mut self) -> Result<bool> {
+        // take this opportunity to migrate 1 state-trie.
+        self.consensus.db.state_trie()?.migrate_state_trie()?;
+
+        // normal timeout handler
         if let Some(network_message) = self.consensus.timeout()? {
             self.handle_network_message_response(network_message)?;
             return Ok(true);
         }
-
         Ok(false)
     }
 
