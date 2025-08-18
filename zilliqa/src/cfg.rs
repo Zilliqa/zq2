@@ -638,6 +638,7 @@ pub struct Fork {
     pub check_minimum_gas_price: bool,
     pub inject_access_list: bool,
     pub use_max_gas_priority_fee: bool,
+    pub failed_zil_transfers_to_eoa_proper_fee_deduction: bool,
 }
 
 pub enum ForkName {
@@ -771,6 +772,8 @@ pub struct ForkDelta {
     pub inject_access_list: Option<bool>,
     /// if true, use max gas priority fee
     pub use_max_gas_priority_fee: Option<bool>,
+    /// if true, a proper fee is charged for failed zil transfers to eoa
+    pub failed_zil_transfers_to_eoa_proper_fee_deduction: Option<bool>,
 }
 
 impl Fork {
@@ -869,6 +872,9 @@ impl Fork {
             use_max_gas_priority_fee: delta
                 .use_max_gas_priority_fee
                 .unwrap_or(self.use_max_gas_priority_fee),
+            failed_zil_transfers_to_eoa_proper_fee_deduction: delta
+                .failed_zil_transfers_to_eoa_proper_fee_deduction
+                .unwrap_or(self.failed_zil_transfers_to_eoa_proper_fee_deduction),
         }
     }
 }
@@ -968,6 +974,7 @@ pub fn genesis_fork_default() -> Fork {
         check_minimum_gas_price: true,
         inject_access_list: true,
         use_max_gas_priority_fee: true,
+        failed_zil_transfers_to_eoa_proper_fee_deduction: true,
     }
 }
 
@@ -1119,6 +1126,7 @@ mod tests {
                 check_minimum_gas_price: None,
                 inject_access_list: None,
                 use_max_gas_priority_fee: None,
+                failed_zil_transfers_to_eoa_proper_fee_deduction: None,
             }],
             ..Default::default()
         };
@@ -1173,6 +1181,7 @@ mod tests {
                     check_minimum_gas_price: None,
                     inject_access_list: None,
                     use_max_gas_priority_fee: None,
+                    failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1207,6 +1216,7 @@ mod tests {
                     check_minimum_gas_price: None,
                     inject_access_list: None,
                     use_max_gas_priority_fee: None,
+                    failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                 },
             ],
             ..Default::default()
@@ -1275,6 +1285,7 @@ mod tests {
                     check_minimum_gas_price: None,
                     inject_access_list: None,
                     use_max_gas_priority_fee: None,
+                    failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1309,6 +1320,7 @@ mod tests {
                     check_minimum_gas_price: None,
                     inject_access_list: None,
                     use_max_gas_priority_fee: None,
+                    failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                 },
             ],
             ..Default::default()
@@ -1368,6 +1380,7 @@ mod tests {
                 check_minimum_gas_price: true,
                 inject_access_list: true,
                 use_max_gas_priority_fee: true,
+                failed_zil_transfers_to_eoa_proper_fee_deduction: true,
             },
             forks: vec![],
             ..Default::default()
@@ -1415,6 +1428,7 @@ mod tests {
                     check_minimum_gas_price: None,
                     inject_access_list: None,
                     use_max_gas_priority_fee: None,
+                    failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1449,6 +1463,7 @@ mod tests {
                     check_minimum_gas_price: None,
                     inject_access_list: None,
                     use_max_gas_priority_fee: None,
+                    failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                 },
             ],
             ..Default::default()

@@ -103,7 +103,7 @@ If you want to remove the previously generated key:
 
 ```bash
 # Generate stats dashboard secret
-python scripts/delete_gcp_secrets.py network.yaml --project-id=your-project --label-key "zq2-network" --label-value "network_name" --force
+python scripts/delete_gcp_secrets.py --project-id=your-project --label-key "zq2-network" --label-value "network_name" --force
 ```
 
 otherwise:

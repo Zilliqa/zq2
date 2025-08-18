@@ -29,7 +29,7 @@ fn txpool_content(
     _params: Params,
     node: &Arc<RwLock<Node>>,
 ) -> Result<Option<types::txpool::TxPoolContent>> {
-    let mut node = node.write();
+    let node = node.read();
     let content = node.txpool_content();
 
     let pending: HashMap<Address, HashMap<u64, Transaction>> = content
@@ -74,7 +74,7 @@ fn txpool_content_from(
 ) -> Result<types::txpool::TxPoolContent> {
     let address: super::zilliqa::ZilAddress = params.one()?;
     let address: Address = address.into();
-    let mut node = node.write();
+    let node = node.read();
     let content = node.txpool_content_from(&address);
 
     let mut result = types::txpool::TxPoolContent {
@@ -110,7 +110,7 @@ fn txpool_inspect(
     _params: Params,
     node: &Arc<RwLock<Node>>,
 ) -> Result<types::txpool::TxPoolInspect> {
-    let mut node = node.write();
+    let node = node.read();
     let content = node.txpool_content();
 
     let mut result = types::txpool::TxPoolInspect {
@@ -149,7 +149,7 @@ fn txpool_inspect(
 
 /// txpool_status
 fn txpool_status(_params: Params, node: &Arc<RwLock<Node>>) -> Result<types::txpool::TxPoolStatus> {
-    let mut node = node.write();
+    let node = node.read();
     let content = node.txpool_status();
 
     Ok(types::txpool::TxPoolStatus {

@@ -382,7 +382,7 @@ pub fn old_get_block_transaction_receipts_inner(
     for (transaction_index, receipt_retrieved) in receipts_retrieved.iter().enumerate() {
         // This could maybe be a bit faster if we had a db function that queried transactions by
         // block hash, joined on receipts, but this would be quite a bit of new code.
-        let Some(signed_transaction) = node.get_transaction_by_hash(receipt_retrieved.tx_hash)?
+        let Some(verified_transaction) = node.get_transaction_by_hash(receipt_retrieved.tx_hash)?
         else {
             warn!(
                 "Failed to get TX by hash when getting TX receipt! {}",
@@ -392,12 +392,12 @@ pub fn old_get_block_transaction_receipts_inner(
         };
 
         // Required workaround for incorrectly converted nonces for zq1 scilla transactions
-        let contract_address = match &signed_transaction.tx {
+        let contract_address = match &verified_transaction.tx {
             SignedTransaction::Zilliqa { tx, .. } => {
                 if tx.to_addr.is_zero() && receipt_retrieved.success {
                     Some(zil_contract_address(
-                        signed_transaction.signer,
-                        signed_transaction
+                        verified_transaction.signer,
+                        verified_transaction
                             .tx
                             .nonce()
                             .ok_or_else(|| anyhow!("Unable to extract nonce!"))?,
@@ -427,11 +427,11 @@ pub fn old_get_block_transaction_receipts_inner(
             logs.push(log);
         }
 
-        let from = signed_transaction.signer;
-        let v = signed_transaction.tx.sig_v();
-        let r = signed_transaction.tx.sig_r();
-        let s = signed_transaction.tx.sig_s();
-        let transaction = signed_transaction.tx.into_transaction();
+        let from = verified_transaction.signer;
+        let v = verified_transaction.tx.sig_v();
+        let r = verified_transaction.tx.sig_r();
+        let s = verified_transaction.tx.sig_s();
+        let transaction = verified_transaction.tx.into_transaction();
 
         let receipt = eth::TransactionReceipt {
             transaction_hash: (receipt_retrieved.tx_hash).into(),
@@ -446,7 +446,7 @@ pub fn old_get_block_transaction_receipts_inner(
             contract_address,
             logs,
             logs_bloom: [0; 256],
-            ty: 0,
+            ty: transaction.transaction_type(),
             status: receipt_retrieved.success,
             v,
             r,
