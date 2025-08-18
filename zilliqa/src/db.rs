@@ -236,7 +236,6 @@ const CURRENT_DB_VERSION: &str = "1";
 pub struct Db {
     db: Arc<Mutex<Connection>>,
     rdb: Arc<rocksdb::DB>,
-    // state_cache: Arc<Mutex<LruCache<Vec<u8>, Vec<u8>>>>,
     path: Option<Box<Path>>,
     /// The block height at which ZQ2 blocks begin.
     /// This value should be required only for proto networks to distinguise between ZQ1 and ZQ2 blocks.
@@ -358,14 +357,16 @@ impl Db {
             tempfile::tempdir().unwrap().path().join("state.db")
         };
 
-        let mut block_opts = BlockBasedOptions::default();
         let cache = Cache::new_lru_cache(state_cache_size);
+        let mut block_opts = BlockBasedOptions::default();
         block_opts.set_block_cache(&cache);
 
         let mut rdb_opts = Options::default();
         rdb_opts.create_if_missing(true);
         rdb_opts.set_block_based_table_factory(&block_opts);
 
+        // Should be safe in single-threaded mode, since we shouldn't have race conditions
+        // i.e. same entry being read and written to, due to the way that the state-trie is structured.
         let rdb = DBWithThreadMode::<SingleThreaded>::open(&rdb_opts, rdb_path)?;
 
         tracing::info!(
@@ -375,7 +376,6 @@ impl Db {
         );
         Ok(Db {
             db: Arc::new(Mutex::new(connection)),
-            // state_cache: Arc::new(Mutex::new(LruCache::new(state_cache_size))),
             rdb: Arc::new(rdb),
             path,
             executable_blocks_height,
@@ -631,7 +631,6 @@ impl Db {
     pub fn state_trie(&self) -> Result<TrieStorage> {
         Ok(TrieStorage {
             db: self.db.clone(),
-            // _cache: self.state_cache.clone(),
             rdb: self.rdb.clone(),
         })
     }
