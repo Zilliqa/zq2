@@ -1360,6 +1360,32 @@ impl TrieStorage {
         Ok(())
     }
 
+    // migrate state_trie from sqlite to rocksdb, by simply iterating over every node (forced read)
+    pub fn migrate_state(&self, root_hash: Hash) -> Result<()> {
+        let trie_store = Arc::new(Self {
+            db: self.db.clone(),
+            rdb: self.rdb.clone(),
+        });
+        let state_trie = EthTrie::new(trie_store.clone()).at_root(root_hash.into());
+        for (k, v) in state_trie.iter() {
+            // for each account, load its storage trie
+            let account_state = bincode::serde::decode_from_slice::<Account, _>(
+                v.as_slice(),
+                bincode::config::legacy(),
+            )?
+            .0
+            .storage_root;
+            let account_trie = EthTrie::new(trie_store.clone()).at_root(account_state.0.into());
+            // force read account_storage trie
+            tracing::trace!(
+                "Migrate {} ({})",
+                hex::encode(&k),
+                account_trie.iter().count()
+            );
+        }
+        Ok(())
+    }
+
     pub fn write_batch(
         &self,
         keys: Vec<Vec<u8>>,
