@@ -21,7 +21,13 @@ test = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-alloy = { version = "0.12.4", default-features = false, features = ["consensus", "eips", "rlp", "serde", "signer-local"] }
+alloy = { version = "0.12.4", default-features = false, features = [
+    "consensus",
+    "eips",
+    "rlp",
+    "serde",
+    "signer-local",
+] }
 anyhow = "1.0.98"
 async-trait = "0.1.88"
 base64 = "0.22.0"
@@ -32,30 +38,35 @@ clap-verbosity-flag = "3.0.3"
 cliclack = "0.3.6"
 colored = "3.0.0"
 env_logger = "0.11.8"
-eth_trie = {version = "0.1.0", path = "../eth-trie.rs"}
+eth_trie = { version = "0.1.0", path = "../eth-trie.rs" }
 ethabi = "18.0.0"
-ethers = {version="2.0.14", features = ["ws"]}
+ethers = { version = "2.0.14", features = ["ws"] }
 futures = "0.3.31"
 hex = "0.4.3"
 home = "0.5.11"
 indicatif = "0.17.11"
 itertools = "0.14.0"
-jsonrpsee = {version = "0.24.8", features = ["client"]}
+jsonrpsee = { version = "0.24.8", features = ["client"] }
 k256 = "0.13.4"
 lazy_static = "1.5.0"
-libp2p = { version = "0.56.0", features = ["identify"]}
+libp2p = { version = "0.56.0", features = ["identify"] }
 log = "0.4.27"
 parking_lot = "0.12.4"
 primitive-types = "0.12.2"
 prost = "0.14.1"
 rand = "0.8.5"
 regex = "1.11.1"
-reqwest = {version = "0.12.15", features = ["json", "rustls-tls", "http2", "charset"], default-features = false}
-revm = {version = "19.6.0", features = ["optional_balance_check"]}
+reqwest = { version = "0.12.15", features = [
+    "json",
+    "rustls-tls",
+    "http2",
+    "charset",
+], default-features = false }
+revm = { version = "19.6.0", features = ["optional_balance_check"] }
 rs-leveldb = "0.1.5"
 rustls = "0.23.23"
 scopeguard = "1.2.0"
-serde = {version = "1.0.219", features = ["derive"]}
+serde = { version = "1.0.219", features = ["derive"] }
 serde_json = { version = "1.0.142", features = ["preserve_order"] }
 serde_yaml = "0.9.34"
 sha2 = "0.10.8"
@@ -65,12 +76,20 @@ strum_macros = "0.27"
 tempfile = "3.19.1"
 tera = "1.19.1"
 thiserror = "2.0.12"
-tokio = {version = "1.47.1", features = ["macros", "rt-multi-thread", "sync", "io-std", "io-util", "process", "fs"]}
+tokio = { version = "1.47.1", features = [
+    "macros",
+    "rt-multi-thread",
+    "sync",
+    "io-std",
+    "io-util",
+    "process",
+    "fs",
+] }
 tokio-stream = "0.1.17"
 toml = { version = "0.9.5", features = ["preserve_order"] }
 tracing = "0.1.41"
 url = "2.5.4"
-zilliqa = {path = "../zilliqa"}
+zilliqa = { path = "../zilliqa" }
 zilliqa-rs = "0.3.2"
 
 [build-dependencies]
