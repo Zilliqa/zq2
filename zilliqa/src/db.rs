@@ -1344,6 +1344,21 @@ pub struct TrieStorage {
 }
 
 impl TrieStorage {
+    // copy state_trie data from rocksdb to sqlite
+    pub fn revert_state(&self) -> Result<(), rocksdb::Error> {
+        self.rdb.cancel_all_background_work(true);
+        let db = self.db.lock().unwrap();
+        let mut iter = self.rdb.iterator(rocksdb::IteratorMode::Start);
+        while let Some(node) = iter.next() {
+            let (key, value) = node?;
+            db.prepare_cached("INSERT OR REPLACE INTO state_trie (key, value) VALUES (?1, ?2)")
+                .unwrap()
+                .execute(rusqlite::params![key, value])
+                .unwrap();
+        }
+        Ok(())
+    }
+
     pub fn write_batch(
         &self,
         keys: Vec<Vec<u8>>,
