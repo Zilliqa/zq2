@@ -1366,10 +1366,14 @@ impl TrieStorage {
 }
 
 impl eth_trie::DB for TrieStorage {
-    type Error = rocksdb::Error;
-
+    type Error = eth_trie::TrieError;
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, Self::Error> {
-        if let Some(value) = self.rdb.get(key)? {
+        // read value from RocksDB with JIT migration
+        if let Some(value) = self
+            .rdb
+            .get(key)
+            .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?
+        {
             tracing::trace!("HIT {}", hex::encode(key));
             return Ok(Some(value));
         }
@@ -1379,15 +1383,17 @@ impl eth_trie::DB for TrieStorage {
             .lock()
             .unwrap()
             .prepare_cached("SELECT value FROM state_trie WHERE key = ?1")
-            .unwrap()
+            .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?
             .query_row([key], |row| row.get(0))
             .optional()
-            .unwrap();
+            .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?;
 
-        // lazy migration
+        // JIT migration
         if let Some(value) = value {
             tracing::trace!("MISS {}", hex::encode(key));
-            self.rdb.put(key, value.as_slice())?;
+            self.rdb
+                .put(key, value.as_slice())
+                .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?;
             return Ok(Some(value));
         }
         Ok(None)
@@ -1396,11 +1402,13 @@ impl eth_trie::DB for TrieStorage {
     #[inline]
     fn insert(&self, key: &[u8], value: Vec<u8>) -> Result<(), Self::Error> {
         self.write_batch(vec![key.to_vec()], vec![value])
+            .map_err(|e| eth_trie::TrieError::DB(e.to_string()))
     }
 
     #[inline]
     fn insert_batch(&self, keys: Vec<Vec<u8>>, values: Vec<Vec<u8>>) -> Result<(), Self::Error> {
         self.write_batch(keys, values)
+            .map_err(|e| eth_trie::TrieError::DB(e.to_string()))
     }
 
     fn remove(&self, _key: &[u8]) -> Result<(), Self::Error> {
