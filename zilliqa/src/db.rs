@@ -15,7 +15,9 @@ use anyhow::{Context, Result, anyhow};
 use eth_trie::{DB, EthTrie, MemoryDB, Trie};
 // use lru_mem::LruCache;
 use lz4::{Decoder, EncoderBuilder};
-use rocksdb::{DBWithThreadMode, SingleThreaded, WriteBatchWithTransaction};
+use rocksdb::{
+    BlockBasedOptions, Cache, DBWithThreadMode, Options, SingleThreaded, WriteBatchWithTransaction,
+};
 use rusqlite::{
     Connection, OptionalExtension, Row, ToSql, named_params,
     types::{FromSql, FromSqlError, ToSqlOutput},
@@ -245,7 +247,7 @@ impl Db {
     pub fn new<P>(
         data_dir: Option<P>,
         shard_id: u64,
-        _state_cache_size: usize,
+        state_cache_size: usize,
         executable_blocks_height: Option<u64>,
     ) -> Result<Self>
     where
@@ -355,9 +357,22 @@ impl Db {
         } else {
             tempfile::tempdir().unwrap().path().join("state.db")
         };
-        let rdb = DBWithThreadMode::<SingleThreaded>::open_default(rdb_path)?;
 
-        tracing::info!("State database: {}", rdb.path().display());
+        let mut block_opts = BlockBasedOptions::default();
+        let cache = Cache::new_lru_cache(state_cache_size);
+        block_opts.set_block_cache(&cache);
+
+        let mut rdb_opts = Options::default();
+        rdb_opts.create_if_missing(true);
+        rdb_opts.set_block_based_table_factory(&block_opts);
+
+        let rdb = DBWithThreadMode::<SingleThreaded>::open(&rdb_opts, rdb_path)?;
+
+        tracing::info!(
+            "State database: {} ({})",
+            rdb.path().display(),
+            rdb.latest_sequence_number()
+        );
         Ok(Db {
             db: Arc::new(Mutex::new(connection)),
             // state_cache: Arc::new(Mutex::new(LruCache::new(state_cache_size))),
