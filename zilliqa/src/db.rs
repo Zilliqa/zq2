@@ -357,6 +357,7 @@ impl Db {
         };
         let rdb = DBWithThreadMode::<SingleThreaded>::open_default(rdb_path)?;
 
+        tracing::info!("State database: {}", rdb.path().display());
         Ok(Db {
             db: Arc::new(Mutex::new(connection)),
             // state_cache: Arc::new(Mutex::new(LruCache::new(state_cache_size))),
