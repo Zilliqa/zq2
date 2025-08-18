@@ -1349,8 +1349,8 @@ impl TrieStorage {
     pub fn revert_state(&self) -> Result<(), rocksdb::Error> {
         self.rdb.cancel_all_background_work(true);
         let db = self.db.lock().unwrap();
-        let mut iter = self.rdb.iterator(rocksdb::IteratorMode::Start);
-        while let Some(node) = iter.next() {
+        let iter = self.rdb.iterator(rocksdb::IteratorMode::Start);
+        for node in iter {
             let (key, value) = node?;
             db.prepare_cached("INSERT OR REPLACE INTO state_trie (key, value) VALUES (?1, ?2)")
                 .unwrap()
