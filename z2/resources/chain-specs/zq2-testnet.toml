@@ -87,5 +87,5 @@ consensus.forks = [
     { at_height = 10109366, prevent_zil_transfer_from_evm_to_scilla_contract = true },
     { at_height = 10854709, scilla_failed_txn_correct_gas_fee_charged = true, check_minimum_gas_price = true },
     { at_height = 11300000, inject_access_list = true, use_max_gas_priority_fee = true },
-    { at_height = 12706907, failed_zil_transfers_to_eoa_proper_fee_deduction = true },
+    { at_height = 12998790, failed_zil_transfers_to_eoa_proper_fee_deduction = true },
 ]

@@ -254,7 +254,7 @@ impl Chain {
                 // estimated: 2025-08-04T12.00.00Z
                 json!({ "at_height": 7000000, "inject_access_list": true, "use_max_gas_priority_fee": true}),
                 // esimated: 2025-09-15T12.00.00Z
-                json!({ "at_height": 9583198, "failed_zil_transfers_to_eoa_proper_fee_deduction": true}),
+                json!({ "at_height": 10153271, "failed_zil_transfers_to_eoa_proper_fee_deduction": true}),
             ]),
             _ => None,
         }
