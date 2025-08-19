@@ -1005,7 +1005,7 @@ impl ActiveCall {
                 Ok(Some((val, "Uint64".to_owned())))
             }
             "_this_address" => {
-                let val = scilla_val(format!("\"0x{:#x}\"", addr).into_bytes());
+                let val = scilla_val(format!("\"0x{addr:#x}\"").into_bytes());
                 Ok(Some((val, "ByStr20".to_owned())))
             }
             "_codehash" => {

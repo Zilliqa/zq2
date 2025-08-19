@@ -1641,10 +1641,7 @@ mod tests {
         let _result: Vec<_> = pool.pending_transactions_ordered().collect();
         let duration = start.elapsed();
 
-        println!(
-            "Benchmark completed: pending_transactions took {:?} to execute.",
-            duration
-        );
+        println!("Benchmark completed: pending_transactions took {duration:?} to execute.");
         Ok(())
     }
 
@@ -2327,7 +2324,7 @@ mod tests {
         // Create 1000 accounts
         let mut accounts = Vec::new();
         for i in 0..1000 {
-            let addr: Address = format!("0x{:040x}", i).parse()?;
+            let addr: Address = format!("0x{i:040x}").parse()?;
             let acc = create_acc(&mut state, addr, 1_000_000, 0)?;
             accounts.push((addr, acc));
         }
@@ -2358,8 +2355,7 @@ mod tests {
         let time_per_op = duration.as_nanos() / transaction_count as u128;
 
         println!(
-            "Timing: Insert transactions (ascending nonces) - {} ops in {:?} = {} ns/op",
-            transaction_count, duration, time_per_op
+            "Timing: Insert transactions (ascending nonces) - {transaction_count} ops in {duration:?} = {time_per_op} ns/op"
         );
 
         Ok(())
@@ -2373,7 +2369,7 @@ mod tests {
         // Create 1000 accounts
         let mut accounts = Vec::new();
         for i in 0..1000 {
-            let addr: Address = format!("0x{:040x}", i).parse()?;
+            let addr: Address = format!("0x{i:040x}").parse()?;
             let acc = create_acc(&mut state, addr, 1_000_000, 0)?;
             accounts.push((addr, acc));
         }
@@ -2405,8 +2401,7 @@ mod tests {
         let time_per_op = duration.as_nanos() / transaction_count as u128;
 
         println!(
-            "Timing: Insert transactions (descending nonces) - {} ops in {:?} = {} ns/op",
-            transaction_count, duration, time_per_op
+            "Timing: Insert transactions (descending nonces) - {transaction_count} ops in {duration:?} = {time_per_op} ns/op"
         );
 
         Ok(())
@@ -2420,7 +2415,7 @@ mod tests {
         // Create 100 accounts with 100 transactions each
         let mut accounts = Vec::new();
         for i in 0..100 {
-            let addr: Address = format!("0x{:040x}", i).parse()?;
+            let addr: Address = format!("0x{i:040x}").parse()?;
             let acc = create_acc(&mut state, addr, 1_000_000, 0)?;
             accounts.push((addr, acc));
         }
@@ -2445,8 +2440,7 @@ mod tests {
         let duration = start.elapsed();
         let time_per_op = duration.as_nanos() / operations as u128;
         println!(
-            "Timing: Get all pending transactions - {} ops in {:?} = {} ns/op",
-            operations, duration, time_per_op
+            "Timing: Get all pending transactions - {operations} ops in {duration:?} = {time_per_op} ns/op"
         );
 
         // Benchmark getting pending transaction count for 1 second
@@ -2459,8 +2453,7 @@ mod tests {
         let duration = start.elapsed();
         let time_per_op = duration.as_nanos() / operations as u128;
         println!(
-            "Timing: Get pending transaction count - {} ops in {:?} = {} ns/op",
-            operations, duration, time_per_op
+            "Timing: Get pending transaction count - {operations} ops in {duration:?} = {time_per_op} ns/op"
         );
 
         // Benchmark getting best transaction for 1 second
@@ -2473,8 +2466,7 @@ mod tests {
         let duration = start.elapsed();
         let time_per_op = duration.as_nanos() / operations as u128;
         println!(
-            "Timing: Get best transaction - {} ops in {:?} = {} ns/op",
-            operations, duration, time_per_op
+            "Timing: Get best transaction - {operations} ops in {duration:?} = {time_per_op} ns/op"
         );
 
         // Benchmark popping transactions for 1 second
@@ -2494,8 +2486,7 @@ mod tests {
         let duration = start.elapsed();
         let time_per_op = duration.as_nanos() / operations as u128;
         println!(
-            "Timing: Popping best transaction - {} ops in {:?} = {} ns/op",
-            operations, duration, time_per_op
+            "Timing: Popping best transaction - {operations} ops in {duration:?} = {time_per_op} ns/op"
         );
 
         Ok(())

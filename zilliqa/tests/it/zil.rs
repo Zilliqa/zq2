@@ -2527,8 +2527,7 @@ async fn get_num_peers(mut network: Network) {
 
     assert!(
         response.is_number(),
-        "Expected response to be a number, got: {:?}",
-        response
+        "Expected response to be a number, got: {response:?}"
     );
 }
 
@@ -3031,8 +3030,7 @@ async fn get_num_ds_blocks(mut network: Network) {
 
     assert!(
         response.is_string(),
-        "Expected response to be a string, got: {:?}",
-        response
+        "Expected response to be a string, got: {response:?}"
     );
 }
 
@@ -3214,8 +3212,7 @@ async fn get_num_txns_ds_epoch_0(mut network: Network) {
 
     assert!(
         response.is_string(),
-        "Expected response to be a string, got: {:?}",
-        response
+        "Expected response to be a string, got: {response:?}"
     );
 }
 
@@ -3270,8 +3267,7 @@ async fn get_num_txns_ds_epoch_1(mut network: Network) {
 
     assert!(
         response.is_string(),
-        "Expected response to be a string, got: {:?}",
-        response
+        "Expected response to be a string, got: {response:?}"
     );
 
     let response_num = response
@@ -3295,8 +3291,7 @@ async fn get_num_txns_tx_epoch_0(mut network: Network) {
 
     assert!(
         response.is_string(),
-        "Expected response to be a string, got: {:?}",
-        response
+        "Expected response to be a string, got: {response:?}"
     );
 }
 
@@ -3352,8 +3347,7 @@ async fn get_num_txns_tx_epoch_1(mut network: Network) {
 
     assert!(
         response.is_string(),
-        "Expected response to be a string, got: {:?}",
-        response
+        "Expected response to be a string, got: {response:?}"
     );
 
     let response_num = response
@@ -3377,8 +3371,7 @@ async fn combined_total_coin_supply_test(mut network: Network) {
 
     assert!(
         response_str.is_string(),
-        "Expected response to be a string, got: {:?}",
-        response_str
+        "Expected response to be a string, got: {response_str:?}"
     );
 
     let total_coin_supply_str = response_str.as_str().expect("Expected string conversion");
@@ -3394,8 +3387,7 @@ async fn combined_total_coin_supply_test(mut network: Network) {
 
     assert!(
         response_int.is_number(),
-        "Expected response to be a number, got: {:?}",
-        response_int
+        "Expected response to be a number, got: {response_int:?}"
     );
 
     let total_coin_supply_as_int: u128 = response_int
@@ -3440,8 +3432,7 @@ async fn get_node_type(mut network: Network) {
 
     assert!(
         response.is_string(),
-        "Expected response to be a string, got: {:?}",
-        response
+        "Expected response to be a string, got: {response:?}"
     );
 
     let allowed_node_types = ["Seed"];
@@ -3449,8 +3440,7 @@ async fn get_node_type(mut network: Network) {
 
     assert!(
         allowed_node_types.contains(&response_str),
-        "Unexpected node type: {}",
-        response_str
+        "Unexpected node type: {response_str}"
     );
 }
 
@@ -3466,8 +3456,7 @@ async fn get_prev_difficulty(mut network: Network) {
 
     assert!(
         response.is_u64(),
-        "Expected response to be a u64, got: {:?}",
-        response
+        "Expected response to be a u64, got: {response:?}"
     );
 
     let response_u64 = response.as_u64().expect("Expected response to be a u64");
@@ -3487,8 +3476,7 @@ async fn get_prev_ds_difficulty(mut network: Network) {
 
     assert!(
         response.is_u64(),
-        "Expected response to be a u64, got: {:?}",
-        response
+        "Expected response to be a u64, got: {response:?}"
     );
 
     let response_u64 = response.as_u64().expect("Expected response to be a u64");

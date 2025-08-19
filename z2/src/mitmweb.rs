@@ -39,12 +39,12 @@ impl Runner {
         );
         let mut cmd = Command::new("mitmweb");
         cmd.arg("--mode");
-        cmd.arg(format!("reverse:http://localhost:{}", to_port));
+        cmd.arg(format!("reverse:http://localhost:{to_port}"));
         cmd.arg("--no-web-open-browser");
         cmd.arg("--listen-port");
-        cmd.arg(format!("{}", from_port));
+        cmd.arg(format!("{from_port}"));
         cmd.arg("--web-port");
-        cmd.arg(format!("{}", mgmt_port));
+        cmd.arg(format!("{mgmt_port}"));
         let join_handlers = collector::spawn(
             &mut cmd,
             "mitmweb",

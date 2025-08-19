@@ -269,7 +269,7 @@ impl Chain {
 
         Err(anyhow!(
             "{}",
-            format!("Subdomain not available for the chain {}", self).red()
+            format!("Subdomain not available for the chain {self}").red()
         ))
     }
 
@@ -282,7 +282,7 @@ impl Chain {
 
         Err(anyhow!(
             "{}",
-            format!("Genesis amount not available for the chain {}", self).red()
+            format!("Genesis amount not available for the chain {self}").red()
         ))
     }
 
@@ -295,11 +295,7 @@ impl Chain {
 
         Err(anyhow!(
             "{}",
-            format!(
-                "Genesis deposits amount not available for the chain {}",
-                self
-            )
-            .red()
+            format!("Genesis deposits amount not available for the chain {self}").red()
         ))
     }
 
@@ -311,13 +307,13 @@ impl Chain {
         let project_id = self.get_str("project_id");
 
         if let Some(project_id) = project_id {
-            println!("{}", format!("Using the project ID {}", project_id).green());
+            println!("{}", format!("Using the project ID {project_id}").green());
             return Ok(project_id);
         }
 
         Err(anyhow!(
             "{}",
-            format!("project_id not available for the chain {}", self).red()
+            format!("project_id not available for the chain {self}").red()
         ))
     }
 

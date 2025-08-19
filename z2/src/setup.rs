@@ -94,7 +94,7 @@ pub struct Setup {
 
 impl Config {
     pub fn get_config_file_name(config_dir: &str) -> Result<String> {
-        let file_name = format!("{}/{}", config_dir, NETWORK_CONFIG_FILE_NAME);
+        let file_name = format!("{config_dir}/{NETWORK_CONFIG_FILE_NAME}");
         Ok(file_name.to_string())
     }
 
@@ -172,7 +172,7 @@ impl Setup {
                 address,
             },
         );
-        let chain_name = format!("{}", chain);
+        let chain_name = format!("{chain}");
         let config = Config {
             shape: Composition::single_node(is_validator),
             node_data,
@@ -600,7 +600,7 @@ impl Setup {
             cfg.p2p_port = 0;
             // Now write the config.
             let config_path = self.get_config_path(*node_index)?;
-            println!("🪅 Writing configuration file for node {0} .. ", node_index);
+            println!("🪅 Writing configuration file for node {node_index} .. ");
             let config_str = toml::to_string(&cfg)?;
             fs::write(config_path, config_str).await?;
         }
@@ -773,7 +773,7 @@ pub fn generate_keys_from_index(index: u64) -> Result<(SecretKey, SigningKey)> {
         index, 0,
         "index must be non-zero when generating secret key"
     );
-    let padded_key = format!("{:0>64}", index);
+    let padded_key = format!("{index:0>64}");
     let secret_key = SecretKey::from_hex(&padded_key).map_err(|err| anyhow!(Box::new(err)))?;
     let signing_key = SigningKey::from_slice(&hex::decode(padded_key)?)?;
     Ok((secret_key, signing_key))

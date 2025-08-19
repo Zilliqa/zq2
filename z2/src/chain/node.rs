@@ -63,13 +63,11 @@ pub fn docker_image(component: &str, version: &str) -> Result<String> {
         Components::ZQ2 => {
             if semver_re.is_match(version) {
                 Ok(format!(
-                    "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zq2:{}",
-                    version
+                    "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zq2:{version}"
                 ))
             } else if commit_id_re.is_match(version) {
                 Ok(format!(
-                    "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-private/zq2:{}",
-                    version
+                    "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-private/zq2:{version}"
                 ))
             } else {
                 Err(anyhow!("Invalid version for ZQ2"))
@@ -211,7 +209,7 @@ impl Machine {
             let plaintext = KmsService::decrypt(
                 &self.project_id,
                 value,
-                &format!("kms-{}", chain_name),
+                &format!("kms-{chain_name}"),
                 &self.name,
                 Some(self.clone()),
             )?;
@@ -257,7 +255,7 @@ impl Machine {
             params.clone().unwrap_or("[]".to_string()),
         );
 
-        let url = format!("http://localhost:{}", port);
+        let url = format!("http://localhost:{port}");
         let output = std::process::Command::new("curl")
             .args([
                 "--max-time",
@@ -349,7 +347,7 @@ impl Machine {
                 "--zone",
                 &self.zone,
                 "--local-host-port",
-                &format!("localhost:{}", port),
+                &format!("localhost:{port}"),
             ])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -831,14 +829,14 @@ impl ChainNode {
         if let Some(checkpoint_url) = self.chain.checkpoint_url() {
             if self.role == NodeRole::Validator || self.role == NodeRole::Bootstrap {
                 let checkpoint_file = checkpoint_url.rsplit('/').next().unwrap_or("");
-                ctx.insert("checkpoint_file", &format!("/{}", checkpoint_file));
+                ctx.insert("checkpoint_file", &format!("/{checkpoint_file}"));
 
                 let checkpoint_hex_block =
                     crate::utils::string_decimal_to_hex(&checkpoint_file.replace(".dat", ""))?;
 
                 let json_response = self.chain.run_rpc_call(
                     "eth_getBlockByNumber",
-                    &Some(format!("[\"{}\", false]", checkpoint_hex_block)),
+                    &Some(format!("[\"{checkpoint_hex_block}\", false]")),
                     30,
                 )?;
 
@@ -865,10 +863,7 @@ impl ChainNode {
                 ctx.insert("checkpoint_hash", checkpoint_hash);
 
                 log::info!(
-                    "Importing the checkpoint from the block {} ({} hex) whose hash is {}",
-                    checkpoint_file,
-                    checkpoint_hex_block,
-                    checkpoint_hash,
+                    "Importing the checkpoint from the block {checkpoint_file} ({checkpoint_hex_block} hex) whose hash is {checkpoint_hash}"
                 );
             }
         }
@@ -886,10 +881,8 @@ impl ChainNode {
 
         // Adding the OpenTelemetry collector endpoint to all nodes configurations
         let otlp_collector_endpoint = "http://localhost:4317";
-        let config_file_with_otlp = format!(
-            "otlp_collector_endpoint = \"{otlp_collector_endpoint}\"\n{}",
-            config_file
-        );
+        let config_file_with_otlp =
+            format!("otlp_collector_endpoint = \"{otlp_collector_endpoint}\"\n{config_file}");
 
         let mut fh = File::create(filename).await?;
         fh.write_all(config_file_with_otlp.as_bytes()).await?;
@@ -948,7 +941,7 @@ impl ChainNode {
         let mut backup_name = name.unwrap_or(self.name());
 
         if zip {
-            backup_name = format!("{}.zip", backup_name);
+            backup_name = format!("{backup_name}.zip");
         }
 
         let multi_progress =
@@ -1166,8 +1159,7 @@ impl ChainNode {
         progress_bar.set_style(
             indicatif::ProgressStyle::default_bar()
                 .template(&format!(
-                    "{{spinner:.green}} {{bar:{}.cyan/blue}} {{msg}}",
-                    BAR_SIZE
+                    "{{spinner:.green}} {{bar:{BAR_SIZE}.cyan/blue}} {{msg}}"
                 ))
                 .unwrap()
                 .progress_chars("#>-"),
@@ -1268,7 +1260,7 @@ impl ChainNode {
             serde_json::from_value(ci).expect("Failed to parse JSON")
         });
 
-        let mut message = format!("{}", consensus_info);
+        let mut message = format!("{consensus_info}");
         progress_bar.set_message(message.clone());
 
         if follow {
@@ -1289,7 +1281,7 @@ impl ChainNode {
                     serde_json::from_value(ci).expect("Failed to parse JSON")
                 });
 
-                message = format!("{}", consensus_info);
+                message = format!("{consensus_info}");
                 progress_bar.set_message(message);
                 progress_bar.set_position(0);
             }

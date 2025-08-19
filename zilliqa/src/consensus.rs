@@ -2863,7 +2863,12 @@ impl Consensus {
             .fold((0, 0), |(total_weight, cosigned_sum), (i, stake)| {
                 (
                     total_weight + stake,
-                    cosigned_sum + cosigned[i].then_some(stake).unwrap_or_default(),
+                    cosigned_sum
+                        + if cosigned[i] {
+                            stake
+                        } else {
+                            Default::default()
+                        },
                 )
             });
 

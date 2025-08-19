@@ -124,7 +124,7 @@ async fn execute_install_or_upgrade(
     }
 
     for failure in failures {
-        log::error!("FAILURE: {}", failure);
+        log::error!("FAILURE: {failure}");
     }
 
     Ok(())
@@ -194,7 +194,7 @@ pub async fn get_config_file(config_file: &str, role: NodeRole, out: Option<&str
         } else {
             println!("Config file for a node role {} in {}", role, chain.name());
             println!("---");
-            println!("{}", content);
+            println!("{content}");
             println!("---");
         }
     } else {
@@ -276,10 +276,10 @@ pub async fn get_node_deposit_commands(genesis_private_key: &str, node: &ChainNo
     println!("z2 deposit --chain {} \\", node.chain()?);
     println!("\t--peer-id {} \\", node_ethereum_address.peer_id);
     println!("\t--public-key {} \\", node_ethereum_address.bls_public_key);
-    println!("\t--deposit-auth-signature {} \\", deposit_auth_signature);
-    println!("\t--private-key {} \\", genesis_private_key);
-    println!("\t--reward-address {} \\", ZERO_ACCOUNT);
-    println!("\t--signing-address {} \\", ZERO_ACCOUNT);
+    println!("\t--deposit-auth-signature {deposit_auth_signature} \\");
+    println!("\t--private-key {genesis_private_key} \\");
+    println!("\t--reward-address {ZERO_ACCOUNT} \\");
+    println!("\t--signing-address {ZERO_ACCOUNT} \\");
     println!("\t--amount {VALIDATOR_DEPOSIT_IN_MILLIONS}\n");
 
     Ok(())
@@ -419,12 +419,12 @@ pub async fn run_deposit(config_file: &str, node_selection: bool) -> Result<()> 
     }
 
     for success in successes {
-        log::info!("SUCCESS: {}", success);
+        log::info!("SUCCESS: {success}");
     }
 
     if !failures.is_empty() {
         for failure in failures {
-            log::error!("FAILURE: {}", failure);
+            log::error!("FAILURE: {failure}");
         }
         log::error!(
             "Run `z2 deployer get-deposit-commands <chain_file>` to get the deposit command each node"
@@ -492,12 +492,12 @@ pub async fn run_deposit_top_up(config_file: &str, node_selection: bool, amount:
     }
 
     for success in successes {
-        log::info!("SUCCESS: {}", success);
+        log::info!("SUCCESS: {success}");
     }
 
     if !failures.is_empty() {
         for failure in failures {
-            log::error!("FAILURE: {}", failure);
+            log::error!("FAILURE: {failure}");
         }
     }
 
@@ -562,12 +562,12 @@ pub async fn run_unstake(config_file: &str, node_selection: bool, amount: u8) ->
     }
 
     for success in successes {
-        log::info!("SUCCESS: {}", success);
+        log::info!("SUCCESS: {success}");
     }
 
     if !failures.is_empty() {
         for failure in failures {
-            log::error!("FAILURE: {}", failure);
+            log::error!("FAILURE: {failure}");
         }
     }
 
@@ -632,12 +632,12 @@ pub async fn run_withdraw(config_file: &str, node_selection: bool) -> Result<()>
     }
 
     for success in successes {
-        log::info!("SUCCESS: {}", success);
+        log::info!("SUCCESS: {success}");
     }
 
     if !failures.is_empty() {
         for failure in failures {
-            log::error!("FAILURE: {}", failure);
+            log::error!("FAILURE: {failure}");
         }
     }
 
@@ -928,7 +928,7 @@ pub async fn run_restore(
     }
 
     for failure in failures {
-        log::error!("FAILURE: {}", failure);
+        log::error!("FAILURE: {failure}");
     }
 
     Ok(())
@@ -992,7 +992,7 @@ pub async fn run_reset(config_file: &str, node_selection: bool) -> Result<()> {
     }
 
     for failure in failures {
-        log::error!("FAILURE: {}", failure);
+        log::error!("FAILURE: {failure}");
     }
 
     Ok(())
@@ -1056,7 +1056,7 @@ pub async fn run_restart(config_file: &str, node_selection: bool) -> Result<()> 
     }
 
     for failure in failures {
-        log::error!("FAILURE: {}", failure);
+        log::error!("FAILURE: {failure}");
     }
 
     Ok(())
@@ -1168,7 +1168,7 @@ pub async fn run_monitor(
     }
 
     for failure in failures {
-        log::error!("FAILURE: {}", failure);
+        log::error!("FAILURE: {failure}");
     }
 
     Ok(())

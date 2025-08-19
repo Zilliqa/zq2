@@ -285,7 +285,7 @@ fn create_transaction(
     let sig = schnorr::Signature::from_str(&transaction.signature).map_err(|err| {
         ErrorObject::owned::<String>(
             RPCErrorCode::RpcVerifyRejected as i32,
-            format!("Cannot extract signature - {}", err),
+            format!("Cannot extract signature - {err}"),
             None,
         )
     })?;
@@ -668,7 +668,7 @@ fn get_smart_contract_code(params: Params, node: &Arc<RwLock<Node>>) -> Result<V
     if !state.has_account(address)? {
         return Err(ErrorObject::owned(
             RPCErrorCode::RpcInvalidAddressOrKey as i32,
-            format!("Address does not exist: {}", address),
+            format!("Address does not exist: {address}"),
             None::<()>,
         )
         .into());

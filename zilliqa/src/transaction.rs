@@ -966,7 +966,7 @@ impl ZilAmount {
     pub fn to_float_string(self) -> String {
         let integer_part = self.0 / 10u128.pow(12);
         let fractional_part = self.0 % 10u128.pow(12);
-        format!("{}.{}", integer_part, fractional_part)
+        format!("{integer_part}.{fractional_part}")
     }
 }
 

@@ -38,7 +38,7 @@ impl Runner {
     ) -> Result<Runner> {
         let exe_name = format!("{base_dir}/scilla/bin/scilla-server-http");
         let mut cmd = Command::new(&exe_name);
-        let port = format!("{}", port);
+        let port = format!("{port}");
         cmd.args(vec!["-p", &port]);
         let join_handles = collector::spawn(
             &mut cmd,
