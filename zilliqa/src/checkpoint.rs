@@ -5,7 +5,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, ensure};
 use eth_trie::{DB, EthTrie, MemoryDB, Trie};
 use lz4::Decoder;
 
@@ -177,34 +177,56 @@ struct Checkpoint {
 }
 
 pub fn load_ckpt(path: &Path, trie_storage: Arc<TrieStorage>, chain_id: u64) -> Result<()> {
+    ensure!(
+        path.extension().unwrap_or_default() == "ckpt",
+        "Checkpoint {} is not .ckpt file",
+        path.display()
+    );
+
     let mut zipreader = zip::ZipArchive::new(std::fs::File::open(path)?)?;
 
-    if zipreader.comment() != CKPT_VERSION.as_bytes() {
-        return Err(anyhow::anyhow!("Invalid checkpoint version"));
-    }
+    ensure!(
+        zipreader.comment() == CKPT_VERSION.as_bytes(),
+        "Invalid checkpoint version",
+    );
 
     // READ METADATA
     let meta = {
         let mut file = zipreader.by_name("metadata.json")?;
         let meta: Checkpoint = serde_json::from_reader(&mut file)?;
-        assert_eq!(chain_id, meta.chain_id, "Chain ID mismatch");
+        ensure!(
+            chain_id == meta.chain_id,
+            "Chain ID {} mismatch",
+            meta.chain_id
+        );
         meta
     };
 
-    let _block = {
+    let block = {
         let mut file = zipreader.by_name("block.bin")?;
         let block: crate::message::Block =
             bincode::serde::decode_from_std_read(&mut file, BIN_CONFIG)?;
-        assert!(block.verify_hash().is_ok(), "Block hash mismatch");
+        ensure!(
+            block.verify_hash().is_ok(),
+            "Block hash {} invalid",
+            block.hash()
+        );
         block
     };
     let parent = {
         let mut file = zipreader.by_name("parent.bin")?;
         let block: crate::message::Block =
             bincode::serde::decode_from_std_read(&mut file, BIN_CONFIG)?;
-        assert!(block.verify_hash().is_ok(), "Parent hash mismatch");
+        ensure!(
+            block.verify_hash().is_ok(),
+            "Parent hash {} invalid",
+            block.hash()
+        );
         block
     };
+
+    ensure!(block.parent_hash() == parent.hash(), "Parent hash mismatch");
+
     let _transactions = {
         let mut file = zipreader.by_name("transactions.bin")?;
         let transactions: Vec<SignedTransaction> =
@@ -245,7 +267,11 @@ pub fn load_ckpt(path: &Path, trie_storage: Arc<TrieStorage>, chain_id: u64) -> 
             .0
             .storage_root;
             let root_hash = account_trie.root_hash()?;
-            assert_eq!(root_hash, account_root, "Account storage root mismatch");
+            ensure!(
+                root_hash == account_root,
+                "Account storage root {} mismatch",
+                root_hash
+            );
 
             // commit the in-memory trie to storage
             let (keys, vals): (Vec<_>, Vec<_>) = mem_storage.storage.write().drain().unzip();
@@ -253,17 +279,26 @@ pub fn load_ckpt(path: &Path, trie_storage: Arc<TrieStorage>, chain_id: u64) -> 
 
             account_count += 1;
         }
-        assert_eq!(
-            account_storage.root_hash()?.0,
-            parent.state_root_hash().0,
-            "State root hash mismatch"
+        let root_hash = account_storage.root_hash()?;
+        ensure!(
+            root_hash.0 == parent.state_root_hash().0,
+            "State root hash {} mismatch",
+            root_hash
         );
 
         (account_count, record_count)
     };
 
-    assert_eq!(meta.account_count, account_count, "Account count mismatch");
-    assert_eq!(meta.record_count, record_count, "Record count mismatch");
+    ensure!(
+        meta.record_count == record_count,
+        "Record count {} mismatch",
+        record_count
+    );
+    ensure!(
+        meta.account_count == account_count,
+        "Account count {} mismatch",
+        account_count
+    );
 
     Ok(())
 }
@@ -276,6 +311,12 @@ pub fn save_ckpt(
     parent: Block,
     chain_id: u64,
 ) -> Result<()> {
+    ensure!(
+        path.extension().unwrap_or_default() == "ckpt",
+        "Checkpoint {} is not .ckpt file",
+        path.display()
+    );
+
     let zipfile = std::fs::File::create(path)?;
     let options = zip::write::SimpleFileOptions::default()
         .large_file(true)
