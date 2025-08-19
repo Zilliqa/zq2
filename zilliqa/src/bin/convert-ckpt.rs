@@ -139,9 +139,8 @@ fn load_ckpt(path: &Path, trie_storage: Arc<TrieStorage>) -> Result<()> {
             // compute the root trie for this account, commits the trie to storage
             let root_hash = account_trie.root_hash()?;
             assert_eq!(root_hash, account_root, "Account storage root mismatch");
-            for (key, val) in mem_storage.storage.read().iter() {
-                trie_storage.insert(key.as_slice(), val.clone())?;
-            }
+            let (keys, vals): (Vec<_>, Vec<_>) = mem_storage.storage.write().drain().unzip();
+            trie_storage.insert_batch(keys, vals)?;
 
             account_storage.insert(account_key.as_slice(), account_val.as_slice())?;
             account_count += 1;
