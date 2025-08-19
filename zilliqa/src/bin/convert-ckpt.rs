@@ -79,6 +79,12 @@ fn load_ckpt(path: &Path, trie_storage: Arc<TrieStorage>) -> Result<()> {
         return Err(anyhow::anyhow!("Invalid checkpoint version"));
     }
 
+    let meta = {
+        let mut file = zipreader.by_name("metadata.json")?;
+        let meta: Checkpoint = serde_json::from_reader(&mut file)?;
+        meta
+    };
+
     // READ TEST
     let _block = {
         let mut file = zipreader.by_name("block.bin")?;
@@ -123,22 +129,18 @@ fn load_ckpt(path: &Path, trie_storage: Arc<TrieStorage>) -> Result<()> {
             let mem_storage = Arc::new(MemoryDB::new(true));
             let mut account_trie = EthTrie::new(mem_storage.clone());
 
-            // let account_trie_root: FixedBytes<32> =
             let count: usize = bincode::serde::decode_from_std_read(&mut reader, BIN_CONFIG)?;
-            // while account_trie.root_hash()?.0 != account_trie_root.0 {
             for _ in 0..count {
                 let key: Vec<u8> = bincode::decode_from_std_read(&mut reader, BIN_CONFIG)?;
                 let val: Vec<u8> = bincode::decode_from_std_read(&mut reader, BIN_CONFIG)?;
                 account_trie.insert(key.as_slice(), val.as_slice())?;
+                record_count += 1;
             }
             // compute the root trie for this account, commits the trie to storage
             let root_hash = account_trie.root_hash()?;
             assert_eq!(root_hash, account_root, "Account storage root mismatch");
-
-            // write final account-trie storage data
             for (key, val) in mem_storage.storage.read().iter() {
                 trie_storage.insert(key.as_slice(), val.clone())?;
-                record_count += 1;
             }
 
             account_storage.insert(account_key.as_slice(), account_val.as_slice())?;
@@ -153,9 +155,8 @@ fn load_ckpt(path: &Path, trie_storage: Arc<TrieStorage>) -> Result<()> {
         (account_count, record_count)
     };
 
-    // let meta = { serde_json::from_slice::<Checkpoint>(zipreader.zip64_comment().unwrap())? };
-    // assert_eq!(meta.account_count, account_count, "Account count mismatch");
-    // assert_eq!(meta.record_count, record_count, "Record count mismatch");
+    assert_eq!(meta.account_count, account_count, "Account count mismatch");
+    assert_eq!(meta.record_count, record_count, "Record count mismatch");
 
     Ok(())
 }
@@ -225,8 +226,10 @@ fn save_ckpt(
         record_count,
     };
 
+    zipwriter.start_file("metadata.json", options)?;
+    serde_json::to_writer(&mut zipwriter, &meta)?;
+
     zipwriter.set_comment(CKPT_VERSION);
-    zipwriter.set_zip64_comment(Some(serde_json::to_string(&meta)?));
     zipwriter.finish()?;
     Ok(())
 }
