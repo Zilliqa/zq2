@@ -211,8 +211,8 @@ impl Chain {
                 json!({ "at_height": 10854709, "scilla_failed_txn_correct_gas_fee_charged": true, "check_minimum_gas_price": true}),
                 // estimated: 2025-08-02T12.00.00Z
                 json!({ "at_height": 11300000, "inject_access_list": true, "use_max_gas_priority_fee": true}),
-                // esimated: 2025-08-20T12.00.00Z
-                json!({ "at_height": 12706907, "failed_zil_transfers_to_eoa_proper_fee_deduction": true}),
+                // esimated: 2025-08-22T12.00.00Z
+                json!({ "at_height": 12998790, "failed_zil_transfers_to_eoa_proper_fee_deduction": true}),
             ]),
             Chain::Zq2Mainnet => Some(vec![
                 json!({ "at_height": 4770088, "executable_blocks": true }),
