@@ -173,19 +173,21 @@ const CKPT_VERSION: &str = "ZILCHKPT/2.0";
 struct Checkpoint {
     pub account_count: u64,
     pub record_count: u64,
+    pub chain_id: u64,
 }
 
-pub fn load_ckpt(path: &Path, trie_storage: Arc<TrieStorage>) -> Result<()> {
+pub fn load_ckpt(path: &Path, trie_storage: Arc<TrieStorage>, chain_id: u64) -> Result<()> {
     let mut zipreader = zip::ZipArchive::new(std::fs::File::open(path)?)?;
 
     if zipreader.comment() != CKPT_VERSION.as_bytes() {
         return Err(anyhow::anyhow!("Invalid checkpoint version"));
     }
 
-    // READ TEST
+    // READ METADATA
     let meta = {
         let mut file = zipreader.by_name("metadata.json")?;
         let meta: Checkpoint = serde_json::from_reader(&mut file)?;
+        assert_eq!(chain_id, meta.chain_id, "Chain ID mismatch");
         meta
     };
 
@@ -272,6 +274,7 @@ pub fn save_ckpt(
     block: Block,
     transactions: Vec<SignedTransaction>,
     parent: Block,
+    chain_id: u64,
 ) -> Result<()> {
     let zipfile = std::fs::File::create(path)?;
     let options = zip::write::SimpleFileOptions::default()
@@ -330,6 +333,7 @@ pub fn save_ckpt(
     let meta = Checkpoint {
         account_count,
         record_count,
+        chain_id,
     };
 
     zipwriter.start_file("metadata.json", options)?;

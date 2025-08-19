@@ -80,6 +80,7 @@ fn main() -> Result<()> {
         block,
         transactions,
         parent,
+        args.id,
     )?;
     println!("WRITE {:?}", now.elapsed());
 
@@ -93,7 +94,7 @@ fn main() -> Result<()> {
 
     let now = Instant::now();
     println!("VERIFY {} -> {}", args.output, dbpath.display());
-    zilliqa::checkpoint::load_ckpt(path.as_path(), Arc::new(db.state_trie()?))?;
+    zilliqa::checkpoint::load_ckpt(path.as_path(), Arc::new(db.state_trie()?), args.id)?;
     println!("VERIFY {:?}", now.elapsed());
 
     Ok(())
