@@ -34,7 +34,7 @@ pub enum NetworkType {
 impl fmt::Display for NetworkType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            NetworkType::Local(v) => write!(f, "local {0:?}", v),
+            NetworkType::Local(v) => write!(f, "local {v:?}"),
             NetworkType::Deployed(c) => write!(f, "deployed {c}"),
         }
     }
@@ -435,7 +435,7 @@ pub async fn generate_docs(
     api_url_opt: &Option<String>,
 ) -> Result<()> {
     // Grotty, but easier than lots of silly Path conversions.
-    let scan_dir = format!("{}/zq2/docs", base_dir);
+    let scan_dir = format!("{base_dir}/zq2/docs");
     let key_prefix = if let Some(v) = in_key_prefix {
         v.to_string()
     } else {

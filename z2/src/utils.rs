@@ -120,7 +120,7 @@ pub fn parse_checkpoint_spec(spec: &str) -> Result<Checkpoint> {
 
 pub fn string_decimal_to_hex(input: &str) -> Result<String> {
     if let Ok(decimal_value) = input.trim().parse::<u64>() {
-        return Ok(format!("0x{:X}", decimal_value));
+        return Ok(format!("0x{decimal_value:X}"));
     }
 
     Err(anyhow!("Invalid decimal number provided."))
@@ -139,12 +139,12 @@ pub fn format_amount(number: f64) -> String {
         formatted_integer = format!(",{}{}", &integer_str[len - 3..], formatted_integer);
         integer_str.truncate(len - 3);
     }
-    formatted_integer = format!("{}{}", integer_str, formatted_integer);
+    formatted_integer = format!("{integer_str}{formatted_integer}");
 
     // Format the fractional part with six decimal places
-    let formatted_fractional = format!("{:.18}", fractional_part);
+    let formatted_fractional = format!("{fractional_part:.18}");
     let formatted_fractional = formatted_fractional.trim_start_matches('0');
 
     // Combine the integer and fractional parts
-    format!("{}{}", formatted_integer, formatted_fractional)
+    format!("{formatted_integer}{formatted_fractional}")
 }

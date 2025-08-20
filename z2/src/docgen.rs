@@ -40,7 +40,7 @@ impl fmt::Display for PageStatus {
             Self::PartiallyImplemented => "PartiallyImplemented",
             Self::NotYetDocumented => "NotYetDocumented",
         };
-        write!(f, "{}", val)
+        write!(f, "{val}")
     }
 }
 
@@ -389,7 +389,7 @@ pub fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, PageStatus
 impl Macros {
     pub fn inject_into(&self, context: &mut tera::Context) -> Result<()> {
         for (k, v) in self.macros.iter() {
-            context.insert(format!("macro_{}", k), v);
+            context.insert(format!("macro_{k}"), v);
         }
         Ok(())
     }
@@ -588,7 +588,7 @@ impl Docs {
         if let Some(ref v) = self.id_prefix {
             desc_path.push(v.to_lowercase());
         }
-        let supported_api_filename = format!("{0}.md", SUPPORTED_APIS_PATH_NAME);
+        let supported_api_filename = format!("{SUPPORTED_APIS_PATH_NAME}.md");
         desc_path.push(&supported_api_filename);
 
         let mut out_path = PathBuf::new();
@@ -601,7 +601,7 @@ impl Docs {
         if let Some(ref v) = self.id_prefix {
             mkdocs_path.push(v.to_lowercase());
         }
-        mkdocs_path.push(format!("{0}.md", SUPPORTED_APIS_PATH_NAME));
+        mkdocs_path.push(format!("{SUPPORTED_APIS_PATH_NAME}.md"));
         let mut id_path = PathBuf::new();
         if let Some(ref v) = self.id_prefix {
             id_path.push(v);

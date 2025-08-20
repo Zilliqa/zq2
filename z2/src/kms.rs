@@ -37,8 +37,7 @@ impl KmsService {
         // Execute command in a machine if provided, otherwise run locally
         let plaintext = if let Some(machine) = machine {
             let cmd = format!(
-                "echo '{}' | base64 -d | gcloud kms decrypt --project {} --location global --keyring {} --key {} --ciphertext-file - --plaintext-file -",
-                base64_ciphertext, kms_project_id, kms_keyring, kms_key
+                "echo '{base64_ciphertext}' | base64 -d | gcloud kms decrypt --project {kms_project_id} --location global --keyring {kms_keyring} --key {kms_key} --ciphertext-file - --plaintext-file -"
             );
             let output = machine.run(&cmd, false)?;
             if !output.status.success() {

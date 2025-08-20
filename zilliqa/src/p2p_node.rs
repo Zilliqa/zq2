@@ -336,7 +336,7 @@ impl P2pNode {
                             // only add peer, if it is on the same application protocol
                             let is_match = info.protocol_version == self.protocol_version;
                             // will only be true if peer is publicly reachable i.e. SERVER mode.
-                            let is_kad = info.protocols.iter().any(|p| *p == self.kad_protocol);
+                            let is_kad = info.protocols.contains(&self.kad_protocol);
 
                             for addr in info.listen_addrs {
                                 if is_match {
@@ -402,7 +402,7 @@ impl P2pNode {
                                     let (shard_id, _external_message) = request;
                                     debug!(source = %_source, %to, external_message = %_external_message, request_id = %_request_id, "message received");
                                     let _topic = Self::shard_id_to_topic(shard_id, None);
-                                    let _id = format!("{}", _request_id);
+                                    let _id = format!("{_request_id}");
                                     cfg_if! {
                                         if #[cfg(not(feature = "fake_response_channel"))] {
                                             match _external_message {
@@ -493,7 +493,7 @@ impl P2pNode {
                 }
                 message = self.outbound_message_receiver.next() => {
                     let (dest, shard_id, message) = message.expect("message stream should be infinite");
-                    let data = cbor4ii::serde::to_vec(Vec::new(), &message).unwrap();
+                    let data = cbor4ii::serde::to_vec(Vec::new(), &message)?;
                     let from = self.peer_id;
 
                     let topic = Self::shard_id_to_topic(shard_id, Some(&message));
@@ -501,7 +501,7 @@ impl P2pNode {
                     match dest {
                         Some((dest, request_id)) => {
                             debug!(%from, %dest, %message, ?request_id, "sending direct message");
-                            let id = format!("{:?}", request_id);
+                            let id = format!("{request_id:?}");
                             if from == dest {
                                 self.send_to(&topic.hash(), |c| c.requests.send((from, id, message, ResponseChannel::Local)))?;
                             } else {

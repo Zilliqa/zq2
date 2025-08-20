@@ -295,7 +295,7 @@ impl FromStr for SecretKeys {
         let mut v = Vec::new();
         for part in s.split(',') {
             let key = SecretKey::from_hex(part.trim())
-                .map_err(|e| format!("invalid key ‘{}’: {}", part, e))?;
+                .map_err(|e| format!("invalid key ‘{part}’: {e}"))?;
             v.push(key);
         }
         Ok(SecretKeys(v))

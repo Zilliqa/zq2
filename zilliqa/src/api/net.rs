@@ -29,7 +29,7 @@ fn net_listening(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<bool> {
 /// net_peerCount
 fn net_peer_count(_: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
     let peer_count = node.read().get_peer_num();
-    Ok(format!("0x{:x}", peer_count))
+    Ok(format!("0x{peer_count:x}"))
 }
 
 /// net_version

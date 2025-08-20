@@ -1045,9 +1045,7 @@ impl Network {
                     Some((destination, _)) => {
                         assert!(
                             cbor_size < zilliqa::constants::MAX_REQUEST_SIZE, // 1MB request
-                            "request overflow {} {:?}",
-                            cbor_size,
-                            external_message
+                            "request overflow {cbor_size} {external_message:?}"
                         );
 
                         // Direct message
@@ -1097,9 +1095,7 @@ impl Network {
                     None => {
                         assert!(
                             cbor_size < zilliqa::constants::MAX_GOSSIP_SIZE, // 2MB gossip
-                            "broadcast overflow {} {:?}",
-                            cbor_size,
-                            external_message
+                            "broadcast overflow {cbor_size} {external_message:?}"
                         );
 
                         // Broadcast
@@ -1153,9 +1149,7 @@ impl Network {
                     .len();
                 assert!(
                     cbor_size < zilliqa::constants::MAX_RESPONSE_SIZE, // 10MB response
-                    "response overflow {} {:?}",
-                    cbor_size,
-                    message
+                    "response overflow {cbor_size} {message:?}"
                 );
 
                 // skip on faux response
@@ -1630,7 +1624,7 @@ impl LocalRpcClient {
             {
                 let id = id.into_owned();
                 self.subscriptions.lock().unwrap().insert(id, rx);
-                let r = serde_json::from_str(&format!("\"{:#x}\"", id)).unwrap();
+                let r = serde_json::from_str(&format!("\"{id:#x}\"")).unwrap();
                 return Ok(r);
             }
         }

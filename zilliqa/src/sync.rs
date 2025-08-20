@@ -1635,9 +1635,7 @@ impl SyncPeers {
             return 0;
         }
         let best_score = peers.iter().map(|p| p.score).min().unwrap();
-        let best_count = peers.iter().filter(|p| p.score == best_score).count();
-
-        best_count // optimistic, use as many peers as possible
+        peers.iter().filter(|p| p.score == best_score).count()
     }
 
     fn count(&self) -> usize {
