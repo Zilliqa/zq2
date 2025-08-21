@@ -22,7 +22,7 @@ fake_response_channel = []
 fake_time = []
 
 [build-dependencies]
-anyhow = { version = "1.0.98", features = ["backtrace"] }
+anyhow = { version = "1.0.99", features = ["backtrace"] }
 vergen-git2 = { version = "1.0.2", features = [] }
 
 [dependencies]
@@ -38,13 +38,13 @@ alloy = { version = "0.12.4", default-features = false, features = [
     "serde",
     "sol-types",
 ] }
-anyhow = { version = "1.0.98", features = ["backtrace"] }
-async-trait = "0.1.88"
+anyhow = { version = "1.0.99", features = ["backtrace"] }
+async-trait = "0.1.89"
 base64 = "0.22.1"
 bincode = { version = "2.0.1", features = ["serde"] }
 bitvec = { version = "1.0.1", features = ["serde"] }
-bytes = "1.10.0"
-clap = { version = "4.5.43", features = ["derive"] }
+bytes = "1.10.1"
+clap = { version = "4.5.45", features = ["derive"] }
 eth_trie = { path = "../eth-trie.rs" }
 ethabi = "18.0.0"
 futures = "0.3.31"
