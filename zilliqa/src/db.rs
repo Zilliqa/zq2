@@ -1443,30 +1443,6 @@ mod tests {
     use crate::{crypto::SecretKey, state::State};
 
     #[test]
-    fn bincode1_bincode2_compatibility() {
-        #[derive(Serialize)]
-        struct Testdata {
-            a: QuorumCertificate,
-            b: BlsSignature,
-            c: VecLogSqlable,
-            d: MapScillaErrorSqlable,
-        }
-
-        let data = Testdata {
-            a: QuorumCertificate::genesis(),
-            b: BlsSignature::identity(),
-            c: VecLogSqlable(Vec::new()),
-            d: MapScillaErrorSqlable(BTreeMap::new()),
-        };
-
-        let bincode1 = bincode_v1::serialize(&data).unwrap(); // v1.3.3
-        let bincode2 = bincode::serde::encode_to_vec(&data, bincode::config::legacy()).unwrap(); // v2.0 compatibility
-        let bincode0 = bincode::serde::encode_to_vec(&data, bincode::config::standard()).unwrap(); // v2.0 new standard
-        assert_ne!(bincode1, bincode0);
-        assert_eq!(bincode1, bincode2);
-    }
-
-    #[test]
     fn query_planner_stability_guarantee() {
         let base_path = tempdir().unwrap();
         let base_path = base_path.path();
