@@ -15,8 +15,8 @@ use anyhow::{Result, anyhow};
 use http::Extensions;
 use itertools::Either;
 use jsonrpsee::{
-    PendingSubscriptionSink, RpcModule, SubscriptionMessage,
-    core::StringError,
+    PendingSubscriptionSink, RpcModule,
+    core::SubscriptionError,
     types::{
         Params,
         error::{ErrorObject, ErrorObjectOwned},
@@ -906,7 +906,7 @@ async fn subscribe(
     pending: PendingSubscriptionSink,
     node: Arc<Arc<RwLock<Node>>>,
     _: Extensions,
-) -> Result<(), StringError> {
+) -> Result<(), SubscriptionError> {
     let mut params = params.sequence();
     let kind: SubscriptionKind = params.next()?;
     let params: Option<pubsub::Params> = params.optional_next()?;
@@ -934,7 +934,7 @@ async fn subscribe(
                 let eth_block =
                     eth::Block::from_block(&block, miner.unwrap_or_default(), block_gas_limit);
                 let header = eth_block.header;
-                let _ = sink.send(SubscriptionMessage::from_json(&header)?).await;
+                let _ = sink.send(serde_json::value::to_raw_value(&header)?).await;
             }
         }
         SubscriptionKind::Logs => {
@@ -1012,7 +1012,7 @@ async fn subscribe(
                 }
                 std::mem::drop(node_lock);
                 for log in logs {
-                    let _ = sink.send(SubscriptionMessage::from_json(&log)?).await;
+                    let _ = sink.send(serde_json::value::to_raw_value(&log)?).await;
                 }
             }
         }
@@ -1031,7 +1031,7 @@ async fn subscribe(
 
                 while let Ok(txn) = txns.recv().await {
                     let txn = eth::Transaction::new(txn, None);
-                    let _ = sink.send(SubscriptionMessage::from_json(&txn)?).await;
+                    let _ = sink.send(serde_json::value::to_raw_value(&txn)?).await;
                 }
             } else {
                 let mut txns = node_lock.subscribe_to_new_transaction_hashes();
@@ -1039,7 +1039,7 @@ async fn subscribe(
 
                 while let Ok(txn) = txns.recv().await {
                     let _ = sink
-                        .send(SubscriptionMessage::from_json(&B256::from(txn))?)
+                        .send(serde_json::value::to_raw_value(&B256::from(txn))?)
                         .await;
                 }
             }
