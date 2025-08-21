@@ -1941,7 +1941,7 @@ impl SyncSegments {
         // drop existing db, reopen new one, to free up disk space
         let path = tempdir().unwrap();
         self.db = sled::Config::new()
-            .path(path.into_path())
+            .path(path.keep())
             .mode(sled::Mode::LowSpace)
             .temporary(true)
             .open()?;
