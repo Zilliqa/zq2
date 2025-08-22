@@ -479,7 +479,7 @@ struct JoinStruct {
     /// Endpoint of OTLP collector
     #[clap(long)]
     otlp_endpoint: Option<String>,
-    /// Pre-release version of the image to run
+    /// Use the latest pre-release version instead of the latest stable release
     #[clap(long)]
     pre_release: bool,
 }
