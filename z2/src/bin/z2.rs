@@ -479,6 +479,9 @@ struct JoinStruct {
     /// Endpoint of OTLP collector
     #[clap(long)]
     otlp_endpoint: Option<String>,
+    /// Pre-release version of the image to run
+    #[clap(long)]
+    pre_release: bool,
 }
 
 #[derive(Args, Debug)]
@@ -1084,7 +1087,8 @@ async fn main() -> Result<()> {
             }
         },
         Commands::Join(args) => {
-            let mut chain = validators::ChainConfig::new(&args.chain_name).await?;
+            let mut chain =
+                validators::ChainConfig::new(&args.chain_name, args.pre_release).await?;
             validators::gen_validator_startup_script(
                 &mut chain,
                 &args.image_tag,

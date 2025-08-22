@@ -159,7 +159,7 @@ impl Setup {
         secret_key_hex: &str,
         is_validator: bool,
     ) -> Result<Self> {
-        let chain_config = validators::ChainConfig::new(chain).await?;
+        let chain_config = validators::ChainConfig::new(chain, false).await?;
         let mut node_data = HashMap::new();
         let secret_key =
             SecretKey::from_hex(secret_key_hex).map_err(|err| anyhow!(Box::new(err)))?;
@@ -214,7 +214,7 @@ impl Setup {
             .await?
             .ok_or(anyhow!("Couldn't load configuration from {config_dir}"))?;
         let chain_config = if let Some(v) = &config.chain {
-            Some(validators::ChainConfig::new(&chain::Chain::from_str(v)?).await?)
+            Some(validators::ChainConfig::new(&chain::Chain::from_str(v)?, false).await?)
         } else {
             None
         };
