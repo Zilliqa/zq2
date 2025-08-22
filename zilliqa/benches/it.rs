@@ -1,4 +1,4 @@
-use std::{env, iter, path::PathBuf, sync::Arc, time::Duration};
+use std::{env, hint::black_box, iter, path::PathBuf, sync::Arc, time::Duration};
 
 use alloy::{
     consensus::TxLegacy,
@@ -8,7 +8,7 @@ use alloy::{
     signers::local::LocalSigner,
 };
 use bitvec::{bitarr, order::Msb0};
-use criterion::{BatchSize, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
 use eth_trie::{MemoryDB, Trie};
 use itertools::Itertools;
 use k256::elliptic_curve::sec1::ToEncodedPoint;

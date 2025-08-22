@@ -12,7 +12,7 @@ use foundry_compilers::{
     artifacts::{EvmVersion, Optimizer, Settings, SolcInput, Source},
     solc::{Solc, SolcLanguage},
 };
-use rand::{Rng, SeedableRng, distributions::Alphanumeric, rngs::SmallRng};
+use rand::{Rng, SeedableRng, distributions::Alphanumeric, rngs::StdRng};
 use serde::Deserialize;
 
 pub fn compile_contract(path: &str, contract: &str) -> (JsonAbi, Bytes) {
@@ -76,7 +76,7 @@ pub struct ScillaServer {
 impl Default for ScillaServer {
     fn default() -> ScillaServer {
         let mut container_name = "scilla-server-".to_owned();
-        let rng = SmallRng::from_entropy();
+        let rng = StdRng::from_entropy();
         container_name.extend(rng.sample_iter(&Alphanumeric).map(char::from).take(8));
 
         let temp_dir = std::env::var_os("ZQ_TEST_TEMP_DIR")
