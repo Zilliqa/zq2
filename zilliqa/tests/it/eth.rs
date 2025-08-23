@@ -1,6 +1,7 @@
-use std::{fmt::Debug, ops::DerefMut};
+use std::{fmt::Debug, ops::DerefMut, sync::Arc};
 
-use alloy::primitives::{Address, hex};
+use alloy::primitives::{Address, B256, hex};
+use eth_trie::{EthTrie, MemoryDB, Trie};
 use ethabi::{Token, ethereum_types::U64};
 use ethers::{
     abi::FunctionExt,
@@ -20,6 +21,7 @@ use futures::{StreamExt, future::join_all};
 use primitive_types::{H160, H256};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use zilliqa::state::{Account, State};
 
 use crate::{LocalRpcClient, Network, Wallet, deploy_contract};
 
@@ -1552,6 +1554,119 @@ async fn get_block_receipts(mut network: Network) {
         .unwrap();
 
     assert!(receipts.contains(&individual1));
+}
+
+#[zilliqa_macros::test]
+async fn test_eth_get_proof(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    // Example from https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_getstorageat.
+    let (hash, _) = deploy_contract(
+        "tests/it/contracts/Storage.sol",
+        "Storage",
+        0u128,
+        &wallet,
+        &mut network,
+    )
+    .await;
+
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+    let contract_address = receipt.contract_address.unwrap();
+
+    let deployed_at_block = receipt.block_number.unwrap().as_u64();
+    let deployed_at_block = wallet.get_block(deployed_at_block).await.unwrap().unwrap();
+
+    let contract_account = {
+        let node = network.nodes[0].inner.read();
+        node.consensus
+            .state()
+            .get_account(Address::from(contract_address.0))
+            .unwrap()
+    };
+
+    // A single storage item with slot = 0
+    let storage_key = H256::from([0u8; 32]);
+    let storage_keys = vec![storage_key];
+    let proof = wallet
+        .get_proof(
+            contract_address,
+            storage_keys,
+            Some(BlockNumber::from(deployed_at_block.number.unwrap()).into()),
+        )
+        .await
+        .unwrap();
+
+    let storage_value = {
+        let node = network.nodes[0].inner.read();
+        node.consensus
+            .state()
+            .get_account_storage(
+                Address::from(contract_address.0),
+                B256::from_slice(storage_key.as_bytes()),
+            )
+            .unwrap()
+    };
+
+    // Verify account
+    {
+        let memdb = Arc::new(MemoryDB::new(true));
+        let trie = EthTrie::new(Arc::clone(&memdb));
+
+        let account_proof = proof
+            .account_proof
+            .iter()
+            .map(|elem| elem.to_vec())
+            .collect::<Vec<_>>();
+
+        let verify_result = trie
+            .verify_proof(
+                B256::from_slice(deployed_at_block.state_root.as_bytes()),
+                State::account_key(Address::from(contract_address.0)).as_slice(),
+                account_proof,
+            )
+            .unwrap()
+            .unwrap();
+
+        let recovered_account: Account =
+            bincode::serde::decode_from_slice(&verify_result, bincode::config::legacy())
+                .unwrap()
+                .0;
+        assert_eq!(recovered_account.balance, 0);
+        assert_eq!(
+            recovered_account.storage_root,
+            contract_account.storage_root
+        );
+    }
+
+    // Verify storage key
+    {
+        let memdb = Arc::new(MemoryDB::new(true));
+        let trie = EthTrie::new(Arc::clone(&memdb));
+
+        // There's only a single key we want to proove
+        let single_proof = proof.storage_proof.last().unwrap();
+
+        let storage_proof = single_proof
+            .proof
+            .iter()
+            .map(|elem| elem.to_vec())
+            .collect::<Vec<_>>();
+
+        let verify_result = trie
+            .verify_proof(
+                B256::from_slice(contract_account.storage_root.as_slice()),
+                State::account_storage_key(
+                    Address::from(contract_address.0),
+                    B256::from_slice(storage_key.as_bytes()),
+                )
+                .as_slice(),
+                storage_proof,
+            )
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(verify_result.as_slice(), storage_value.as_slice());
+    }
 }
 
 #[zilliqa_macros::test]
