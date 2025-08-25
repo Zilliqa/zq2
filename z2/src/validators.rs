@@ -112,7 +112,7 @@ impl SignerClient {
     }
 
     pub async fn deposit_top_up(&self, bls_public_key: &NodePublicKey, amount: u8) -> Result<()> {
-        println!("DepositTopUp: adding {} $ZIL stake", amount,);
+        println!("DepositTopUp: adding {amount} $ZIL stake");
 
         let client = self.get_signer().await?;
 
@@ -142,7 +142,7 @@ impl SignerClient {
     }
 
     pub async fn unstake(&self, bls_public_key: &NodePublicKey, amount: u8) -> Result<()> {
-        println!("Unstake: removing {} $ZIL", amount);
+        println!("Unstake: removing {amount} $ZIL");
 
         let client = self.get_signer().await?;
         // Unstake the validator's funds.
@@ -301,9 +301,9 @@ pub struct ChainConfig {
 }
 
 impl ChainConfig {
-    pub async fn new(chain_name: &Chain) -> Result<Self> {
+    pub async fn new(chain_name: &Chain, pre_release: bool) -> Result<Self> {
         let spec = get_chain_spec_config(&chain_name.to_string()).await?;
-        let version = github::get_release_or_commit("zq2").await?;
+        let version = github::get_release_or_commit("zq2", pre_release).await?;
 
         Ok(ChainConfig {
             name: chain_name.to_string(),

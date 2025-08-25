@@ -559,8 +559,7 @@ async fn test_transaction_replacement_during_consensus(mut network: Network) {
         if replacement_receipt.is_some() {
             assert!(
                 initial_receipt.is_none(),
-                "Both original and replacement transactions were processed on node {}",
-                index
+                "Both original and replacement transactions were processed on node {index}"
             );
         }
 
@@ -664,10 +663,7 @@ async fn test_transaction_pool_during_network_partition(mut network: Network) {
         let diff = (*pending as f64 - avg_pending).abs();
         assert!(
             diff <= avg_pending * 0.5 + 5.0, // Allow 50% variance + 5 transactions
-            "Node {} pending count too different from average: {} vs avg {}",
-            i,
-            pending,
-            avg_pending
+            "Node {i} pending count too different from average: {pending} vs avg {avg_pending}"
         );
     }
 }

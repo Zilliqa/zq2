@@ -74,5 +74,18 @@ This process consists of 1 main phase:
 
 During this phase, a node determines the lowest block it has and requests for blocks down to *base_height* only.
 Upon receiving a response from another node, it will store the blocks *ad-verbatim* without executing them.
+The blocks can be executed later using the *State Sync* process below.
 
 A node enters this phase only during normal operations, when it encounters a block Proposal that is successfully handled normally.
+To enable this feature, set the `node.sync.base_height` to a value that is lower than the height of the existing block range.
+
+# State Sync
+
+State sync is the process of filling out the state history from an older checkpoint.
+It is designed to import the state from the older checkpoint, and replay blocks going forwards from that checkpoint to the latest.
+
+However, it requires that the node must already be in posession of the blocks stored in the checkpoint used (both the checkpoint block itself and its parent block).
+This implies that the node must have completed both *Active Sync* and *Passive Sync* prior to this; and has synced beyond the checkpoint height.
+
+To enable this feature, set the `node.load_checkpoint` to a value that corresponds to the checkpoint being used - just like how a node is being restored from a checkpoint.
+Note that the checkpoint being used must be an older one, and the node must be in possession of the blocks (both the checkpoint block and its parent block).

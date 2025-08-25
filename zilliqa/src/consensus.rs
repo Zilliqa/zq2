@@ -3,6 +3,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     error::Error,
     fmt::Display,
+    ops::RangeInclusive,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -13,8 +14,8 @@ use std::{
 use alloy::primitives::{Address, U256};
 use anyhow::{Context, Result, anyhow};
 use bitvec::{bitarr, order::Msb0};
-use dashmap::DashMap;
-use eth_trie::{EthTrie, MemoryDB, Trie};
+use dashmap::{DashMap, DashSet};
+use eth_trie::{DB, EthTrie, MemoryDB, Trie};
 use itertools::Itertools;
 use k256::pkcs8::der::DateTime;
 use libp2p::PeerId;
@@ -263,15 +264,12 @@ impl Consensus {
         );
 
         // Start chain from checkpoint. Load data file and initialise data in tables
-        let mut checkpoint_data = None;
-        if let Some(checkpoint) = &config.load_checkpoint {
+        let checkpoint_data = if let Some(checkpoint) = &config.load_checkpoint {
             trace!("Loading state from checkpoint: {:?}", checkpoint);
-            checkpoint_data = db.load_trusted_checkpoint(
-                &checkpoint.file,
-                &checkpoint.hash,
-                config.eth_chain_id,
-            )?;
-        }
+            db.load_trusted_checkpoint(&checkpoint.file, &checkpoint.hash, config.eth_chain_id)?
+        } else {
+            None
+        };
 
         let latest_block = db
             .get_finalized_view()?
@@ -452,17 +450,64 @@ impl Consensus {
         );
 
         // If we started from a checkpoint, execute the checkpointed block now
-        if let Some((block, transactions, parent)) = checkpoint_data {
-            consensus.execute_block(
-                None,
-                &block,
-                transactions,
-                &consensus
-                    .state
-                    .at_root(parent.state_root_hash().into())
-                    .get_stakers(block.header)?,
-                false,
-            )?;
+        if let Some((block, transactions, mut parent)) = checkpoint_data {
+            if consensus
+                .db
+                .get_block(BlockFilter::Hash(block.hash()))?
+                .is_none()
+            {
+                // if block is missing, execute the block
+                consensus.state.set_to_root(parent.state_root_hash().into());
+                consensus.execute_block(
+                    None,
+                    &block,
+                    transactions,
+                    &consensus
+                        .state
+                        .at_root(parent.state_root_hash().into())
+                        .get_stakers(block.header)?,
+                    true,
+                )?;
+            } else if let Some(latest_block) = latest_block {
+                // if block is present, perform state-sync
+                let mutations = DashSet::new();
+                let range = block.number()..latest_block.number();
+                tracing::info!(?range, "Syncing state from checkpoint");
+                for number in range {
+                    let Some(block) = consensus
+                        .db
+                        .get_transactionless_block(BlockFilter::Height(number))?
+                    else {
+                        tracing::error!("Block not found {number}");
+                        break;
+                    };
+
+                    // check that the block mutates state; and
+                    // the state is not already present in the db.
+                    if mutations.insert(block.state_root_hash())
+                        && consensus
+                            .db
+                            .state_trie()?
+                            .get(block.state_root_hash().as_bytes())?
+                            .is_none()
+                    {
+                        tracing::info!(number = %block.number(), state=%block.state_root_hash(), "Syncing state from block");
+                        let brt = consensus
+                            .db
+                            .get_block_and_receipts_and_transactions(BlockFilter::Hash(
+                                block.hash(),
+                            ))?
+                            .expect("block must exist due to check above");
+                        let transactions = brt.transactions.into_iter().map(|tx| tx.tx).collect();
+                        consensus.replay_proposal(
+                            brt.block,
+                            transactions,
+                            parent.state_root_hash(),
+                        )?;
+                        parent = block;
+                    }
+                }
+            }
         }
 
         // If timestamp of when current high_qc was written exists then use it to estimate the minimum number of blocks the network has moved on since shut down
@@ -754,11 +799,6 @@ impl Consensus {
         proposal: Proposal,
         during_sync: bool,
     ) -> Result<Option<NetworkMessage>> {
-        if self.sync.am_syncing()? && !during_sync {
-            debug!("skipping block proposal, we are currently syncing");
-            return Ok(None);
-        }
-
         self.cleanup_votes()?;
 
         let (block, transactions) = proposal.into_parts();
@@ -1073,17 +1113,17 @@ impl Consensus {
         Ok(Some(result))
     }
 
-    pub fn txpool_content(&mut self) -> TxPoolContent {
+    pub fn txpool_content(&self) -> TxPoolContent {
         let pool = self.transaction_pool.read();
         pool.preview_content()
     }
 
-    pub fn txpool_content_from(&mut self, address: &Address) -> TxPoolContentFrom {
+    pub fn txpool_content_from(&self, address: &Address) -> TxPoolContentFrom {
         let pool = self.transaction_pool.read();
         pool.preview_content_from(address)
     }
 
-    pub fn txpool_status(&mut self) -> TxPoolStatus {
+    pub fn txpool_status(&self) -> TxPoolStatus {
         let pool = self.transaction_pool.read();
         pool.preview_status()
     }
@@ -2802,6 +2842,21 @@ impl Consensus {
             .ok_or_else(|| anyhow!("no qcs in agg"))
     }
 
+    pub fn replay_proposal(
+        &mut self,
+        block: Block,
+        transactions: Vec<SignedTransaction>,
+        parent_state: Hash,
+    ) -> Result<()> {
+        let prev_root_hash = self.state.root_hash()?;
+        self.state.set_to_root(parent_state.into());
+        let stakers = self.state.get_stakers(block.header)?;
+        self.execute_block(None, &block, transactions, stakers.as_slice(), true)?;
+        // restore previous state
+        self.state.set_to_root(prev_root_hash.into());
+        Ok(())
+    }
+
     fn verify_qc_signature(
         &self,
         qc: &QuorumCertificate,
@@ -2877,7 +2932,12 @@ impl Consensus {
             .fold((0, 0), |(total_weight, cosigned_sum), (i, stake)| {
                 (
                     total_weight + stake,
-                    cosigned_sum + cosigned[i].then_some(stake).unwrap_or_default(),
+                    cosigned_sum
+                        + if cosigned[i] {
+                            stake
+                        } else {
+                            Default::default()
+                        },
                 )
             });
 
@@ -3337,7 +3397,7 @@ impl Consensus {
         self.state = state;
 
         if self.state.root_hash()? != block.state_root_hash() {
-            warn!(
+            error!(
                 "State root hash mismatch! Our state hash: {}, block hash: {:?} block prop: {:?}",
                 self.state.root_hash()?,
                 block.state_root_hash(),
@@ -3541,6 +3601,11 @@ impl Consensus {
     pub fn get_num_transactions(&self) -> Result<usize> {
         let count = self.db.get_total_transaction_count()?;
         Ok(count)
+    }
+
+    pub fn get_block_range(&self) -> Result<RangeInclusive<u64>> {
+        let range = self.db.available_range()?;
+        Ok(range)
     }
 
     pub fn get_sync_data(&self) -> Result<Option<SyncingStruct>> {

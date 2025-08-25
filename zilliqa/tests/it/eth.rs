@@ -1563,7 +1563,7 @@ async fn test_block_filter(mut network: Network) {
     // Create a new block filter
     println!("Creating new block filter");
     let filter_id: u128 = provider.request("eth_newBlockFilter", ()).await.unwrap();
-    println!("Created filter with ID: {}", filter_id);
+    println!("Created filter with ID: {filter_id}");
 
     // Generate some blocks
     println!("Generating blocks");
@@ -1586,7 +1586,7 @@ async fn test_block_filter(mut network: Network) {
     // Changes should be valid block hashes
     println!("Verifying block hashes");
     for hash in &changes {
-        println!("Checking block hash: {}", hash);
+        println!("Checking block hash: {hash}");
         let block = provider
             .get_block(BlockId::Hash(*hash))
             .await
@@ -1611,7 +1611,7 @@ async fn test_block_filter(mut network: Network) {
         .request("eth_uninstallFilter", [filter_id])
         .await
         .unwrap();
-    println!("Filter removed: {}", filter_removed_successfully);
+    println!("Filter removed: {filter_removed_successfully}");
     assert!(filter_removed_successfully);
 }
 
@@ -1626,7 +1626,7 @@ async fn test_pending_transaction_filter(mut network: Network) {
         .request("eth_newPendingTransactionFilter", ())
         .await
         .unwrap();
-    println!("Created filter with ID: {}", filter_id);
+    println!("Created filter with ID: {filter_id}");
 
     // Send a transaction.
     let hash = wallet
@@ -1681,7 +1681,7 @@ async fn test_log_filter(mut network: Network) {
         "address": contract_address,
     });
     let filter_id: u128 = provider.request("eth_newFilter", [filter]).await.unwrap();
-    println!("Created filter with ID: {}", filter_id);
+    println!("Created filter with ID: {filter_id}");
 
     let emit_events = contract.function("emitEvents").unwrap();
     let call_tx = TransactionRequest::new()
@@ -1731,7 +1731,7 @@ async fn test_log_filter(mut network: Network) {
         .request("eth_uninstallFilter", [filter_id])
         .await
         .unwrap();
-    println!("Filter removed: {}", filter_removed_successfully);
+    println!("Filter removed: {filter_removed_successfully}");
     assert!(filter_removed_successfully);
 }
 
@@ -1758,7 +1758,7 @@ async fn test_uninstall_filter(mut network: Network) {
     // Create a new filter
     println!("Creating new block filter");
     let filter_id: u128 = provider.request("eth_newBlockFilter", ()).await.unwrap();
-    println!("Created filter with ID: {}", filter_id);
+    println!("Created filter with ID: {filter_id}");
 
     // Verify filter exists by using it
     println!("Verifying filter exists");
@@ -1774,7 +1774,7 @@ async fn test_uninstall_filter(mut network: Network) {
         .request("eth_uninstallFilter", [filter_id])
         .await
         .unwrap();
-    println!("Filter removed: {}", filter_removed);
+    println!("Filter removed: {filter_removed}");
     assert!(filter_removed);
 
     // Verify filter no longer exists

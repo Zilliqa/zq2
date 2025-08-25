@@ -801,6 +801,18 @@ impl Transaction {
             Transaction::Intershard(_) => None,
         }
     }
+
+    pub fn transaction_type(&self) -> u64 {
+        match self {
+            Transaction::Legacy(_) => 0,
+            Transaction::Eip2930(_) => 1,
+            Transaction::Eip1559(_) => 2,
+            // "ZIL" encoded in ASCII
+            Transaction::Zilliqa(_) => 90_73_76,
+            // "ZIL" + 1
+            Transaction::Intershard(_) => 90_73_77,
+        }
+    }
 }
 
 impl From<TxLegacy> for Transaction {
@@ -954,7 +966,7 @@ impl ZilAmount {
     pub fn to_float_string(self) -> String {
         let integer_part = self.0 / 10u128.pow(12);
         let fractional_part = self.0 % 10u128.pow(12);
-        format!("{}.{}", integer_part, fractional_part)
+        format!("{integer_part}.{fractional_part}")
     }
 }
 

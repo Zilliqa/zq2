@@ -32,7 +32,7 @@ use zilliqa::{
 use crate::{zq1, zq1::Transaction};
 
 fn create_acc_query_prefix(address: Address) -> String {
-    format!("{:02x}", address)
+    format!("{address:02x}")
 }
 
 const ZQ1_STATE_KEY_SEPARATOR: u8 = 0x16;
@@ -159,10 +159,7 @@ fn convert_scilla_state(
     let checker_result = match invoke_checker(state, code, init_data) {
         Ok(result) => result,
         Err(err) => {
-            eprintln!(
-                "Checker failed for address {:?} with error: {:?}",
-                address, err
-            );
+            eprintln!("Checker failed for address {address:?} with error: {err:?}");
             // Return default values
             return Ok((
                 storage_root,

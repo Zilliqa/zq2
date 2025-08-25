@@ -2292,10 +2292,16 @@ pub fn scilla_call(
                 false => from_addr,
             };
 
-            let gas_used = if fork.scilla_failed_txn_correct_gas_fee_charged {
+            let gas_left = if fork.scilla_failed_txn_correct_gas_fee_charged {
                 gas.into()
             } else {
                 EvmGas(0)
+            };
+
+            let gas_used = if fork.failed_zil_transfers_to_eoa_proper_fee_deduction {
+                EvmGas::from(gas_limit) - gas_left
+            } else {
+                gas_left
             };
 
             if let Some(result) =

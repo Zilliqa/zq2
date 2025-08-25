@@ -2527,8 +2527,7 @@ async fn get_num_peers(mut network: Network) {
 
     assert!(
         response.is_number(),
-        "Expected response to be a number, got: {:?}",
-        response
+        "Expected response to be a number, got: {response:?}"
     );
 }
 
@@ -3031,8 +3030,7 @@ async fn get_num_ds_blocks(mut network: Network) {
 
     assert!(
         response.is_string(),
-        "Expected response to be a string, got: {:?}",
-        response
+        "Expected response to be a string, got: {response:?}"
     );
 }
 
@@ -3214,8 +3212,7 @@ async fn get_num_txns_ds_epoch_0(mut network: Network) {
 
     assert!(
         response.is_string(),
-        "Expected response to be a string, got: {:?}",
-        response
+        "Expected response to be a string, got: {response:?}"
     );
 }
 
@@ -3270,8 +3267,7 @@ async fn get_num_txns_ds_epoch_1(mut network: Network) {
 
     assert!(
         response.is_string(),
-        "Expected response to be a string, got: {:?}",
-        response
+        "Expected response to be a string, got: {response:?}"
     );
 
     let response_num = response
@@ -3295,8 +3291,7 @@ async fn get_num_txns_tx_epoch_0(mut network: Network) {
 
     assert!(
         response.is_string(),
-        "Expected response to be a string, got: {:?}",
-        response
+        "Expected response to be a string, got: {response:?}"
     );
 }
 
@@ -3352,8 +3347,7 @@ async fn get_num_txns_tx_epoch_1(mut network: Network) {
 
     assert!(
         response.is_string(),
-        "Expected response to be a string, got: {:?}",
-        response
+        "Expected response to be a string, got: {response:?}"
     );
 
     let response_num = response
@@ -3377,8 +3371,7 @@ async fn combined_total_coin_supply_test(mut network: Network) {
 
     assert!(
         response_str.is_string(),
-        "Expected response to be a string, got: {:?}",
-        response_str
+        "Expected response to be a string, got: {response_str:?}"
     );
 
     let total_coin_supply_str = response_str.as_str().expect("Expected string conversion");
@@ -3394,8 +3387,7 @@ async fn combined_total_coin_supply_test(mut network: Network) {
 
     assert!(
         response_int.is_number(),
-        "Expected response to be a number, got: {:?}",
-        response_int
+        "Expected response to be a number, got: {response_int:?}"
     );
 
     let total_coin_supply_as_int: u128 = response_int
@@ -3440,8 +3432,7 @@ async fn get_node_type(mut network: Network) {
 
     assert!(
         response.is_string(),
-        "Expected response to be a string, got: {:?}",
-        response
+        "Expected response to be a string, got: {response:?}"
     );
 
     let allowed_node_types = ["Seed"];
@@ -3449,8 +3440,7 @@ async fn get_node_type(mut network: Network) {
 
     assert!(
         allowed_node_types.contains(&response_str),
-        "Unexpected node type: {}",
-        response_str
+        "Unexpected node type: {response_str}"
     );
 }
 
@@ -3466,8 +3456,7 @@ async fn get_prev_difficulty(mut network: Network) {
 
     assert!(
         response.is_u64(),
-        "Expected response to be a u64, got: {:?}",
-        response
+        "Expected response to be a u64, got: {response:?}"
     );
 
     let response_u64 = response.as_u64().expect("Expected response to be a u64");
@@ -3487,8 +3476,7 @@ async fn get_prev_ds_difficulty(mut network: Network) {
 
     assert!(
         response.is_u64(),
-        "Expected response to be a u64, got: {:?}",
-        response
+        "Expected response to be a u64, got: {response:?}"
     );
 
     let response_u64 = response.as_u64().expect("Expected response to be a u64");
@@ -4525,6 +4513,61 @@ async fn failed_scilla_to_scilla_transfers_proper_fee(mut network: Network) {
         &secret_key,
         2,
         ToAddr::Address(contract_address),
+        amount_to_transfer,
+        gas_limit.0,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let txn_hash: H256 = response["TranID"].as_str().unwrap().parse().unwrap();
+    network.run_until_receipt(&wallet, txn_hash, 200).await;
+
+    let eth_receipt = wallet
+        .get_transaction_receipt(txn_hash)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(eth_receipt.status.unwrap().as_u32(), 0);
+    assert_eq!(eth_receipt.cumulative_gas_used.as_u64(), 21000);
+
+    let transaction_fee: u128 =
+        (eth_receipt.cumulative_gas_used * eth_receipt.effective_gas_price.unwrap()).as_u128();
+
+    let balance_after_failed_call = wallet.get_balance(address, None).await.unwrap().as_u128();
+
+    assert_eq!(balance_after_failed_call, initial_balance - transaction_fee);
+}
+
+#[zilliqa_macros::test(restrict_concurrency)]
+async fn failed_zil_transfers_proper_fee(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
+
+    let initial_balance = wallet.get_balance(address, None).await.unwrap().as_u128();
+
+    let gas_price_str: String = wallet
+        .provider()
+        .request("GetMinimumGasPrice", ())
+        .await
+        .unwrap();
+
+    let gas_price: u128 = u128::from_str(&gas_price_str).unwrap();
+    let gas_limit: ScillaGas = EvmGas(21000).into();
+
+    let destination = Address::random_with(network.rng.lock().unwrap().deref_mut());
+
+    let amount_to_transfer = initial_balance;
+
+    let response = issue_create_transaction(
+        &wallet,
+        &secret_key.public_key(),
+        gas_price,
+        &mut network,
+        &secret_key,
+        1,
+        ToAddr::Address(H160::from_slice(destination.as_slice())),
         amount_to_transfer,
         gas_limit.0,
         None,

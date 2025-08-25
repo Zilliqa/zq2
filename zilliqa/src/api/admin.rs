@@ -50,7 +50,7 @@ struct ConsensusInfo {
 }
 
 fn admin_block_range(_params: Params, node: &Arc<RwLock<Node>>) -> Result<RangeInclusive<u64>> {
-    node.read().db.available_range()
+    node.read().consensus.get_block_range()
 }
 
 fn consensus_info(_: Params, node: &Arc<RwLock<Node>>) -> Result<ConsensusInfo> {

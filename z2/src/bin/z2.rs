@@ -295,7 +295,7 @@ impl FromStr for SecretKeys {
         let mut v = Vec::new();
         for part in s.split(',') {
             let key = SecretKey::from_hex(part.trim())
-                .map_err(|e| format!("invalid key ‘{}’: {}", part, e))?;
+                .map_err(|e| format!("invalid key ‘{part}’: {e}"))?;
             v.push(key);
         }
         Ok(SecretKeys(v))
@@ -479,6 +479,9 @@ struct JoinStruct {
     /// Endpoint of OTLP collector
     #[clap(long)]
     otlp_endpoint: Option<String>,
+    /// Use the latest pre-release version instead of the latest stable release
+    #[clap(long)]
+    pre_release: bool,
 }
 
 #[derive(Args, Debug)]
@@ -1084,7 +1087,8 @@ async fn main() -> Result<()> {
             }
         },
         Commands::Join(args) => {
-            let mut chain = validators::ChainConfig::new(&args.chain_name).await?;
+            let mut chain =
+                validators::ChainConfig::new(&args.chain_name, args.pre_release).await?;
             validators::gen_validator_startup_script(
                 &mut chain,
                 &args.image_tag,

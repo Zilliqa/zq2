@@ -202,13 +202,13 @@ impl Db {
     pub fn get_contract_code(&self, address: Address) -> Result<Option<Vec<u8>>> {
         Ok(self
             .contract_code
-            .get_u8(&ReadOptions::new(), format!("{:02x}", address).as_bytes())?)
+            .get_u8(&ReadOptions::new(), format!("{address:02x}").as_bytes())?)
     }
 
     pub fn put_contract_code(&self, address: Address, code: &[u8]) -> Result<()> {
         Ok(self.contract_code.put_u8(
             &WriteOptions::new(),
-            format!("{:02x}", address).as_bytes(),
+            format!("{address:02x}").as_bytes(),
             code,
         )?)
     }
@@ -220,7 +220,7 @@ impl Db {
     pub fn get_contract_init_state_2(&self, account: Address) -> Result<Option<Vec<u8>>> {
         Ok(self
             .contract_init_state_2
-            .get_u8(&ReadOptions::new(), format!("{:02x}", account).as_bytes())?)
+            .get_u8(&ReadOptions::new(), format!("{account:02x}").as_bytes())?)
     }
 
     pub fn contract_init_state_2(
@@ -409,7 +409,7 @@ impl Db {
 
     pub fn save_account(&mut self, address: Address, account: ProtoAccountBase) -> Result<()> {
         self.state.insert(
-            format!("{:02x}", address).as_bytes(),
+            format!("{address:02x}").as_bytes(),
             &account.encode_to_vec(),
         )?;
 
@@ -434,7 +434,7 @@ impl Db {
     }
 
     pub fn get_account(&self, address: Address) -> Result<Option<ProtoAccountBase>> {
-        let Some(account) = self.state.get(format!("{:02x}", address).as_bytes())? else {
+        let Some(account) = self.state.get(format!("{address:02x}").as_bytes())? else {
             return Ok(None);
         };
 

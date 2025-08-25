@@ -9,6 +9,7 @@ use std::{
 
 use anyhow::{Result, anyhow};
 use http::{Method, header};
+use jsonrpsee::server::ServerConfig;
 use libp2p::{PeerId, futures::StreamExt};
 use node::Node;
 use opentelemetry::KeyValue;
@@ -142,9 +143,13 @@ impl NodeLauncher {
                 .allow_headers([header::CONTENT_TYPE]);
             let middleware = tower::ServiceBuilder::new().layer(HealthLayer).layer(cors);
             let server = jsonrpsee::server::ServerBuilder::new()
-                .max_response_body_size(config.max_rpc_response_size)
+                .set_config(
+                    ServerConfig::builder()
+                        .max_response_body_size(config.max_rpc_response_size)
+                        .set_id_provider(EthIdProvider)
+                        .build(),
+                )
                 .set_http_middleware(middleware)
-                .set_id_provider(EthIdProvider)
                 .build((Ipv4Addr::UNSPECIFIED, api_server.port))
                 .await;
 
@@ -217,7 +222,7 @@ impl NodeLauncher {
 
                     let start = SystemTime::now();
                     if let ExternalMessage::BatchedTransactions(transactions) = message {
-                        let my_peer_id = self.node.write().consensus.peer_id();
+                        let my_peer_id = self.node.read().consensus.peer_id();
 
                         if source != my_peer_id {
                             let mut verified = Vec::with_capacity(transactions.len());
@@ -300,8 +305,7 @@ impl NodeLauncher {
                         &attributes,
                     );
                 }
-                message = self.local_messages.next() => {
-                    let (_source, _message) = message.expect("message stream should be infinite");
+                _message = self.local_messages.next() => {
                     todo!("Local messages will need to be handled once cross-shard messaging is implemented");
                 }
                 () = &mut consensus_sleep => {

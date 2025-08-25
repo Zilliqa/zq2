@@ -15,8 +15,8 @@ use anyhow::{Result, anyhow};
 use http::Extensions;
 use itertools::Either;
 use jsonrpsee::{
-    PendingSubscriptionSink, RpcModule, SubscriptionMessage,
-    core::StringError,
+    PendingSubscriptionSink, RpcModule,
+    core::SubscriptionError,
     types::{
         Params,
         error::{ErrorObject, ErrorObjectOwned},
@@ -382,7 +382,7 @@ pub fn old_get_block_transaction_receipts_inner(
     for (transaction_index, receipt_retrieved) in receipts_retrieved.iter().enumerate() {
         // This could maybe be a bit faster if we had a db function that queried transactions by
         // block hash, joined on receipts, but this would be quite a bit of new code.
-        let Some(signed_transaction) = node.get_transaction_by_hash(receipt_retrieved.tx_hash)?
+        let Some(verified_transaction) = node.get_transaction_by_hash(receipt_retrieved.tx_hash)?
         else {
             warn!(
                 "Failed to get TX by hash when getting TX receipt! {}",
@@ -392,12 +392,12 @@ pub fn old_get_block_transaction_receipts_inner(
         };
 
         // Required workaround for incorrectly converted nonces for zq1 scilla transactions
-        let contract_address = match &signed_transaction.tx {
+        let contract_address = match &verified_transaction.tx {
             SignedTransaction::Zilliqa { tx, .. } => {
                 if tx.to_addr.is_zero() && receipt_retrieved.success {
                     Some(zil_contract_address(
-                        signed_transaction.signer,
-                        signed_transaction
+                        verified_transaction.signer,
+                        verified_transaction
                             .tx
                             .nonce()
                             .ok_or_else(|| anyhow!("Unable to extract nonce!"))?,
@@ -427,11 +427,11 @@ pub fn old_get_block_transaction_receipts_inner(
             logs.push(log);
         }
 
-        let from = signed_transaction.signer;
-        let v = signed_transaction.tx.sig_v();
-        let r = signed_transaction.tx.sig_r();
-        let s = signed_transaction.tx.sig_s();
-        let transaction = signed_transaction.tx.into_transaction();
+        let from = verified_transaction.signer;
+        let v = verified_transaction.tx.sig_v();
+        let r = verified_transaction.tx.sig_r();
+        let s = verified_transaction.tx.sig_s();
+        let transaction = verified_transaction.tx.into_transaction();
 
         let receipt = eth::TransactionReceipt {
             transaction_hash: (receipt_retrieved.tx_hash).into(),
@@ -446,7 +446,7 @@ pub fn old_get_block_transaction_receipts_inner(
             contract_address,
             logs,
             logs_bloom: [0; 256],
-            ty: 0,
+            ty: transaction.transaction_type(),
             status: receipt_retrieved.success,
             v,
             r,
@@ -906,7 +906,7 @@ async fn subscribe(
     pending: PendingSubscriptionSink,
     node: Arc<Arc<RwLock<Node>>>,
     _: Extensions,
-) -> Result<(), StringError> {
+) -> Result<(), SubscriptionError> {
     let mut params = params.sequence();
     let kind: SubscriptionKind = params.next()?;
     let params: Option<pubsub::Params> = params.optional_next()?;
@@ -934,7 +934,7 @@ async fn subscribe(
                 let eth_block =
                     eth::Block::from_block(&block, miner.unwrap_or_default(), block_gas_limit);
                 let header = eth_block.header;
-                let _ = sink.send(SubscriptionMessage::from_json(&header)?).await;
+                let _ = sink.send(serde_json::value::to_raw_value(&header)?).await;
             }
         }
         SubscriptionKind::Logs => {
@@ -1012,7 +1012,7 @@ async fn subscribe(
                 }
                 std::mem::drop(node_lock);
                 for log in logs {
-                    let _ = sink.send(SubscriptionMessage::from_json(&log)?).await;
+                    let _ = sink.send(serde_json::value::to_raw_value(&log)?).await;
                 }
             }
         }
@@ -1031,7 +1031,7 @@ async fn subscribe(
 
                 while let Ok(txn) = txns.recv().await {
                     let txn = eth::Transaction::new(txn, None);
-                    let _ = sink.send(SubscriptionMessage::from_json(&txn)?).await;
+                    let _ = sink.send(serde_json::value::to_raw_value(&txn)?).await;
                 }
             } else {
                 let mut txns = node_lock.subscribe_to_new_transaction_hashes();
@@ -1039,7 +1039,7 @@ async fn subscribe(
 
                 while let Ok(txn) = txns.recv().await {
                     let _ = sink
-                        .send(SubscriptionMessage::from_json(&B256::from(txn))?)
+                        .send(serde_json::value::to_raw_value(&B256::from(txn))?)
                         .await;
                 }
             }

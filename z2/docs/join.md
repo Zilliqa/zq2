@@ -11,6 +11,7 @@ Options:
       --chain <CHAIN_NAME>             Specify the ZQ2 chain you want join [possible values: zq2-infratest, zq2-devnet, zq2-testnet, zq2-mainnet]
       --image-tag <IMAGE_TAG>          Specify the tag of the image to run
       --otlp-endpoint <OTLP_ENDPOINT>  Endpoint of OTLP collector
+      --pre-release                    Use the latest pre-release version instead of the latest stable release
   -v, --verbose...                     Increase logging verbosity
   -q, --quiet...                       Decrease logging verbosity
   -h, --help                           Print help
@@ -26,6 +27,14 @@ z2 join --chain zq2-testnet
 👤 Role: Node
 💾 Node config: /path/to/zq2/zq2-testnet.toml
 💾 Startup script: /path/to/zq2/start_node.sh
+```
+
+### Use a prerelease image
+
+To use the latest prerelease image instead of the latest stable release, pass the `--pre-release` flag:
+
+```bash
+z2 join --chain zq2-testnet --pre-release
 ```
 
 ## Run the node

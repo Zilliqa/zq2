@@ -11,6 +11,7 @@ use std::{
 
 use alloy::primitives::Address;
 use anyhow::{Context, Result, anyhow};
+#[allow(unused_imports)]
 use eth_trie::{DB, EthTrie, MemoryDB, Trie};
 use itertools::Itertools;
 use lru_mem::LruCache;
@@ -223,8 +224,6 @@ pub struct BlockAndReceiptsAndTransactions {
     pub receipts: Vec<TransactionReceipt>,
     pub transactions: Vec<VerifiedTransaction>,
 }
-
-const CHECKPOINT_HEADER_BYTES: [u8; 8] = *b"ZILCHKPT";
 
 /// Version string that is written to disk along with the persisted database. This should be bumped whenever we make a
 /// backwards incompatible change to our database format. This should be done rarely, since it forces all node
@@ -540,7 +539,6 @@ impl Db {
             .unwrap_or_default();
         Ok(min..=max)
     }
-
     /// Fetch checkpoint data from file and initialise db state
     /// Return checkpointed block and transactions which must be executed after this function
     /// Return None if checkpoint already loaded
@@ -550,214 +548,58 @@ impl Db {
         hash: &Hash,
         our_shard_id: u64,
     ) -> Result<Option<(Block, Vec<SignedTransaction>, Block)>> {
-        // For now, only support a single version: you want to load the latest checkpoint, anyway.
-        const SUPPORTED_VERSION: u32 = 3;
-
-        // Decompress file and write to temp file
+        tracing::info!(%hash, "Checkpoint");
+        // Decompress the file for processing
         let input_file = File::open(path.as_ref())?;
         let buf_reader: BufReader<File> = BufReader::with_capacity(128 * 1024 * 1024, input_file);
         let mut reader = Decoder::new(buf_reader)?;
-        let trie_storage = Arc::new(self.state_trie()?);
-        let mut state_trie = EthTrie::new(trie_storage.clone());
-
-        // Decode and validate header
-        let mut header: [u8; 21] = [0u8; 21];
-        reader.read_exact(&mut header)?;
-        let header = header;
-        if header[0..8] != CHECKPOINT_HEADER_BYTES // magic bytes
-            || header[20] != b'\n'
-        // header must end in newline
-        {
-            return Err(anyhow!("Invalid checkpoint file: invalid header"));
-        }
-        let version = u32::from_be_bytes(header[8..12].try_into()?);
-        // Only support a single version right now.
-        if version != SUPPORTED_VERSION {
-            return Err(anyhow!("Invalid checkpoint file: unsupported version."));
-        }
-        let shard_id = u64::from_be_bytes(header[12..20].try_into()?);
-        if shard_id != our_shard_id {
-            return Err(anyhow!("Invalid checkpoint file: wrong shard ID."));
-        }
-
-        // Decode and validate checkpoint block, its transactions and parent block
-        let mut block_len_buf = [0u8; std::mem::size_of::<u64>()];
-        reader.read_exact(&mut block_len_buf)?;
-        let mut block_ser = vec![0u8; usize::try_from(u64::from_be_bytes(block_len_buf))?];
-        reader.read_exact(&mut block_ser)?;
-        let block: Block =
-            bincode::serde::decode_from_slice(&block_ser, bincode::config::legacy())?.0;
-        if block.hash() != *hash {
-            return Err(anyhow!("Checkpoint does not match trusted hash"));
-        }
-        block.verify_hash()?;
-
-        let mut transactions_len_buf = [0u8; std::mem::size_of::<u64>()];
-        reader.read_exact(&mut transactions_len_buf)?;
-        let mut transactions_ser =
-            vec![0u8; usize::try_from(u64::from_be_bytes(transactions_len_buf))?];
-        reader.read_exact(&mut transactions_ser)?;
-        let transactions =
-            bincode::serde::decode_from_slice(&transactions_ser, bincode::config::legacy())?.0;
-
-        let mut parent_len_buf = [0u8; std::mem::size_of::<u64>()];
-        reader.read_exact(&mut parent_len_buf)?;
-        let mut parent_ser = vec![0u8; usize::try_from(u64::from_be_bytes(parent_len_buf))?];
-        reader.read_exact(&mut parent_ser)?;
-        let parent: Block =
-            bincode::serde::decode_from_slice(&parent_ser, bincode::config::legacy())?.0;
-        if block.parent_hash() != parent.hash() {
-            return Err(anyhow!(
-                "Invalid checkpoint file: parent's blockhash does not correspond to checkpoint block"
-            ));
-        }
-
-        if state_trie.iter().next().is_some()
-            || self.get_highest_canonical_block_number()?.is_some()
-        {
-            // If checkpointed block already exists then assume checkpoint load already complete. Return None
-            if self.get_block(block.hash().into())?.is_some() {
-                return Ok(None);
-            }
-            // This may not be strictly necessary, as in theory old values will, at worst, be orphaned
-            // values not part of any state trie of any known block. With some effort, this could
-            // even be supported.
-            // However, without such explicit support, having old blocks MAY in fact cause
-            // unexpected and unwanted behaviour. Thus we currently forbid loading a checkpoint in
-            // a node that already contains previous state, until (and unless) there's ever a
-            // usecase for going through the effort to support it and ensure it works as expected.
-            if let Some(db_block) = self.get_block(parent.hash().into())? {
-                if db_block.parent_hash() != parent.parent_hash() {
-                    return Err(anyhow!(
-                        "Inconsistent checkpoint file: block loaded from checkpoint and block stored in database with same hash have differing parent hashes"
-                    ));
-                } else {
-                    // In this case, the database already has the block contained in this checkpoint. We assume the
-                    // database contains the full state for that block too and thus return early, without actually
-                    // loading the checkpoint file.
-                    return Ok(Some((block, transactions, parent)));
-                }
-            } else {
-                return Err(anyhow!(
-                    "Inconsistent checkpoint file: block loaded from checkpoint file does not exist in non-empty database"
-                ));
-            }
-        }
-
-        // Helper function used for inserting entries from memory (which backs storage trie) into persistent storage
-        let db_flush = |db: Arc<TrieStorage>, cache: Arc<MemoryDB>| -> Result<()> {
-            let mut cache_storage = cache.storage.write();
-            let (keys, values): (Vec<_>, Vec<_>) = cache_storage.drain().unzip();
-            debug!("Doing write to db with total items {}", keys.len());
-            db.insert_batch(keys, values)?;
-            Ok(())
+        let Some((block, transactions, parent)) =
+            crate::checkpoint::get_checkpoint_block(&mut reader, hash, our_shard_id)?
+        else {
+            return Err(anyhow!("Invalid checkpoint file"));
         };
 
-        let mut processed_accounts = 0;
-        let mut processed_storage_items = 0;
-        // This is taken directly from batch_write. However, this can be as big as we think it's reasonable to be
-        // (ideally multiples of `32766 / 2` so that batch writes are fully utilized)
-        // TODO: consider putting this const somewhere else as long as we use sql-lite
-        // Also see: https://www.sqlite.org/limits.html#max_variable_number
-        let maximum_sql_parameters = 32766 / 2;
-        const COMPUTE_ROOT_HASH_EVERY_ACCOUNTS: usize = 10000;
-        let mem_storage = Arc::new(MemoryDB::new(true));
+        let trie_storage = Arc::new(self.state_trie()?);
+        let state_trie = EthTrie::new(trie_storage.clone());
 
-        // then decode state
-        loop {
-            // Read account key and the serialised Account
-            let mut account_hash = [0u8; 32];
-            match reader.read_exact(&mut account_hash) {
-                // Read successful
-                Ok(_) => (),
-                // Break loop here if weve reached the end of the file
-                Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                    break;
-                }
-                Err(e) => return Err(e.into()),
-            };
+        // INITIAL CHECKPOINT LOAD
+        // If no state trie exists and no blocks are known, then we are in a fresh database.
+        // We can safely load the checkpoint.
+        if state_trie.iter().next().is_none()
+            && self.get_highest_canonical_block_number()?.is_none()
+        {
+            tracing::info!(state = %parent.state_root_hash(), "Restoring checkpoint");
+            crate::checkpoint::load_state_trie(&mut reader, trie_storage, &parent)?;
 
-            let mut serialised_account_len_buf = [0u8; std::mem::size_of::<u64>()];
-            reader.read_exact(&mut serialised_account_len_buf)?;
-            let mut serialised_account =
-                vec![0u8; usize::try_from(u64::from_be_bytes(serialised_account_len_buf))?];
-            reader.read_exact(&mut serialised_account)?;
+            let parent_ref: &Block = &parent; // for moving into the closure
+            self.with_sqlite_tx(move |tx| {
+                self.insert_block_with_db_tx(tx, parent_ref)?;
+                self.set_finalized_view_with_db_tx(tx, parent_ref.view())?;
+                self.set_high_qc_with_db_tx(tx, block.header.qc)?;
+                self.set_view_with_db_tx(tx, parent_ref.view() + 1, false)?;
+                Ok(())
+            })?;
 
-            // Read entire account storage as a buffer
-            let mut account_storage_len_buf = [0u8; std::mem::size_of::<u64>()];
-            reader.read_exact(&mut account_storage_len_buf)?;
-            let account_storage_len = usize::try_from(u64::from_be_bytes(account_storage_len_buf))?;
-            let mut account_storage = vec![0u8; account_storage_len];
-            reader.read_exact(&mut account_storage)?;
-
-            // Pull out each storage key and value
-            let mut account_trie = EthTrie::new(mem_storage.clone());
-            let mut pointer: usize = 0;
-            while account_storage_len > pointer {
-                let storage_key_len_buf: &[u8] =
-                    &account_storage[pointer..(pointer + std::mem::size_of::<u64>())];
-                let storage_key_len =
-                    usize::try_from(u64::from_be_bytes(storage_key_len_buf.try_into()?))?;
-                pointer += std::mem::size_of::<u64>();
-                let storage_key: &[u8] = &account_storage[pointer..(pointer + storage_key_len)];
-                pointer += storage_key_len;
-
-                let storage_val_len_buf: &[u8] =
-                    &account_storage[pointer..(pointer + std::mem::size_of::<u64>())];
-                let storage_val_len =
-                    usize::try_from(u64::from_be_bytes(storage_val_len_buf.try_into()?))?;
-                pointer += std::mem::size_of::<u64>();
-                let storage_val: &[u8] = &account_storage[pointer..(pointer + storage_val_len)];
-                pointer += storage_val_len;
-
-                account_trie.insert(storage_key, storage_val)?;
-
-                processed_storage_items += 1;
-            }
-
-            let account_trie_root = bincode::serde::decode_from_slice::<Account, _>(
-                &serialised_account,
-                bincode::config::legacy(),
-            )?
-            .0
-            .storage_root;
-            if account_trie.root_hash()?.as_slice() != account_trie_root {
-                return Err(anyhow!(
-                    "Invalid checkpoint file: account trie root hash mismatch: calculated {}, checkpoint file contained {}",
-                    hex::encode(account_trie.root_hash()?.as_slice()),
-                    hex::encode(account_trie_root)
-                ));
-            }
-            if processed_storage_items > maximum_sql_parameters {
-                db_flush(trie_storage.clone(), mem_storage.clone())?;
-                processed_storage_items = 0;
-            }
-
-            state_trie.insert(&account_hash, &serialised_account)?;
-
-            processed_accounts += 1;
-            // Occasionally flush the cached state changes to disk to minimise memory usage.
-            if processed_accounts % COMPUTE_ROOT_HASH_EVERY_ACCOUNTS == 0 {
-                let _ = state_trie.root_hash()?;
-            }
+            return Ok(Some((block, transactions, parent)));
         }
 
-        db_flush(trie_storage.clone(), mem_storage.clone())?;
-
-        if state_trie.root_hash()? != parent.state_root_hash().0 {
-            return Err(anyhow!("Invalid checkpoint file: state root hash mismatch"));
+        // OTHER SANITY CHECKS
+        // Check if the parent block is sane
+        let Some(ckpt_parent) = self.get_block(parent.hash().into())? else {
+            return Err(anyhow!("Invalid checkpoint attempt"));
+        };
+        if ckpt_parent.parent_hash() != parent.parent_hash() {
+            return Err(anyhow!("Critical checkpoint error"));
+        };
+        if trie_storage
+            .get(ckpt_parent.state_root_hash().as_bytes())?
+            .is_none()
+        {
+            // If the corresponding state is missing, load it from the checkpoint
+            tracing::info!(state = %ckpt_parent.state_root_hash(), "Syncing checkpoint");
+            crate::checkpoint::load_state_trie(&mut reader, trie_storage, &ckpt_parent)?;
         }
-
-        let parent_ref: &Block = &parent; // for moving into the closure
-        self.with_sqlite_tx(move |tx| {
-            self.insert_block_with_db_tx(tx, parent_ref)?;
-            self.set_finalized_view_with_db_tx(tx, parent_ref.view())?;
-            self.set_high_qc_with_db_tx(tx, block.header.qc)?;
-            self.set_view_with_db_tx(tx, parent_ref.view() + 1, false)?;
-            Ok(())
-        })?;
-
-        Ok(Some((block, transactions, parent)))
+        Ok(Some((block, transactions, ckpt_parent)))
     }
 
     pub fn state_trie(&self) -> Result<TrieStorage> {
@@ -1400,7 +1242,7 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
     let mut writer = BufWriter::with_capacity(128 * 1024 * 1024, outfile_temp); // 128 MiB chunks
 
     // write the header:
-    writer.write_all(&CHECKPOINT_HEADER_BYTES)?; // file identifier
+    writer.write_all(&crate::checkpoint::CHECKPOINT_HEADER_BYTES)?; // file identifier
     writer.write_all(&VERSION.to_be_bytes())?; // 4 BE bytes for version
     writer.write_all(&shard_id.to_be_bytes())?; // 8 BE bytes for shard ID
     writer.write_all(b"\n")?;
@@ -1526,12 +1368,10 @@ impl TrieStorage {
                 .unwrap()
                 .prepare_cached(&query)?
                 .execute(rusqlite::params_from_iter(params))?;
+            // take lock once
+            let mut cache = self.cache.lock().unwrap();
             for (key, value) in keys.iter().zip(values) {
-                let _ = self
-                    .cache
-                    .lock()
-                    .unwrap()
-                    .insert(key.to_vec(), value.to_vec());
+                let _ = cache.insert(key.to_vec(), value.to_vec());
             }
         }
         Ok(())
@@ -1601,30 +1441,6 @@ mod tests {
 
     use super::*;
     use crate::{crypto::SecretKey, state::State};
-
-    #[test]
-    fn bincode1_bincode2_compatibility() {
-        #[derive(Serialize)]
-        struct Testdata {
-            a: QuorumCertificate,
-            b: BlsSignature,
-            c: VecLogSqlable,
-            d: MapScillaErrorSqlable,
-        }
-
-        let data = Testdata {
-            a: QuorumCertificate::genesis(),
-            b: BlsSignature::identity(),
-            c: VecLogSqlable(Vec::new()),
-            d: MapScillaErrorSqlable(BTreeMap::new()),
-        };
-
-        let bincode1 = bincode_v1::serialize(&data).unwrap(); // v1.3.3
-        let bincode2 = bincode::serde::encode_to_vec(&data, bincode::config::legacy()).unwrap(); // v2.0 compatibility
-        let bincode0 = bincode::serde::encode_to_vec(&data, bincode::config::standard()).unwrap(); // v2.0 new standard
-        assert_ne!(bincode1, bincode0);
-        assert_eq!(bincode1, bincode2);
-    }
 
     #[test]
     fn query_planner_stability_guarantee() {
@@ -1788,7 +1604,7 @@ mod tests {
         assert_eq!(checkpoint_transactions, transactions);
         assert_eq!(checkpoint_parent, parent);
 
-        // Return None if checkpointed block already executed
+        // Always return Some, even if checkpointed block already executed
         db.insert_block(&checkpoint_block).unwrap();
         let result = db
             .load_trusted_checkpoint(
@@ -1797,6 +1613,6 @@ mod tests {
                 SHARD_ID,
             )
             .unwrap();
-        assert!(result.is_none());
+        assert!(result.is_some());
     }
 }

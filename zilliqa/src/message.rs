@@ -353,7 +353,7 @@ impl Display for ExternalMessage {
                     )
                 }
                 Err(err) => {
-                    write!(f, "NewTransaction(Unable to verify txn due to: {:?})", err)
+                    write!(f, "NewTransaction(Unable to verify txn due to: {err:?})")
                 }
             },
             ExternalMessage::BatchedTransactions(txns) => {
@@ -412,10 +412,10 @@ impl Display for InternalMessage {
                 write!(f, "ExportCheckpoint({})", block.number())
             }
             InternalMessage::SubscribeToGossipSubTopic(topic) => {
-                write!(f, "SubscribeToGossipSubTopic({:?})", topic)
+                write!(f, "SubscribeToGossipSubTopic({topic:?})")
             }
             InternalMessage::UnsubscribeFromGossipSubTopic(topic) => {
-                write!(f, "UnsubscribeFromGossipSubTopic({:?})", topic)
+                write!(f, "UnsubscribeFromGossipSubTopic({topic:?})")
             }
         }
     }

@@ -485,9 +485,9 @@ mod tests {
     fn int_diff_3() {
         let have = RangeMap::from_tuple_vec(&vec![(208, 8000)]);
         let to_remove = RangeMap::from_tuple_vec(&vec![(7820, 7827), (7889, 7903)]);
-        println!("have = {:?} to_remove = {:?}", have, to_remove);
+        println!("have = {have:?} to_remove = {to_remove:?}");
         let (get, still_want) = have.diff_inter(&to_remove);
-        println!("get = {:?} still_want = {:?}", get, still_want);
+        println!("get = {get:?} still_want = {still_want:?}");
         assert_eq!(
             get,
             RangeMap::from_tuple_vec(&vec![(7820, 7827), (7889, 7903)])
@@ -502,9 +502,9 @@ mod tests {
     fn int_diff_4() {
         let have = RangeMap::from_tuple_vec(&vec![(0, 660), (661, 753), (1935, 1945)]);
         let to_remove = RangeMap::from_tuple_vec(&vec![(1871, 1872)]);
-        println!("have = {:?} to_remove = {:?}", have, to_remove);
+        println!("have = {have:?} to_remove = {to_remove:?}");
         let (get, still_want) = have.diff_inter(&to_remove);
-        println!("get = {:?} still_want = {:?}", get, still_want);
+        println!("get = {get:?} still_want = {still_want:?}");
         assert_eq!(get, RangeMap::from_tuple_vec(&vec![]));
         assert_eq!(
             still_want,

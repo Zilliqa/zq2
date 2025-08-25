@@ -33,7 +33,7 @@ impl fmt::Display for Composition {
             .for_each(|x| {
                 map.with_elem(*x);
             });
-        write!(f, "{}", map)
+        write!(f, "{map}")
     }
 }
 

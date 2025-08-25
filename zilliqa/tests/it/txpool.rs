@@ -302,7 +302,7 @@ async fn txpool_inspect(mut network: Network) {
                 // Check if any of the transaction summaries contain our transaction details
                 for (_, summary) in txs_obj {
                     let summary_str = summary.as_str().unwrap().to_lowercase();
-                    let to_addr_string = format!("{:?}", to_addr);
+                    let to_addr_string = format!("{to_addr:?}");
                     let value_string = value.to_string();
                     if summary_str.contains(&to_addr_string) && summary_str.contains(&value_string)
                     {

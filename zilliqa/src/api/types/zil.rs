@@ -199,7 +199,7 @@ pub struct GetTxResponse {
     #[serde(with = "num_as_str")]
     pub amount: ZilAmount,
     pub signature: String,
-    pub receipt: GetTxResponseReceipt,
+    pub receipt: ReceiptResponse,
     #[serde(with = "num_as_str")]
     pub gas_price: ZilAmount,
     #[serde(with = "num_as_str")]
@@ -245,7 +245,7 @@ pub struct EventLog {
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct GetTxResponseReceipt {
+pub struct ReceiptResponse {
     pub accepted: bool,
     #[serde(with = "num_as_str")]
     pub gas_used: ScillaGas,
@@ -260,6 +260,54 @@ pub struct GetTxResponseReceipt {
     pub errors: BTreeMap<u64, Vec<u64>>,
     pub exceptions: Vec<ScillaException>,
     pub success: bool,
+}
+
+impl ReceiptResponse {
+    pub fn new(receipt: TransactionReceipt, block_number: u64) -> Result<Self> {
+        Ok(Self {
+            gas_used: receipt.gas_used.into(),
+            cumulative_gas_used: receipt.cumulative_gas_used.into(),
+            cumulative_gas: receipt.gas_used.into(), // for historic reasons, deprecated field
+            epoch_num: block_number,
+            transitions: receipt
+                .transitions
+                .into_iter()
+                .map(|t| {
+                    Ok(Transition {
+                        addr: t.from,
+                        // The depth of transitions from this API start counting from the first contract call, rather
+                        // than from the initial EOA. The initial call is not included as a transition, so this should
+                        // never underflow.
+                        depth: t.depth - 1,
+                        msg: TransitionMessage {
+                            amount: t.amount,
+                            recipient: t.to,
+                            tag: t.tag,
+                            params: serde_json::from_str(&t.params)?,
+                        },
+                    })
+                })
+                .collect::<Result<_>>()?,
+            event_logs: receipt
+                .logs
+                .into_iter()
+                .filter_map(|log| log.into_scilla())
+                .map(|log| EventLog {
+                    address: log.address,
+                    event_name: log.event_name,
+                    params: log.params,
+                })
+                .collect(),
+            success: receipt.success,
+            accepted: receipt.accepted.unwrap_or(false),
+            errors: receipt
+                .errors
+                .into_iter()
+                .map(|(k, v)| (k, v.into_iter().map(|err| err as u64).collect()))
+                .collect(),
+            exceptions: receipt.exceptions,
+        })
+    }
 }
 
 impl GetTxResponse {
@@ -334,49 +382,7 @@ impl GetTxResponse {
             sender_pub_key,
             amount,
             signature,
-            receipt: GetTxResponseReceipt {
-                gas_used: receipt.gas_used.into(),
-                cumulative_gas_used: receipt.cumulative_gas_used.into(),
-                cumulative_gas: receipt.gas_used.into(), // for historic reasons, deprecated field
-                epoch_num: block_number,
-                transitions: receipt
-                    .transitions
-                    .into_iter()
-                    .map(|t| {
-                        Ok(Transition {
-                            addr: t.from,
-                            // The depth of transitions from this API start counting from the first contract call, rather
-                            // than from the initial EOA. The initial call is not included as a transition, so this should
-                            // never underflow.
-                            depth: t.depth - 1,
-                            msg: TransitionMessage {
-                                amount: t.amount,
-                                recipient: t.to,
-                                tag: t.tag,
-                                params: serde_json::from_str(&t.params)?,
-                            },
-                        })
-                    })
-                    .collect::<Result<_>>()?,
-                event_logs: receipt
-                    .logs
-                    .into_iter()
-                    .filter_map(|log| log.into_scilla())
-                    .map(|log| EventLog {
-                        address: log.address,
-                        event_name: log.event_name,
-                        params: log.params,
-                    })
-                    .collect(),
-                success: receipt.success,
-                accepted: receipt.accepted.unwrap_or(false),
-                errors: receipt
-                    .errors
-                    .into_iter()
-                    .map(|(k, v)| (k, v.into_iter().map(|err| err as u64).collect()))
-                    .collect(),
-                exceptions: receipt.exceptions,
-            },
+            receipt: ReceiptResponse::new(receipt, block_number)?,
             gas_price,
             gas_limit,
             code,
@@ -665,7 +671,7 @@ pub struct TransactionBody {
     #[serde(rename = "gasPrice")]
     pub gas_price: String,
     pub nonce: String,
-    pub receipt: TransactionReceiptResponse,
+    pub receipt: ReceiptResponse,
     #[serde(rename = "senderPubKey")]
     pub sender_pub_key: String,
     pub signature: String,
@@ -675,22 +681,6 @@ pub struct TransactionBody {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
     pub data: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub event_logs: Option<Vec<crate::transaction::Log>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub transitions: Option<Vec<crate::exec::ScillaTransition>>,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct TransactionReceiptResponse {
-    #[serde(with = "num_as_str")]
-    pub gas_used: ScillaGas,
-    #[serde(with = "num_as_str")]
-    pub cumulative_gas_used: ScillaGas,
-    #[serde(with = "num_as_str")]
-    pub cumulative_gas: ScillaGas, // deprecated
-    pub epoch_num: String,
-    pub success: bool,
 }
 
 // From https://github.com/Zilliqa/Zilliqa/blob/master/src/common/TxnStatus.h#L23

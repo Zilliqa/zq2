@@ -61,7 +61,7 @@ use futures::{Future, FutureExt, Stream, StreamExt, stream::BoxStream};
 use itertools::Itertools;
 use jsonrpsee::{
     RpcModule,
-    types::{Id, Notification, RequestSer, Response, ResponsePayload},
+    types::{Id, Notification, Request, Response, ResponsePayload},
 };
 use k256::ecdsa::SigningKey;
 use libp2p::PeerId;
@@ -1045,9 +1045,7 @@ impl Network {
                     Some((destination, _)) => {
                         assert!(
                             cbor_size < zilliqa::constants::MAX_REQUEST_SIZE, // 1MB request
-                            "request overflow {} {:?}",
-                            cbor_size,
-                            external_message
+                            "request overflow {cbor_size} {external_message:?}"
                         );
 
                         // Direct message
@@ -1097,9 +1095,7 @@ impl Network {
                     None => {
                         assert!(
                             cbor_size < zilliqa::constants::MAX_GOSSIP_SIZE, // 2MB gossip
-                            "broadcast overflow {} {:?}",
-                            cbor_size,
-                            external_message
+                            "broadcast overflow {cbor_size} {external_message:?}"
                         );
 
                         // Broadcast
@@ -1153,9 +1149,7 @@ impl Network {
                     .len();
                 assert!(
                     cbor_size < zilliqa::constants::MAX_RESPONSE_SIZE, // 10MB response
-                    "response overflow {} {:?}",
-                    cbor_size,
-                    message
+                    "response overflow {cbor_size} {message:?}"
                 );
 
                 // skip on faux response
@@ -1580,7 +1574,7 @@ async fn get_stakers(
 pub struct LocalRpcClient {
     id: Arc<AtomicU64>,
     rpc_module: RpcModule<Arc<RwLock<Node>>>,
-    subscriptions: Arc<Mutex<HashMap<u64, mpsc::Receiver<String>>>>,
+    subscriptions: Arc<Mutex<HashMap<u64, mpsc::Receiver<Box<RawValue>>>>>,
 }
 
 impl LocalRpcClient {
@@ -1608,10 +1602,10 @@ impl LocalRpcClient {
                 *id = u64::from_str_radix(str_id, 16).unwrap().into();
             });
         }
-        let payload = RequestSer::owned(
-            Id::Number(next_id),
-            method,
+        let payload = Request::owned(
+            method.to_string(),
             params.map(|x| serde_json::value::to_raw_value(&x).unwrap()),
+            Id::Number(next_id),
         );
         let request = serde_json::to_string(&payload).unwrap();
 
@@ -1622,7 +1616,7 @@ impl LocalRpcClient {
             .unwrap();
 
         if method == "eth_subscribe" {
-            let sub_response = serde_json::from_str::<Response<u64>>(&response);
+            let sub_response = serde_json::from_str::<Response<u64>>(response.get());
             if let Ok(Response {
                 payload: ResponsePayload::Success(id),
                 ..
@@ -1630,12 +1624,12 @@ impl LocalRpcClient {
             {
                 let id = id.into_owned();
                 self.subscriptions.lock().unwrap().insert(id, rx);
-                let r = serde_json::from_str(&format!("\"{:#x}\"", id)).unwrap();
+                let r = serde_json::from_str(&format!("\"{id:#x}\"")).unwrap();
                 return Ok(r);
             }
         }
 
-        let response: Response<Rc<R>> = serde_json::from_str(&response).unwrap();
+        let response: Response<Rc<R>> = serde_json::from_str(response.get()).unwrap();
 
         let r = match response.payload {
             ResponsePayload::Success(r) => r,
@@ -1668,7 +1662,7 @@ impl PubsubClient for LocalRpcClient {
             .unwrap();
         Ok(Box::pin(ReceiverStream::new(rx).map(|s| {
             serde_json::value::to_raw_value(
-                &serde_json::from_str::<Notification<Value>>(&s)
+                &serde_json::from_str::<Notification<Value>>(s.get())
                     .unwrap()
                     .params["result"],
             )

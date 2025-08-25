@@ -27,11 +27,11 @@ use super::{
     to_hex::ToHex,
     types::zil::{
         self, BlockchainInfo, DSBlock, DSBlockHeaderVerbose, DSBlockListing, DSBlockListingResult,
-        DSBlockRateResult, DSBlockVerbose, GetCurrentDSCommResult, MinerInfo,
+        DSBlockRateResult, DSBlockVerbose, GetCurrentDSCommResult, MinerInfo, ReceiptResponse,
         RecentTransactionsResponse, SWInfo, ShardingStructure, SmartContract, StateProofResponse,
-        TXBlockRateResult, TransactionBody, TransactionReceiptResponse, TransactionState,
-        TransactionStatusResponse, TxBlockListing, TxBlockListingResult,
-        TxnBodiesForTxBlockExResponse, TxnsForTxBlockExResponse,
+        TXBlockRateResult, TransactionBody, TransactionState, TransactionStatusResponse,
+        TxBlockListing, TxBlockListingResult, TxnBodiesForTxBlockExResponse,
+        TxnsForTxBlockExResponse,
     },
 };
 use crate::{
@@ -285,7 +285,7 @@ fn create_transaction(
     let sig = schnorr::Signature::from_str(&transaction.signature).map_err(|err| {
         ErrorObject::owned::<String>(
             RPCErrorCode::RpcVerifyRejected as i32,
-            format!("Cannot extract signature - {}", err),
+            format!("Cannot extract signature - {err}"),
             None,
         )
     })?;
@@ -668,7 +668,7 @@ fn get_smart_contract_code(params: Params, node: &Arc<RwLock<Node>>) -> Result<V
     if !state.has_account(address)? {
         return Err(ErrorObject::owned(
             RPCErrorCode::RpcInvalidAddressOrKey as i32,
-            format!("Address does not exist: {}", address),
+            format!("Address does not exist: {address}"),
             None::<()>,
         )
         .into());
@@ -1157,91 +1157,72 @@ fn extract_transaction_bodies(block: &Block, node: &Node) -> Result<Vec<Transact
         let receipt = node
             .get_transaction_receipt(*hash)?
             .ok_or(anyhow!("Transaction receipt missing"))?;
-        let receipt_response = TransactionReceiptResponse {
-            gas_used: receipt.gas_used.into(),
-            cumulative_gas_used: receipt.cumulative_gas_used.into(),
-            cumulative_gas: receipt.gas_used.into(), // Deprecated
-            epoch_num: block.number().to_string(),
-            success: receipt.success,
+        let receipt_response = ReceiptResponse::new(receipt, block.number());
+        let (version, to_addr, sender_pub_key, signature, code, data) = match tx.tx {
+            SignedTransaction::Zilliqa { tx, sig, key } => {
+                let is_create = !tx.code.is_empty();
+                let is_call = !tx.data.is_empty();
+                (
+                    ((tx.chain_id as u32) << 16) | 1,
+                    tx.to_addr,
+                    key.to_encoded_point(true).as_bytes().to_hex(),
+                    <[u8; 64]>::from(sig.to_bytes()).to_hex(),
+                    is_create.then_some(tx.code),
+                    is_call.then_some(tx.data),
+                )
+            }
+            SignedTransaction::Legacy { tx, sig } => (
+                ((tx.chain_id.unwrap_or_default() as u32) << 16) | 2,
+                tx.to.to().copied().unwrap_or_default(),
+                sig.recover_from_prehash(&tx.signature_hash())?
+                    .to_sec1_bytes()
+                    .to_hex(),
+                sig.as_bytes().to_hex(),
+                tx.to.is_create().then(|| hex::encode(&tx.input)),
+                tx.to.is_call().then(|| hex::encode(&tx.input)),
+            ),
+            SignedTransaction::Eip2930 { tx, sig } => (
+                ((tx.chain_id as u32) << 16) | 3,
+                tx.to.to().copied().unwrap_or_default(),
+                sig.recover_from_prehash(&tx.signature_hash())?
+                    .to_sec1_bytes()
+                    .to_hex(),
+                sig.as_bytes().to_hex(),
+                tx.to.is_create().then(|| hex::encode(&tx.input)),
+                tx.to.is_call().then(|| hex::encode(&tx.input)),
+            ),
+            SignedTransaction::Eip1559 { tx, sig } => (
+                ((tx.chain_id as u32) << 16) | 4,
+                tx.to.to().copied().unwrap_or_default(),
+                sig.recover_from_prehash(&tx.signature_hash())?
+                    .to_sec1_bytes()
+                    .to_hex(),
+                sig.as_bytes().to_hex(),
+                tx.to.is_create().then(|| hex::encode(&tx.input)),
+                tx.to.is_call().then(|| hex::encode(&tx.input)),
+            ),
+            SignedTransaction::Intershard { tx, .. } => (
+                ((tx.chain_id as u32) << 16) | 20,
+                tx.to_addr.unwrap_or_default(),
+                String::new(),
+                String::new(),
+                tx.to_addr.is_none().then(|| hex::encode(&tx.payload)),
+                tx.to_addr.is_some().then(|| hex::encode(&tx.payload)),
+            ),
         };
-        let (version, to_addr, sender_pub_key, signature, code, data, event_logs, transitions) =
-            match tx.tx {
-                SignedTransaction::Zilliqa { tx, sig, key } => {
-                    let is_create = !tx.code.is_empty();
-                    let is_call = !tx.data.is_empty();
-                    (
-                        ((tx.chain_id as u32) << 16) | 1,
-                        tx.to_addr,
-                        key.to_encoded_point(true).as_bytes().to_hex(),
-                        <[u8; 64]>::from(sig.to_bytes()).to_hex(),
-                        is_create.then_some(tx.code),
-                        is_call.then_some(tx.data),
-                        is_call.then(|| receipt.logs.clone()),
-                        is_call.then(|| receipt.transitions.clone()),
-                    )
-                }
-                SignedTransaction::Legacy { tx, sig } => (
-                    ((tx.chain_id.unwrap_or_default() as u32) << 16) | 2,
-                    tx.to.to().copied().unwrap_or_default(),
-                    sig.recover_from_prehash(&tx.signature_hash())?
-                        .to_sec1_bytes()
-                        .to_hex(),
-                    sig.as_bytes().to_hex(),
-                    tx.to.is_create().then(|| hex::encode(&tx.input)),
-                    tx.to.is_call().then(|| hex::encode(&tx.input)),
-                    tx.to.is_call().then(|| receipt.logs.clone()),
-                    tx.to.is_call().then(|| receipt.transitions.clone()),
-                ),
-                SignedTransaction::Eip2930 { tx, sig } => (
-                    ((tx.chain_id as u32) << 16) | 3,
-                    tx.to.to().copied().unwrap_or_default(),
-                    sig.recover_from_prehash(&tx.signature_hash())?
-                        .to_sec1_bytes()
-                        .to_hex(),
-                    sig.as_bytes().to_hex(),
-                    tx.to.is_create().then(|| hex::encode(&tx.input)),
-                    tx.to.is_call().then(|| hex::encode(&tx.input)),
-                    tx.to.is_call().then(|| receipt.logs.clone()),
-                    tx.to.is_call().then(|| receipt.transitions.clone()),
-                ),
-                SignedTransaction::Eip1559 { tx, sig } => (
-                    ((tx.chain_id as u32) << 16) | 4,
-                    tx.to.to().copied().unwrap_or_default(),
-                    sig.recover_from_prehash(&tx.signature_hash())?
-                        .to_sec1_bytes()
-                        .to_hex(),
-                    sig.as_bytes().to_hex(),
-                    tx.to.is_create().then(|| hex::encode(&tx.input)),
-                    tx.to.is_call().then(|| hex::encode(&tx.input)),
-                    tx.to.is_call().then(|| receipt.logs.clone()),
-                    tx.to.is_call().then(|| receipt.transitions.clone()),
-                ),
-                SignedTransaction::Intershard { tx, .. } => (
-                    ((tx.chain_id as u32) << 16) | 20,
-                    tx.to_addr.unwrap_or_default(),
-                    String::new(),
-                    String::new(),
-                    tx.to_addr.is_none().then(|| hex::encode(&tx.payload)),
-                    tx.to_addr.is_some().then(|| hex::encode(&tx.payload)),
-                    None, // Not a CONTRACT_CALL
-                    None, // Not a CONTRACT_CALL
-                ),
-            };
         let body = TransactionBody {
             id: tx.hash.to_string(),
             amount: amount.to_string(),
             gas_limit: gas_limit.to_string(),
             gas_price: gas_price.to_string(),
             nonce: nonce.to_string(),
-            receipt: receipt_response,
+            receipt: receipt_response?,
             sender_pub_key,
             signature,
             to_addr: to_addr.to_string(),
             version: version.to_string(),
             code,
             data,
-            event_logs,
-            transitions,
         };
         transactions.push(body);
     }
