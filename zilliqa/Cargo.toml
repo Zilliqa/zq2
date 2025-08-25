@@ -84,7 +84,7 @@ paste = "1.0.15"
 prost = "0.14.1"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
-revm = { version = "19.6.0", features = [
+revm = { version = "20.0.0", features = [
     "optional_eip3607",
     "optional_no_base_fee",
 ] }
