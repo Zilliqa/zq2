@@ -24,6 +24,7 @@ use crate::{
     error::ensure_success,
     message::{Block, BlockHeader, MAX_COMMITTEE_SIZE},
     node::ChainId,
+    precompiles::ViewHistory,
     scilla::{ParamValue, Scilla, Transition},
     serde_util::vec_param_value,
     transaction::EvmGas,
@@ -53,6 +54,7 @@ pub struct State {
     pub gas_price: u128,
     pub chain_id: ChainId,
     pub forks: Forks,
+    pub view_history: ViewHistory,
 }
 
 impl State {
@@ -72,6 +74,7 @@ impl State {
             chain_id: ChainId::new(config.eth_chain_id),
             forks: consensus_config.get_forks()?,
             sql,
+            view_history: ViewHistory::new(),
         })
     }
 
@@ -330,6 +333,7 @@ impl State {
             chain_id: self.chain_id,
             forks: self.forks.clone(),
             sql: self.sql.clone(),
+            view_history: self.view_history.clone(),
         }
     }
 
