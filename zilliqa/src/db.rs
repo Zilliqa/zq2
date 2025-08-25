@@ -232,7 +232,7 @@ const CURRENT_DB_VERSION: &str = "1";
 
 #[derive(Debug)]
 pub struct Db {
-    db: Arc<Mutex<Connection>>,
+    pool: Arc<r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>>,
     state_cache: Arc<Mutex<LruCache<Vec<u8>, Vec<u8>>>>,
     path: Option<Box<Path>>,
     /// The block height at which ZQ2 blocks begin.
@@ -250,7 +250,7 @@ impl Db {
     where
         P: AsRef<Path>,
     {
-        let (connection, path) = match data_dir {
+        let (manager, path) = match data_dir {
             Some(path) => {
                 let path = path.as_ref().join(shard_id.to_string());
                 fs::create_dir_all(&path).context(format!("Unable to create {path:?}"))?;
@@ -274,82 +274,34 @@ impl Db {
                 version_file.write_all(CURRENT_DB_VERSION.as_bytes())?;
 
                 let db_path = path.join("db.sqlite3");
+
                 (
-                    Connection::open(&db_path)
-                        .context(format!("Cannot access sqlite db {0:?}", &db_path))?,
+                    r2d2_sqlite::SqliteConnectionManager::file(db_path)
+                        .with_init(Self::tweak_connection),
                     Some(path.into_boxed_path()),
                 )
             }
-            None => (Connection::open_in_memory()?, None),
+            None => (r2d2_sqlite::SqliteConnectionManager::memory(), None),
         };
 
-        // SQLite performance tweaks
+        // Connection pool
+        let num_workers = if cfg!(test) {
+            8 // for tests only
+        } else {
+            tokio::runtime::Handle::current().metrics().num_workers() * 2 // more than enough connections
+        };
 
-        // large page_size is more compact/efficient
-        connection.pragma_update(None, "page_size", 1 << 15)?;
-        let page_size: i32 = connection.pragma_query_value(None, "page_size", |r| r.get(0))?;
+        let builder = r2d2::Pool::builder()
+            .min_idle(Some(1))
+            .max_size(num_workers as u32);
+        tracing::info!("SQLite {builder:?}");
 
-        // reduced non-critical fsync() calls
-        connection.pragma_update(None, "synchronous", "NORMAL")?;
-        let synchronous: i8 = connection.pragma_query_value(None, "synchronous", |r| r.get(0))?;
-
-        // store temporary tables/indices in-memory
-        connection.pragma_update(None, "temp_store", "MEMORY")?;
-        let temp_store: i8 = connection.pragma_query_value(None, "temp_store", |r| r.get(0))?;
-
-        // general read/write performance improvement
-        let journal_mode: String =
-            connection.pragma_update_and_check(None, "journal_mode", "WAL", |r| r.get(0))?;
-
-        // retain journal size of 32MB - based on observations
-        let journal_size_limit: i32 =
-            connection
-                .pragma_update_and_check(None, "journal_size_limit", 1 << 25, |r| r.get(0))?;
-
-        // cache 1-days data (256MB) in-memory
-        connection.pragma_update(None, "cache_size", (1 << 28) / page_size)?;
-        let cache_size: i32 = connection.pragma_query_value(None, "cache_size", |r| r.get(0))?;
-
-        // increase size of prepared cache
-        connection.set_prepared_statement_cache_capacity(128); // default is 16, which is small
-
-        // enable QPSG - https://github.com/Zilliqa/zq2/issues/2870
-        if !connection.set_db_config(
-            rusqlite::config::DbConfig::SQLITE_DBCONFIG_ENABLE_QPSG,
-            true,
-        )? {
-            tracing::warn!("QPSG disabled");
-        }
-
-        tracing::info!(
-            ?journal_mode,
-            ?journal_size_limit,
-            ?synchronous,
-            ?temp_store,
-            ?page_size,
-            ?cache_size,
-            "PRAGMA"
-        );
-
-        // Add tracing - logs SQL statements
-        connection.trace_v2(
-            rusqlite::trace::TraceEventCodes::SQLITE_TRACE_PROFILE,
-            Some(|profile_event| {
-                if let rusqlite::trace::TraceEvent::Profile(statement, duration) = profile_event {
-                    let statement_txt = statement.expanded_sql();
-                    let duration_secs = duration.as_secs();
-                    // tracing::trace!(duration_secs, statement_txt, "sql executed");
-                    if duration_secs > 5 {
-                        tracing::warn!(duration_secs, statement_txt, "sql execution took > 5s");
-                    }
-                }
-            }),
-        );
-
+        let pool = builder.build(manager)?;
+        let connection = pool.get()?;
         Self::ensure_schema(&connection)?;
 
         Ok(Db {
-            db: Arc::new(Mutex::new(connection)),
+            pool: Arc::new(pool),
             state_cache: Arc::new(Mutex::new(LruCache::new(state_cache_size))),
             path,
             executable_blocks_height,
@@ -417,11 +369,8 @@ impl Db {
             connection.execute_batch(
                 "
                 BEGIN;
-
                 INSERT INTO schema_version VALUES (1);
-
                 ALTER TABLE tip_info ADD COLUMN voted_in_view BOOLEAN NOT NULL DEFAULT FALSE;
-
                 COMMIT;
             ",
             )?;
@@ -431,9 +380,7 @@ impl Db {
             connection.execute_batch(
                 "
                 BEGIN;
-
                 INSERT INTO schema_version VALUES (2);
-
                 CREATE TABLE new_receipts (
                     tx_hash BLOB NOT NULL REFERENCES transactions (tx_hash),
                     block_hash BLOB NOT NULL REFERENCES blocks (block_hash),
@@ -453,7 +400,6 @@ impl Db {
                 DROP TABLE receipts;
                 ALTER TABLE new_receipts RENAME TO receipts;
                 CREATE INDEX block_hash_index ON receipts (block_hash);
-
                 COMMIT;
             ",
             )?;
@@ -463,11 +409,8 @@ impl Db {
             connection.execute_batch(
                 "
                 BEGIN;
-
                 INSERT INTO schema_version VALUES (3);
-
                 CREATE INDEX idx_receipts_tx_hash ON receipts (tx_hash);
-
                 COMMIT;
             ",
             )?;
@@ -477,11 +420,8 @@ impl Db {
             connection.execute_batch(
                 "
                 BEGIN;
-
                 INSERT INTO schema_version VALUES (4);
-
                 CREATE TABLE IF NOT EXISTS aux_table (key TEXT NOT NULL PRIMARY KEY, value BLOB NOT NULL) WITHOUT ROWID;
-
                 COMMIT;
             ",
             )?;
@@ -490,20 +430,57 @@ impl Db {
         Ok(())
     }
 
+    // SQLite performance tweaks
+    fn tweak_connection(connection: &mut Connection) -> Result<(), rusqlite::Error> {
+        // large page_size is more compact/efficient, 64K is hard-coded maximum
+        connection.pragma_update(None, "page_size", 1 << 15)?;
+        // reduced non-critical fsync() calls, reducing disk I/O
+        connection.pragma_update(None, "synchronous", "NORMAL")?;
+        // store temporary tables/indices in-memory, reducing disk I/O
+        connection.pragma_update(None, "temp_store", "MEMORY")?;
+        // improved read/write multi-threaded locking
+        connection.pragma_update(None, "journal_mode", "WAL")?;
+        // journal size of 32MB - empirical value
+        connection.pragma_update(None, "journal_size_limit", 1 << 25)?;
+        // page cache 32MB/connection
+        connection.pragma_update(None, "cache_size", 1 << 10)?;
+        // larger prepared cache, due to many prepared statements
+        connection.set_prepared_statement_cache_capacity(1 << 8); // default is 16, which is small
+        // enable QPSG - https://github.com/Zilliqa/zq2/issues/2870
+        if !connection.set_db_config(
+            rusqlite::config::DbConfig::SQLITE_DBCONFIG_ENABLE_QPSG,
+            true,
+        )? {
+            tracing::warn!("*** QPSG disabled - queries may be slow ***");
+        }
+        // Add tracing - logs SQL statements
+        connection.trace_v2(
+            rusqlite::trace::TraceEventCodes::SQLITE_TRACE_PROFILE,
+            Some(|profile_event| {
+                if let rusqlite::trace::TraceEvent::Profile(statement, duration) = profile_event {
+                    let statement_txt = statement.expanded_sql();
+                    let duration_secs = duration.as_secs();
+                    if duration_secs > 5 {
+                        tracing::warn!(duration_secs, statement_txt, "sql execution took > 5s");
+                    }
+                }
+            }),
+        );
+        Ok(())
+    }
+
     pub fn get_value_from_aux_table(&self, key: &str) -> Result<Option<Vec<u8>>> {
         Ok(self
-            .db
-            .lock()
-            .unwrap()
+            .pool
+            .get()?
             .prepare_cached("SELECT value FROM aux_table WHERE key = ?1")?
             .query_row([key], |row| row.get(0))
             .optional()?)
     }
 
     pub fn insert_value_to_aux_table(&self, key: &str, value: Vec<u8>) -> Result<()> {
-        self.db
-            .lock()
-            .unwrap()
+        self.pool
+            .get()?
             .prepare_cached("INSERT OR REPLACE INTO aux_table (key, value) VALUES (?1, ?2)")?
             .execute(rusqlite::params![key, value])?;
         Ok(())
@@ -522,7 +499,7 @@ impl Db {
 
     /// Returns the lowest and highest block numbers of stored blocks
     pub fn available_range(&self) -> Result<RangeInclusive<u64>> {
-        let db = self.db.lock().unwrap();
+        let db = self.pool.get()?;
         // Doing it together is slow
         // sqlite> EXPLAIN QUERY PLAN SELECT MIN(height), MAX(height) FROM blocks;
         // QUERY PLAN
@@ -604,13 +581,13 @@ impl Db {
 
     pub fn state_trie(&self) -> Result<TrieStorage> {
         Ok(TrieStorage {
-            db: self.db.clone(),
+            pool: self.pool.clone(),
             cache: self.state_cache.clone(),
         })
     }
 
     pub fn with_sqlite_tx(&self, operations: impl FnOnce(&Connection) -> Result<()>) -> Result<()> {
-        let mut sqlite_tx = self.db.lock().unwrap();
+        let mut sqlite_tx = self.pool.get()?;
         let sqlite_tx = sqlite_tx.transaction()?;
         operations(&sqlite_tx)?;
         Ok(sqlite_tx.commit()?)
@@ -618,9 +595,8 @@ impl Db {
 
     pub fn get_block_hash_by_view(&self, view: u64) -> Result<Option<Hash>> {
         Ok(self
-            .db
-            .lock()
-            .unwrap()
+            .pool
+            .get()?
             .prepare_cached("SELECT block_hash FROM blocks WHERE view = ?1")?
             .query_row([view], |row| row.get(0))
             .optional()?)
@@ -634,14 +610,14 @@ impl Db {
     }
 
     pub fn set_finalized_view(&self, view: u64) -> Result<()> {
-        self.set_finalized_view_with_db_tx(&self.db.lock().unwrap(), view)
+        let db = self.pool.get()?;
+        self.set_finalized_view_with_db_tx(&db, view)
     }
 
     pub fn get_finalized_view(&self) -> Result<Option<u64>> {
         Ok(self
-            .db
-            .lock()
-            .unwrap()
+            .pool
+            .get()?
             .prepare_cached("SELECT finalized_view FROM tip_info")?
             .query_row((), |row| row.get(0))
             .optional()
@@ -662,14 +638,14 @@ impl Db {
     }
 
     pub fn set_view(&self, view: u64, voted: bool) -> Result<bool> {
-        self.set_view_with_db_tx(&self.db.lock().unwrap(), view, voted)
+        let db = self.pool.get()?;
+        self.set_view_with_db_tx(&db, view, voted)
     }
 
     pub fn get_view(&self) -> Result<Option<u64>> {
         Ok(self
-            .db
-            .lock()
-            .unwrap()
+            .pool
+            .get()?
             .prepare_cached("SELECT view FROM tip_info")?
             .query_row((), |row| row.get(0))
             .optional()
@@ -678,18 +654,16 @@ impl Db {
 
     pub fn get_voted_in_view(&self) -> Result<bool> {
         Ok(self
-            .db
-            .lock()
-            .unwrap()
+            .pool
+            .get()?
             .prepare_cached("SELECT voted_in_view FROM tip_info")?
             .query_row((), |row| row.get(0))?)
     }
 
     pub fn get_highest_canonical_block_number(&self) -> Result<Option<u64>> {
         Ok(self
-            .db
-            .lock()
-            .unwrap()
+            .pool
+            .get()?
             .prepare_cached("SELECT MAX(height) FROM blocks WHERE is_canonical = 1")?
             .query_row((), |row| {
                 row.get(0).map_err(|e| {
@@ -720,14 +694,14 @@ impl Db {
     }
 
     pub fn set_high_qc(&self, high_qc: QuorumCertificate) -> Result<()> {
-        self.set_high_qc_with_db_tx(&self.db.lock().unwrap(), high_qc)
+        let db = self.pool.get()?;
+        self.set_high_qc_with_db_tx(&db, high_qc)
     }
 
     pub fn get_high_qc(&self) -> Result<Option<QuorumCertificate>> {
         Ok(self
-            .db
-            .lock()
-            .unwrap()
+            .pool
+            .get()?
             .prepare_cached("SELECT high_qc FROM tip_info")?
             .query_row((), |row| row.get(0))
             .optional()?
@@ -736,9 +710,8 @@ impl Db {
 
     pub fn get_high_qc_updated_at(&self) -> Result<Option<SystemTime>> {
         Ok(self
-            .db
-            .lock()
-            .unwrap()
+            .pool
+            .get()?
             .prepare_cached("SELECT high_qc_updated_at FROM tip_info")?
             .query_row((), |row| row.get::<_, SystemTimeSqlable>(0))
             .optional()
@@ -761,16 +734,14 @@ impl Db {
     }
 
     pub fn add_touched_address(&self, address: Address, txn_hash: Hash) -> Result<()> {
-        self.add_touched_address_with_db_tx(&self.db.lock().unwrap(), address, txn_hash)
+        let db = self.pool.get()?;
+        self.add_touched_address_with_db_tx(&db, address, txn_hash)
     }
 
     pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
         // TODO: this is only ever used in one API, so keep an eye on performance - in case e.g.
         // the index table might need to be denormalised to simplify this lookup
-        Ok(self
-            .db
-            .lock()
-            .unwrap()
+        Ok(self.pool.get()?
             .prepare_cached("SELECT tx_hash FROM touched_address_index JOIN receipts USING (tx_hash) JOIN blocks USING (block_hash) WHERE address = ?1 ORDER BY blocks.height, receipts.tx_index")?
             .query_map([AddressSqlable(address)], |row| row.get(0))?
             .collect::<Result<Vec<_>, _>>()?)
@@ -779,9 +750,8 @@ impl Db {
     pub fn get_transaction(&self, txn_hash: &Hash) -> Result<Option<VerifiedTransaction>> {
         Ok(
             match self
-                .db
-                .lock()
-                .unwrap()
+                .pool
+                .get()?
                 .prepare_cached("SELECT data FROM transactions WHERE tx_hash = ?1")?
                 .query_row([txn_hash], |row| row.get(0))
                 .optional()?
@@ -795,9 +765,8 @@ impl Db {
 
     pub fn contains_transaction(&self, hash: &Hash) -> Result<bool> {
         Ok(self
-            .db
-            .lock()
-            .unwrap()
+            .pool
+            .get()?
             .prepare_cached("SELECT 1 FROM transactions WHERE tx_hash = ?1")?
             .query_row([hash], |row| row.get::<_, i64>(0))
             .optional()?
@@ -819,14 +788,12 @@ impl Db {
     /// Insert a transaction whose hash was precalculated, to save a call to calculate_hash() if it
     /// is already known
     pub fn insert_transaction(&self, hash: &Hash, tx: &VerifiedTransaction) -> Result<()> {
-        self.insert_transaction_with_db_tx(&self.db.lock().unwrap(), hash, tx)
+        let db = self.pool.get()?;
+        self.insert_transaction_with_db_tx(&db, hash, tx)
     }
 
     pub fn get_block_hash_reverse_index(&self, tx_hash: &Hash) -> Result<Option<Hash>> {
-        Ok(self
-            .db
-            .lock()
-            .unwrap()
+        Ok(self.pool.get()?
             .prepare_cached("SELECT r.block_hash FROM receipts r INNER JOIN blocks b ON r.block_hash = b.block_hash WHERE r.tx_hash = ?1 AND b.is_canonical = TRUE")?
             .query_row([tx_hash], |row| row.get(0))
             .optional()?)
@@ -863,31 +830,29 @@ impl Db {
     }
 
     pub fn mark_block_as_canonical(&self, hash: Hash) -> Result<()> {
-        self.db
-            .lock()
-            .unwrap()
+        self.pool
+            .get()?
             .prepare_cached("UPDATE blocks SET is_canonical = TRUE WHERE block_hash = ?1")?
             .execute([hash])?;
         Ok(())
     }
 
     pub fn mark_block_as_non_canonical(&self, hash: Hash) -> Result<()> {
-        self.db
-            .lock()
-            .unwrap()
+        self.pool
+            .get()?
             .prepare_cached("UPDATE blocks SET is_canonical = FALSE WHERE block_hash = ?1")?
             .execute([hash])?;
         Ok(())
     }
 
     pub fn insert_block(&self, block: &Block) -> Result<()> {
-        self.insert_block_with_db_tx(&self.db.lock().unwrap(), block)
+        let db = self.pool.get()?;
+        self.insert_block_with_db_tx(&db, block)
     }
 
     pub fn remove_block(&self, block: &Block) -> Result<()> {
-        self.db
-            .lock()
-            .unwrap()
+        self.pool
+            .get()?
             .prepare_cached("DELETE FROM blocks WHERE block_hash = ?1")?
             .execute([block.header.hash])?;
         Ok(())
@@ -895,7 +860,7 @@ impl Db {
 
     /// Triggers a DB vacuum
     pub fn vacuum(&self) -> Result<()> {
-        let db = self.db.lock().unwrap();
+        let db = self.pool.get()?;
         db.execute("VACUUM", [])?;
         Ok(())
     }
@@ -935,10 +900,7 @@ impl Db {
     }
 
     pub fn get_blocks_by_height(&self, height: u64) -> Result<Vec<Block>> {
-        let rows = self
-            .db
-            .lock()
-            .unwrap()
+        let rows = self.pool.get()?
             .prepare_cached("SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE height = ?1")?
             .query_map([height], |row| Ok(Block {
                 header: BlockHeader {
@@ -984,38 +946,38 @@ impl Db {
         // Remember to add to `query_planner_stability_guarantee()` test below
         Ok(match filter {
             BlockFilter::Hash(hash) => {
-                self.db.lock().unwrap().prepare_cached(concat!(
+                self.pool.get()?.prepare_cached(concat!(
                     "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
                     "WHERE block_hash = ?1"
                 ),)?.query_row([hash], make_block).optional()?
             }
             BlockFilter::View(view) => {
-                self.db.lock().unwrap().prepare_cached(concat!(
+                self.pool.get()?.prepare_cached(concat!(
                     "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
                     "WHERE view = ?1"
                 ),)?.query_row([view], make_block).optional()?
             }
             BlockFilter::Height(height) => {
-                self.db.lock().unwrap().prepare_cached(concat!(
+                self.pool.get()?.prepare_cached(concat!(
                     "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
                     "WHERE height = ?1 AND is_canonical = TRUE"
                 ),)?.query_row([height], make_block).optional()?
             }
             // Compound SQL queries below, due to - https://github.com/Zilliqa/zq2/issues/2629
             BlockFilter::MaxCanonicalByHeight => {
-                self.db.lock().unwrap().prepare_cached(concat!(
+                self.pool.get()?.prepare_cached(concat!(
                     "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
                     "WHERE is_canonical = true AND height = (SELECT MAX(height) FROM blocks WHERE is_canonical = TRUE)"
                 ),)?.query_row([], make_block).optional()?
             }
             BlockFilter::MaxHeight => {
-                self.db.lock().unwrap().prepare_cached(concat!(
+                self.pool.get()?.prepare_cached(concat!(
                     "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
                     "WHERE height = (SELECT MAX(height) FROM blocks) LIMIT 1"
                 ),)?.query_row([], make_block).optional()?
             }
             BlockFilter::Finalized => {
-                if let Some(result) = self.db.lock().unwrap().prepare_cached(concat!(
+                if let Some(result) = self.pool.get()?.prepare_cached(concat!(
                     "SELECT block_hash, blocks.view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
                     "INNER JOIN tip_info ON blocks.view = tip_info.finalized_view"
                 ),)?.query_row([], make_block).optional()? {
@@ -1026,7 +988,7 @@ impl Db {
             },
             BlockFilter::HighQC => {
                 if let Some(high_qc) = self.get_high_qc()?{
-                    self.db.lock().unwrap().prepare_cached(concat!(
+                    self.pool.get()?.prepare_cached(concat!(
                         "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
                         "WHERE block_hash = ?1"
                     ),)?.query_row([high_qc.block_hash], make_block).optional()?
@@ -1048,9 +1010,8 @@ impl Db {
             block.header.state_root_hash = Hash::ZERO;
         }
         let transaction_hashes = self
-            .db
-            .lock()
-            .unwrap()
+            .pool
+            .get()?
             .prepare_cached(
                 "SELECT tx_hash FROM receipts WHERE block_hash = ?1 ORDER BY tx_index ASC",
             )?
@@ -1071,7 +1032,7 @@ impl Db {
             block.header.state_root_hash = Hash::ZERO;
         }
 
-        let receipts = self.db.lock().unwrap().prepare_cached("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1 ORDER BY tx_index ASC")?.query_map([block.header.hash], Self::make_receipt)?.collect::<Result<Vec<_>, _>>()?;
+        let receipts = self.pool.get()?.prepare_cached("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1 ORDER BY tx_index ASC")?.query_map([block.header.hash], Self::make_receipt)?.collect::<Result<Vec<_>, _>>()?;
 
         let transaction_hashes = receipts.iter().map(|x| x.tx_hash).collect();
         block.transactions = transaction_hashes;
@@ -1093,12 +1054,9 @@ impl Db {
             block.header.state_root_hash = Hash::ZERO;
         }
 
-        let receipts = self.db.lock().unwrap().prepare_cached("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1 ORDER BY tx_index ASC")?.query_map([block.header.hash], Self::make_receipt)?.collect::<Result<Vec<_>, _>>()?;
+        let receipts = self.pool.get()?.prepare_cached("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1 ORDER BY tx_index ASC")?.query_map([block.header.hash], Self::make_receipt)?.collect::<Result<Vec<_>, _>>()?;
 
-        let transactions: Vec<VerifiedTransaction> = self
-            .db
-            .lock()
-            .unwrap()
+        let transactions: Vec<VerifiedTransaction> = self.pool.get()?
             .prepare_cached(
                 "SELECT data, transactions.tx_hash FROM transactions INNER JOIN receipts ON transactions.tx_hash = receipts.tx_hash WHERE receipts.block_hash = ?1 ORDER BY receipts.tx_index ASC",
             )?
@@ -1127,9 +1085,8 @@ impl Db {
 
     pub fn contains_block(&self, block_hash: &Hash) -> Result<bool> {
         Ok(self
-            .db
-            .lock()
-            .unwrap()
+            .pool
+            .get()?
             .prepare_cached("SELECT 1 FROM blocks WHERE block_hash = ?1")?
             .query_row([block_hash], |row| row.get::<_, i64>(0))
             .optional()?
@@ -1138,9 +1095,8 @@ impl Db {
 
     pub fn contains_canonical_block(&self, block_hash: &Hash) -> Result<bool> {
         Ok(self
-            .db
-            .lock()
-            .unwrap()
+            .pool
+            .get()?
             .prepare_cached("SELECT 1 FROM blocks WHERE is_canonical = TRUE AND block_hash = ?1")?
             .query_row([block_hash], |row| row.get::<_, i64>(0))
             .optional()?
@@ -1191,14 +1147,15 @@ impl Db {
     }
 
     pub fn insert_transaction_receipt(&self, receipt: TransactionReceipt) -> Result<()> {
-        self.insert_transaction_receipt_with_db_tx(&self.db.lock().unwrap(), receipt)
+        let db = self.pool.get()?;
+        self.insert_transaction_receipt_with_db_tx(&db, receipt)
     }
 
     pub fn get_transaction_receipts_in_block(
         &self,
         block_hash: &Hash,
     ) -> Result<Vec<TransactionReceipt>> {
-        Ok(self.db.lock().unwrap().prepare_cached("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1 ORDER BY tx_index")?.query_map([block_hash], Self::make_receipt)?.collect::<Result<Vec<_>, _>>()?)
+        Ok(self.pool.get()?.prepare_cached("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1 ORDER BY tx_index")?.query_map([block_hash], Self::make_receipt)?.collect::<Result<Vec<_>, _>>()?)
     }
 
     pub fn get_total_transaction_count(&self) -> Result<usize> {
@@ -1327,7 +1284,7 @@ fn compress_file<P: AsRef<Path> + Debug>(input_file_path: P, output_file_path: P
 /// An implementor of [eth_trie::DB] which uses a [Connection] to persist data.
 #[derive(Debug, Clone)]
 pub struct TrieStorage {
-    db: Arc<Mutex<Connection>>,
+    pool: Arc<r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>>,
     cache: Arc<Mutex<LruCache<Vec<u8>, Vec<u8>>>>,
 }
 
@@ -1363,10 +1320,10 @@ impl TrieStorage {
                 format!("INSERT OR REPLACE INTO state_trie (key, value) VALUES {params_stmt}");
 
             let params = keys.iter().zip(values).flat_map(|(k, v)| [k, v]);
-            self.db
-                .lock()
+            self.pool
+                .get()
                 .unwrap()
-                .prepare_cached(&query)?
+                .prepare(&query)? // do not cache, since it's unique
                 .execute(rusqlite::params_from_iter(params))?;
             // take lock once
             let mut cache = self.cache.lock().unwrap();
@@ -1387,26 +1344,28 @@ impl eth_trie::DB for TrieStorage {
         }
 
         let value: Option<Vec<u8>> = self
-            .db
-            .lock()
+            .pool
+            .get()
             .unwrap()
             .prepare_cached("SELECT value FROM state_trie WHERE key = ?1")?
             .query_row([key], |row| row.get(0))
             .optional()?;
 
-        let mut cache = self.cache.lock().unwrap();
-        if !cache.contains(key) {
-            if let Some(value) = &value {
-                let _ = cache.insert(key.to_vec(), value.clone());
-            }
+        if let Some(value) = value {
+            let _ = self
+                .cache
+                .lock()
+                .unwrap()
+                .insert(key.to_vec(), value.clone());
+            return Ok(Some(value));
         }
 
-        Ok(value)
+        Ok(None)
     }
 
     fn insert(&self, key: &[u8], value: Vec<u8>) -> Result<(), Self::Error> {
-        self.db
-            .lock()
+        self.pool
+            .get()
             .unwrap()
             .prepare_cached("INSERT OR REPLACE INTO state_trie (key, value) VALUES (?1, ?2)")?
             .execute((key, &value))?;
@@ -1448,7 +1407,7 @@ mod tests {
         let base_path = base_path.path();
         let db = Db::new(Some(base_path), 0, 1024, None).unwrap();
 
-        let sql = db.db.lock().unwrap();
+        let sql = db.pool.get().unwrap();
 
         // Check that EXPLAIN works
         // sqlite> EXPLAIN QUERY PLAN SELECT min(height), max(height) FROM blocks;
@@ -1481,7 +1440,6 @@ mod tests {
             "SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1 ORDER BY tx_index",
             "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE is_canonical = true AND height = (SELECT MAX(height) FROM blocks WHERE is_canonical = TRUE)",
             "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE height = (SELECT MAX(height) FROM blocks) LIMIT 1",
-            // "SELECT block_hash, blocks.view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks INNER JOIN tip_info ON blocks.view = tip_info.finalized_view", // tip_info is one record so scanning is fine
             "SELECT data, transactions.tx_hash FROM transactions INNER JOIN receipts ON transactions.tx_hash = receipts.tx_hash WHERE receipts.block_hash = ?1 ORDER BY receipts.tx_index ASC",
             // TODO: Add more queries
         ];

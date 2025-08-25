@@ -290,7 +290,7 @@ impl Node {
     }
 
     pub fn handle_broadcast_transactions(
-        &mut self,
+        &self,
         transactions: Vec<VerifiedTransaction>,
     ) -> Result<()> {
         let from_broadcast = true;
