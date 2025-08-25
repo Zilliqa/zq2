@@ -21,7 +21,7 @@ fn main() -> Result<()> {
     let args = Args::parse();
 
     let data_dir = PathBuf::from(args.data_dir.clone());
-    let db = Arc::new(Db::new::<PathBuf>(Some(data_dir), args.id, 0, None, true)?);
+    let db = Arc::new(Db::new::<PathBuf>(Some(data_dir), args.id, 0, None, false)?);
 
     let trie_storage = Arc::new(db.state_trie()?);
 

@@ -190,7 +190,7 @@ pub struct NodeConfig {
     /// Sync configuration
     #[serde(default)]
     pub sync: SyncConfig,
-    /// Disable RocksDB active migration
+    /// Enable RocksDB active migration
     #[serde(default)]
     pub active_state_migration: bool,
 }

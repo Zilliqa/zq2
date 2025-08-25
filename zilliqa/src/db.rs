@@ -247,7 +247,7 @@ pub struct Db {
     /// This value should be required only for proto networks to distinguise between ZQ1 and ZQ2 blocks.
     executable_blocks_height: Option<u64>,
     // whether to skip active rocksdb migration
-    skip_migrate: bool,
+    active_migrate: bool,
 }
 
 impl Db {
@@ -256,7 +256,7 @@ impl Db {
         shard_id: u64,
         state_cache_size: usize,
         executable_blocks_height: Option<u64>,
-        skip_migrate: bool,
+        active_migrate: bool,
     ) -> Result<Self>
     where
         P: AsRef<Path>,
@@ -392,7 +392,7 @@ impl Db {
             rdb: Arc::new(rdb),
             path,
             executable_blocks_height,
-            skip_migrate,
+            active_migrate,
         })
     }
 
@@ -680,7 +680,7 @@ impl Db {
             db: self.db.clone(),
             cache: self.cache.clone(),
             rdb: self.rdb.clone(),
-            skip_migrate: self.skip_migrate,
+            active_migrate: self.active_migrate,
         })
     }
 
@@ -1405,7 +1405,7 @@ pub struct TrieStorage {
     db: Arc<Mutex<Connection>>,
     cache: Arc<Mutex<LruCache<Vec<u8>, Vec<u8>>>>,
     rdb: Arc<rocksdb::DB>,
-    skip_migrate: bool,
+    active_migrate: bool,
 }
 
 impl TrieStorage {
@@ -1459,7 +1459,7 @@ impl TrieStorage {
     // actively migrate state_trie from sqlite to rocksdb,
     // by iterating over every node in the trie (forced read)
     pub fn migrate_state_trie(&self) -> Result<()> {
-        if self.skip_migrate {
+        if !self.active_migrate {
             return Ok(());
         }
 
@@ -1476,7 +1476,7 @@ impl TrieStorage {
             db: self.db.clone(),
             cache: self.cache.clone(),
             rdb: self.rdb.clone(),
-            skip_migrate: self.skip_migrate,
+            active_migrate: self.active_migrate,
         });
 
         // pre-load the entire state_trie at this state_root
@@ -1620,7 +1620,7 @@ mod tests {
     fn query_planner_stability_guarantee() {
         let base_path = tempdir().unwrap();
         let base_path = base_path.path();
-        let db = Db::new(Some(base_path), 0, 1024, None, true).unwrap();
+        let db = Db::new(Some(base_path), 0, 1024, None, false).unwrap();
 
         let sql = db.db.lock().unwrap();
 
@@ -1656,7 +1656,7 @@ mod tests {
             "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE is_canonical = true AND height = (SELECT MAX(height) FROM blocks WHERE is_canonical = TRUE)",
             "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE height = (SELECT MAX(height) FROM blocks) LIMIT 1",
             "SELECT data, transactions.tx_hash FROM transactions INNER JOIN receipts ON transactions.tx_hash = receipts.tx_hash WHERE receipts.block_hash = ?1 ORDER BY receipts.tx_index ASC",
-            "SELECT state_root_hash FROM blocks WHERE height = ?1 AND is_canonical = TRUE",
+            "SELECT state_root_hash FROM blocks WHERE is_canonical = TRUE AND height = ?1",
             // TODO: Add more queries
         ];
 
@@ -1684,7 +1684,7 @@ mod tests {
     fn checkpoint_export_import() {
         let base_path = tempdir().unwrap();
         let base_path = base_path.path();
-        let db = Db::new(Some(base_path), 0, 1024, None, true).unwrap();
+        let db = Db::new(Some(base_path), 0, 1024, None, false).unwrap();
 
         // Seed db with data
         let mut rng = ChaCha8Rng::seed_from_u64(0);
