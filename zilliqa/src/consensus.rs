@@ -30,7 +30,7 @@ use crate::{
     aux, blockhooks,
     cfg::{ConsensusConfig, ForkName, NodeConfig},
     constants::{
-        EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, MAX_MISSED_VIEW_AGE,
+        EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, LAG_BEHIND_CURRENT_VIEW, MAX_MISSED_VIEW_AGE,
         TIME_TO_ALLOW_PROPOSAL_BROADCAST,
     },
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey, verify_messages},
@@ -411,27 +411,45 @@ impl Consensus {
             aux::check_and_build_ots_indices(db, latest_block_view)?;
         }
 
-        // TODO: check if the leader is fetched somewhere before this point
-        // after restarting, reconstruct the missed views history even before receiving new proposals
-        let mut block = latest_block.unwrap();
+        // after restarting, reconstruct the missed view history
+        let finalized_view = consensus.get_finalized_view()?;
+        //TODO(#3080): add the missed view history to the checkpoint file and
+        //             persist it in the db after processing the checkpoint file
+        let mut block = consensus
+            .db
+            .get_block(BlockFilter::View(finalized_view))?
+            .ok_or_else(|| anyhow!("missing finalized block!"))?;
         while let Some(parent) = consensus.get_block(&block.parent_hash())? {
+            let state_at = consensus.state.at_root(parent.state_root_hash().into());
             let mut start = parent.view();
-            if start + MAX_MISSED_VIEW_AGE < latest_block_view {
-                start = latest_block_view - MAX_MISSED_VIEW_AGE - 1;
+            if start + MAX_MISSED_VIEW_AGE + LAG_BEHIND_CURRENT_VIEW < latest_block_view {
+                start = latest_block_view - MAX_MISSED_VIEW_AGE - LAG_BEHIND_CURRENT_VIEW - 1;
             }
-            for view in (start + 1..block.view()).rev() {
-                if let Some(leader) = consensus.leader_for_view(parent.hash(), view) {
-                    let mut deque = consensus.state().missed_views.lock().unwrap();
-                    let id = &leader.as_bytes()[..3];
-                    info!(view, id, "~~~~~~~~~~> restoring missed");
-                    deque.push_front((view, leader));
-                }
-            }
+            //TODO(#3080): the missed view history does not contains the preceding views that determine the leader
+            //             therefore we have to go back to the genesis at which the missed view history was empty
+            //             or to the block for which we imported the missed view history from the checkpoint file
+            consensus.state.view_history.populate_history(
+                state_at,
+                block.header.number,
+                block.view(),
+                start,
+            )?;
             block = parent;
-            if block.view() + MAX_MISSED_VIEW_AGE < latest_block_view {
+            if block.view() + MAX_MISSED_VIEW_AGE + LAG_BEHIND_CURRENT_VIEW < latest_block_view {
+                let mut starting_view =
+                    consensus.state().view_history.starting_view.lock().unwrap();
+                *starting_view = start + 1;
                 break;
             }
         }
+        // the next lines are only for logging and can be commented out
+        let starting_view = *consensus.state().view_history.starting_view.lock().unwrap();
+        info!(starting_view, finalized_view, "~~~~~~~~~~> restoring");
+        info!(
+            view = consensus.get_view()?,
+            history = display(&consensus.state.view_history),
+            "~~~~~~~~~~> current"
+        );
 
         // If we started from a checkpoint, execute the checkpointed block now
         if let Some((block, transactions, parent)) = checkpoint_data {
@@ -815,31 +833,6 @@ impl Consensus {
                 block.number(),
                 block.hash()
             );
-            {
-                for view in parent.view() + 1..block.view() {
-                    if let Some(leader) = self.leader_for_view(parent.hash(), view) {
-                        let mut deque = self.state().missed_views.lock().unwrap();
-                        if let Some((last, _)) = deque.back() {
-                            if view <= *last {
-                                continue;
-                            }
-                        }
-                        let id = &leader.as_bytes()[..3];
-                        info!(view, id, "++++++++++> adding missed");
-                        deque.push_back((view, leader));
-                    }
-                }
-                let mut deque = self.state().missed_views.lock().unwrap();
-                while let Some((view, leader)) = deque.front() {
-                    if *view + MAX_MISSED_VIEW_AGE < block.view() {
-                        let id = &leader.as_bytes()[..3];
-                        info!(view, id, "----------> deleting missed");
-                        deque.pop_front();
-                    } else {
-                        break; // keys are monotonic
-                    }
-                }
-            }
 
             if head_block.hash() != parent.hash() || block.number() != head_block.header.number + 1
             {
@@ -2337,12 +2330,43 @@ impl Consensus {
 
     /// Saves the finalized tip view, and runs all hooks for the newly finalized block
     fn finalize_block(&mut self, block: Block) -> Result<()> {
-        trace!(
+        info!(
             "Finalizing block {} at view {} num {}",
             block.hash(),
             block.view(),
             block.number()
         );
+
+        let mut current = block.clone();
+        let finalized_view = self.get_finalized_view()?;
+        let mut new_missed_views: Vec<(u64, NodePublicKey)> = Vec::new();
+        while current.view() > finalized_view {
+            let parent = self.get_block(&current.parent_hash())?.ok_or_else(|| {
+                anyhow!(format!("missing block parent {}", &current.parent_hash()))
+            })?;
+            let state_at = self.state.at_root(parent.state_root_hash().into());
+            let block_header = BlockHeader {
+                number: current.header.number,
+                ..Default::default()
+            };
+            for view in (parent.view() + 1..current.view()).rev() {
+                if let Ok(leader) = state_at.leader(view, block_header) {
+                    new_missed_views.push((view, leader));
+                }
+            }
+            current = parent;
+        }
+        let mut modified = self.state.view_history.extend_history(&new_missed_views)?;
+        modified |= self.state.view_history.prune_history(block.view())?;
+        // the following code is only for logging and can be commented out
+        if modified {
+            info!(
+                view = self.get_view()?,
+                history = display(&self.state.view_history),
+                "~~~~~~~~~~> current"
+            );
+        }
+
         self.set_finalized_view(block.view())?;
 
         let receipts = self.db.get_transaction_receipts_in_block(&block.hash())?;

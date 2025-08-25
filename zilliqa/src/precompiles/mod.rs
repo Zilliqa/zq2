@@ -8,7 +8,7 @@ use std::sync::Arc;
 use alloy::primitives::Address;
 use bls_verify::BlsVerify;
 //use penalty::Penalty;
-pub use penalty::penalty_handle_register;
+pub use penalty::{ViewHistory, penalty_handle_register};
 use pop_verify::PopVerify;
 use revm::ContextPrecompile;
 use scilla::ScillaRead;

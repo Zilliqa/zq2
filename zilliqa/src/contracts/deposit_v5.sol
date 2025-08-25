@@ -198,7 +198,7 @@ contract Deposit is UUPSUpgradeable {
 
     function leaderFromRandomness(
         uint256 randomness
-    ) private view returns (bytes memory) {
+    ) private view returns (bytes memory, uint256) {
         Committee storage currentCommittee = committee();
         // Get a random number in the inclusive range of 0 to (totalStake - 1)
         uint256 position = randomness % currentCommittee.totalStake;
@@ -211,7 +211,7 @@ contract Deposit is UUPSUpgradeable {
             cummulativeStake += stakedBalance;
 
             if (position < cummulativeStake) {
-                return stakerKey;
+                return (stakerKey, i);
             }
         }
 
@@ -222,12 +222,26 @@ contract Deposit is UUPSUpgradeable {
         uint256 viewNumber
     ) public view returns (bytes memory stakerKey) {
         uint256 randomness = viewNumber;
+        uint256 bitmap;
+        uint256 number = committee().stakerKeys.length;
+        // representing stakers in a bitmap is very efficient
+        // as long as their number does not exceed 255
+        require(number < 256, "Too many validators");
+        uint256 index;
         bytes memory output;
         do {
             randomness = uint256(
                 keccak256(bytes.concat(bytes32(randomness)))
             );
-            stakerKey = leaderFromRandomness(randomness);
+            (stakerKey, index) = leaderFromRandomness(randomness);
+            // skip the precompile if this stakerKey has already been checked
+            if (bitmap & (1 << index) != 0)
+                continue;
+            // return the stakerKey if it is the only one left even if jailed
+            if (number == 1)
+                break;
+            number--;
+            bitmap |= 1 << index;
             bytes memory input = abi.encodeWithSelector(
                 hex"5db5c142", // bytes4(keccak256("jailed(bytes,uint256)"))
                 stakerKey,
