@@ -6,12 +6,10 @@ use alloy::{
 };
 use anyhow::{Result, anyhow};
 use revm::{
-    ContextStatefulPrecompile, FrameOrResult, InnerEvmContext,
-    handler::register::EvmHandler,
     interpreter::{CallInputs, Gas, InstructionResult, InterpreterResult},
     precompile::PrecompileError,
     primitives::{
-        Address, Bytes, EVMError, LogData, PrecompileErrors, PrecompileOutput, PrecompileResult,
+        Address, Bytes, LogData,
     },
 };
 use scilla_parser::{

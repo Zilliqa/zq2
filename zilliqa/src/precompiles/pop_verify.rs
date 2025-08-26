@@ -1,10 +1,9 @@
 use blsful::Bls12381G2Impl;
 use ethabi::{ParamType, Token, decode, encode, short_signature};
 use revm::{
-    ContextStatefulPrecompile, InnerEvmContext,
     precompile::PrecompileError,
     primitives::{
-        Bytes, PrecompileErrors, PrecompileOutput, PrecompileResult,
+        Bytes,
         alloy_primitives::private::alloy_rlp::Encodable,
     },
 };

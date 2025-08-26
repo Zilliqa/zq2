@@ -1,14 +1,13 @@
 use blsful::Bls12381G2Impl;
 use ethabi::{ParamType, Token, decode, encode, short_signature};
 use revm::{
-    ContextStatefulPrecompile, InnerEvmContext,
     precompile::PrecompileError,
     primitives::{
-        Bytes, PrecompileErrors, PrecompileOutput, PrecompileResult,
+        Bytes,
         alloy_primitives::private::alloy_rlp::Encodable,
     },
 };
-
+use revm::precompile::{PrecompileOutput, PrecompileResult};
 use crate::exec::PendingState;
 
 pub struct BlsVerify;
@@ -27,7 +26,7 @@ impl BlsVerify {
         _context: &mut InnerEvmContext<PendingState>,
     ) -> PrecompileResult {
         if gas_limit < Self::BLS_VERIFY_GAS_PRICE {
-            return Err(PrecompileErrors::Error(PrecompileError::OutOfGas));
+            return Err(PrecompileError::OutOfGas);
         }
 
         let Ok(decoded) = decode(

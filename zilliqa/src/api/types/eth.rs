@@ -5,7 +5,7 @@ use alloy::{
     primitives::{Address, B256, U64, U128, U256},
     rpc::types::TransactionInput,
 };
-use revm::primitives::AccessListItem;
+use revm::context::transaction::AccessListItem;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 

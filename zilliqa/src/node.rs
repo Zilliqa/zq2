@@ -25,9 +25,10 @@ use anyhow::{Result, anyhow};
 use libp2p::{PeerId, request_response::OutboundFailure};
 use rand::RngCore;
 use revm::{
-    Inspector,
-    primitives::{AccessListItem, ExecutionResult},
 };
+use revm::context_interface::result::ExecutionResult;
+use revm::context_interface::transaction::AccessList;
+use revm_inspector::Inspector;
 use revm_inspectors::tracing::{
     FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig, TransactionContext,
     js::JsInspector,
@@ -952,7 +953,7 @@ impl Node {
         gas: Option<EvmGas>,
         gas_price: Option<u128>,
         value: u128,
-        access_list: Option<Vec<AccessListItem>>,
+        access_list: Option<AccessList>,
     ) -> Result<u64> {
         let block = self
             .get_block(block_number)?

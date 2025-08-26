@@ -1,6 +1,6 @@
+use alloy::primitives::Address;
 use anyhow::Result;
 use libp2p::PeerId;
-use revm::primitives::Address;
 use serde::Deserialize;
 use zilliqa::crypto::{NodePublicKey, SecretKey};
 
@@ -20,7 +20,7 @@ impl EthereumAddress {
             secret_key,
             bls_public_key: secret_key.node_public_key(),
             peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
-            address: secret_key.to_evm_address(),
+            address: secret_key.into(),
         })
     }
 }

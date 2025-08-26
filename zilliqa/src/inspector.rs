@@ -2,11 +2,11 @@ use std::collections::HashSet;
 
 use alloy::primitives::{Address, U256};
 use revm::{
-    Database, EvmContext, Inspector,
-    inspectors::NoOpInspector,
+    Database, Inspector,
     interpreter::{CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome},
-    primitives::CreateScheme,
 };
+use revm::context_interface::{ContextTr, CreateScheme};
+use revm_inspector::NoOpInspector;
 use revm_inspectors::tracing::{
     FourByteInspector, MuxInspector, TracingInspector, js::JsInspector,
 };
@@ -65,8 +65,8 @@ pub struct TouchedAddressInspector {
     pub touched: HashSet<Address>,
 }
 
-impl<DB: Database> Inspector<DB> for TouchedAddressInspector {
-    fn call(&mut self, _: &mut EvmContext<DB>, inputs: &mut CallInputs) -> Option<CallOutcome> {
+impl<CTX> Inspector<CTX> for TouchedAddressInspector {
+    fn call(&mut self, _: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
         self.touched.insert(inputs.caller);
         self.touched.insert(inputs.bytecode_address);
         self.touched.insert(inputs.target_address);
@@ -75,7 +75,7 @@ impl<DB: Database> Inspector<DB> for TouchedAddressInspector {
 
     fn create_end(
         &mut self,
-        _: &mut EvmContext<DB>,
+        _: &mut CTX,
         inputs: &CreateInputs,
         outcome: CreateOutcome,
     ) -> CreateOutcome {
@@ -128,10 +128,10 @@ impl CreatorInspector {
     }
 }
 
-impl<DB: Database> Inspector<DB> for CreatorInspector {
+impl<CTX> Inspector<CTX> for CreatorInspector {
     fn create_end(
         &mut self,
-        _: &mut EvmContext<DB>,
+        _: &mut CTX,
         inputs: &CreateInputs,
         outcome: CreateOutcome,
     ) -> CreateOutcome {
@@ -163,10 +163,10 @@ impl OtterscanTraceInspector {
     }
 }
 
-impl<DB: Database> Inspector<DB> for OtterscanTraceInspector {
+impl<CTX: ContextTr> Inspector<CTX> for OtterscanTraceInspector {
     fn call(
         &mut self,
-        context: &mut EvmContext<DB>,
+        context: &mut CTX,
         inputs: &mut CallInputs,
     ) -> Option<CallOutcome> {
         let ty = match inputs.scheme {
@@ -180,11 +180,11 @@ impl<DB: Database> Inspector<DB> for OtterscanTraceInspector {
         };
         self.entries.push(TraceEntry {
             ty,
-            depth: context.journaled_state.depth(),
+            depth: context.journal().depth().into(),
             from: inputs.caller,
             to: inputs.target_address,
             value: inputs.transfer_value().map(|v| v.to()),
-            input: inputs.input.to_vec(),
+            input: inputs.input.bytes(context).to_vec(),
         });
 
         None
@@ -192,7 +192,7 @@ impl<DB: Database> Inspector<DB> for OtterscanTraceInspector {
 
     fn create(
         &mut self,
-        context: &mut EvmContext<DB>,
+        context: &mut CTX,
         inputs: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
         let ty = match inputs.scheme {
@@ -273,10 +273,10 @@ impl OtterscanOperationInspector {
     }
 }
 
-impl<DB: Database> Inspector<DB> for OtterscanOperationInspector {
+impl<CTX> Inspector<CTX> for OtterscanOperationInspector {
     fn call(
         &mut self,
-        context: &mut EvmContext<DB>,
+        context: &mut CTX,
         inputs: &mut CallInputs,
     ) -> Option<CallOutcome> {
         if context.journaled_state.depth() != 0 && inputs.transfers_value() {
@@ -293,7 +293,7 @@ impl<DB: Database> Inspector<DB> for OtterscanOperationInspector {
 
     fn create(
         &mut self,
-        context: &mut EvmContext<DB>,
+        context: &mut CTX,
         inputs: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
         if context.journaled_state.depth() != 0 {

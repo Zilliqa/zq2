@@ -10,19 +10,25 @@ use std::{
     sync::{Arc, MutexGuard},
 };
 
-use alloy::primitives::{Address, Bytes, U256, address, hex};
-use anyhow::{Context, Result, anyhow};
+use alloy::{
+    consensus::TxType,
+    primitives::{Address, Bytes, U256, address, hex},
+};
+use anyhow::{Result, anyhow};
 use eth_trie::{EthTrie, Trie};
 use ethabi::Token;
 use jsonrpsee::types::ErrorObjectOwned;
 use libp2p::PeerId;
-use revm::{
-    Database, DatabaseRef, Evm, GetInspector, Inspector, JournaledState, inspector_handle_register,
-    primitives::{
-        AccessListItem, AccountInfo, B256, BlockEnv, Bytecode, Env, ExecutionResult, HaltReason,
-        HandlerCfg, KECCAK_EMPTY, Output, ResultAndState, SpecId, TxEnv,
-    },
-};
+use revm::{Database, DatabaseRef, Inspector, Journal, context::{
+    BlockEnv, CfgEnv, Evm, TxEnv,
+    result::{ExecutionResult, HaltReason, Output, ResultAndState},
+    transaction::AccessListItem,
+}, database::InMemoryDB, primitives::{B256, KECCAK_EMPTY, TxKind, hardfork::SpecId}, state::{AccountInfo, Bytecode}, MainContext, MainBuilder, ExecuteEvm};
+use revm::context_interface::JournalTr;
+use revm::context_interface::transaction::AccessList;
+use revm::database_interface::EmptyDB;
+use revm::handler::{EthPrecompiles, EvmTr, PrecompileProvider};
+use revm_context::Context;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -64,7 +70,7 @@ type ScillaResultAndState = (ScillaResult, HashMap<Address, PendingAccount>);
 /// Data returned after applying a [Transaction] to [State].
 #[derive(Clone)]
 pub enum TransactionApplyResult {
-    Evm(ResultAndState, Box<Env>),
+    Evm(ResultAndState, Box<CfgEnv>),
     Scilla(ScillaResultAndState),
 }
 
@@ -436,11 +442,13 @@ pub struct ExternalContext<'a, I> {
     pub has_called_scilla_precompile: bool,
 }
 
-impl<I: Inspector<PendingState>> GetInspector<PendingState> for ExternalContext<'_, I> {
-    fn get_inspector(&mut self) -> &mut impl Inspector<PendingState> {
-        &mut self.inspector
-    }
-}
+pub type ZQ2EvmContext<'a, I> = Context<BlockEnv, TxEnv, CfgEnv, EmptyDB, Journal<PendingState>, ExternalContext<'a, I>>;
+
+// impl<I: Inspector<PendingState>> GetInspector<PendingState> for ExternalContext<'_, I> {
+//     fn get_inspector(&mut self) -> &mut impl Inspector<PendingState> {
+//         &mut self.inspector
+//     }
+// }
 
 const SPEC_ID: SpecId = SpecId::SHANGHAI;
 
@@ -508,8 +516,12 @@ impl State {
 
     fn failed(
         mut result_and_state: ResultAndState,
-        env: Box<Env>,
-    ) -> Result<(ResultAndState, HashMap<Address, PendingAccount>, Box<Env>)> {
+        env: Box<CfgEnv>,
+    ) -> Result<(
+        ResultAndState,
+        HashMap<Address, PendingAccount>,
+        Box<CfgEnv>,
+    )> {
         result_and_state.state.clear();
         Ok((
             ResultAndState {
@@ -535,19 +547,23 @@ impl State {
         amount: u128,
         payload: Vec<u8>,
         nonce: Option<u64>,
-        access_list: Option<Vec<AccessListItem>>,
+        access_list: Option<AccessList>,
         current_block: BlockHeader,
         inspector: I,
         enable_inspector: bool,
         base_fee_check: BaseFeeCheck,
         extra_opts: ExtraOpts,
-    ) -> Result<(ResultAndState, HashMap<Address, PendingAccount>, Box<Env>)> {
+    ) -> Result<(
+        ResultAndState,
+        HashMap<Address, PendingAccount>,
+        Box<CfgEnv>,
+    )> {
         let mut padded_view_number = [0u8; 32];
         padded_view_number[24..].copy_from_slice(&current_block.view.to_be_bytes());
 
         let fork = self.forks.get(current_block.number).clone();
         let external_context = ExternalContext {
-            inspector,
+            inspector: inspector.clone(),
             fork: &fork,
             enforce_transaction_failure: false,
             callers: vec![from_addr],
@@ -557,14 +573,68 @@ impl State {
         let access_list = if fork.inject_access_list {
             access_list.unwrap_or_default()
         } else {
-            vec![]
+            AccessList::default()
         };
         let gas_priority_fee = if fork.use_max_gas_priority_fee {
-            max_priority_fee_per_gas.map(U256::from)
+            max_priority_fee_per_gas.map(u128::from)
         } else {
             None
         };
         let pending_state = PendingState::new(self.clone(), fork.clone());
+
+        let evm_ctx = Context::new(pending_state, SPEC_ID).with_cfg({
+            let mut cfg = CfgEnv::new_with_spec(SPEC_ID);
+            cfg.disable_eip3607 = extra_opts.disable_eip3607;
+            cfg.chain_id = self.chain_id.eth;
+            cfg.disable_base_fee = match base_fee_check {
+                BaseFeeCheck::Validate => false,
+                BaseFeeCheck::Ignore => true,
+            };
+            cfg
+        }).with_block(BlockEnv {
+            number: U256::from(current_block.number),
+            timestamp: U256::from(
+                current_block
+                    .timestamp
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            ),
+            gas_limit: self.block_gas_limit.0,
+            basefee: self.gas_price.into(),
+            difficulty: U256::from(1),
+            prevrandao: Some(Hash::builder().with(padded_view_number).finalize().into()),
+            blob_excess_gas_and_price: None,
+            beneficiary: Default::default()
+        }).with_tx(TxEnv {
+            tx_type: TxType::Legacy.into(),
+            caller: from_addr.0.into(),
+            gas_limit: gas_limit.0,
+            gas_price: u128::from(gas_price),
+            kind: to_addr.into(),
+            value: U256::from(amount),
+            data: payload.clone().into(),
+            nonce: nonce.unwrap_or_default(),
+            chain_id: Some(self.chain_id.eth),
+            access_list,
+            gas_priority_fee,
+            blob_hashes: vec![],
+            max_fee_per_blob_gas: 0,
+            authorization_list: Vec::default(),
+        });
+
+        let mut evm = evm_ctx.build_mainnet().with_inspector(inspector).with_precompiles({
+            let mut precompiles = EthPrecompiles::default();
+            precompiles.set_spec(SPEC_ID);
+            precompiles.extend(get_custom_precompiles());
+            precompiles
+        });
+
+        let result = evm.replay();
+
+
+
+        /*
         let mut evm = Evm::builder()
             .with_db(pending_state)
             .with_block_env(BlockEnv {
@@ -582,6 +652,7 @@ impl State {
                 difficulty: U256::from(1),
                 prevrandao: Some(Hash::builder().with(padded_view_number).finalize().into()),
                 blob_excess_gas_and_price: None,
+                beneficiary: Default::default(),
             })
             .with_external_context(external_context)
             .with_handler_cfg(HandlerCfg { spec_id: SPEC_ID })
@@ -595,10 +666,11 @@ impl State {
                 };
             })
             .with_tx_env(TxEnv {
+                tx_type: TxType::Legacy,
                 caller: from_addr.0.into(),
                 gas_limit: gas_limit.0,
                 gas_price: U256::from(gas_price),
-                transact_to: to_addr.into(),
+                kind: to_addr.into(),
                 value: U256::from(amount),
                 data: payload.clone().into(),
                 nonce,
@@ -621,9 +693,9 @@ impl State {
             evm = evm.append_handler_register(inspector_handle_register);
         }
         let mut evm = evm.build();
-
-        let result_and_state = evm.transact()?;
-        let mut ctx_with_handler = evm.into_context_with_handler_cfg();
+        */
+        let result_and_state = evm.replay()?;
+        let mut ctx_with_handler = evm.ctx();
 
         // If the scilla precompile failed for whitelisted zq1 contract we mark the entire transaction as failed
         if ctx_with_handler
@@ -951,7 +1023,7 @@ impl State {
     /// Applies a state delta from an EVM execution to the state.
     pub fn apply_delta_evm(
         &mut self,
-        state: &revm::primitives::HashMap<Address, revm::primitives::Account>,
+        state: &revm::primitives::HashMap<Address, revm::state::Account>,
         current_block_number: u64,
     ) -> Result<()> {
         let only_mutated_accounts_update_state = self
@@ -1206,7 +1278,7 @@ impl State {
         gas: Option<EvmGas>,
         gas_price: Option<u128>,
         value: u128,
-        access_list: Option<Vec<AccessListItem>>,
+        access_list: Option<AccessList>,
     ) -> Result<u64> {
         let gas_price = gas_price.unwrap_or(self.gas_price);
 
@@ -1280,7 +1352,7 @@ impl State {
         gas: EvmGas,
         gas_price: u128,
         value: u128,
-        access_list: Option<Vec<AccessListItem>>,
+        access_list: Option<AccessList>,
     ) -> Result<u64> {
         let (ResultAndState { result, .. }, ..) = self.apply_transaction_evm(
             from_addr,
@@ -1391,7 +1463,7 @@ pub struct PendingState {
     pub new_state: HashMap<Address, PendingAccount>,
     // Read-only copy of the current cached EVM state. Only `Some` when this Scilla call is made by the `scilla_call`
     // precompile.
-    pub evm_state: Option<JournaledState>,
+    pub evm_state: Option<Journal<InMemoryDB>>,
     pub fork: Fork,
 }
 
@@ -1401,7 +1473,7 @@ pub struct PendingState {
 fn load_account<'a>(
     pre_state: &State,
     new_state: &'a mut HashMap<Address, PendingAccount>,
-    evm_state: &Option<JournaledState>,
+    evm_state: &Option<Journal<InMemoryDB>>,
     address: Address,
 ) -> Result<&'a mut PendingAccount> {
     match (
