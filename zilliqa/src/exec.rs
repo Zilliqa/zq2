@@ -23,8 +23,8 @@ use revm::{Database, DatabaseRef, Inspector, Journal, context::{
     BlockEnv, CfgEnv, Evm, TxEnv,
     result::{ExecutionResult, HaltReason, Output, ResultAndState},
     transaction::AccessListItem,
-}, database::InMemoryDB, primitives::{B256, KECCAK_EMPTY, TxKind, hardfork::SpecId}, state::{AccountInfo, Bytecode}, MainContext, MainBuilder, ExecuteEvm};
-use revm::context_interface::JournalTr;
+}, database::InMemoryDB, primitives::{B256, KECCAK_EMPTY, TxKind, hardfork::SpecId}, state::{AccountInfo, Bytecode}, MainBuilder, ExecuteEvm};
+use revm::context_interface::{DBErrorMarker, JournalTr};
 use revm::context_interface::transaction::AccessList;
 use revm::database_interface::EmptyDB;
 use revm::handler::{EthPrecompiles, EvmTr, PrecompileProvider};
@@ -42,7 +42,7 @@ use crate::{
     error::ensure_success,
     inspector::{self, ScillaInspector},
     message::{Block, BlockHeader},
-    precompiles::{get_custom_precompiles, scilla_call_handle_register},
+    precompiles::{get_custom_precompiles},
     scilla::{self, ParamValue, Scilla, split_storage_key, storage_key},
     state::{Account, Code, ContractInit, ExternalLibrary, State, contract_addr},
     time::SystemTime,
@@ -319,6 +319,8 @@ impl From<scilla::Error> for ScillaException {
 // We need to define a custom error type for our [Database], which implements [Error].
 #[derive(Debug)]
 pub struct DatabaseError(anyhow::Error);
+
+impl DBErrorMarker for DatabaseError {}
 
 impl From<anyhow::Error> for DatabaseError {
     fn from(err: anyhow::Error) -> Self {

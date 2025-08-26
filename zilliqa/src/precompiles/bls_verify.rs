@@ -1,3 +1,4 @@
+use alloy::primitives::Address;
 use blsful::Bls12381G2Impl;
 use ethabi::{ParamType, Token, decode, encode, short_signature};
 use revm::{
@@ -7,13 +8,15 @@ use revm::{
         alloy_primitives::private::alloy_rlp::Encodable,
     },
 };
+use revm::interpreter::InputsImpl;
 use revm::precompile::{PrecompileOutput, PrecompileResult};
-use crate::exec::PendingState;
+use crate::exec::{PendingState, ZQ2EvmContext};
+use crate::precompiles::ContextPrecompile;
 
 pub struct BlsVerify;
 
 // keep in-sync with zilliqa/src/contracts/deposit_v3.sol
-impl BlsVerify {
+impl<I> BlsVerify {
     /// We charge gas as if we were using Ethereum precompile gas prices for each operation:
     ///     - Message to hash: SHA256 over 76 byte message: 60 + 12 * 3 = 96
     ///     - Hash to point: Rough estimate                             = 100_000
@@ -23,7 +26,7 @@ impl BlsVerify {
     fn bls_verify(
         input: &[u8],
         gas_limit: u64,
-        _context: &mut InnerEvmContext<PendingState>,
+        _: &mut ZQ2EvmContext<I>,
     ) -> PrecompileResult {
         if gas_limit < Self::BLS_VERIFY_GAS_PRICE {
             return Err(PrecompileError::OutOfGas);
@@ -67,12 +70,14 @@ impl BlsVerify {
     }
 }
 
-impl ContextStatefulPrecompile<PendingState> for BlsVerify {
+impl<I> ContextPrecompile<ZQ2EvmContext<'_, I>> for BlsVerify {
     fn call(
         &self,
-        input: &Bytes,
-        gas_price: u64,
-        context: &mut InnerEvmContext<PendingState>,
+        ctx: &mut ZQ2EvmContext<I>,
+        _dest: Address,
+        input: &InputsImpl,
+        _is_static: bool,
+        gas_limit: u64
     ) -> PrecompileResult {
         if input.length() < 4 {
             return Err(PrecompileError::Other(
@@ -89,9 +94,10 @@ impl ContextStatefulPrecompile<PendingState> for BlsVerify {
             Self::bls_verify,
         )];
 
+        let raw_input = input.input.bytes(ctx);
         let Some(handler) = dispatch_table
             .iter()
-            .find(|&predicate| predicate.0 == input[..4])
+            .find(|&predicate| predicate.0 == raw_input[..4])
         else {
             return Err(PrecompileError::Other(
                 "Unable to find handler with given selector".to_string(),
@@ -99,6 +105,6 @@ impl ContextStatefulPrecompile<PendingState> for BlsVerify {
             .into());
         };
 
-        handler.1(&input[4..], gas_price, context)
+        handler.1(&raw_input[4..], gas_limit, ctx)
     }
 }

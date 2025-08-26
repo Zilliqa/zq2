@@ -1,3 +1,4 @@
+use alloy::primitives::Address;
 use blsful::Bls12381G2Impl;
 use ethabi::{ParamType, Token, decode, encode, short_signature};
 use revm::{
@@ -7,21 +8,23 @@ use revm::{
         alloy_primitives::private::alloy_rlp::Encodable,
     },
 };
-
-use crate::exec::PendingState;
+use revm::interpreter::InputsImpl;
+use revm_precompile::{PrecompileOutput, PrecompileResult};
+use crate::exec::{ZQ2EvmContext};
+use crate::precompiles::ContextPrecompile;
 
 pub struct PopVerify;
 
 // keep in-sync with zilliqa/src/contracts/deposit_v2.sol
-impl PopVerify {
+impl<I> PopVerify {
     const POP_VERIFY_GAS_PRICE: u64 = 1_000_000u64; // FIXME: Gas Price?
     fn pop_verify(
         input: &[u8],
         gas_limit: u64,
-        _context: &mut InnerEvmContext<PendingState>,
+        _: &mut ZQ2EvmContext<I>,
     ) -> PrecompileResult {
         if gas_limit < Self::POP_VERIFY_GAS_PRICE {
-            return Err(PrecompileErrors::Error(PrecompileError::OutOfGas));
+            return Err(PrecompileError::OutOfGas);
         }
 
         let Ok(decoded) = decode(&[ParamType::Bytes, ParamType::Bytes], input) else {
@@ -55,12 +58,14 @@ impl PopVerify {
     }
 }
 
-impl ContextStatefulPrecompile<PendingState> for PopVerify {
+impl<I> ContextPrecompile<ZQ2EvmContext<'_, I>> for PopVerify {
     fn call(
         &self,
-        input: &Bytes,
-        gas_price: u64,
-        context: &mut InnerEvmContext<PendingState>,
+        ctx: &mut ZQ2EvmContext<I>,
+        _dest: Address,
+        input: &InputsImpl,
+        _is_static: bool,
+        gas_limit: u64
     ) -> PrecompileResult {
         if input.length() < 4 {
             return Err(PrecompileError::Other(
@@ -74,9 +79,10 @@ impl ContextStatefulPrecompile<PendingState> for PopVerify {
             Self::pop_verify,
         )];
 
+        let raw_input = input.input.bytes(ctx);
         let Some(handler) = dispatch_table
             .iter()
-            .find(|&predicate| predicate.0 == input[..4])
+            .find(|&predicate| predicate.0 == raw_input[..4])
         else {
             return Err(PrecompileError::Other(
                 "Unable to find handler with given selector".to_string(),
@@ -84,6 +90,6 @@ impl ContextStatefulPrecompile<PendingState> for PopVerify {
             .into());
         };
 
-        handler.1(&input[4..], gas_price, context)
+        handler.1(&raw_input[4..], gas_limit, ctx)
     }
 }

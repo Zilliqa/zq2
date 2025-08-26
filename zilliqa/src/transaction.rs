@@ -14,10 +14,12 @@ use alloy::{
     rlp::{EMPTY_STRING_CODE, Encodable, Header},
     sol_types::SolValue,
 };
+use alloy::primitives::{PrimitiveSignature, Signature};
 use anyhow::{Result, anyhow};
 use bytes::{BufMut, BytesMut};
 use itertools::Itertools;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
+use revm::context_interface::transaction::AccessList;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use sha3::{
@@ -147,17 +149,17 @@ pub enum SignedTransaction {
     Legacy {
         #[serde(with = "ser_rlp")]
         tx: TxLegacy,
-        sig: PrimitiveSignature,
+        sig: Signature,
     },
     Eip2930 {
         #[serde(with = "ser_rlp")]
         tx: TxEip2930,
-        sig: PrimitiveSignature,
+        sig: Signature,
     },
     Eip1559 {
         #[serde(with = "ser_rlp")]
         tx: TxEip1559,
-        sig: PrimitiveSignature,
+        sig: Signature,
     },
     Zilliqa {
         tx: TxZilliqa,
@@ -791,11 +793,11 @@ impl Transaction {
         }
     }
 
-    pub fn access_list(&self) -> Option<Vec<AccessListItem>> {
+    pub fn access_list(&self) -> Option<AccessList> {
         match self {
             Transaction::Legacy(_) => None,
-            Transaction::Eip2930(TxEip2930 { access_list, .. }) => Some(access_list.0.clone()),
-            Transaction::Eip1559(TxEip1559 { access_list, .. }) => Some(access_list.0.clone()),
+            Transaction::Eip2930(TxEip2930 { access_list, .. }) => Some(access_list.clone()),
+            Transaction::Eip1559(TxEip1559 { access_list, .. }) => Some(access_list.clone()),
             Transaction::Zilliqa(_) => None,
             Transaction::Intershard(_) => None,
         }

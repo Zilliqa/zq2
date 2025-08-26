@@ -8,12 +8,12 @@ use alloy::primitives::Address;
 use revm::context_interface::{Cfg, ContextTr};
 use revm::handler::{EthPrecompiles, PrecompileProvider};
 use revm::interpreter::{InputsImpl, InterpreterResult};
+use revm_precompile::PrecompileResult;
 use bls_verify::BlsVerify;
 use pop_verify::PopVerify;
 use scilla::ScillaRead;
-pub use scilla::scilla_call_handle_register;
 
-use crate::exec::PendingState;
+use crate::exec::{PendingState, ZQ2EvmContext};
 
 #[derive(Debug, Clone)]
 pub struct ZQ2PrecompileProvider {
@@ -46,12 +46,6 @@ where
         is_static: bool,
         gas_limit: u64,
     ) -> Result<Option<Self::Output>, String> {
-        // Check if this is our custom precompile
-        if *address == CUSTOM_PRECOMPILE_ADDRESS {
-            return Ok(Some(run_custom_precompile(
-                context, inputs, is_static, gas_limit,
-            )?));
-        }
 
         // Otherwise, delegate to standard Ethereum precompiles
         self.inner
@@ -60,29 +54,42 @@ where
 
     fn warm_addresses(&self) -> Box<impl Iterator<Item = Address>> {
         // Include our custom precompile address along with standard ones
-        let mut addresses = vec![CUSTOM_PRECOMPILE_ADDRESS];
+        let mut addresses = vec![];
         addresses.extend(self.inner.warm_addresses());
         Box::new(addresses.into_iter())
     }
 
     fn contains(&self, address: &Address) -> bool {
-        *address == CUSTOM_PRECOMPILE_ADDRESS || self.inner.contains(address)
+        self.inner.contains(address)
     }
 }
 
-pub fn get_custom_precompiles() -> Vec<(Address, ContextPrecompile<PendingState>)> {
+pub trait ContextPrecompile<CTX: ContextTr>: Sync + Send {
+    fn call(
+        &self,
+        ctx: &mut CTX,
+        target: Address,
+        input: &InputsImpl,
+        is_static: bool,
+        gas_litmit: u64
+    ) -> PrecompileResult;
+}
+
+pub type ExtendedPrecompileFn<CTX: ContextTr> = fn(&mut CTX, Address, &InputsImpl, bool, u64) -> PrecompileResult;
+
+pub fn get_custom_precompiles<'a, I>() -> Vec<(Address, Arc<dyn ContextPrecompile<ZQ2EvmContext<'a, I>>>)> {
     vec![
         (
             Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x80"),
-            ContextPrecompile::ContextStateful(Arc::new(PopVerify)),
+            Arc::new(PopVerify),
         ),
         (
             Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x81"),
-            ContextPrecompile::ContextStateful(Arc::new(BlsVerify)),
+            Arc::new(BlsVerify),
         ),
         (
             Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x92"),
-            ContextPrecompile::ContextStateful(Arc::new(ScillaRead)),
+            Arc::new(ScillaRead),
         ),
         // The "Scilla call" precompile also exists at address `0x5a494c53`. However, it is implemented by overwriting
         // the `revm` call handler, rather than using a conventional precompile. This is because it requires extra

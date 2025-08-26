@@ -5,7 +5,7 @@ use revm::{
     Database, Inspector,
     interpreter::{CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome},
 };
-use revm::context_interface::{ContextTr, CreateScheme};
+use revm::context_interface::{ContextTr, CreateScheme, JournalTr};
 use revm_inspector::NoOpInspector;
 use revm_inspectors::tracing::{
     FourByteInspector, MuxInspector, TracingInspector, js::JsInspector,
@@ -77,13 +77,12 @@ impl<CTX> Inspector<CTX> for TouchedAddressInspector {
         &mut self,
         _: &mut CTX,
         inputs: &CreateInputs,
-        outcome: CreateOutcome,
-    ) -> CreateOutcome {
+        outcome: &mut CreateOutcome,
+    ) {
         self.touched.insert(inputs.caller);
         if let Some(address) = outcome.address {
             self.touched.insert(address);
         }
-        outcome
     }
 
     fn selfdestruct(&mut self, contract: Address, target: Address, _: U256) {
@@ -133,14 +132,13 @@ impl<CTX> Inspector<CTX> for CreatorInspector {
         &mut self,
         _: &mut CTX,
         inputs: &CreateInputs,
-        outcome: CreateOutcome,
-    ) -> CreateOutcome {
+        outcome: &mut CreateOutcome,
+    ) {
         if let Some(address) = outcome.address {
             if address == self.contract {
                 self.creator = Some(inputs.caller);
             }
         }
-        outcome
     }
 }
 
@@ -198,11 +196,12 @@ impl<CTX: ContextTr> Inspector<CTX> for OtterscanTraceInspector {
         let ty = match inputs.scheme {
             CreateScheme::Create => TraceEntryType::Create,
             CreateScheme::Create2 { .. } => TraceEntryType::Create2,
+            _ => TraceEntryType::Create,
         };
-        let nonce = context.journaled_state.account(inputs.caller).info.nonce;
+        let nonce = context.journal().db().account(inputs.caller).info.nonce;
         self.entries.push(TraceEntry {
             ty,
-            depth: context.journaled_state.depth(),
+            depth: context.journaled_state().depth().into(),
             from: inputs.caller,
             to: inputs.created_address(nonce),
             value: Some(inputs.value.to()),

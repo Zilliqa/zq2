@@ -12,6 +12,10 @@ use revm::{
         Address, Bytes, LogData,
     },
 };
+use revm::interpreter::InputsImpl;
+use revm::interpreter::interpreter_types::InputsTr;
+use revm_context::JournalTr;
+use revm_precompile::{PrecompileOutput, PrecompileResult};
 use scilla_parser::{
     ast::nodes::{
         NodeAddressType, NodeByteStr, NodeMetaIdentifier, NodeScillaType, NodeTypeMapKey,
@@ -29,6 +33,8 @@ use crate::{
     state::Code,
     transaction::{EvmGas, ZilAmount},
 };
+use crate::exec::ZQ2EvmContext;
+use crate::precompiles::ContextPrecompile;
 
 /// Internal representation of Scilla types. This is a greatly simplified version of [NodeScillaType] (which comes
 /// directly from the Scilla parser) and only supports the types we currently care about. Raw parsed types can be
@@ -210,14 +216,14 @@ fn get_indices(
 pub(crate) struct ScillaRead;
 
 #[track_caller]
-fn oog<T>() -> Result<T, PrecompileErrors> {
+fn oog<T>() -> Result<T, PrecompileError> {
     let location = std::panic::Location::caller();
     trace!(%location, "scilla_call out of gas");
-    Err(PrecompileErrors::Error(PrecompileError::OutOfGas))
+    Err(PrecompileError::OutOfGas)
 }
 
 #[track_caller]
-fn err<T>(message: impl Into<String>) -> Result<T, PrecompileErrors> {
+fn err<T>(message: impl Into<String>) -> Result<T, PrecompileError> {
     let location = std::panic::Location::caller();
     let message = message.into();
     trace!(%location, message, "scilla_call failed");
@@ -225,19 +231,19 @@ fn err<T>(message: impl Into<String>) -> Result<T, PrecompileErrors> {
 }
 
 #[track_caller]
-fn err_inner(message: impl Into<String>) -> PrecompileErrors {
+fn err_inner(message: impl Into<String>) -> PrecompileError {
     let location = std::panic::Location::caller();
     let message = message.into();
     trace!(%location, message, "scilla_call failed");
-    PrecompileErrors::Error(PrecompileError::other(message))
+    PrecompileError::other(message)
 }
 
 #[track_caller]
-fn fatal<T>(message: &'static str) -> Result<T, PrecompileErrors> {
+fn fatal<T>(message: &'static str) -> Result<T, PrecompileError> {
     let location = std::panic::Location::caller();
     trace!(%location, message, "scilla_call failed");
-    Err(PrecompileErrors::Fatal {
-        msg: message.to_owned(),
+    Err(PrecompileError::Fatal {
+        0: message.to_owned(),
     })
 }
 
@@ -245,14 +251,16 @@ fn fatal<T>(message: &'static str) -> Result<T, PrecompileErrors> {
 const BASE_COST: u64 = 15;
 const PER_BYTE_COST: u64 = 3;
 
-impl ContextStatefulPrecompile<PendingState> for ScillaRead {
+impl<I> ContextPrecompile<ZQ2EvmContext<'_, I>> for ScillaRead {
     fn call(
         &self,
-        input: &Bytes,
-        gas_limit: u64,
-        context: &mut InnerEvmContext<PendingState>,
+        ctx: &mut ZQ2EvmContext<I>,
+        _dest: Address,
+        input: &InputsImpl,
+        _is_static: bool,
+        gas_limit: u64
     ) -> PrecompileResult {
-        let Ok(input_len) = u64::try_from(input.len()) else {
+        let Ok(input_len) = u64::try_from(input.input().len()) else {
             return err("input too long");
         };
         let required_gas = input_len * PER_BYTE_COST + BASE_COST;
@@ -260,13 +268,15 @@ impl ContextStatefulPrecompile<PendingState> for ScillaRead {
             return oog();
         }
 
-        let mut decoder = Decoder::new(input, false);
+        let raw_input = input.input().bytes(ctx);
+
+        let mut decoder = Decoder::new(&raw_input);
 
         let address =
             Address::detokenize(decoder.decode().map_err(|_| err_inner("invalid address"))?);
         let field = String::detokenize(decoder.decode().map_err(|_| err_inner("invalid field"))?);
 
-        let account = match context.db.load_account(address) {
+        let account = match ctx.journaled_state.db().load_account(address) {
             Ok(account) => account,
             Err(e) => {
                 tracing::error!(?e, "state access failed");
@@ -320,7 +330,7 @@ impl ContextStatefulPrecompile<PendingState> for ScillaRead {
                     };
                     value.abi_encode()
                 } else {
-                    let Ok(value) = context.db.load_storage(address, &field, &indices) else {
+                    let Ok(value) = ctx.db.load_storage(address, &field, &indices) else {
                         return fatal("failed to read value");
                     };
                     if let Some(value) = value {
@@ -355,7 +365,7 @@ impl ContextStatefulPrecompile<PendingState> for ScillaRead {
                     };
                     value.abi_encode()
                 } else {
-                    let Ok(value) = context.db.load_storage(address, &field, &indices) else {
+                    let Ok(value) = ctx.journaled_state.db().load_storage(address, &field, &indices) else {
                         return fatal("failed to read value");
                     };
                     if let Some(value) = value {
@@ -375,7 +385,7 @@ impl ContextStatefulPrecompile<PendingState> for ScillaRead {
     }
 }
 
-pub fn scilla_call_handle_register<I: ScillaInspector>(
+/*pub fn scilla_call_handle_register<I: ScillaInspector>(
     handler: &mut EvmHandler<'_, ExternalContext<I>, PendingState>,
 ) {
     // Create handler
@@ -522,8 +532,9 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
         prev_handle(ctx, frame, memory, outcome)
     });
 }
+*/
 
-fn scilla_call_precompile<I: ScillaInspector>(
+/*fn scilla_call_precompile<I: ScillaInspector>(
     input: &CallInputs,
     gas_limit: u64,
     evmctx: &mut InnerEvmContext<PendingState>,
@@ -723,3 +734,5 @@ fn scilla_call_precompile<I: ScillaInspector>(
         Bytes::new(),
     ))
 }
+
+ */
