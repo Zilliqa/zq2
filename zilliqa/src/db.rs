@@ -361,9 +361,9 @@ impl Db {
 
         // RocksDB
         let rdb_path = if let Some(s) = path.clone() {
-            s.join("state.db")
+            s.join("state.rocksdb")
         } else {
-            tempfile::tempdir().unwrap().path().join("state.db")
+            tempfile::tempdir().unwrap().path().join("state.rocksdb")
         };
 
         let cache = Cache::new_lru_cache(1 << 28); // same as SQLite in-memory page cache
@@ -1409,6 +1409,24 @@ pub struct TrieStorage {
 }
 
 impl TrieStorage {
+    pub fn write_batch(&self, keys: Vec<Vec<u8>>, values: Vec<Vec<u8>>) -> Result<()> {
+        if keys.is_empty() {
+            return Ok(());
+        }
+
+        anyhow::ensure!(keys.len() == values.len(), "Keys != Values");
+
+        let mut batch = WriteBatchWithTransaction::<false>::default();
+        let mut cache = self.cache.lock().unwrap();
+        for (key, value) in keys.into_iter().zip(values.into_iter()) {
+            batch.put(key.as_slice(), value.as_slice());
+            cache.insert(key, value).ok(); // write-thru policy; silent errors
+        }
+        self.rdb.write(batch)?;
+
+        Ok(())
+    }
+
     // copy state_trie data from rocksdb to sqlite
     pub fn revert_state(&self) -> Result<(), rocksdb::Error> {
         self.rdb.cancel_all_background_work(true);
@@ -1467,7 +1485,7 @@ impl TrieStorage {
         if migrate_at == 0 {
             // unlikely that the state_root for block_0 == block_n;
             // so, if height = 0 it means that we're done.
-            // TODO: drop the sqlite state_trie table
+            // TODO: drop the sqlite state_trie table in a subsequent release.
             return Ok(());
         }
         let root_hash = self.get_root_hash(migrate_at)?;
@@ -1514,24 +1532,6 @@ impl TrieStorage {
                     .ok(); // ignore errors, can only mean that the table is renamed.
             }
         }
-
-        Ok(())
-    }
-
-    pub fn write_batch(&self, keys: Vec<Vec<u8>>, values: Vec<Vec<u8>>) -> Result<()> {
-        if keys.is_empty() {
-            return Ok(());
-        }
-
-        anyhow::ensure!(keys.len() == values.len(), "Keys != Values");
-
-        let mut batch = WriteBatchWithTransaction::<false>::default();
-        let mut cache = self.cache.lock().unwrap();
-        for (key, value) in keys.into_iter().zip(values.into_iter()) {
-            batch.put(key.as_slice(), value.as_slice());
-            cache.insert(key, value).ok(); // write-thru policy; silent errors
-        }
-        self.rdb.write(batch)?;
 
         Ok(())
     }
