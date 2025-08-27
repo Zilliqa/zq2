@@ -14,7 +14,7 @@ use alloy::{
     rlp::{EMPTY_STRING_CODE, Encodable, Header},
     sol_types::SolValue,
 };
-use alloy::primitives::{PrimitiveSignature, Signature};
+use alloy::primitives::{Signature};
 use anyhow::{Result, anyhow};
 use bytes::{BufMut, BytesMut};
 use itertools::Itertools;

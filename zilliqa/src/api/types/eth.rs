@@ -5,7 +5,7 @@ use alloy::{
     primitives::{Address, B256, U64, U128, U256},
     rpc::types::TransactionInput,
 };
-use revm::context::transaction::AccessListItem;
+use alloy::rpc::types::AccessList;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
@@ -451,7 +451,7 @@ pub struct CallParams {
     #[serde(default, flatten)]
     pub data: TransactionInput,
     #[serde(default)]
-    pub access_list: Option<Vec<AccessListItem>>,
+    pub access_list: Option<AccessList>,
 }
 
 #[derive(Clone, Serialize)]

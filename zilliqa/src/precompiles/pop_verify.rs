@@ -3,10 +3,6 @@ use blsful::Bls12381G2Impl;
 use ethabi::{ParamType, Token, decode, encode, short_signature};
 use revm::{
     precompile::PrecompileError,
-    primitives::{
-        Bytes,
-        alloy_primitives::private::alloy_rlp::Encodable,
-    },
 };
 use revm::interpreter::InputsImpl;
 use revm_precompile::{PrecompileOutput, PrecompileResult};
@@ -16,9 +12,9 @@ use crate::precompiles::ContextPrecompile;
 pub struct PopVerify;
 
 // keep in-sync with zilliqa/src/contracts/deposit_v2.sol
-impl<I> PopVerify {
+impl PopVerify {
     const POP_VERIFY_GAS_PRICE: u64 = 1_000_000u64; // FIXME: Gas Price?
-    fn pop_verify(
+    fn pop_verify<I>(
         input: &[u8],
         gas_limit: u64,
         _: &mut ZQ2EvmContext<I>,
@@ -67,7 +63,7 @@ impl<I> ContextPrecompile<ZQ2EvmContext<'_, I>> for PopVerify {
         _is_static: bool,
         gas_limit: u64
     ) -> PrecompileResult {
-        if input.length() < 4 {
+        if input.input.len() < 4 {
             return Err(PrecompileError::Other(
                 "Provided input must be at least 4-byte long".into(),
             )

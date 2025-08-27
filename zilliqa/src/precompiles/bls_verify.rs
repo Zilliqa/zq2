@@ -3,27 +3,23 @@ use blsful::Bls12381G2Impl;
 use ethabi::{ParamType, Token, decode, encode, short_signature};
 use revm::{
     precompile::PrecompileError,
-    primitives::{
-        Bytes,
-        alloy_primitives::private::alloy_rlp::Encodable,
-    },
 };
 use revm::interpreter::InputsImpl;
 use revm::precompile::{PrecompileOutput, PrecompileResult};
-use crate::exec::{PendingState, ZQ2EvmContext};
+use crate::exec::{ZQ2EvmContext};
 use crate::precompiles::ContextPrecompile;
 
 pub struct BlsVerify;
 
 // keep in-sync with zilliqa/src/contracts/deposit_v3.sol
-impl<I> BlsVerify {
+impl BlsVerify {
     /// We charge gas as if we were using Ethereum precompile gas prices for each operation:
     ///     - Message to hash: SHA256 over 76 byte message: 60 + 12 * 3 = 96
     ///     - Hash to point: Rough estimate                             = 100_000
     ///     - Single pairing check on BLS12-381 (ref: EIP-1108)         = 79_000
     ///                                                                 = 180_000
     const BLS_VERIFY_GAS_PRICE: u64 = 180_000u64;
-    fn bls_verify(
+    fn bls_verify<I>(
         input: &[u8],
         gas_limit: u64,
         _: &mut ZQ2EvmContext<I>,
@@ -79,7 +75,7 @@ impl<I> ContextPrecompile<ZQ2EvmContext<'_, I>> for BlsVerify {
         _is_static: bool,
         gas_limit: u64
     ) -> PrecompileResult {
-        if input.length() < 4 {
+        if input.input.len() < 4 {
             return Err(PrecompileError::Other(
                 "Provided input must be at least 4-byte long".into(),
             )

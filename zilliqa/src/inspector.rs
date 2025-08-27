@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use alloy::primitives::{Address, U256};
 use revm::{
-    Database, Inspector,
+    Inspector,
     interpreter::{CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome},
 };
 use revm::context_interface::{ContextTr, CreateScheme, JournalTr};
@@ -65,7 +65,7 @@ pub struct TouchedAddressInspector {
     pub touched: HashSet<Address>,
 }
 
-impl<CTX> Inspector<CTX> for TouchedAddressInspector {
+impl<CTX: ContextTr> Inspector<CTX> for TouchedAddressInspector {
     fn call(&mut self, _: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
         self.touched.insert(inputs.caller);
         self.touched.insert(inputs.bytecode_address);
@@ -172,13 +172,10 @@ impl<CTX: ContextTr> Inspector<CTX> for OtterscanTraceInspector {
             CallScheme::CallCode => TraceEntryType::CallCode,
             CallScheme::DelegateCall => TraceEntryType::DelegateCall,
             CallScheme::StaticCall => TraceEntryType::StaticCall,
-            CallScheme::ExtCall => TraceEntryType::ExtCall,
-            CallScheme::ExtStaticCall => TraceEntryType::ExtStaticCall,
-            CallScheme::ExtDelegateCall => TraceEntryType::ExtDelegateCall,
         };
         self.entries.push(TraceEntry {
             ty,
-            depth: context.journal().depth().into(),
+            depth: context.journal().depth().try_into().unwrap_or_default(),
             from: inputs.caller,
             to: inputs.target_address,
             value: inputs.transfer_value().map(|v| v.to()),
@@ -198,10 +195,10 @@ impl<CTX: ContextTr> Inspector<CTX> for OtterscanTraceInspector {
             CreateScheme::Create2 { .. } => TraceEntryType::Create2,
             _ => TraceEntryType::Create,
         };
-        let nonce = context.journal().db().account(inputs.caller).info.nonce;
+        let nonce = context.journal_mut().load_account(inputs.caller).unwrap().info.nonce;
         self.entries.push(TraceEntry {
             ty,
-            depth: context.journaled_state().depth().into(),
+            depth: context.journal().depth().try_into().unwrap_or_default(),
             from: inputs.caller,
             to: inputs.created_address(nonce),
             value: Some(inputs.value.to()),
@@ -225,17 +222,6 @@ impl<CTX: ContextTr> Inspector<CTX> for OtterscanTraceInspector {
 }
 
 impl ScillaInspector for OtterscanTraceInspector {
-    fn call(&mut self, from: Address, to: Address, amount: u128, depth: u64) {
-        self.entries.push(TraceEntry {
-            ty: TraceEntryType::Call,
-            depth,
-            from,
-            to,
-            value: Some(amount),
-            input: vec![],
-        })
-    }
-
     fn create(&mut self, creator: Address, contract_address: Address, amount: u128) {
         self.entries.push(TraceEntry {
             ty: TraceEntryType::Create,
@@ -248,6 +234,17 @@ impl ScillaInspector for OtterscanTraceInspector {
     }
 
     fn transfer(&mut self, from: Address, to: Address, amount: u128, depth: u64) {
+        self.entries.push(TraceEntry {
+            ty: TraceEntryType::Call,
+            depth,
+            from,
+            to,
+            value: Some(amount),
+            input: vec![],
+        })
+    }
+
+    fn call(&mut self, from: Address, to: Address, amount: u128, depth: u64) {
         self.entries.push(TraceEntry {
             ty: TraceEntryType::Call,
             depth,
@@ -272,13 +269,13 @@ impl OtterscanOperationInspector {
     }
 }
 
-impl<CTX> Inspector<CTX> for OtterscanOperationInspector {
+impl<CTX: ContextTr> Inspector<CTX> for OtterscanOperationInspector {
     fn call(
         &mut self,
         context: &mut CTX,
         inputs: &mut CallInputs,
     ) -> Option<CallOutcome> {
-        if context.journaled_state.depth() != 0 && inputs.transfers_value() {
+        if context.journal().depth() != 0 && inputs.transfers_value() {
             self.entries.push(Operation {
                 ty: OperationType::Transfer,
                 from: inputs.caller,
@@ -295,12 +292,13 @@ impl<CTX> Inspector<CTX> for OtterscanOperationInspector {
         context: &mut CTX,
         inputs: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
-        if context.journaled_state.depth() != 0 {
+        if context.journal().depth() != 0 {
             let ty = match inputs.scheme {
                 CreateScheme::Create => OperationType::Create,
                 CreateScheme::Create2 { .. } => OperationType::Create2,
+                _ => OperationType::Create
             };
-            let nonce = context.journaled_state.account(inputs.caller).info.nonce;
+            let nonce = context.journal_mut().load_account(inputs.caller).unwrap().info.nonce;
             self.entries.push(Operation {
                 ty,
                 from: inputs.caller,
@@ -323,7 +321,7 @@ impl<CTX> Inspector<CTX> for OtterscanOperationInspector {
 }
 
 impl ScillaInspector for OtterscanOperationInspector {
-    fn call(&mut self, from: Address, to: Address, amount: u128, depth: u64) {
+    fn transfer(&mut self, from: Address, to: Address, amount: u128, depth: u64) {
         if depth != 0 && amount != 0 {
             self.entries.push(Operation {
                 ty: OperationType::Transfer,
@@ -334,7 +332,7 @@ impl ScillaInspector for OtterscanOperationInspector {
         }
     }
 
-    fn transfer(&mut self, from: Address, to: Address, amount: u128, depth: u64) {
+    fn call(&mut self, from: Address, to: Address, amount: u128, depth: u64) {
         if depth != 0 && amount != 0 {
             self.entries.push(Operation {
                 ty: OperationType::Transfer,

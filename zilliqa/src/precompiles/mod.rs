@@ -13,7 +13,7 @@ use bls_verify::BlsVerify;
 use pop_verify::PopVerify;
 use scilla::ScillaRead;
 
-use crate::exec::{PendingState, ZQ2EvmContext};
+use crate::exec::{ZQ2EvmContext};
 
 #[derive(Debug, Clone)]
 pub struct ZQ2PrecompileProvider {
@@ -35,7 +35,7 @@ where
     type Output = InterpreterResult;
 
     fn set_spec(&mut self, spec: <CTX::Cfg as Cfg>::Spec) -> bool {
-        self.inner.set_spec(spec)
+        <EthPrecompiles as PrecompileProvider<CTX>>::set_spec(&mut self.inner, spec)
     }
 
     fn run(

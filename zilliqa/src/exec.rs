@@ -7,28 +7,26 @@ use std::{
     fs, mem,
     num::NonZeroU128,
     path::Path,
-    sync::{Arc, MutexGuard},
+    sync::{MutexGuard},
 };
 
 use alloy::{
     consensus::TxType,
     primitives::{Address, Bytes, U256, address, hex},
 };
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, Context};
 use eth_trie::{EthTrie, Trie};
 use ethabi::Token;
 use jsonrpsee::types::ErrorObjectOwned;
 use libp2p::PeerId;
 use revm::{Database, DatabaseRef, Inspector, Journal, context::{
-    BlockEnv, CfgEnv, Evm, TxEnv,
+    BlockEnv, CfgEnv,
     result::{ExecutionResult, HaltReason, Output, ResultAndState},
-    transaction::AccessListItem,
-}, database::InMemoryDB, primitives::{B256, KECCAK_EMPTY, TxKind, hardfork::SpecId}, state::{AccountInfo, Bytecode}, MainBuilder, ExecuteEvm};
-use revm::context_interface::{DBErrorMarker, JournalTr};
+}, database::InMemoryDB, primitives::{B256, KECCAK_EMPTY, hardfork::SpecId}, state::{AccountInfo, Bytecode}, MainBuilder, ExecuteEvm};
+use revm::context_interface::DBErrorMarker;
 use revm::context_interface::transaction::AccessList;
-use revm::database_interface::EmptyDB;
-use revm::handler::{EthPrecompiles, EvmTr, PrecompileProvider};
-use revm_context::Context;
+use revm::handler::{EvmTr};
+use revm_context::{Context as RevmContext, ContextTr, TxEnv};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -42,7 +40,6 @@ use crate::{
     error::ensure_success,
     inspector::{self, ScillaInspector},
     message::{Block, BlockHeader},
-    precompiles::{get_custom_precompiles},
     scilla::{self, ParamValue, Scilla, split_storage_key, storage_key},
     state::{Account, Code, ContractInit, ExternalLibrary, State, contract_addr},
     time::SystemTime,
@@ -51,6 +48,7 @@ use crate::{
         ZilAmount, total_scilla_gas_price,
     },
 };
+use crate::precompiles::ZQ2PrecompileProvider;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum ExecType {
@@ -70,7 +68,7 @@ type ScillaResultAndState = (ScillaResult, HashMap<Address, PendingAccount>);
 /// Data returned after applying a [Transaction] to [State].
 #[derive(Clone)]
 pub enum TransactionApplyResult {
-    Evm(ResultAndState, Box<CfgEnv>),
+    Evm(ResultAndState, CfgEnv),
     Scilla(ScillaResultAndState),
 }
 
@@ -444,7 +442,13 @@ pub struct ExternalContext<'a, I> {
     pub has_called_scilla_precompile: bool,
 }
 
-pub type ZQ2EvmContext<'a, I> = Context<BlockEnv, TxEnv, CfgEnv, EmptyDB, Journal<PendingState>, ExternalContext<'a, I>>;
+pub type ZQ2EvmContext<'a, I> = RevmContext<BlockEnv, TxEnv, CfgEnv, PendingState, Journal<PendingState>, ExternalContext<'a, I>>;
+fn new_zq2_evm_ctx<I>(db: PendingState, chain: ExternalContext<I>) -> ZQ2EvmContext<I> {
+
+
+    let ctx: RevmContext<BlockEnv, TxEnv, CfgEnv, PendingState, Journal<PendingState>> = RevmContext::new(db, SPEC_ID);
+    ctx.with_chain(chain)
+}
 
 // impl<I: Inspector<PendingState>> GetInspector<PendingState> for ExternalContext<'_, I> {
 //     fn get_inspector(&mut self) -> &mut impl Inspector<PendingState> {
@@ -518,11 +522,11 @@ impl State {
 
     fn failed(
         mut result_and_state: ResultAndState,
-        env: Box<CfgEnv>,
+        env: CfgEnv,
     ) -> Result<(
         ResultAndState,
         HashMap<Address, PendingAccount>,
-        Box<CfgEnv>,
+        CfgEnv,
     )> {
         result_and_state.state.clear();
         Ok((
@@ -539,7 +543,7 @@ impl State {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn apply_transaction_evm<I: Inspector<PendingState> + ScillaInspector>(
+    pub fn apply_transaction_evm<'a, I: Inspector<ZQ2EvmContext<'a, I>> + ScillaInspector + Clone>(
         &self,
         from_addr: Address,
         to_addr: Option<Address>,
@@ -558,7 +562,7 @@ impl State {
     ) -> Result<(
         ResultAndState,
         HashMap<Address, PendingAccount>,
-        Box<CfgEnv>,
+        CfgEnv,
     )> {
         let mut padded_view_number = [0u8; 32];
         padded_view_number[24..].copy_from_slice(&current_block.view.to_be_bytes());
@@ -584,7 +588,8 @@ impl State {
         };
         let pending_state = PendingState::new(self.clone(), fork.clone());
 
-        let evm_ctx = Context::new(pending_state, SPEC_ID).with_cfg({
+        
+        let evm_ctx = new_zq2_evm_ctx(pending_state, external_context).with_cfg({
             let mut cfg = CfgEnv::new_with_spec(SPEC_ID);
             cfg.disable_eip3607 = extra_opts.disable_eip3607;
             cfg.chain_id = self.chain_id.eth;
@@ -603,7 +608,7 @@ impl State {
                     .as_secs(),
             ),
             gas_limit: self.block_gas_limit.0,
-            basefee: self.gas_price.into(),
+            basefee: self.gas_price.try_into()?,
             difficulty: U256::from(1),
             prevrandao: Some(Hash::builder().with(padded_view_number).finalize().into()),
             blob_excess_gas_and_price: None,
@@ -625,16 +630,7 @@ impl State {
             authorization_list: Vec::default(),
         });
 
-        let mut evm = evm_ctx.build_mainnet().with_inspector(inspector).with_precompiles({
-            let mut precompiles = EthPrecompiles::default();
-            precompiles.set_spec(SPEC_ID);
-            precompiles.extend(get_custom_precompiles());
-            precompiles
-        });
-
-        let result = evm.replay();
-
-
+        let mut evm = evm_ctx.build_mainnet().with_inspector(inspector).with_precompiles(ZQ2PrecompileProvider::new());
 
         /*
         let mut evm = Evm::builder()
@@ -697,15 +693,13 @@ impl State {
         let mut evm = evm.build();
         */
         let result_and_state = evm.replay()?;
-        let mut ctx_with_handler = evm.ctx();
+        let ctx_with_handler = evm.ctx();
 
         // If the scilla precompile failed for whitelisted zq1 contract we mark the entire transaction as failed
-        if ctx_with_handler
-            .context
-            .external
+        if ctx_with_handler.chain
             .enforce_transaction_failure
         {
-            return Self::failed(result_and_state, ctx_with_handler.context.evm.inner.env);
+            return Self::failed(result_and_state, ctx_with_handler.cfg.clone());
         }
 
         // If any of EVM (calls, creates, ...) failed and there was a call to whitelisted scilla address with interop precompile
@@ -714,19 +708,19 @@ impl State {
             .forks
             .get(current_block.number)
             .evm_exec_failure_causes_scilla_precompile_to_fail;
-        let ctx = &ctx_with_handler.context.external;
+        let ext_ctx = &ctx_with_handler.chain;
         if evm_exec_failure_causes_scilla_precompile_to_fail
-            && ctx.has_evm_failed
-            && ctx.has_called_scilla_precompile
+            && ext_ctx.has_evm_failed
+            && ext_ctx.has_called_scilla_precompile
             && extra_opts.exec_type == ExecType::Transact
         {
-            return Self::failed(result_and_state, ctx_with_handler.context.evm.inner.env);
+            return Self::failed(result_and_state, ctx_with_handler.cfg.clone());
         }
 
         Ok((
             result_and_state,
-            ctx_with_handler.context.evm.db.finalize(),
-            ctx_with_handler.context.evm.inner.env,
+            ctx_with_handler.db_mut().finalize(),
+            evm.cfg.clone(),
         ))
     }
 
@@ -840,7 +834,7 @@ impl State {
     }
 
     /// Apply a transaction to the account state.
-    pub fn apply_transaction<I: Inspector<PendingState> + ScillaInspector>(
+    pub fn apply_transaction<'a, I: Inspector<ZQ2EvmContext<'a, I>> + ScillaInspector + Clone>(
         &mut self,
         txn: VerifiedTransaction,
         current_block: BlockHeader,

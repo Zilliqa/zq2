@@ -12,6 +12,7 @@ use revm::{
         Address, Bytes, LogData,
     },
 };
+use revm::context_interface::ContextTr;
 use revm::interpreter::InputsImpl;
 use revm::interpreter::interpreter_types::InputsTr;
 use revm_context::JournalTr;
@@ -276,7 +277,7 @@ impl<I> ContextPrecompile<ZQ2EvmContext<'_, I>> for ScillaRead {
             Address::detokenize(decoder.decode().map_err(|_| err_inner("invalid address"))?);
         let field = String::detokenize(decoder.decode().map_err(|_| err_inner("invalid field"))?);
 
-        let account = match ctx.journaled_state.db().load_account(address) {
+        let account = match ctx.db_mut().load_account(address) {
             Ok(account) => account,
             Err(e) => {
                 tracing::error!(?e, "state access failed");
@@ -330,7 +331,7 @@ impl<I> ContextPrecompile<ZQ2EvmContext<'_, I>> for ScillaRead {
                     };
                     value.abi_encode()
                 } else {
-                    let Ok(value) = ctx.db.load_storage(address, &field, &indices) else {
+                    let Ok(value) = ctx.journal_mut().db_mut().load_storage(address, &field, &indices) else {
                         return fatal("failed to read value");
                     };
                     if let Some(value) = value {
@@ -365,7 +366,7 @@ impl<I> ContextPrecompile<ZQ2EvmContext<'_, I>> for ScillaRead {
                     };
                     value.abi_encode()
                 } else {
-                    let Ok(value) = ctx.journaled_state.db().load_storage(address, &field, &indices) else {
+                    let Ok(value) = ctx.journal_mut().db_mut().load_storage(address, &field, &indices) else {
                         return fatal("failed to read value");
                     };
                     if let Some(value) = value {

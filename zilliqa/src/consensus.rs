@@ -55,6 +55,7 @@ use crate::{
         EvmGas, SignedTransaction, TransactionReceipt, ValidationOutcome, VerifiedTransaction,
     },
 };
+use crate::exec::ZQ2EvmContext;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct NewViewVote {
@@ -1049,7 +1050,7 @@ impl Consensus {
     }
 
     /// For a given State apply the given transaction
-    pub fn apply_transaction_at<I: Inspector<PendingState> + ScillaInspector>(
+    pub fn apply_transaction_at<I: for<'a> Inspector<ZQ2EvmContext<'a, I>> + ScillaInspector>(
         state: &mut State,
         txn: VerifiedTransaction,
         current_block: BlockHeader,
