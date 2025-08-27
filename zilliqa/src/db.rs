@@ -289,7 +289,10 @@ impl Db {
         let num_workers = if cfg!(test) {
             4 // for tests only
         } else {
-            tokio::runtime::Handle::current().metrics().num_workers()
+            tokio::runtime::Handle::current()
+                .metrics()
+                .num_workers()
+                .max(4) // minimum number of workers
         };
 
         // Build connection pool
