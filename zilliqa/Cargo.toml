@@ -129,6 +129,8 @@ reth-ipc = { git = "https://github.com/paradigmxyz/reth", version = "1.4.1" }
 parking_lot = { version = "0.12.4", features = ["send_guard"] }
 dashmap = "6.1.0"
 sled = { version = "0.34.7", features = ["no_logs"] }
+r2d2 = "0.8.10"
+r2d2_sqlite = "0.31.0"
 
 [dev-dependencies]
 alloy = { version = "0.12.4", default-features = false, features = [

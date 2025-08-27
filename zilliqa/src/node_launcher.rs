@@ -232,15 +232,10 @@ impl NodeLauncher {
                                     Err(e) => error!("Skipping transaction {e}"),
                                 }
                             }
-                            if let Err(e)= self.node.write().handle_broadcast_transactions(verified) {
+                            if let Err(e)= self.node.read().handle_broadcast_transactions(verified) {
                                 error!("Failed to handle broadcast transactions {e}");
                             }
                         }
-                        // Try to assemble block even for the origin of this batch
-                        // // For now, we don't add new transactions to the block after initial creation
-                        // if let Err(e) = self.node.write().try_to_apply_transactions() {
-                        //     error!("Failed to try to apply transactions {e}");
-                        // }
                     }
                     else if let Err(e) = self.node.write().handle_broadcast(source, message, response_channel) {
                         attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));
