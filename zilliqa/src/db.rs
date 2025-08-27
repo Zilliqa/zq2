@@ -5,7 +5,7 @@ use std::{
     io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     ops::RangeInclusive,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::Duration,
 };
 
@@ -16,6 +16,9 @@ use eth_trie::{DB, EthTrie, MemoryDB, Trie};
 use itertools::Itertools;
 use lru_mem::LruCache;
 use lz4::{Decoder, EncoderBuilder};
+use parking_lot::RwLock;
+use r2d2::Pool;
+use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{
     Connection, OptionalExtension, Row, ToSql, named_params,
     types::{FromSql, FromSqlError, ToSqlOutput},
@@ -232,8 +235,8 @@ const CURRENT_DB_VERSION: &str = "1";
 
 #[derive(Debug)]
 pub struct Db {
-    pool: Arc<r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>>,
-    state_cache: Arc<Mutex<LruCache<Vec<u8>, Vec<u8>>>>,
+    pool: Arc<Pool<SqliteConnectionManager>>,
+    state_cache: Arc<RwLock<LruCache<Vec<u8>, Vec<u8>>>>,
     path: Option<Box<Path>>,
     /// The block height at which ZQ2 blocks begin.
     /// This value should be required only for proto networks to distinguise between ZQ1 and ZQ2 blocks.
@@ -276,25 +279,24 @@ impl Db {
                 let db_path = path.join("db.sqlite3");
 
                 (
-                    r2d2_sqlite::SqliteConnectionManager::file(db_path)
-                        .with_init(Self::tweak_connection),
+                    SqliteConnectionManager::file(db_path).with_init(Self::init_connection),
                     Some(path.into_boxed_path()),
                 )
             }
-            None => (r2d2_sqlite::SqliteConnectionManager::memory(), None),
+            None => (SqliteConnectionManager::memory(), None),
         };
 
-        // Connection pool
         let num_workers = if cfg!(test) {
             8 // for tests only
         } else {
-            tokio::runtime::Handle::current().metrics().num_workers() * 2 // more than enough connections
+            tokio::runtime::Handle::current().metrics().num_workers()
         };
 
-        let builder = r2d2::Pool::builder()
+        // Build connection pool
+        let builder = Pool::builder()
             .min_idle(Some(1))
-            .max_size(num_workers as u32);
-        tracing::info!("SQLite {builder:?}");
+            .max_size(2 * num_workers as u32);
+        tracing::debug!("SQLite {builder:?}");
 
         let pool = builder.build(manager)?;
         let connection = pool.get()?;
@@ -302,7 +304,7 @@ impl Db {
 
         Ok(Db {
             pool: Arc::new(pool),
-            state_cache: Arc::new(Mutex::new(LruCache::new(state_cache_size))),
+            state_cache: Arc::new(RwLock::new(LruCache::new(state_cache_size))),
             path,
             executable_blocks_height,
         })
@@ -431,7 +433,7 @@ impl Db {
     }
 
     // SQLite performance tweaks
-    fn tweak_connection(connection: &mut Connection) -> Result<(), rusqlite::Error> {
+    fn init_connection(connection: &mut Connection) -> Result<(), rusqlite::Error> {
         // large page_size is more compact/efficient, 64K is hard-coded maximum
         connection.pragma_update(None, "page_size", 1 << 15)?;
         // reduced non-critical fsync() calls, reducing disk I/O
@@ -1284,8 +1286,8 @@ fn compress_file<P: AsRef<Path> + Debug>(input_file_path: P, output_file_path: P
 /// An implementor of [eth_trie::DB] which uses a [Connection] to persist data.
 #[derive(Debug, Clone)]
 pub struct TrieStorage {
-    pool: Arc<r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>>,
-    cache: Arc<Mutex<LruCache<Vec<u8>, Vec<u8>>>>,
+    pool: Arc<Pool<SqliteConnectionManager>>,
+    cache: Arc<RwLock<LruCache<Vec<u8>, Vec<u8>>>>,
 }
 
 impl TrieStorage {
@@ -1326,7 +1328,7 @@ impl TrieStorage {
                 .prepare(&query)? // do not cache, since it's unique
                 .execute(rusqlite::params_from_iter(params))?;
             // take lock once
-            let mut cache = self.cache.lock().unwrap();
+            let mut cache = self.cache.write();
             for (key, value) in keys.iter().zip(values) {
                 let _ = cache.insert(key.to_vec(), value.to_vec());
             }
@@ -1339,8 +1341,9 @@ impl eth_trie::DB for TrieStorage {
     type Error = rusqlite::Error;
 
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, Self::Error> {
-        if let Some(cached) = self.cache.lock().unwrap().get(key).map(|v| v.to_vec()) {
-            return Ok(Some(cached));
+        // does not mark the entry as MRU, but allows concurrent cache reads;
+        if let Some(cached) = self.cache.read().peek(key) {
+            return Ok(Some(cached.to_vec()));
         }
 
         let value: Option<Vec<u8>> = self
@@ -1352,11 +1355,7 @@ impl eth_trie::DB for TrieStorage {
             .optional()?;
 
         if let Some(value) = value {
-            let _ = self
-                .cache
-                .lock()
-                .unwrap()
-                .insert(key.to_vec(), value.clone());
+            let _ = self.cache.write().insert(key.to_vec(), value.clone());
             return Ok(Some(value));
         }
 
@@ -1369,7 +1368,7 @@ impl eth_trie::DB for TrieStorage {
             .unwrap()
             .prepare_cached("INSERT OR REPLACE INTO state_trie (key, value) VALUES (?1, ?2)")?
             .execute((key, &value))?;
-        let _ = self.cache.lock().unwrap().insert(key.to_vec(), value);
+        let _ = self.cache.write().insert(key.to_vec(), value);
         Ok(())
     }
 
