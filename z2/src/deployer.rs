@@ -14,6 +14,7 @@ use zilliqa::{crypto::SecretKey, exec::BLESSED_TRANSACTIONS};
 use crate::{
     address::EthereumAddress,
     chain::{
+        Chain,
         config::NetworkConfig,
         instance::ChainInstance,
         node::{ChainNode, NodePort, NodeRole},
@@ -131,6 +132,11 @@ async fn execute_install_or_upgrade(
 }
 
 async fn post_install(chain: ChainInstance) -> Result<()> {
+    if chain.chain()? == Chain::Zq2Testnet || chain.chain()? == Chain::Zq2Mainnet {
+        log::info!("Skipping post install actions for chain: {}", chain.name());
+        return anyhow::Ok(());
+    }
+
     let genesis_private_key = chain.genesis_private_key()?;
     let url = chain.chain()?.get_api_endpoint()?;
 
