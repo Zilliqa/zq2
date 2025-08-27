@@ -287,7 +287,7 @@ impl Db {
         };
 
         let num_workers = if cfg!(test) {
-            8 // for tests only
+            4 // for tests only
         } else {
             tokio::runtime::Handle::current().metrics().num_workers()
         };
@@ -295,7 +295,7 @@ impl Db {
         // Build connection pool
         let builder = Pool::builder()
             .min_idle(Some(1))
-            .max_size(2 * num_workers as u32);
+            .max_size(2 * num_workers as u32); // more than enough connections
         tracing::debug!("SQLite {builder:?}");
 
         let pool = builder.build(manager)?;
