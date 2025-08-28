@@ -2433,7 +2433,8 @@ impl Consensus {
             .db
             .get_checkpoint_dir()?
             .ok_or(anyhow!("No checkpoint directory configured"))?;
-        let file_name = db::get_checkpoint_filename(checkpoint_dir.clone(), &block)?;
+        let file_name =
+            db::get_checkpoint_filename(checkpoint_dir.clone(), &block)?.with_extension("ckpt");
         let hash = block.hash();
         self.message_sender
             .send_message_to_coordinator(InternalMessage::ExportBlockCheckpoint(
