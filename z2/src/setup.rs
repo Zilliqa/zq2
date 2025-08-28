@@ -20,7 +20,7 @@ use zilliqa::{
     api,
     cfg::{
         ApiServer, SyncConfig, genesis_fork_default, max_rpc_response_size_default,
-        new_view_broadcast_interval_default, state_cache_size_default,
+        new_view_broadcast_interval_default, state_cache_size_default, max_missed_view_age_default,
     },
     crypto::{SecretKey, TransactionPublicKey},
 };
@@ -32,7 +32,7 @@ use zilliqa::{
         eth_chain_id_default, failed_request_sleep_duration_default, max_blocks_in_flight_default,
         scilla_address_default, scilla_ext_libs_path_default,
         scilla_server_socket_directory_default, scilla_stdlib_dir_default, state_rpc_limit_default,
-        total_native_token_supply_default,
+        total_native_token_supply_default, 
     },
     transaction::EvmGas,
 };
@@ -561,6 +561,7 @@ impl Setup {
                 failed_request_sleep_duration: failed_request_sleep_duration_default(),
                 enable_ots_indices: false,
                 max_rpc_response_size: max_rpc_response_size_default(),
+                max_missed_view_age: max_missed_view_age_default(),
             };
             println!("🧩  Node {node_index} has RPC port {port}");
 

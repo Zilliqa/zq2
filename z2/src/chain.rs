@@ -93,6 +93,10 @@ impl Chain {
                         withdrawal_period: 5 * 60, // 5 minutes
                     }),
                 }),
+                deposit_v6: Some(ContractUpgradeConfig {
+                    height: 0,
+                    reinitialise_params: None,
+                }),
             },
             _ => ContractUpgrades::default(),
         }
@@ -135,6 +139,7 @@ impl Chain {
                 "inject_access_list": false,
                 "use_max_gas_priority_fee": false,
                 "failed_zil_transfers_to_eoa_proper_fee_deduction": false,
+                "validator_jailing": false,
             })),
             Chain::Zq2Mainnet => Some(json!({
                 "at_height": 0,
@@ -170,6 +175,7 @@ impl Chain {
                 "inject_access_list": false,
                 "use_max_gas_priority_fee": false,
                 "failed_zil_transfers_to_eoa_proper_fee_deduction": false,
+                "validator_jailing": false,
             })),
             _ => None,
         }
@@ -213,6 +219,8 @@ impl Chain {
                 json!({ "at_height": 11300000, "inject_access_list": true, "use_max_gas_priority_fee": true}),
                 // esimated: 2025-08-22T12.00.00Z
                 json!({ "at_height": 12998790, "failed_zil_transfers_to_eoa_proper_fee_deduction": true}),
+                // estimated: TBD
+                json!({ "at_height": 14997600, "validator_jailing": true}),
             ]),
             Chain::Zq2Mainnet => Some(vec![
                 json!({ "at_height": 4770088, "executable_blocks": true }),
@@ -255,6 +263,8 @@ impl Chain {
                 json!({ "at_height": 7000000, "inject_access_list": true, "use_max_gas_priority_fee": true}),
                 // esimated: 2025-09-15T12.00.00Z
                 json!({ "at_height": 10153271, "failed_zil_transfers_to_eoa_proper_fee_deduction": true}),
+                // estimated: TBD
+                json!({ "at_height": 11998800, "validator_jailing": true}),
             ]),
             _ => None,
         }

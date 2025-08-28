@@ -436,6 +436,7 @@ pub struct ExternalContext<'a, I> {
     pub callers: Vec<Address>,
     pub has_evm_failed: bool,
     pub has_called_scilla_precompile: bool,
+    pub finalized_view: u64,
     pub view_history: ViewHistory,
 }
 
@@ -556,6 +557,7 @@ impl State {
             callers: vec![from_addr],
             has_evm_failed: false,
             has_called_scilla_precompile: false,
+            finalized_view: self.finalized_view,
             view_history: self.view_history.clone(),
         };
         let access_list = if fork.inject_access_list {

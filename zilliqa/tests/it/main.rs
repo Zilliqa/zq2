@@ -9,7 +9,7 @@ use parking_lot::{RwLock, RwLockWriteGuard};
 use primitive_types::{H160, U256};
 use serde_json::{Value, value::RawValue};
 use zilliqa::{
-    cfg::new_view_broadcast_interval_default, contracts, crypto::NodePublicKey, db::BlockFilter,
+    cfg::{max_missed_view_age_default, new_view_broadcast_interval_default}, contracts, crypto::NodePublicKey, db::BlockFilter,
     state::contract_addr,
 };
 mod admin;
@@ -352,9 +352,10 @@ impl Network {
                     )),
                     None,
                     None,
+                    None,
                 )
             } else {
-                ContractUpgrades::new(None, None, None)
+                ContractUpgrades::new(None, None, None, None)
             }
         };
 
@@ -414,6 +415,7 @@ impl Network {
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: true,
             max_rpc_response_size: max_rpc_response_size_default(),
+            max_missed_view_age: max_missed_view_age_default(),
         };
 
         let (nodes, external_receivers, local_receivers, request_response_receivers): (
@@ -508,9 +510,10 @@ impl Network {
                 )),
                 None,
                 None,
+                None,
             )
         } else {
-            ContractUpgrades::new(None, None, None)
+            ContractUpgrades::new(None, None, None, None)
         };
         let config = NodeConfig {
             eth_chain_id: self.shard_id,
@@ -567,6 +570,7 @@ impl Network {
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: true,
             max_rpc_response_size: max_rpc_response_size_default(),
+            max_missed_view_age: max_missed_view_age_default(),
         };
 
         let secret_key = options.secret_key_or_random(self.rng.clone());

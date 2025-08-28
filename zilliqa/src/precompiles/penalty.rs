@@ -21,7 +21,7 @@ use revm::{
 use tracing::info;
 
 use crate::{
-    constants::{LAG_BEHIND_CURRENT_VIEW, MAX_MISSED_VIEW_AGE},
+    constants::{MISSED_VIEW_WINDOW, MISSED_VIEW_THRESHOLD, LAG_BEHIND_CURRENT_VIEW},
     crypto::NodePublicKey,
     exec::{ExternalContext, PendingState},
     inspector::ScillaInspector,
@@ -32,14 +32,14 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct ViewHistory {
     pub missed_views: Arc<Mutex<VecDeque<(u64, NodePublicKey)>>>,
-    pub starting_view: Arc<Mutex<u64>>,
+    pub min_view: Arc<Mutex<u64>>,
 }
 
 impl ViewHistory {
     pub fn new() -> Self {
         ViewHistory {
             missed_views: Arc::new(Mutex::new(VecDeque::new())),
-            starting_view: Arc::new(Mutex::new(0)),
+            min_view: Arc::new(Mutex::new(0)),
         }
     }
 
@@ -56,18 +56,18 @@ impl ViewHistory {
             );
             deque.push_back((*view, *leader));
         }
-        //TODO(#3080): replace the above loop with the line below
+        //TODO(#3080): replace the above loop with the line below once logging is not needed anymore
         //deque.extend(new_missed_views.iter().rev());
         Ok(!new_missed_views.is_empty())
     }
 
-    pub fn prune_history(&mut self, view: u64) -> anyhow::Result<bool> {
+    pub fn prune_history(&mut self, view: u64, max_missed_view_age: u64) -> anyhow::Result<bool> {
         let mut deque = self.missed_views.lock().unwrap();
         let len = deque.len();
-        let mut starting_view = self.starting_view.lock().unwrap();
-        *starting_view = view.saturating_sub(LAG_BEHIND_CURRENT_VIEW + MAX_MISSED_VIEW_AGE);
+        let mut min_view = self.min_view.lock().unwrap();
+        *min_view = view.saturating_sub(LAG_BEHIND_CURRENT_VIEW + max_missed_view_age);
         while let Some((view, leader)) = deque.front() {
-            if *view < *starting_view {
+            if *view < *min_view {
                 info!(
                     view,
                     id = &leader.as_bytes()[..3],
@@ -80,37 +80,14 @@ impl ViewHistory {
         }
         Ok(deque.len() < len)
     }
-
-    pub fn populate_history(
-        &mut self,
-        state: State,
-        block_number: u64,
-        block_view: u64,
-        start_view: u64,
-    ) -> anyhow::Result<()> {
-        let block_header = BlockHeader {
-            number: block_number,
-            ..Default::default()
-        };
-        for view in (start_view + 1..block_view).rev() {
-            if let Ok(leader) = state.leader(view, block_header) {
-                let mut deque = self.missed_views.lock().unwrap();
-                info!(
-                    view,
-                    id = &leader.as_bytes()[..3],
-                    "~~~~~~~~~~> restoring missed"
-                );
-                deque.push_front((view, leader));
-            }
-        }
-        Ok(())
-    }
 }
 
 impl Display for ViewHistory {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let deque = self.missed_views.lock().unwrap();
-        let history: Vec<(u64, String)> = deque
+        let front = deque.front();
+        let back = deque.back();
+        /*let history: Vec<(u64, String)> = deque
             .iter()
             .map(|(view, leader)| {
                 let mut id = [0u8; 3];
@@ -122,9 +99,36 @@ impl Display for ViewHistory {
                     .join(" ");
                 (*view, format!("[{}]", hex_id))
             })
-            .collect();
-        let starting = *self.starting_view.lock().unwrap();
-        write!(f, "starting: {} missed: {:?}", starting, history,)
+            .collect();*/
+        let first = match front {
+            Some((view, leader)) => {
+                let mut id = [0u8; 3];
+                id.copy_from_slice(&leader.as_bytes()[..3]);
+                let hex_id = id
+                    .iter()
+                    .map(|byte| format!("{:02x}", byte))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                Some((*view, format!("[{}]", hex_id)))
+            },
+            None => None
+        };
+        let last = match back {
+            Some((view, leader)) => {
+                let mut id = [0u8; 3];
+                id.copy_from_slice(&leader.as_bytes()[..3]);
+                let hex_id = id
+                    .iter()
+                    .map(|byte| format!("{:02x}", byte))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                Some((*view, format!("[{}]", hex_id)))
+            },
+            None => None
+        };
+        let min_view = *self.min_view.lock().unwrap();
+        //write!(f, "min: {} missed: {} {:?}", min_view, history.len(), history)
+        write!(f, "min: {} missed: {} {:?}..{:?}", min_view, deque.len(), first.unwrap_or((0, "n/a".to_string())), last.unwrap_or((0, "n/a".to_string())))
     }
 }
 
@@ -197,7 +201,7 @@ pub fn dispatch<I: ScillaInspector>(
     _context: &mut InnerEvmContext<PendingState>,
     external_context: &mut ExternalContext<I>,
 ) -> PrecompileResult {
-    //TODO(#3080): check gas limit?
+    //TODO(#3080): check the gas limit and adjust how much gas the precompile should use 
     //info!(gas_limit, "~~~> precompile called with");
     //if gas_limit < 10_000u64 {
     //    return Err(PrecompileErrors::Error(PrecompileError::OutOfGas));
@@ -219,23 +223,77 @@ pub fn dispatch<I: ScillaInspector>(
     };
     let leader = decoded.first().unwrap().to_owned().into_bytes().unwrap();
     let view = decoded.last().unwrap().to_owned().into_uint().unwrap();
-    let starting_view = *external_context.view_history.starting_view.lock().unwrap();
-    //TODO(#3080): check if view.as_u64().saturating_sub(LAG_BEHIND_CURRENT_VIEW) >= finalized_view
-    if starting_view > 1
-        && view.as_u64().saturating_sub(LAG_BEHIND_CURRENT_VIEW) < starting_view + 100
+    if !external_context.fork.validator_jailing {
+        info!(?view, "==========> jailing not activated yet");
+        let output = encode(&[Token::Bool(false)]);
+        return Ok(PrecompileOutput::new(10_000u64, output.into()))
+    }
+    if view.as_u64().saturating_sub(LAG_BEHIND_CURRENT_VIEW) >= external_context.finalized_view {
+        info!(
+            ?view, 
+            finalized = external_context.finalized_view,
+            "~~~~~~~~~~> required missed view history not finalized"
+        );
+        return Err(PrecompileError::Other("Required missed view history not finalized".into()).into());
+    }
+    let min_view = *external_context.view_history.min_view.lock().unwrap();
+    // fail if the missed view history does not reach back far enough in the past or
+    // the queried view is too far in the future based on the currently finalized view
+    if min_view > 1 && view.as_u64().saturating_sub(LAG_BEHIND_CURRENT_VIEW) < min_view + MISSED_VIEW_WINDOW
+        || view.as_u64() <= external_context.finalized_view + LAG_BEHIND_CURRENT_VIEW + MISSED_VIEW_WINDOW
     {
         info!(
             ?view,
-            starting_view, "~~~~~~~~~~> missed view history not available"
+            min = min_view,
+            finalized = external_context.finalized_view,
+            "~~~~~~~~~~> missed view history not available"
         );
         return Err(PrecompileError::Other("Missed view history not available".into()).into());
     }
     let deque = external_context.view_history.missed_views.lock().unwrap();
-    let missed = deque
+    // binary search to find the relevant missed views in O(log(n))
+    let (first_slice, second_slice) = deque.as_slices();
+    let search_slice = |slice: &[(u64, NodePublicKey)], target: u64| {
+        slice.binary_search_by_key(&target, |&(key, _)| key)
+    };
+    let to = view.as_u64().saturating_sub(LAG_BEHIND_CURRENT_VIEW);
+    let from = to.saturating_sub(MISSED_VIEW_WINDOW);
+    let (first_start_idx, first_end_idx) = (
+        search_slice(first_slice, from).unwrap_or_else(|i| i),
+        search_slice(first_slice, to).unwrap_or_else(|i| i),
+    );
+    let first_range = &first_slice[first_start_idx..first_end_idx];
+    // filter the missed views that had the same leader as the selected one
+    let filter = |(key, value): &(u64, NodePublicKey)| {
+        if value == &NodePublicKey::from_bytes(leader.as_slice()).unwrap()
+            {
+                Some(*key)
+            } else {
+                None
+            }
+    };
+    let missed = if second_slice.is_empty() {
+        first_range
+            .iter()
+            .filter_map(filter)
+            .count()
+    } else {
+        let (second_start_idx, second_end_idx) = (
+            search_slice(second_slice, from).unwrap_or_else(|i| i),
+            search_slice(second_slice, to).unwrap_or_else(|i| i),
+        );
+        let second_range = &second_slice[second_start_idx..second_end_idx];
+        first_range
+            .iter()
+            .chain(second_range.iter())
+            .filter_map(filter)
+            .count()
+    };
+    /*let missed = deque
         .iter()
         .filter_map(|(key, value)| {
             if *key < view.as_u64().saturating_sub(LAG_BEHIND_CURRENT_VIEW)
-                && key + 100 >= view.as_u64().saturating_sub(LAG_BEHIND_CURRENT_VIEW)
+                && key + MISSED_VIEW_WINDOW >= view.as_u64().saturating_sub(LAG_BEHIND_CURRENT_VIEW)
                 && value == &NodePublicKey::from_bytes(leader.as_slice()).unwrap()
             {
                 Some(key)
@@ -243,13 +301,13 @@ pub fn dispatch<I: ScillaInspector>(
                 None
             }
         })
-        .count();
-    let jailed = missed >= 3;
+        .count();*/
+    let jailed = missed >= MISSED_VIEW_THRESHOLD;
     info!(
         jailed,
         missed,
         ?view,
-        starting_view,
+        min_view,
         id = &leader[..3],
         "==========> leader"
     );

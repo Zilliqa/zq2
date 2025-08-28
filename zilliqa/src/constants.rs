@@ -90,13 +90,12 @@ pub const MAX_REQUEST_SIZE: usize = 1024 * 1024;
 pub const PROPOSAL_THRESHOLD: usize = MAX_GOSSIP_SIZE * 8 / 10; // 80%
 pub const SYNC_THRESHOLD: usize = MAX_RESPONSE_SIZE - MAX_GOSSIP_SIZE;
 
-// Jailing considers a window of views defined by the lag behind the current view;
-// it must be large enough to ensure the views are finalized
-pub const LAG_BEHIND_CURRENT_VIEW: u64 = 50;
+// Jailing considers a window of past views and checks if the selected leader
+// missed a number of views configured as threshold
+pub const MISSED_VIEW_WINDOW: u64 = 100;
+pub const MISSED_VIEW_THRESHOLD: usize = 3;
 
-//TODO(#3080): replace the constant with a config setting  with 100 as default value used
-//             by validator nodes as they do not query historical leaders while archive
-//             nodes use the value 0 meaning the full history back to the fork height at
-//             which executable_blocks became true i.e. the genesis / switchover height
-// Maximum age of the items in the missed view history older than `LAG_BEHIND_CURRENT_VIEW`
-pub const MAX_MISSED_VIEW_AGE: u64 = 100;
+// The window of past views taken into account for jailing is defined by
+// the lag behind the current view; it must be large enough to make sure
+// the views are already finalized
+pub const LAG_BEHIND_CURRENT_VIEW: u64 = 50;

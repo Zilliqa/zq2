@@ -54,6 +54,7 @@ pub struct State {
     pub gas_price: u128,
     pub chain_id: ChainId,
     pub forks: Forks,
+    pub finalized_view: u64,
     pub view_history: ViewHistory,
 }
 
@@ -62,6 +63,7 @@ impl State {
         let db = Arc::new(trie);
         let consensus_config = &config.consensus;
         Ok(Self {
+            sql,
             db: db.clone(),
             accounts: Arc::new(Mutex::new(PatriciaTrie::new(db))),
             scilla: Arc::new(OnceLock::new()),
@@ -73,7 +75,7 @@ impl State {
             gas_price: *consensus_config.gas_price,
             chain_id: ChainId::new(config.eth_chain_id),
             forks: consensus_config.get_forks()?,
-            sql,
+            finalized_view: 0,
             view_history: ViewHistory::new(),
         })
     }
@@ -216,6 +218,13 @@ impl State {
                 )?;
             }
         }
+        if let Some(deposit_v6_deploy_config) = &config.contract_upgrades.deposit_v6 {
+            if deposit_v6_deploy_config.height == block_header.number {
+                let deposit_v6_contract =
+                    Lazy::<contracts::Contract>::force(&contracts::deposit_v6::CONTRACT);
+                self.upgrade_deposit_contract(block_header, deposit_v6_contract, None)?;
+            }
+        }
         Ok(())
     }
 
@@ -321,6 +330,7 @@ impl State {
 
     pub fn at_root(&self, root_hash: B256) -> Self {
         Self {
+            sql: self.sql.clone(),
             db: self.db.clone(),
             accounts: Arc::new(Mutex::new(self.accounts.lock().unwrap().at_root(root_hash))),
             scilla: self.scilla.clone(),
@@ -332,7 +342,7 @@ impl State {
             gas_price: self.gas_price,
             chain_id: self.chain_id,
             forks: self.forks.clone(),
-            sql: self.sql.clone(),
+            finalized_view: self.finalized_view,
             view_history: self.view_history.clone(),
         }
     }

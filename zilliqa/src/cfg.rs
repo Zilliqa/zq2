@@ -11,6 +11,7 @@ use crate::{
     crypto::{Hash, NodePublicKey},
     transaction::EvmGas,
 };
+use crate::constants::MISSED_VIEW_WINDOW;
 
 // Note that z2 constructs instances of this to save as a configuration so it must be both
 // serializable and deserializable.
@@ -190,6 +191,9 @@ pub struct NodeConfig {
     /// Sync configuration
     #[serde(default)]
     pub sync: SyncConfig,
+    /// Maximum age of missed view items older than `LAG_BEHIND_CURRENT_VIEW` that are retained in the history
+    #[serde(default = "max_missed_view_age_default")]
+    pub max_missed_view_age: u64,
 }
 
 impl Default for NodeConfig {
@@ -215,6 +219,7 @@ impl Default for NodeConfig {
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: false,
             max_rpc_response_size: max_rpc_response_size_default(),
+            max_missed_view_age: max_missed_view_age_default(),
         }
     }
 }
@@ -255,6 +260,10 @@ impl NodeConfig {
         // 1000 would saturate a typical node.
         if self.sync.max_blocks_in_flight > 1000 {
             return Err(anyhow!("max_blocks_in_flight must be at most 1000"));
+        }
+        // the minimum required for the next leader selection
+        if self.max_missed_view_age < MISSED_VIEW_WINDOW {
+            return Err(anyhow!("max_missed_view_age must be at least 100"));
         }
         Ok(())
     }
@@ -330,6 +339,10 @@ pub fn state_rpc_limit_default() -> usize {
 
 pub fn failed_request_sleep_duration_default() -> Duration {
     Duration::from_secs(10)
+}
+
+pub fn max_missed_view_age_default() -> u64 {
+    100
 }
 
 /// Wrapper for [u128] that (de)serializes with a string. `serde_toml` does not support `u128`s.
@@ -596,6 +609,7 @@ impl Forks {
                 ForkName::RestoreIgniteWalletContracts => fork.restore_ignite_wallet_contracts,
                 ForkName::InjectAccessList => fork.inject_access_list,
                 ForkName::UseMaxGasPriorityFee => fork.use_max_gas_priority_fee,
+                ForkName::ValidatorJailing => fork.validator_jailing,
             } {
                 return Some(fork.at_height);
             }
@@ -639,6 +653,7 @@ pub struct Fork {
     pub inject_access_list: bool,
     pub use_max_gas_priority_fee: bool,
     pub failed_zil_transfers_to_eoa_proper_fee_deduction: bool,
+    pub validator_jailing: bool,
 }
 
 pub enum ForkName {
@@ -664,6 +679,7 @@ pub enum ForkName {
     RestoreIgniteWalletContracts,
     InjectAccessList,
     UseMaxGasPriorityFee,
+    ValidatorJailing,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -774,6 +790,8 @@ pub struct ForkDelta {
     pub use_max_gas_priority_fee: Option<bool>,
     /// if true, a proper fee is charged for failed zil transfers to eoa
     pub failed_zil_transfers_to_eoa_proper_fee_deduction: Option<bool>,
+    /// if true, apply jailing during leader selection
+    pub validator_jailing: Option<bool>,
 }
 
 impl Fork {
@@ -875,6 +893,7 @@ impl Fork {
             failed_zil_transfers_to_eoa_proper_fee_deduction: delta
                 .failed_zil_transfers_to_eoa_proper_fee_deduction
                 .unwrap_or(self.failed_zil_transfers_to_eoa_proper_fee_deduction),
+            validator_jailing: delta.validator_jailing.unwrap_or(self.validator_jailing),
         }
     }
 }
@@ -975,6 +994,7 @@ pub fn genesis_fork_default() -> Fork {
         inject_access_list: true,
         use_max_gas_priority_fee: true,
         failed_zil_transfers_to_eoa_proper_fee_deduction: true,
+        validator_jailing: true,
     }
 }
 
@@ -1016,6 +1036,7 @@ pub struct ContractUpgrades {
     pub deposit_v3: Option<ContractUpgradeConfig>,
     pub deposit_v4: Option<ContractUpgradeConfig>,
     pub deposit_v5: Option<ContractUpgradeConfig>,
+    pub deposit_v6: Option<ContractUpgradeConfig>,
 }
 
 impl ContractUpgrades {
@@ -1023,11 +1044,13 @@ impl ContractUpgrades {
         deposit_v3: Option<ContractUpgradeConfig>,
         deposit_v4: Option<ContractUpgradeConfig>,
         deposit_v5: Option<ContractUpgradeConfig>,
+        deposit_v6: Option<ContractUpgradeConfig>,
     ) -> ContractUpgrades {
         Self {
             deposit_v3,
             deposit_v4,
             deposit_v5,
+            deposit_v6,
         }
     }
     pub fn to_toml(&self) -> toml::Value {
@@ -1067,6 +1090,10 @@ impl Default for ContractUpgrades {
             deposit_v5: Some(ContractUpgradeConfig {
                 height: 0,
                 reinitialise_params: Some(ReinitialiseParams::default()),
+            }),
+            deposit_v6: Some(ContractUpgradeConfig {
+                height: 0,
+                reinitialise_params: None,
             }),
         }
     }
@@ -1127,6 +1154,7 @@ mod tests {
                 inject_access_list: None,
                 use_max_gas_priority_fee: None,
                 failed_zil_transfers_to_eoa_proper_fee_deduction: None,
+                validator_jailing: None,
             }],
             ..Default::default()
         };
@@ -1182,6 +1210,7 @@ mod tests {
                     inject_access_list: None,
                     use_max_gas_priority_fee: None,
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
+                    validator_jailing: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1217,6 +1246,7 @@ mod tests {
                     inject_access_list: None,
                     use_max_gas_priority_fee: None,
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
+                    validator_jailing: None,
                 },
             ],
             ..Default::default()
@@ -1286,6 +1316,7 @@ mod tests {
                     inject_access_list: None,
                     use_max_gas_priority_fee: None,
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
+                    validator_jailing: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1321,6 +1352,7 @@ mod tests {
                     inject_access_list: None,
                     use_max_gas_priority_fee: None,
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
+                    validator_jailing: None,
                 },
             ],
             ..Default::default()
@@ -1381,6 +1413,7 @@ mod tests {
                 inject_access_list: true,
                 use_max_gas_priority_fee: true,
                 failed_zil_transfers_to_eoa_proper_fee_deduction: true,
+                validator_jailing: true,
             },
             forks: vec![],
             ..Default::default()
@@ -1429,6 +1462,7 @@ mod tests {
                     inject_access_list: None,
                     use_max_gas_priority_fee: None,
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
+                    validator_jailing: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1464,6 +1498,7 @@ mod tests {
                     inject_access_list: None,
                     use_max_gas_priority_fee: None,
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
+                    validator_jailing: None,
                 },
             ],
             ..Default::default()

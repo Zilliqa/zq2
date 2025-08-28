@@ -31,7 +31,7 @@ use crate::{
     aux, blockhooks,
     cfg::{ConsensusConfig, ForkName, NodeConfig},
     constants::{
-        EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, LAG_BEHIND_CURRENT_VIEW, MAX_MISSED_VIEW_AGE,
+        EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, LAG_BEHIND_CURRENT_VIEW,
         TIME_TO_ALLOW_PROPOSAL_BROADCAST,
     },
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey, verify_messages},
@@ -410,43 +410,87 @@ impl Consensus {
         }
 
         // after restarting, reconstruct the missed view history
+        let earliest = consensus
+            .config
+            .consensus
+            .get_forks()?
+            .find_height_fork_first_activated(ForkName::ExecutableBlocks)
+            .unwrap_or_default();
+        let max_missed_view_age = consensus
+            .config
+            .max_missed_view_age;
+        let (first, last) = consensus.db.get_first_last_from_view_history()?;
         let finalized_view = consensus.get_finalized_view()?;
-        //TODO(#3080): add the missed view history to the checkpoint file and
-        //             persist it in the db after processing the checkpoint file
+        consensus.state.finalized_view = finalized_view;
+        let imported_missed_views: Vec<(u64, NodePublicKey)> = consensus
+            .db
+            .read_recent_view_history(
+                finalized_view.saturating_sub(max_missed_view_age + LAG_BEHIND_CURRENT_VIEW + 1)
+            )?
+            .iter()
+            .map(|(view, bytes)| (*view, NodePublicKey::from_bytes(&bytes).unwrap()))
+            .rev()
+            .collect();
+        info!(missed = imported_missed_views.len(), first, last, "~~~~~~~~~~> found in db");
+            consensus.state.view_history.extend_history(&imported_missed_views)?;
+        info!(
+            view = start_view,
+            finalized = finalized_view,
+            history = display(&consensus.state.view_history),
+            "~~~~~~~~~~> imported in"
+        );
+        //TODO(#3080): add the missed view history to the checkpoint file
+        //             and store it in the db at each epoch boundary
         let mut block = consensus
             .db
             .get_block(BlockFilter::View(finalized_view))?
             .ok_or_else(|| anyhow!("missing finalized block!"))?;
+        let mut new_missed_views: Vec<(u64, NodePublicKey)> = Vec::new();
         while let Some(parent) = consensus.get_block(&block.parent_hash())? {
             let state_at = consensus.state.at_root(parent.state_root_hash().into());
+            let block_header = BlockHeader {
+                number: parent.header.number,
+                ..Default::default()
+            };
             let mut start = parent.view();
-            if start + MAX_MISSED_VIEW_AGE + LAG_BEHIND_CURRENT_VIEW < latest_block_view {
-                start = latest_block_view - MAX_MISSED_VIEW_AGE - LAG_BEHIND_CURRENT_VIEW - 1;
+            if start + max_missed_view_age + LAG_BEHIND_CURRENT_VIEW < finalized_view {
+                start = finalized_view - max_missed_view_age - LAG_BEHIND_CURRENT_VIEW - 1;
             }
-            //TODO(#3080): the missed view history does not contains the preceding views that determine the leader
-            //             therefore we have to go back to the genesis at which the missed view history was empty
-            //             or to the block for which we imported the missed view history from the checkpoint file
-            consensus.state.view_history.populate_history(
-                state_at,
-                block.header.number,
-                block.view(),
-                start,
-            )?;
+            for view in (start.max(last) + 1..block.view()).rev() {
+                if let Ok(leader) = state_at.leader(view, block_header) {
+                    if view == start.max(last) + 1 {
+                        info!(
+                            view,
+                            id = &leader.as_bytes()[..3],
+                            "~~~~~~~~~~> skipping reorged"
+                        );
+                    } else {
+                        new_missed_views.push((view, leader));
+                    }
+                }
+            }
+            // missed views up to last was imported from the db and there can't exist any missed views before earliest 
+            if start < last || start < earliest {
+                let mut min_view =
+                    consensus.state().view_history.min_view.lock().unwrap();
+                *min_view = finalized_view.saturating_sub(max_missed_view_age + LAG_BEHIND_CURRENT_VIEW);
+                break;
+            }
             block = parent;
-            if block.view() + MAX_MISSED_VIEW_AGE + LAG_BEHIND_CURRENT_VIEW < latest_block_view {
-                let mut starting_view =
-                    consensus.state().view_history.starting_view.lock().unwrap();
-                *starting_view = start + 1;
+            if block.view() + max_missed_view_age + LAG_BEHIND_CURRENT_VIEW < finalized_view {
+                let mut min_view =
+                    consensus.state().view_history.min_view.lock().unwrap();
+                *min_view = start + 1;
                 break;
             }
         }
+        let _ = consensus.state.view_history.extend_history(&new_missed_views)?;
         // the next lines are only for logging and can be commented out
-        let starting_view = *consensus.state().view_history.starting_view.lock().unwrap();
-        info!(starting_view, finalized_view, "~~~~~~~~~~> restoring");
         info!(
-            view = consensus.get_view()?,
+            view = start_view,
+            finalized = finalized_view,
             history = display(&consensus.state.view_history),
-            "~~~~~~~~~~> current"
+            "~~~~~~~~~~> restored in"
         );
 
         // If we started from a checkpoint, execute the checkpointed block now
@@ -2386,26 +2430,50 @@ impl Consensus {
             })?;
             let state_at = self.state.at_root(parent.state_root_hash().into());
             let block_header = BlockHeader {
-                number: current.header.number,
+                number: parent.header.number,
                 ..Default::default()
             };
             for view in (parent.view() + 1..current.view()).rev() {
                 if let Ok(leader) = state_at.leader(view, block_header) {
-                    new_missed_views.push((view, leader));
+                    if view == parent.view() + 1 {
+                        info!(
+                            view,
+                            id = &leader.as_bytes()[..3],
+                            "~~~~~~~~~~> skipping reorged"
+                        );
+                    } else {
+                        new_missed_views.push((view, leader));
+                    }
                 }
             }
             current = parent;
         }
-        let mut modified = self.state.view_history.extend_history(&new_missed_views)?;
-        modified |= self.state.view_history.prune_history(block.view())?;
+        let max_missed_view_age = self
+            .config
+            .max_missed_view_age;
+        let extended = self.state.view_history.extend_history(&new_missed_views)?;
+        //TODO(#3080): why use the block.view() being finalized and not the current self.get_view()? 
+        let pruned = self.state.view_history.prune_history(block.view(), max_missed_view_age)?;
         // the following code is only for logging and can be commented out
-        if modified {
+        if extended || pruned {
             info!(
                 view = self.get_view()?,
+                finalized = block.view(),
                 history = display(&self.state.view_history),
                 "~~~~~~~~~~> current"
             );
+            //TODO(#3080): do not update the db on every finalization to avoid impact on block times 
+            if extended {
+                for (view, leader) in new_missed_views.iter().rev() {
+                    self.db.extend_view_history(*view, leader.as_bytes())?;
+                }
+            }
+            if pruned {
+                let min_view = self.state.view_history.min_view.lock().unwrap();
+                self.db.prune_view_history(*min_view)?;
+            }
         }
+        self.state.finalized_view = block.view();
 
         self.set_finalized_view(block.view())?;
 
