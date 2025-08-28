@@ -177,18 +177,7 @@ struct Checkpoint {
     pub block_hash: Hash,
 }
 
-pub fn load_ckpt(
-    path: &Path,
-    trie_storage: Arc<TrieStorage>,
-    chain_id: u64,
-    block_hash: Hash,
-) -> Result<Option<(Block, Vec<SignedTransaction>, Block)>> {
-    ensure!(
-        path.extension().unwrap_or_default() == "ckpt",
-        "Checkpoint {} is not .ckpt file",
-        path.display()
-    );
-
+fn load_ckpt_meta(path: &Path, chain_id: u64, block_hash: &Hash) -> Result<Checkpoint> {
     let mut zipreader = zip::ZipArchive::new(std::fs::File::open(path)?)?;
 
     // Currently checks that the version matches exactly.
@@ -210,12 +199,22 @@ pub fn load_ckpt(
             meta.chain_id
         );
         ensure!(
-            meta.block_hash == block_hash,
+            meta.block_hash == *block_hash,
             "Bock hash {} mistmatch",
             meta.block_hash
         );
         meta
     };
+    Ok(meta)
+}
+
+pub fn load_ckpt_blocks(path: &Path) -> Result<(Block, Vec<SignedTransaction>, Block)> {
+    let mut zipreader = zip::ZipArchive::new(std::fs::File::open(path)?)?;
+    ensure!(
+        zipreader.comment() == CKPT_VERSION.as_bytes(),
+        "Invalid checkpoint version",
+    );
+
     let block = {
         let mut file = zipreader.by_name("block.bincode")?;
         let block: crate::message::Block =
@@ -258,6 +257,19 @@ pub fn load_ckpt(
         );
         transactions
     };
+    Ok((block, transactions, parent))
+}
+
+pub fn load_ckpt_state(
+    path: &Path,
+    trie_storage: Arc<TrieStorage>,
+    state_root_hash: &Hash,
+) -> Result<(u64, u64)> {
+    let mut zipreader = zip::ZipArchive::new(std::fs::File::open(path)?)?;
+    ensure!(
+        zipreader.comment() == CKPT_VERSION.as_bytes(),
+        "Invalid checkpoint version",
+    );
 
     // reconstruct the state trie from accounts/storage leaf nodes
     let (account_count, record_count) = {
@@ -305,15 +317,35 @@ pub fn load_ckpt(
             account_count += 1;
         }
         // compute state_root_hash for parent block; also flushes nodes to disk.
-        let root_hash = account_storage.root_hash()?;
+        let root_hash = Hash(account_storage.root_hash()?.into());
         ensure!(
-            root_hash.0 == parent.state_root_hash().0,
+            root_hash == *state_root_hash,
             "State root hash {} mismatch",
             root_hash
         );
 
         (account_count, record_count)
     };
+
+    Ok((account_count, record_count))
+}
+
+pub fn load_ckpt(
+    path: &Path,
+    trie_storage: Arc<TrieStorage>,
+    chain_id: u64,
+    block_hash: &Hash,
+) -> Result<Option<(Block, Vec<SignedTransaction>, Block)>> {
+    ensure!(
+        path.extension().unwrap_or_default() == "ckpt",
+        "Checkpoint {} is not .ckpt file",
+        path.display()
+    );
+
+    let meta = load_ckpt_meta(path, chain_id, block_hash)?;
+    let (block, transactions, parent) = load_ckpt_blocks(path)?;
+    let (account_count, record_count) =
+        load_ckpt_state(path, trie_storage.clone(), &parent.state_root_hash())?;
 
     ensure!(
         meta.record_count == record_count,
