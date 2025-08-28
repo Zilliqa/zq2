@@ -226,7 +226,7 @@ contract Deposit is UUPSUpgradeable {
         );
         return leaderFromRandomness(randomness);
     }
-
+    
     function getStakers() public view returns (bytes[] memory) {
         return committee().stakerKeys;
     }
