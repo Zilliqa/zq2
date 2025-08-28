@@ -426,7 +426,7 @@ impl Consensus {
                 finalized_view.saturating_sub(max_missed_view_age + LAG_BEHIND_CURRENT_VIEW + 1),
             )?
             .iter()
-            .map(|(view, bytes)| (*view, NodePublicKey::from_bytes(&bytes).unwrap()))
+            .map(|(view, bytes)| (*view, NodePublicKey::from_bytes(bytes).unwrap()))
             .rev()
             .collect();
         info!(

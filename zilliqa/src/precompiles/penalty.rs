@@ -4,7 +4,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use anyhow;
 use ethabi::{ParamType, Token, decode, encode, short_signature};
 use revm::{
     //ContextStatefulPrecompile,
@@ -33,6 +32,12 @@ pub struct ViewHistory {
     pub min_view: Arc<Mutex<u64>>,
 }
 
+impl Default for ViewHistory {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ViewHistory {
     pub fn new() -> Self {
         ViewHistory {
@@ -43,7 +48,7 @@ impl ViewHistory {
 
     pub fn extend_history(
         &mut self,
-        new_missed_views: &Vec<(u64, NodePublicKey)>,
+        new_missed_views: &[(u64, NodePublicKey)],
     ) -> anyhow::Result<bool> {
         let mut deque = self.missed_views.lock().unwrap();
         for (view, leader) in new_missed_views.iter().rev() {
@@ -92,7 +97,7 @@ impl Display for ViewHistory {
             id.copy_from_slice(&leader.as_bytes()[..3]);
             let hex_id = id
                 .iter()
-                .map(|byte| format!("{:02x}", byte))
+                .map(|byte| format!("{byte:02x}"))
                 .collect::<Vec<_>>()
                 .join(" ");
             (*view, format!("[{}]", hex_id))
@@ -104,10 +109,10 @@ impl Display for ViewHistory {
                 id.copy_from_slice(&leader.as_bytes()[..3]);
                 let hex_id = id
                     .iter()
-                    .map(|byte| format!("{:02x}", byte))
+                    .map(|byte| format!("{byte:02x}"))
                     .collect::<Vec<_>>()
                     .join(" ");
-                Some((*view, format!("[{}]", hex_id)))
+                Some((*view, format!("[{hex_id}]")))
             }
             None => None,
         };
@@ -117,10 +122,10 @@ impl Display for ViewHistory {
                 id.copy_from_slice(&leader.as_bytes()[..3]);
                 let hex_id = id
                     .iter()
-                    .map(|byte| format!("{:02x}", byte))
+                    .map(|byte| format!("{byte:02x}"))
                     .collect::<Vec<_>>()
                     .join(" ");
-                Some((*view, format!("[{}]", hex_id)))
+                Some((*view, format!("[{hex_id}]")))
             }
             None => None,
         };

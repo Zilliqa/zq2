@@ -191,7 +191,8 @@ pub struct NodeConfig {
     /// Sync configuration
     #[serde(default)]
     pub sync: SyncConfig,
-    /// Maximum age of missed view items older than `LAG_BEHIND_CURRENT_VIEW` that are retained in the history
+    /// Maximum age of missed view items older than `LAG_BEHIND_CURRENT_VIEW` that are retained in the history.
+    /// The default is sufficient to compute the leaders of the next views, but does not allow the node to compute leaders of past views.
     #[serde(default = "max_missed_view_age_default")]
     pub max_missed_view_age: u64,
 }
