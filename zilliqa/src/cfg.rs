@@ -8,10 +8,10 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::json;
 
 use crate::{
+    constants::MISSED_VIEW_WINDOW,
     crypto::{Hash, NodePublicKey},
     transaction::EvmGas,
 };
-use crate::constants::MISSED_VIEW_WINDOW;
 
 // Note that z2 constructs instances of this to save as a configuration so it must be both
 // serializable and deserializable.

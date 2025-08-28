@@ -416,23 +416,27 @@ impl Consensus {
             .get_forks()?
             .find_height_fork_first_activated(ForkName::ExecutableBlocks)
             .unwrap_or_default();
-        let max_missed_view_age = consensus
-            .config
-            .max_missed_view_age;
+        let max_missed_view_age = consensus.config.max_missed_view_age;
         let (first, last) = consensus.db.get_first_last_from_view_history()?;
         let finalized_view = consensus.get_finalized_view()?;
         consensus.state.finalized_view = finalized_view;
         let imported_missed_views: Vec<(u64, NodePublicKey)> = consensus
             .db
             .read_recent_view_history(
-                finalized_view.saturating_sub(max_missed_view_age + LAG_BEHIND_CURRENT_VIEW + 1)
+                finalized_view.saturating_sub(max_missed_view_age + LAG_BEHIND_CURRENT_VIEW + 1),
             )?
             .iter()
             .map(|(view, bytes)| (*view, NodePublicKey::from_bytes(&bytes).unwrap()))
             .rev()
             .collect();
-        info!(missed = imported_missed_views.len(), first, last, "~~~~~~~~~~> found in db");
-            consensus.state.view_history.extend_history(&imported_missed_views)?;
+        info!(
+            missed = imported_missed_views.len(),
+            first, last, "~~~~~~~~~~> found in db"
+        );
+        consensus
+            .state
+            .view_history
+            .extend_history(&imported_missed_views)?;
         info!(
             view = start_view,
             finalized = finalized_view,
@@ -469,22 +473,24 @@ impl Consensus {
                     }
                 }
             }
-            // missed views up to last was imported from the db and there can't exist any missed views before earliest 
+            // missed views up to last was imported from the db and there can't exist any missed views before earliest
             if start < last || start < earliest {
-                let mut min_view =
-                    consensus.state().view_history.min_view.lock().unwrap();
-                *min_view = finalized_view.saturating_sub(max_missed_view_age + LAG_BEHIND_CURRENT_VIEW);
+                let mut min_view = consensus.state().view_history.min_view.lock().unwrap();
+                *min_view =
+                    finalized_view.saturating_sub(max_missed_view_age + LAG_BEHIND_CURRENT_VIEW);
                 break;
             }
             block = parent;
             if block.view() + max_missed_view_age + LAG_BEHIND_CURRENT_VIEW < finalized_view {
-                let mut min_view =
-                    consensus.state().view_history.min_view.lock().unwrap();
+                let mut min_view = consensus.state().view_history.min_view.lock().unwrap();
                 *min_view = start + 1;
                 break;
             }
         }
-        let _ = consensus.state.view_history.extend_history(&new_missed_views)?;
+        let _ = consensus
+            .state
+            .view_history
+            .extend_history(&new_missed_views)?;
         // the next lines are only for logging and can be commented out
         info!(
             view = start_view,
@@ -2448,12 +2454,13 @@ impl Consensus {
             }
             current = parent;
         }
-        let max_missed_view_age = self
-            .config
-            .max_missed_view_age;
+        let max_missed_view_age = self.config.max_missed_view_age;
         let extended = self.state.view_history.extend_history(&new_missed_views)?;
-        //TODO(#3080): why use the block.view() being finalized and not the current self.get_view()? 
-        let pruned = self.state.view_history.prune_history(block.view(), max_missed_view_age)?;
+        //TODO(#3080): why use the block.view() being finalized and not the current self.get_view()?
+        let pruned = self
+            .state
+            .view_history
+            .prune_history(block.view(), max_missed_view_age)?;
         // the following code is only for logging and can be commented out
         if extended || pruned {
             info!(
@@ -2462,7 +2469,7 @@ impl Consensus {
                 history = display(&self.state.view_history),
                 "~~~~~~~~~~> current"
             );
-            //TODO(#3080): do not update the db on every finalization to avoid impact on block times 
+            //TODO(#3080): do not update the db on every finalization to avoid impact on block times
             if extended {
                 for (view, leader) in new_missed_views.iter().rev() {
                     self.db.extend_view_history(*view, leader.as_bytes())?;

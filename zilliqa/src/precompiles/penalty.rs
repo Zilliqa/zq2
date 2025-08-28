@@ -21,12 +21,10 @@ use revm::{
 use tracing::info;
 
 use crate::{
-    constants::{MISSED_VIEW_WINDOW, MISSED_VIEW_THRESHOLD, LAG_BEHIND_CURRENT_VIEW},
+    constants::{LAG_BEHIND_CURRENT_VIEW, MISSED_VIEW_THRESHOLD, MISSED_VIEW_WINDOW},
     crypto::NodePublicKey,
     exec::{ExternalContext, PendingState},
     inspector::ScillaInspector,
-    message::BlockHeader,
-    state::State,
 };
 
 #[derive(Clone, Debug)]
@@ -88,18 +86,18 @@ impl Display for ViewHistory {
         let front = deque.front();
         let back = deque.back();
         /*let history: Vec<(u64, String)> = deque
-            .iter()
-            .map(|(view, leader)| {
-                let mut id = [0u8; 3];
-                id.copy_from_slice(&leader.as_bytes()[..3]);
-                let hex_id = id
-                    .iter()
-                    .map(|byte| format!("{:02x}", byte))
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                (*view, format!("[{}]", hex_id))
-            })
-            .collect();*/
+        .iter()
+        .map(|(view, leader)| {
+            let mut id = [0u8; 3];
+            id.copy_from_slice(&leader.as_bytes()[..3]);
+            let hex_id = id
+                .iter()
+                .map(|byte| format!("{:02x}", byte))
+                .collect::<Vec<_>>()
+                .join(" ");
+            (*view, format!("[{}]", hex_id))
+        })
+        .collect();*/
         let first = match front {
             Some((view, leader)) => {
                 let mut id = [0u8; 3];
@@ -110,8 +108,8 @@ impl Display for ViewHistory {
                     .collect::<Vec<_>>()
                     .join(" ");
                 Some((*view, format!("[{}]", hex_id)))
-            },
-            None => None
+            }
+            None => None,
         };
         let last = match back {
             Some((view, leader)) => {
@@ -123,12 +121,19 @@ impl Display for ViewHistory {
                     .collect::<Vec<_>>()
                     .join(" ");
                 Some((*view, format!("[{}]", hex_id)))
-            },
-            None => None
+            }
+            None => None,
         };
         let min_view = *self.min_view.lock().unwrap();
         //write!(f, "min: {} missed: {} {:?}", min_view, history.len(), history)
-        write!(f, "min: {} missed: {} {:?}..{:?}", min_view, deque.len(), first.unwrap_or((0, "n/a".to_string())), last.unwrap_or((0, "n/a".to_string())))
+        write!(
+            f,
+            "min: {} missed: {} {:?}..{:?}",
+            min_view,
+            deque.len(),
+            first.unwrap_or((0, "n/a".to_string())),
+            last.unwrap_or((0, "n/a".to_string()))
+        )
     }
 }
 
@@ -201,7 +206,7 @@ pub fn dispatch<I: ScillaInspector>(
     _context: &mut InnerEvmContext<PendingState>,
     external_context: &mut ExternalContext<I>,
 ) -> PrecompileResult {
-    //TODO(#3080): check the gas limit and adjust how much gas the precompile should use 
+    //TODO(#3080): check the gas limit and adjust how much gas the precompile should use
     //info!(gas_limit, "~~~> precompile called with");
     //if gas_limit < 10_000u64 {
     //    return Err(PrecompileErrors::Error(PrecompileError::OutOfGas));
@@ -226,23 +231,27 @@ pub fn dispatch<I: ScillaInspector>(
     if !external_context.fork.validator_jailing {
         info!(?view, "==========> jailing not activated yet");
         let output = encode(&[Token::Bool(false)]);
-        return Ok(PrecompileOutput::new(10_000u64, output.into()))
+        return Ok(PrecompileOutput::new(10_000u64, output.into()));
     }
     if view.as_u64() > LAG_BEHIND_CURRENT_VIEW
         && view.as_u64() - LAG_BEHIND_CURRENT_VIEW >= external_context.finalized_view
     {
         info!(
-            ?view, 
+            ?view,
             finalized = external_context.finalized_view,
             "~~~~~~~~~~> required missed view history not finalized"
         );
-        return Err(PrecompileError::Other("Required missed view history not finalized".into()).into());
+        return Err(
+            PrecompileError::Other("Required missed view history not finalized".into()).into(),
+        );
     }
     let min_view = *external_context.view_history.min_view.lock().unwrap();
     // fail if the missed view history does not reach back far enough in the past or
     // the queried view is too far in the future based on the currently finalized view
-    if min_view > 1 && view.as_u64().saturating_sub(LAG_BEHIND_CURRENT_VIEW) < min_view + MISSED_VIEW_WINDOW
-        || view.as_u64() <= external_context.finalized_view + LAG_BEHIND_CURRENT_VIEW + MISSED_VIEW_WINDOW
+    if min_view > 1
+        && view.as_u64().saturating_sub(LAG_BEHIND_CURRENT_VIEW) < min_view + MISSED_VIEW_WINDOW
+        || view.as_u64()
+            > external_context.finalized_view + LAG_BEHIND_CURRENT_VIEW + MISSED_VIEW_WINDOW
     {
         info!(
             ?view,
@@ -267,18 +276,14 @@ pub fn dispatch<I: ScillaInspector>(
     let first_range = &first_slice[first_start_idx..first_end_idx];
     // filter the missed views that had the same leader as the selected one
     let filter = |(key, value): &(u64, NodePublicKey)| {
-        if value == &NodePublicKey::from_bytes(leader.as_slice()).unwrap()
-            {
-                Some(*key)
-            } else {
-                None
-            }
+        if value == &NodePublicKey::from_bytes(leader.as_slice()).unwrap() {
+            Some(*key)
+        } else {
+            None
+        }
     };
     let missed = if second_slice.is_empty() {
-        first_range
-            .iter()
-            .filter_map(filter)
-            .count()
+        first_range.iter().filter_map(filter).count()
     } else {
         let (second_start_idx, second_end_idx) = (
             search_slice(second_slice, from).unwrap_or_else(|i| i),
@@ -292,18 +297,18 @@ pub fn dispatch<I: ScillaInspector>(
             .count()
     };
     /*let missed = deque
-        .iter()
-        .filter_map(|(key, value)| {
-            if *key < view.as_u64().saturating_sub(LAG_BEHIND_CURRENT_VIEW)
-                && key + MISSED_VIEW_WINDOW >= view.as_u64().saturating_sub(LAG_BEHIND_CURRENT_VIEW)
-                && value == &NodePublicKey::from_bytes(leader.as_slice()).unwrap()
-            {
-                Some(key)
-            } else {
-                None
-            }
-        })
-        .count();*/
+    .iter()
+    .filter_map(|(key, value)| {
+        if *key < view.as_u64().saturating_sub(LAG_BEHIND_CURRENT_VIEW)
+            && key + MISSED_VIEW_WINDOW >= view.as_u64().saturating_sub(LAG_BEHIND_CURRENT_VIEW)
+            && value == &NodePublicKey::from_bytes(leader.as_slice()).unwrap()
+        {
+            Some(key)
+        } else {
+            None
+        }
+    })
+    .count();*/
     let jailed = missed >= MISSED_VIEW_THRESHOLD;
     info!(
         jailed,
