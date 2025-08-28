@@ -217,7 +217,7 @@ pub fn load_ckpt(
         meta
     };
     let block = {
-        let mut file = zipreader.by_name("block.bin")?;
+        let mut file = zipreader.by_name("block.bincode")?;
         let block: crate::message::Block =
             bincode::serde::decode_from_std_read(&mut file, BIN_CONFIG)?;
         ensure!(
@@ -228,7 +228,7 @@ pub fn load_ckpt(
         block
     };
     let parent = {
-        let mut file = zipreader.by_name("parent.bin")?;
+        let mut file = zipreader.by_name("parent.bincode")?;
         let parent: crate::message::Block =
             bincode::serde::decode_from_std_read(&mut file, BIN_CONFIG)?;
         ensure!(
@@ -242,7 +242,7 @@ pub fn load_ckpt(
 
     // Verify transactions list
     let transactions = {
-        let mut file = zipreader.by_name("transactions.bin")?;
+        let mut file = zipreader.by_name("transactions.bincode")?;
         let transactions: Vec<SignedTransaction> =
             bincode::serde::decode_from_std_read(&mut file, BIN_CONFIG)?;
         let mut transactions_trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
@@ -266,7 +266,7 @@ pub fn load_ckpt(
         let mut account_count = 0;
         let mut record_count = 0;
 
-        let mut reader = zipreader.by_name("state_trie.bin")?;
+        let mut reader = zipreader.by_name("state.bincode")?;
         while let Ok(account_key) =
             bincode::decode_from_std_read::<Vec<u8>, _, _>(&mut reader, BIN_CONFIG)
         {
@@ -371,19 +371,19 @@ pub fn save_ckpt(
     let mut zipwriter = zip::ZipWriter::new(zipfile);
 
     // write block.json
-    zipwriter.start_file("block.bin", options)?;
+    zipwriter.start_file("block.bincode", options)?;
     bincode::serde::encode_into_std_write(block, &mut zipwriter, BIN_CONFIG)?;
 
     // write parent.json
-    zipwriter.start_file("parent.bin", options)?;
+    zipwriter.start_file("parent.bincode", options)?;
     bincode::serde::encode_into_std_write(parent, &mut zipwriter, BIN_CONFIG)?;
 
     // write transactions.json
-    zipwriter.start_file("transactions.bin", options)?;
+    zipwriter.start_file("transactions.bincode", options)?;
     bincode::serde::encode_into_std_write(transactions, &mut zipwriter, BIN_CONFIG)?;
 
     // write the accounts in the state trie at this point
-    zipwriter.start_file("state_trie.bin", options)?;
+    zipwriter.start_file("state.bincode", options)?;
     let state_trie_storage = trie_storage.clone();
 
     let accounts =
