@@ -228,7 +228,9 @@ pub fn dispatch<I: ScillaInspector>(
         let output = encode(&[Token::Bool(false)]);
         return Ok(PrecompileOutput::new(10_000u64, output.into()))
     }
-    if view.as_u64().saturating_sub(LAG_BEHIND_CURRENT_VIEW) >= external_context.finalized_view {
+    if view.as_u64() > LAG_BEHIND_CURRENT_VIEW
+        && view.as_u64() - LAG_BEHIND_CURRENT_VIEW >= external_context.finalized_view
+    {
         info!(
             ?view, 
             finalized = external_context.finalized_view,
