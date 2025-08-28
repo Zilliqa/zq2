@@ -336,12 +336,6 @@ pub fn load_ckpt(
     chain_id: u64,
     block_hash: &Hash,
 ) -> Result<Option<(Block, Vec<SignedTransaction>, Block)>> {
-    ensure!(
-        path.extension().unwrap_or_default() == "ckpt",
-        "Checkpoint {} is not .ckpt file",
-        path.display()
-    );
-
     let meta = load_ckpt_meta(path, chain_id, block_hash)?;
     let (block, transactions, parent) = load_ckpt_blocks(path)?;
     let (account_count, record_count) =
@@ -369,12 +363,6 @@ pub fn save_ckpt(
     parent: &Block,
     chain_id: u64,
 ) -> Result<()> {
-    // sanity checks
-    ensure!(
-        path.extension().unwrap_or_default() == "ckpt",
-        "Checkpoint {} is not .ckpt file",
-        path.display()
-    );
     // parent
     ensure!(
         block.parent_hash() == parent.hash(),
