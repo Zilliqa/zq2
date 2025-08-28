@@ -459,8 +459,7 @@ impl Db {
     }
 
     pub fn prune_view_history(&self, view: u64) -> Result<()> {
-        self
-            .pool
+        self.pool
             .get()?
             .prepare_cached("DELETE FROM view_history WHERE view < ?1")?
             .execute([view])?;
@@ -484,8 +483,7 @@ impl Db {
     }
 
     pub fn extend_view_history(&self, view: u64, leader: Vec<u8>) -> Result<()> {
-        self
-            .pool
+        self.pool
             .get()?
             .prepare_cached("INSERT INTO view_history (view, leader) VALUES (?1, ?2)")?
             //.execute(rusqlite::params![view, leader])?;
