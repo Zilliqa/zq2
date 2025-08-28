@@ -2,7 +2,7 @@ use std::{
     collections::BTreeMap,
     fmt::Debug,
     fs::{self, File, OpenOptions},
-    io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
+    io::{BufReader, Read, Seek, SeekFrom, Write},
     ops::RangeInclusive,
     path::{Path, PathBuf},
     sync::Arc,
@@ -15,7 +15,7 @@ use anyhow::{Context, Result, anyhow};
 use eth_trie::{DB, EthTrie, MemoryDB, Trie};
 use itertools::Itertools;
 use lru_mem::LruCache;
-use lz4::{Decoder, EncoderBuilder};
+use lz4::Decoder;
 use parking_lot::RwLock;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -31,7 +31,6 @@ use crate::{
     crypto::{BlsSignature, Hash},
     exec::{ScillaError, ScillaException, ScillaTransition},
     message::{AggregateQc, Block, BlockHeader, QuorumCertificate},
-    state::Account,
     time::SystemTime,
     transaction::{EvmGas, Log, SignedTransaction, TransactionReceipt, VerifiedTransaction},
 };
@@ -527,13 +526,79 @@ impl Db {
     /// Fetch checkpoint data from file and initialise db state
     /// Return checkpointed block and transactions which must be executed after this function
     /// Return None if checkpoint already loaded
-    pub fn load_trusted_checkpoint<P: AsRef<Path>>(
+    pub fn load_trusted_checkpoint(
+        &self,
+        path: PathBuf,
+        hash: &Hash,
+        our_shard_id: u64,
+    ) -> Result<Option<(Block, Vec<SignedTransaction>, Block)>> {
+        let trie_storage = Arc::new(self.state_trie()?);
+        let state_trie = EthTrie::new(trie_storage.clone());
+
+        // If no state trie exists and no blocks are known, then we are in a fresh database.
+        // We can safely load the checkpoint.
+        if state_trie.iter().next().is_none()
+            && self.get_highest_canonical_block_number()?.is_none()
+        {
+            tracing::info!(%hash, "Restoring checkpoint");
+            let (block, transactions, parent) = crate::checkpoint::load_ckpt(
+                path.as_path(),
+                trie_storage.clone(),
+                our_shard_id,
+                hash,
+            )?
+            .expect("does not return None");
+
+            let parent_ref: &Block = &parent; // for moving into the closure
+            self.with_sqlite_tx(move |tx| {
+                self.insert_block_with_db_tx(tx, parent_ref)?;
+                self.set_finalized_view_with_db_tx(tx, parent_ref.view())?;
+                self.set_high_qc_with_db_tx(tx, block.header.qc)?;
+                self.set_view_with_db_tx(tx, parent_ref.view() + 1, false)?;
+                Ok(())
+            })?;
+
+            return Ok(Some((block, transactions, parent)));
+        }
+
+        let (block, transactions, parent) = crate::checkpoint::load_ckpt_blocks(path.as_path())?;
+
+        // OTHER SANITY CHECKS
+        // Check if the parent block is sane
+        let Some(ckpt_parent) = self.get_block(parent.hash().into())? else {
+            return Err(anyhow!("Invalid checkpoint attempt"));
+        };
+        anyhow::ensure!(
+            ckpt_parent.parent_hash() == parent.parent_hash(),
+            "Critical checkpoint error"
+        );
+
+        // check if state-sync is needed i.e. state is missing
+        if trie_storage
+            .get(ckpt_parent.state_root_hash().as_bytes())?
+            .is_none()
+        {
+            // If the corresponding state is missing, load it from the checkpoint
+            tracing::info!(state = %ckpt_parent.state_root_hash(), "Syncing checkpoint");
+            crate::checkpoint::load_ckpt_state(
+                path.as_path(),
+                trie_storage.clone(),
+                &ckpt_parent.state_root_hash(),
+            )?;
+            return Ok(Some((block, transactions, parent)));
+        }
+
+        Ok(None)
+    }
+
+    // old checkpoint format
+    pub fn load_trusted_checkpoint_v1<P: AsRef<Path>>(
         &self,
         path: P,
         hash: &Hash,
         our_shard_id: u64,
     ) -> Result<Option<(Block, Vec<SignedTransaction>, Block)>> {
-        tracing::info!(%hash, "Checkpoint");
+        tracing::info!(%hash, "Checkpoint V1");
         // Decompress the file for processing
         let input_file = File::open(path.as_ref())?;
         let buf_reader: BufReader<File> = BufReader::with_capacity(128 * 1024 * 1024, input_file);
@@ -568,23 +633,7 @@ impl Db {
             return Ok(Some((block, transactions, parent)));
         }
 
-        // OTHER SANITY CHECKS
-        // Check if the parent block is sane
-        let Some(ckpt_parent) = self.get_block(parent.hash().into())? else {
-            return Err(anyhow!("Invalid checkpoint attempt"));
-        };
-        if ckpt_parent.parent_hash() != parent.parent_hash() {
-            return Err(anyhow!("Critical checkpoint error"));
-        };
-        if trie_storage
-            .get(ckpt_parent.state_root_hash().as_bytes())?
-            .is_none()
-        {
-            // If the corresponding state is missing, load it from the checkpoint
-            tracing::info!(state = %ckpt_parent.state_root_hash(), "Syncing checkpoint");
-            crate::checkpoint::load_state_trie(&mut reader, trie_storage, &ckpt_parent)?;
-        }
-        Ok(Some((block, transactions, ckpt_parent)))
+        Ok(None)
     }
 
     pub fn state_trie(&self) -> Result<TrieStorage> {
@@ -1310,7 +1359,10 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::{crypto::SecretKey, state::State};
+    use crate::{
+        crypto::SecretKey,
+        state::{Account, State},
+    };
 
     #[test]
     fn query_planner_stability_guarantee() {
