@@ -1239,9 +1239,21 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
 ) -> Result<()> {
     fs::create_dir_all(&output_dir)?;
     let trie_storage = Arc::new(state_trie_storage);
-    let path = get_checkpoint_filename(output_dir, block)?.with_extension("ckpt");
-    crate::checkpoint::save_ckpt(&path, trie_storage, block, transactions, parent, shard_id)?;
-    Ok(())
+    let path = get_checkpoint_filename(output_dir, block)?;
+    crate::checkpoint::save_ckpt(
+        path.with_extension("part").as_path(),
+        trie_storage,
+        block,
+        transactions,
+        parent,
+        shard_id,
+    )?;
+
+    // rename file when done
+    Ok(fs::rename(
+        path.with_extension("part").as_path(),
+        path.as_path(),
+    )?)
 }
 
 /// An implementor of [eth_trie::DB] which uses a [Connection] to persist data.
