@@ -182,7 +182,7 @@ pub fn load_ckpt(
     trie_storage: Arc<TrieStorage>,
     chain_id: u64,
     block_hash: Hash,
-) -> Result<()> {
+) -> Result<Option<(Block, Vec<SignedTransaction>, Block)>> {
     ensure!(
         path.extension().unwrap_or_default() == "ckpt",
         "Checkpoint {} is not .ckpt file",
@@ -241,7 +241,7 @@ pub fn load_ckpt(
     ensure!(block.parent_hash() == parent.hash(), "Parent hash mismatch");
 
     // Verify transactions list
-    let _transactions = {
+    let transactions = {
         let mut file = zipreader.by_name("transactions.bin")?;
         let transactions: Vec<SignedTransaction> =
             bincode::serde::decode_from_std_read(&mut file, BIN_CONFIG)?;
@@ -326,23 +326,43 @@ pub fn load_ckpt(
         account_count
     );
 
-    Ok(())
+    Ok(Some((block, transactions, parent)))
 }
 
 pub fn save_ckpt(
     path: &Path,
     trie_storage: Arc<TrieStorage>,
-    block: Block,
-    transactions: Vec<SignedTransaction>,
-    parent: Block,
+    block: &Block,
+    transactions: &Vec<SignedTransaction>,
+    parent: &Block,
     chain_id: u64,
 ) -> Result<()> {
+    // sanity checks
     ensure!(
         path.extension().unwrap_or_default() == "ckpt",
         "Checkpoint {} is not .ckpt file",
         path.display()
     );
+    // parent
+    ensure!(
+        block.parent_hash() == parent.hash(),
+        "Parent hash {} mismatch",
+        parent.hash()
+    );
+    // transactions
+    let mut transactions_trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
+    for tx in transactions {
+        let hash = tx.calculate_hash();
+        transactions_trie.insert(hash.as_bytes(), hash.as_bytes())?;
+    }
+    let transactions_root_hash = Hash(transactions_trie.root_hash()?.into());
+    ensure!(
+        transactions_root_hash == block.header.transactions_root_hash,
+        "Transactions root hash {} mismatch",
+        transactions_root_hash
+    );
 
+    // Start writing the checkpoint file
     let zipfile = std::fs::File::create(path)?;
     let options = zip::write::SimpleFileOptions::default()
         .large_file(true)
@@ -352,16 +372,17 @@ pub fn save_ckpt(
 
     // write block.json
     zipwriter.start_file("block.bin", options)?;
-    bincode::serde::encode_into_std_write(&block, &mut zipwriter, BIN_CONFIG)?;
+    bincode::serde::encode_into_std_write(block, &mut zipwriter, BIN_CONFIG)?;
 
     // write parent.json
     zipwriter.start_file("parent.bin", options)?;
-    bincode::serde::encode_into_std_write(&parent, &mut zipwriter, BIN_CONFIG)?;
+    bincode::serde::encode_into_std_write(parent, &mut zipwriter, BIN_CONFIG)?;
 
     // write transactions.json
     zipwriter.start_file("transactions.bin", options)?;
-    bincode::serde::encode_into_std_write(&transactions, &mut zipwriter, BIN_CONFIG)?;
+    bincode::serde::encode_into_std_write(transactions, &mut zipwriter, BIN_CONFIG)?;
 
+    // write the accounts in the state trie at this point
     zipwriter.start_file("state_trie.bin", options)?;
     let state_trie_storage = trie_storage.clone();
 
@@ -404,6 +425,7 @@ pub fn save_ckpt(
         block_hash: block.hash(),
     };
 
+    // write the V2.0 metadata
     zipwriter.start_file("metadata.json", options)?;
     serde_json::to_writer(&mut zipwriter, &meta)?;
 

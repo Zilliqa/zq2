@@ -1188,104 +1188,10 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
     shard_id: u64,
     output_dir: P,
 ) -> Result<()> {
-    const VERSION: u32 = 3;
-
     fs::create_dir_all(&output_dir)?;
-
-    let state_trie_storage = Arc::new(state_trie_storage);
-    // quick sanity check
-    if block.parent_hash() != parent.hash() {
-        return Err(anyhow!(
-            "Parent block parameter must match the checkpoint block's parent hash"
-        ));
-    }
-
-    // Note: we ignore any existing file
-    let output_filename = get_checkpoint_filename(output_dir, block)?;
-    let temp_filename = output_filename.with_extension("part");
-    let outfile_temp = File::create_new(&temp_filename)?;
-    let mut writer = BufWriter::with_capacity(128 * 1024 * 1024, outfile_temp); // 128 MiB chunks
-
-    // write the header:
-    writer.write_all(&crate::checkpoint::CHECKPOINT_HEADER_BYTES)?; // file identifier
-    writer.write_all(&VERSION.to_be_bytes())?; // 4 BE bytes for version
-    writer.write_all(&shard_id.to_be_bytes())?; // 8 BE bytes for shard ID
-    writer.write_all(b"\n")?;
-
-    // write the block...
-    let block_ser = &bincode::serde::encode_to_vec(block, bincode::config::legacy())?;
-    writer.write_all(&u64::try_from(block_ser.len())?.to_be_bytes())?;
-    writer.write_all(block_ser)?;
-
-    // write transactions
-    let transactions_ser = &bincode::serde::encode_to_vec(transactions, bincode::config::legacy())?;
-    writer.write_all(&u64::try_from(transactions_ser.len())?.to_be_bytes())?;
-    writer.write_all(transactions_ser)?;
-
-    // and its parent, to keep the qc tracked
-    let parent_ser = &bincode::serde::encode_to_vec(parent, bincode::config::legacy())?;
-    writer.write_all(&u64::try_from(parent_ser.len())?.to_be_bytes())?;
-    writer.write_all(parent_ser)?;
-
-    // then write state for each account
-    let accounts =
-        EthTrie::new(state_trie_storage.clone()).at_root(parent.state_root_hash().into());
-    let account_storage = EthTrie::new(state_trie_storage);
-    let mut account_key_buf = [0u8; 32]; // save a few allocations, since account keys are fixed length
-
-    for (key, serialised_account) in accounts.iter() {
-        // export the account itself
-        account_key_buf.copy_from_slice(&key);
-        writer.write_all(&account_key_buf)?;
-
-        writer.write_all(&u64::try_from(serialised_account.len())?.to_be_bytes())?;
-        writer.write_all(&serialised_account)?;
-
-        // now write the entire account storage map
-        let account_storage = account_storage.at_root(
-            bincode::serde::decode_from_slice::<Account, _>(
-                &serialised_account,
-                bincode::config::legacy(),
-            )?
-            .0
-            .storage_root,
-        );
-        let mut account_storage_buf = vec![];
-        for (storage_key, storage_val) in account_storage.iter() {
-            account_storage_buf.extend_from_slice(&u64::try_from(storage_key.len())?.to_be_bytes());
-            account_storage_buf.extend_from_slice(&storage_key);
-
-            account_storage_buf.extend_from_slice(&u64::try_from(storage_val.len())?.to_be_bytes());
-            account_storage_buf.extend_from_slice(&storage_val);
-        }
-        writer.write_all(&u64::try_from(account_storage_buf.len())?.to_be_bytes())?;
-        writer.write_all(&account_storage_buf)?;
-    }
-    writer.flush()?;
-
-    // lz4 compress and write to output
-    compress_file(&temp_filename, &output_filename)?;
-
-    fs::remove_file(temp_filename)?;
-
-    Ok(())
-}
-
-/// Read temp file, compress usign lz4, write into output file
-fn compress_file<P: AsRef<Path> + Debug>(input_file_path: P, output_file_path: P) -> Result<()> {
-    let mut reader = BufReader::new(File::open(input_file_path)?);
-
-    let mut encoder = EncoderBuilder::new().build(File::create(output_file_path)?)?;
-    let mut buffer = [0u8; 1024 * 64]; // read 64KB chunks at a time
-    loop {
-        let bytes_read = reader.read(&mut buffer)?; // Read a chunk of decompressed data
-        if bytes_read == 0 {
-            break; // End of file
-        }
-        encoder.write_all(&buffer[..bytes_read])?;
-    }
-    encoder.finish().1?;
-
+    let trie_storage = Arc::new(state_trie_storage);
+    let path = get_checkpoint_filename(output_dir, block)?.with_extension("ckpt");
+    crate::checkpoint::save_ckpt(&path, trie_storage, block, transactions, parent, shard_id)?;
     Ok(())
 }
 

@@ -81,9 +81,9 @@ async fn main() -> Result<()> {
     zilliqa::checkpoint::save_ckpt(
         path.as_path(),
         Arc::new(db.state_trie()?),
-        block,
-        transactions,
-        parent,
+        &block,
+        &transactions,
+        &parent,
         args.id,
     )?;
     println!("WRITE {:?}", now.elapsed());
