@@ -588,7 +588,7 @@ impl Db {
             return Ok(Some((block, transactions, parent)));
         }
 
-        Ok(None)
+        Ok(Some((block, transactions, parent)))
     }
 
     // old checkpoint format
