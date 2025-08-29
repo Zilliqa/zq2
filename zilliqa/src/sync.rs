@@ -374,7 +374,10 @@ impl Sync {
             SyncState::Retry1(_) if self.in_pipeline == 0 => {
                 self.retry_phase1()?;
             }
-            SyncState::Phase4(_) => self.request_passive_sync()?,
+            SyncState::Phase4((last, _)) => {
+                let range = self.sync_base_height..=last;
+                self.request_passive_sync(range)?;
+            }
             _ => {
                 debug!(in_pipeline = %self.in_pipeline, "DoSync : syncing");
             }
@@ -417,7 +420,7 @@ impl Sync {
 
         match (*range.start()).cmp(&self.sync_base_height) {
             Ordering::Equal => {
-                self.sync_base_height = u64::MAX;
+                self.recover_checkpoints(range)?;
             }
             // passive-sync above sync-base-height
             Ordering::Greater => {
@@ -427,12 +430,13 @@ impl Sync {
                 let last = *range.start();
                 let hash = self
                     .db
-                    .get_block(BlockFilter::Height(*range.start()))?
+                    .get_transactionless_block(BlockFilter::Height(*range.start()))?
                     .expect("must exist")
                     .hash();
 
                 self.state = SyncState::Phase4((last, hash));
-                self.request_passive_sync()?;
+                let range = self.sync_base_height..=last;
+                self.request_passive_sync(range)?;
             }
             Ordering::Less => {
                 let last_prune = self.prune_range(range)?;
@@ -443,6 +447,36 @@ impl Sync {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Recovers missing checkpoint parent block (if any)
+    /// It only impacts a handful of blocks.
+    fn recover_checkpoints(&mut self, range: RangeInclusive<u64>) -> Result<()> {
+        let start = range.start().saturating_div(86400);
+        let end = range.end().saturating_div(86400);
+
+        for n in start..=end {
+            let num = n.saturating_mul(86400).saturating_sub(1); // calculate checkpoint parent
+            let Some(block) = self
+                .db
+                .get_transactionless_block(BlockFilter::Height(num))?
+            else {
+                continue; // skip if block not found
+            };
+            if !self
+                .db
+                .get_transaction_receipts_in_block(&block.hash())?
+                .is_empty()
+            {
+                continue; // skip if any transaction receipts are available
+            }
+            tracing::info!(number=%block.number(), hash=%block.hash(), "Recovering checkpoint");
+            self.state = SyncState::Phase4((block.number(), block.hash()));
+            let range = block.number()..=block.number();
+            return self.request_passive_sync(range); // request 1 block only
+        }
+        self.sync_base_height = u64::MAX; // no more to process
         Ok(())
     }
 
@@ -743,8 +777,8 @@ impl Sync {
     /// Phase 4: Request Passive Sync
     ///
     /// Request for as much as possible, but will only receive partial response.
-    fn request_passive_sync(&mut self) -> Result<()> {
-        let SyncState::Phase4((last, hash)) = self.state else {
+    fn request_passive_sync(&mut self, range: RangeInclusive<u64>) -> Result<()> {
+        let SyncState::Phase4((_last, hash)) = self.state else {
             unimplemented!("PassiveSync : invalid state");
         };
 
@@ -755,7 +789,6 @@ impl Sync {
         }
 
         if let Some(peer_info) = self.peers.get_next_peer() {
-            let range = self.sync_base_height..=last;
             info!(?range, from = %peer_info.peer_id, "PassiveSync : requesting");
             let message = ExternalMessage::PassiveSyncRequest(RequestBlocksByHash {
                 request_at: SystemTime::now(),
