@@ -388,6 +388,22 @@ impl ContextPrecompile for ScillaRead {
     }
 }
 
+pub(crate) struct ScillaCall;
+
+impl ContextPrecompile for ScillaCall {
+    fn call<'a>(
+        &self,
+        ctx: &mut ZQ2EvmContext<'a>,
+        _inspector: &mut (impl Inspector<ZQ2EvmContext<'a>> + ScillaInspector),
+        _dest: Address,
+        input: &InputsImpl,
+        _is_static: bool,
+        gas_limit: u64
+    ) -> PrecompileResult {
+        Ok(PrecompileOutput::new(0, Bytes::default()))
+    }
+}
+
 /*pub fn scilla_call_handle_register<I: ScillaInspector>(
     handler: &mut EvmHandler<'_, ExternalContext<I>, PendingState>,
 ) {
@@ -537,7 +553,10 @@ impl ContextPrecompile for ScillaRead {
 }
 */
 
-/*fn scilla_call_precompile<I: ScillaInspector>(
+/*
+
+ fn scilla_call_precompile<I: ScillaInspector>(
+
     input: &CallInputs,
     gas_limit: u64,
     evmctx: &mut InnerEvmContext<PendingState>,
@@ -737,5 +756,6 @@ impl ContextPrecompile for ScillaRead {
         Bytes::new(),
     ))
 }
+
 
  */

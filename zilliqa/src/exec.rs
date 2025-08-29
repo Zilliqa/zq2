@@ -48,7 +48,7 @@ use crate::{
         ZilAmount, total_scilla_gas_price,
     },
 };
-use crate::evm::{new_zq2_evm_ctx, ZQ2EvmContext, SPEC_ID};
+use crate::evm::{new_zq2_evm_ctx, ZQ2Evm, ZQ2EvmContext, SPEC_ID};
 use crate::precompiles::ZQ2PrecompileProvider;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -615,7 +615,7 @@ impl State {
             authorization_list: Vec::default(),
         });
 
-        let mut evm = evm_ctx.build_mainnet().with_inspector(inspector).with_precompiles(ZQ2PrecompileProvider::new());
+        let mut evm = ZQ2Evm::new(evm_ctx, inspector);// evm_ctx.build_mainnet().with_inspector(inspector).with_precompiles(ZQ2PrecompileProvider::new());
 
         /*
         let mut evm = Evm::builder()
@@ -677,7 +677,7 @@ impl State {
         }
         let mut evm = evm.build();
         */
-        let result_and_state = evm.replay()?;
+        let result_and_state = evm.0.replay()?;
         let ctx_with_handler = evm.ctx();
 
         // If the scilla precompile failed for whitelisted zq1 contract we mark the entire transaction as failed
@@ -705,7 +705,7 @@ impl State {
         Ok((
             result_and_state,
             ctx_with_handler.db_mut().finalize(),
-            evm.cfg.clone(),
+            evm.0.cfg.clone(),
         ))
     }
 
