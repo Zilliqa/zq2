@@ -464,6 +464,9 @@ impl Sync {
             else {
                 continue; // skip if block not found
             };
+            if block.transactions_root_hash().0 == crate::constants::EMPTY_ROOT_HASH.0 {
+                continue; // skip if block has empty transactions root hash
+            }
             if !self
                 .db
                 .get_transaction_receipts_in_block(&block.hash())?
