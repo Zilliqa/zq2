@@ -423,14 +423,13 @@ impl Sync {
             Ordering::Greater => {
                 debug!(?range, "StartPassiveSync : syncing",);
 
-                let last = range.start().saturating_sub(1);
+                // start syncing from the lowest block, as the checkpoint parent is missing transactions/receipts.
+                let last = *range.start();
                 let hash = self
                     .db
                     .get_block(BlockFilter::Height(*range.start()))?
                     .expect("must exist")
-                    .header
-                    .qc
-                    .block_hash;
+                    .hash();
 
                 self.state = SyncState::Phase4((last, hash));
                 self.request_passive_sync()?;
@@ -1449,7 +1448,7 @@ impl Sync {
                 "StoreProposals : applying",
             );
 
-            // Store it
+            // Store/Ignore it; if it already exists.
             self.db.with_sqlite_tx(|sqlite_tx| {
                     // Insert block
                     self.db.insert_block_with_db_tx(sqlite_tx, &block)?;
