@@ -8,12 +8,13 @@ use alloy::primitives::Address;
 use revm::context_interface::{Cfg, ContextTr};
 use revm::handler::{EthPrecompiles, PrecompileProvider};
 use revm::interpreter::{InputsImpl, InterpreterResult};
+use revm_inspector::Inspector;
 use revm_precompile::PrecompileResult;
 use bls_verify::BlsVerify;
 use pop_verify::PopVerify;
 use scilla::ScillaRead;
-
-use crate::exec::{ZQ2EvmContext};
+use crate::evm::ZQ2EvmContext;
+use crate::inspector::ScillaInspector;
 
 #[derive(Debug, Clone)]
 pub struct ZQ2PrecompileProvider {
@@ -47,6 +48,7 @@ where
         gas_limit: u64,
     ) -> Result<Option<Self::Output>, String> {
 
+
         // Otherwise, delegate to standard Ethereum precompiles
         self.inner
             .run(context, address, inputs, is_static, gas_limit)
@@ -64,32 +66,64 @@ where
     }
 }
 
-pub trait ContextPrecompile<CTX: ContextTr>: Sync + Send {
-    fn call(
+pub trait ContextPrecompile {
+    fn call<'a>(
         &self,
-        ctx: &mut CTX,
+        ctx: &mut ZQ2EvmContext<'a>,
+        inspector: &mut (impl Inspector<ZQ2EvmContext<'a>> + ScillaInspector),
         target: Address,
         input: &InputsImpl,
         is_static: bool,
-        gas_litmit: u64
+        gas_limit: u64,
     ) -> PrecompileResult;
 }
 
-pub type ExtendedPrecompileFn<CTX: ContextTr> = fn(&mut CTX, Address, &InputsImpl, bool, u64) -> PrecompileResult;
+impl CustomPrecompile {
+    pub fn call<'a>(
+        &self,
+        ctx: &mut ZQ2EvmContext<'a>,
+        inspector: &mut (impl Inspector<ZQ2EvmContext<'a>> + ScillaInspector),
+        target: Address,
+        input: &InputsImpl,
+        is_static: bool,
+        gas_limit: u64,
+    ) -> PrecompileResult
+    {
+        match self {
+            CustomPrecompile::PopVerify(p) => {
+                p.call(ctx, inspector, target, input, is_static, gas_limit)
+            }
+            CustomPrecompile::BlsVerify(p) => {
+                p.call(ctx, inspector, target, input, is_static, gas_limit)
+            }
+            CustomPrecompile::ScillaRead(p) => {
+                p.call(ctx, inspector, target, input, is_static, gas_limit)
+            }
+        }
+    }
+}
 
-pub fn get_custom_precompiles<'a, I>() -> Vec<(Address, Arc<dyn ContextPrecompile<ZQ2EvmContext<'a, I>>>)> {
+
+pub enum CustomPrecompile {
+    PopVerify(PopVerify),
+    BlsVerify(BlsVerify),
+    ScillaRead(ScillaRead),
+}
+
+
+pub fn get_custom_precompiles() -> Vec<(Address, CustomPrecompile)> {
     vec![
         (
             Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x80"),
-            Arc::new(PopVerify),
+            CustomPrecompile::PopVerify(PopVerify),
         ),
         (
             Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x81"),
-            Arc::new(BlsVerify),
+            CustomPrecompile::BlsVerify(BlsVerify),
         ),
         (
             Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x92"),
-            Arc::new(ScillaRead),
+            CustomPrecompile::ScillaRead(ScillaRead),
         ),
         // The "Scilla call" precompile also exists at address `0x5a494c53`. However, it is implemented by overwriting
         // the `revm` call handler, rather than using a conventional precompile. This is because it requires extra
@@ -97,3 +131,4 @@ pub fn get_custom_precompiles<'a, I>() -> Vec<(Address, Arc<dyn ContextPrecompil
         // inspector is kept), the `msg.sender` and the `msg.value`.
     ]
 }
+

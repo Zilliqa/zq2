@@ -5,8 +5,11 @@ use revm::{
     precompile::PrecompileError,
 };
 use revm::interpreter::InputsImpl;
+use revm::interpreter::interpreter::EthInterpreter;
 use revm::precompile::{PrecompileOutput, PrecompileResult};
-use crate::exec::{ZQ2EvmContext};
+use revm_inspector::Inspector;
+use crate::evm::{ZQ2EvmContext};
+use crate::inspector::ScillaInspector;
 use crate::precompiles::ContextPrecompile;
 
 pub struct BlsVerify;
@@ -19,10 +22,10 @@ impl BlsVerify {
     ///     - Single pairing check on BLS12-381 (ref: EIP-1108)         = 79_000
     ///                                                                 = 180_000
     const BLS_VERIFY_GAS_PRICE: u64 = 180_000u64;
-    fn bls_verify<I>(
+    fn bls_verify<'a>(
         input: &[u8],
         gas_limit: u64,
-        _: &mut ZQ2EvmContext<I>,
+        _: &mut ZQ2EvmContext<'a>,
     ) -> PrecompileResult {
         if gas_limit < Self::BLS_VERIFY_GAS_PRICE {
             return Err(PrecompileError::OutOfGas);
@@ -66,11 +69,12 @@ impl BlsVerify {
     }
 }
 
-impl<I> ContextPrecompile<ZQ2EvmContext<'_, I>> for BlsVerify {
-    fn call(
+impl ContextPrecompile for BlsVerify {
+    fn call<'a>(
         &self,
-        ctx: &mut ZQ2EvmContext<I>,
-        _dest: Address,
+        ctx: &mut ZQ2EvmContext<'a>,
+        _inspector: &mut (impl Inspector<ZQ2EvmContext<'a>> + ScillaInspector),
+        _target: Address,
         input: &InputsImpl,
         _is_static: bool,
         gas_limit: u64

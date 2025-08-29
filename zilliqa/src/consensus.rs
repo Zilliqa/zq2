@@ -33,7 +33,7 @@ use crate::{
     constants::{EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, TIME_TO_ALLOW_PROPOSAL_BROADCAST},
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey, verify_messages},
     db::{self, BlockFilter, Db},
-    exec::{PendingState, TransactionApplyResult},
+    exec::{TransactionApplyResult},
     inspector::{self, ScillaInspector, TouchedAddressInspector},
     message::{
         AggregateQc, BitArray, BitSlice, Block, BlockHeader, BlockRef, BlockStrategy,
@@ -55,7 +55,7 @@ use crate::{
         EvmGas, SignedTransaction, TransactionReceipt, ValidationOutcome, VerifiedTransaction,
     },
 };
-use crate::exec::ZQ2EvmContext;
+use crate::evm::ZQ2EvmContext;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct NewViewVote {
@@ -1050,7 +1050,7 @@ impl Consensus {
     }
 
     /// For a given State apply the given transaction
-    pub fn apply_transaction_at<I: for<'a> Inspector<ZQ2EvmContext<'a, I>> + ScillaInspector>(
+    pub fn apply_transaction_at<I: for<'a> Inspector<ZQ2EvmContext<'a>> + ScillaInspector>(
         state: &mut State,
         txn: VerifiedTransaction,
         current_block: BlockHeader,

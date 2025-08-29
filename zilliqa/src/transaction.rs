@@ -14,12 +14,16 @@ use alloy::{
     rlp::{EMPTY_STRING_CODE, Encodable, Header},
     sol_types::SolValue,
 };
-use alloy::primitives::{Signature};
+use alloy::eips::eip2930::AccessListItem;
+use alloy::eips::eip7702::{RecoveredAuthorization, SignedAuthorization};
+use alloy::primitives::{Bytes, Signature};
 use anyhow::{Result, anyhow};
 use bytes::{BufMut, BytesMut};
 use itertools::Itertools;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
+use revm::context_interface::either::Either;
 use revm::context_interface::transaction::AccessList;
+use revm_context::TxEnv;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use sha3::{
@@ -815,6 +819,35 @@ impl Transaction {
         }
     }
 }
+
+impl TryFrom<VerifiedTransaction> for TxEnv {
+    type Error = anyhow::Error;
+
+    fn try_from(txn: VerifiedTransaction) -> std::result::Result<TxEnv, anyhow::Error> {
+        let signer = txn.signer;
+        let inner = txn.tx.into_transaction();
+        Ok(Self {
+            tx_type: inner.transaction_type().try_into()?,
+            caller: signer,
+            gas_limit: inner.gas_limit().0,
+            gas_price: inner.max_fee_per_gas(),
+            kind: match inner.to_addr() {
+                Some(addr) => TxKind::Call(addr),
+                _ => TxKind::Create
+            },
+            value: inner.amount().try_into()?,
+            data: inner.payload().to_vec().into(),
+            nonce: inner.nonce().unwrap_or_default(),
+            chain_id: inner.chain_id(),
+            access_list: inner.access_list().unwrap_or_default(),
+            gas_priority_fee: inner.max_priority_fee_per_gas(),
+            blob_hashes: vec![],
+            max_fee_per_blob_gas: 0,
+            authorization_list: vec![],
+        })
+    }
+}
+
 
 impl From<TxLegacy> for Transaction {
     fn from(tx: TxLegacy) -> Self {

@@ -26,6 +26,7 @@ use libp2p::{PeerId, request_response::OutboundFailure};
 use rand::RngCore;
 use revm::context_interface::result::ExecutionResult;
 use revm::context_interface::transaction::AccessList;
+use revm_context::TxEnv;
 use revm_inspector::Inspector;
 use revm_inspectors::tracing::{
     FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig, TransactionContext,
@@ -55,7 +56,7 @@ use crate::{
         EvmGas, SignedTransaction, TransactionReceipt, TxIntershard, VerifiedTransaction,
     },
 };
-use crate::exec::ZQ2EvmContext;
+use crate::evm::ZQ2EvmContext;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
 pub struct RequestId(u64);
@@ -645,7 +646,7 @@ impl Node {
         Err(anyhow!("transaction not found in block: {txn_hash}"))
     }
 
-    pub fn replay_transaction<'a, I: Inspector<ZQ2EvmContext<'a, I>> + ScillaInspector>(
+    pub fn replay_transaction<'a, I: Inspector<ZQ2EvmContext<'a>> + ScillaInspector>(
         &self,
         txn_hash: Hash,
         inspector: I,
@@ -876,15 +877,19 @@ impl Node {
                         .map_err(|e| anyhow!("Unable to create js inspector: {e}"))?;
 
                 let signed_txn = txn.tx.clone().into_transaction();
-                let result = state.apply_transaction(txn, block.header, &mut inspector, true)?;
+                let result = state.apply_transaction(txn.clone(), block.header, &mut inspector, true)?;
 
                 let TransactionApplyResult::Evm(result, env) = result else {
                     return Ok(None);
                 };
+
+                let Ok(revm_txn) = TxEnv::try_from(txn) else {
+                    return Ok(None);
+                };
+
                 let pending_state = PendingState::new(state.try_clone()?, fork);
-                let state_ref = &pending_state;
                 let result = inspector
-                    .json_result(result, &signed_txn, &block, &pending_state)
+                    .json_result(result, &revm_txn, &block, &pending_state)
                     .map_err(|e| anyhow!("Unable to create json result: {e}"))?;
 
                 Ok(Some(TraceResult::Success {

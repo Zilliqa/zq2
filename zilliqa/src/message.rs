@@ -5,11 +5,12 @@ use std::{
     path::Path,
 };
 
-use alloy::primitives::Address;
+use alloy::primitives::{Address, B256, U256};
 use anyhow::{Result, anyhow};
 use bitvec::{bitarr, order::Msb0};
 use itertools::Either;
 use libp2p::PeerId;
+use revm::context_interface::block::BlobExcessGasAndPrice;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
@@ -852,5 +853,39 @@ impl Block {
             )
             .with_iter(self.transactions.iter().map(|hash| hash.as_bytes()))
             .finalize()
+    }
+}
+
+impl revm_context::Block for Block {
+    fn number(&self) -> U256 {
+        self.header.number.try_into().unwrap_or_default()
+    }
+
+    fn beneficiary(&self) -> Address {
+        Address::ZERO
+    }
+
+    fn timestamp(&self) -> U256 {
+        U256::from(self.header.timestamp.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs())
+    }
+
+    fn gas_limit(&self) -> u64 {
+        self.gas_limit().0
+    }
+
+    fn basefee(&self) -> u64 {
+        self.basefee()
+    }
+
+    fn difficulty(&self) -> U256 {
+        U256::ZERO
+    }
+
+    fn prevrandao(&self) -> Option<B256> {
+        None
+    }
+
+    fn blob_excess_gas_and_price(&self) -> Option<BlobExcessGasAndPrice> {
+        None
     }
 }

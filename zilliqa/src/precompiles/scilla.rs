@@ -16,6 +16,7 @@ use revm::context_interface::ContextTr;
 use revm::interpreter::InputsImpl;
 use revm::interpreter::interpreter_types::InputsTr;
 use revm_context::JournalTr;
+use revm_inspector::Inspector;
 use revm_precompile::{PrecompileOutput, PrecompileResult};
 use scilla_parser::{
     ast::nodes::{
@@ -34,7 +35,7 @@ use crate::{
     state::Code,
     transaction::{EvmGas, ZilAmount},
 };
-use crate::exec::ZQ2EvmContext;
+use crate::evm::ZQ2EvmContext;
 use crate::precompiles::ContextPrecompile;
 
 /// Internal representation of Scilla types. This is a greatly simplified version of [NodeScillaType] (which comes
@@ -252,10 +253,11 @@ fn fatal<T>(message: &'static str) -> Result<T, PrecompileError> {
 const BASE_COST: u64 = 15;
 const PER_BYTE_COST: u64 = 3;
 
-impl<I> ContextPrecompile<ZQ2EvmContext<'_, I>> for ScillaRead {
-    fn call(
+impl ContextPrecompile for ScillaRead {
+    fn call<'a>(
         &self,
-        ctx: &mut ZQ2EvmContext<I>,
+        ctx: &mut ZQ2EvmContext<'a>,
+        _inspector: &mut (impl Inspector<ZQ2EvmContext<'a>> + ScillaInspector),
         _dest: Address,
         input: &InputsImpl,
         _is_static: bool,

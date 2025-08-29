@@ -22,11 +22,11 @@ use libp2p::PeerId;
 use revm::{Database, DatabaseRef, Inspector, Journal, context::{
     BlockEnv, CfgEnv,
     result::{ExecutionResult, HaltReason, Output, ResultAndState},
-}, database::InMemoryDB, primitives::{B256, KECCAK_EMPTY, hardfork::SpecId}, state::{AccountInfo, Bytecode}, MainBuilder, ExecuteEvm};
+}, database::InMemoryDB, primitives::{B256, KECCAK_EMPTY}, state::{AccountInfo, Bytecode}, MainBuilder, ExecuteEvm};
 use revm::context_interface::DBErrorMarker;
 use revm::context_interface::transaction::AccessList;
 use revm::handler::{EvmTr};
-use revm_context::{Context as RevmContext, ContextTr, TxEnv};
+use revm_context::{ContextTr, TxEnv};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -48,6 +48,7 @@ use crate::{
         ZilAmount, total_scilla_gas_price,
     },
 };
+use crate::evm::{new_zq2_evm_ctx, ZQ2EvmContext, SPEC_ID};
 use crate::precompiles::ZQ2PrecompileProvider;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -430,8 +431,7 @@ impl State {
 }
 
 /// The external context used by [Evm].
-pub struct ExternalContext<'a, I> {
-    pub inspector: I,
+pub struct ExternalContext<'a> {
     pub fork: &'a Fork,
     // This flag is only used for zq1 whitelisted contracts, and it's used to detect if the entire transaction should be marked as failed
     pub enforce_transaction_failure: bool,
@@ -442,21 +442,7 @@ pub struct ExternalContext<'a, I> {
     pub has_called_scilla_precompile: bool,
 }
 
-pub type ZQ2EvmContext<'a, I> = RevmContext<BlockEnv, TxEnv, CfgEnv, PendingState, Journal<PendingState>, ExternalContext<'a, I>>;
-fn new_zq2_evm_ctx<I>(db: PendingState, chain: ExternalContext<I>) -> ZQ2EvmContext<I> {
 
-
-    let ctx: RevmContext<BlockEnv, TxEnv, CfgEnv, PendingState, Journal<PendingState>> = RevmContext::new(db, SPEC_ID);
-    ctx.with_chain(chain)
-}
-
-// impl<I: Inspector<PendingState>> GetInspector<PendingState> for ExternalContext<'_, I> {
-//     fn get_inspector(&mut self) -> &mut impl Inspector<PendingState> {
-//         &mut self.inspector
-//     }
-// }
-
-const SPEC_ID: SpecId = SpecId::SHANGHAI;
 
 pub enum BaseFeeCheck {
     /// Transaction gas price will be validated to be at least the block gas price.
@@ -543,7 +529,7 @@ impl State {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn apply_transaction_evm<'a, I: Inspector<ZQ2EvmContext<'a, I>> + ScillaInspector + Clone>(
+    pub fn apply_transaction_evm<'a, I: Inspector<ZQ2EvmContext<'a>> + ScillaInspector>(
         &self,
         from_addr: Address,
         to_addr: Option<Address>,
@@ -569,7 +555,6 @@ impl State {
 
         let fork = self.forks.get(current_block.number).clone();
         let external_context = ExternalContext {
-            inspector: inspector.clone(),
             fork: &fork,
             enforce_transaction_failure: false,
             callers: vec![from_addr],
@@ -834,7 +819,7 @@ impl State {
     }
 
     /// Apply a transaction to the account state.
-    pub fn apply_transaction<'a, I: Inspector<ZQ2EvmContext<'a, I>> + ScillaInspector + Clone>(
+    pub fn apply_transaction<'a, I: Inspector<ZQ2EvmContext<'a>> + ScillaInspector>(
         &mut self,
         txn: VerifiedTransaction,
         current_block: BlockHeader,

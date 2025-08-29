@@ -5,8 +5,10 @@ use revm::{
     precompile::PrecompileError,
 };
 use revm::interpreter::InputsImpl;
+use revm_inspector::Inspector;
 use revm_precompile::{PrecompileOutput, PrecompileResult};
-use crate::exec::{ZQ2EvmContext};
+use crate::evm::ZQ2EvmContext;
+use crate::inspector::ScillaInspector;
 use crate::precompiles::ContextPrecompile;
 
 pub struct PopVerify;
@@ -14,10 +16,10 @@ pub struct PopVerify;
 // keep in-sync with zilliqa/src/contracts/deposit_v2.sol
 impl PopVerify {
     const POP_VERIFY_GAS_PRICE: u64 = 1_000_000u64; // FIXME: Gas Price?
-    fn pop_verify<I>(
+    fn pop_verify<'a>(
         input: &[u8],
         gas_limit: u64,
-        _: &mut ZQ2EvmContext<I>,
+        _: &mut ZQ2EvmContext<'a>,
     ) -> PrecompileResult {
         if gas_limit < Self::POP_VERIFY_GAS_PRICE {
             return Err(PrecompileError::OutOfGas);
@@ -54,10 +56,11 @@ impl PopVerify {
     }
 }
 
-impl<I> ContextPrecompile<ZQ2EvmContext<'_, I>> for PopVerify {
-    fn call(
+impl ContextPrecompile for PopVerify {
+    fn call<'a>(
         &self,
-        ctx: &mut ZQ2EvmContext<I>,
+        ctx: &mut ZQ2EvmContext<'a>,
+        _inspector: &mut (impl Inspector<ZQ2EvmContext<'a>> + ScillaInspector),
         _dest: Address,
         input: &InputsImpl,
         _is_static: bool,
