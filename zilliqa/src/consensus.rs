@@ -14,7 +14,7 @@ use std::{
 use alloy::primitives::{Address, U256};
 use anyhow::{Context, Result, anyhow};
 use bitvec::{bitarr, order::Msb0};
-use dashmap::{DashMap, DashSet};
+use dashmap::DashMap;
 use eth_trie::{DB, EthTrie, MemoryDB, Trie};
 use itertools::Itertools;
 use k256::pkcs8::der::DateTime;
@@ -410,7 +410,7 @@ impl Consensus {
         if let Some((block, transactions, mut parent)) = checkpoint_data {
             if consensus
                 .db
-                .get_block(BlockFilter::Hash(block.hash()))?
+                .get_transactionless_block(BlockFilter::Hash(block.hash()))?
                 .is_none()
             {
                 // if block is missing, execute the block
@@ -427,8 +427,8 @@ impl Consensus {
                 )?;
             } else if let Some(latest_block) = latest_block {
                 // if block is present, perform state-sync
-                let mutations = DashSet::new();
-                let range = block.number()..latest_block.number();
+                let mut last_hash = parent.state_root_hash();
+                let range = block.number()..=latest_block.number();
                 tracing::info!(?range, "Syncing state from checkpoint");
                 for number in range {
                     let Some(block) = consensus
@@ -440,28 +440,31 @@ impl Consensus {
                     };
 
                     // check that the block mutates state; and
-                    // the state is not already present in the db.
-                    if mutations.insert(block.state_root_hash())
-                        && consensus
+                    if last_hash != block.state_root_hash() {
+                        last_hash = block.state_root_hash();
+                        // the state is not already present in the db.
+                        if consensus
                             .db
                             .state_trie()?
                             .get(block.state_root_hash().as_bytes())?
                             .is_none()
-                    {
-                        tracing::info!(number = %block.number(), state=%block.state_root_hash(), "Syncing state from block");
-                        let brt = consensus
-                            .db
-                            .get_block_and_receipts_and_transactions(BlockFilter::Hash(
-                                block.hash(),
-                            ))?
-                            .expect("block must exist due to check above");
-                        let transactions = brt.transactions.into_iter().map(|tx| tx.tx).collect();
-                        consensus.replay_proposal(
-                            brt.block,
-                            transactions,
-                            parent.state_root_hash(),
-                        )?;
-                        parent = block;
+                        {
+                            tracing::info!(number = %block.number(), state=%block.state_root_hash(), "Syncing state from block");
+                            let brt = consensus
+                                .db
+                                .get_block_and_receipts_and_transactions(BlockFilter::Hash(
+                                    block.hash(),
+                                ))?
+                                .expect("block must exist due to check above");
+                            let transactions =
+                                brt.transactions.into_iter().map(|tx| tx.tx).collect();
+                            consensus.replay_proposal(
+                                brt.block,
+                                transactions,
+                                parent.state_root_hash(),
+                            )?;
+                            parent = block;
+                        }
                     }
                 }
             }
