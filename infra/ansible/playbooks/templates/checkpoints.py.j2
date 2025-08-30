@@ -78,7 +78,7 @@ def get_current_block() -> tuple:
         block_number_hex, error = get_rpc_response("eth_blockNumber")
         if error:
             return None, error
-        
+
         if block_number_hex:
             current_block = int(block_number_hex, 16)
             return current_block, None
@@ -90,28 +90,28 @@ def get_current_block() -> tuple:
 def get_checkpoint_files_sorted(checkpoint_dir: str) -> List[str]:
     """Get checkpoint files sorted by modification time (oldest first)."""
     checkpoint_files = []
-    
+
     if not os.path.exists(checkpoint_dir):
         log_message(f"Checkpoint directory {checkpoint_dir} does not exist", "WARNING")
         return []
-    
+
     # Find all files in checkpoint directory, excluding .part files
     pattern = os.path.join(checkpoint_dir, "*")
     for filepath in glob.glob(pattern):
         if os.path.isfile(filepath) and not filepath.endswith('.part'):
             mtime = os.path.getmtime(filepath)
             checkpoint_files.append((mtime, filepath))
-    
+
     # Sort by modification time (oldest first)
     checkpoint_files.sort(key=lambda x: x[0])
-    
+
     # Return just the file paths
     return [filepath for _, filepath in checkpoint_files]
 
 def run_gsutil_command(command: str) -> bool:
     """Run gsutil command and return success status."""
     try:
-        result = subprocess.run(command, shell=True, check=True, 
+        result = subprocess.run(command, shell=True, check=True,
                               capture_output=True, text=True)
         log_message(f"Command successful: {command}")
         return True
@@ -124,50 +124,52 @@ def process_checkpoint_files() -> bool:
     # Get current block information
     current_block, block_error = get_current_block()
     block_info = f" (Current block: {current_block})" if current_block else f" (Block info unavailable: {block_error})"
-    
+
     # Get sorted checkpoint files
     checkpoint_files = get_checkpoint_files_sorted(CONFIG['checkpoint_dir'])
-    
+
     if not checkpoint_files:
         log_message(f"No checkpoint files found in {CONFIG['checkpoint_dir']}{block_info}")
         return True
-    
+
     log_message(f"Found {len(checkpoint_files)} checkpoint files to process{block_info}")
-    
+
     # Process each checkpoint file
     files_processed = 0
     for checkpoint_file in checkpoint_files:
         log_message(f"Processing {checkpoint_file}")
-        
+
         filename = os.path.basename(checkpoint_file)
-        
+
         # Format filename with zero padding (9 digits)
         try:
             formatted_filename = f"{int(filename):09d}"
         except ValueError:
             # If filename is not a number, use as-is
             formatted_filename = filename
-        
-        # Move existing .dat files to previous directory
+
+        # Move existing .dat/.ckpt files to previous directory
         move_cmd = f'gsutil mv "{CONFIG["gcs_bucket"]}/*.dat" "{CONFIG["gcs_bucket"]}/previous/"'
         run_gsutil_command(move_cmd)  # Don't check return value as this might fail if no files exist
-        
+        move_cmd = f'gsutil mv "{CONFIG["gcs_bucket"]}/*.ckpt" "{CONFIG["gcs_bucket"]}/previous/"'
+        run_gsutil_command(move_cmd)  # Don't check return value as this might fail if no files exist
+
         # Get fresh block info for upload confirmation
         fresh_block, fresh_error = get_current_block()
         fresh_block_info = f" (Current block: {fresh_block})" if fresh_block else f" (Block info unavailable: {fresh_error})"
-        
+
         # Copy checkpoint file to GCS with metadata
         metadata_headers = []
         metadata_headers.append(f'-h "x-goog-meta-block_at_checkpoint_production:{filename}"')
         if fresh_block:
             metadata_headers.append(f'-h "x-goog-meta-block_at_checkpoint_upload:{fresh_block}"')
-        
+
         metadata_str = ' '.join(metadata_headers)
-        copy_cmd = f'gsutil {metadata_str} cp "{checkpoint_file}" "{CONFIG["gcs_bucket"]}/{formatted_filename}.dat"'
-        
+        copy_cmd = f'gsutil {metadata_str} cp "{checkpoint_file}" "{CONFIG["gcs_bucket"]}/{formatted_filename}.ckpt"'
+
         if run_gsutil_command(copy_cmd):
             log_message(f"Uploaded {checkpoint_file} to GCS with metadata{fresh_block_info}")
-            
+
             # Delete the local file
             try:
                 os.remove(checkpoint_file)
@@ -178,40 +180,40 @@ def process_checkpoint_files() -> bool:
         else:
             log_message(f"Failed to upload {checkpoint_file} to GCS", "ERROR")
             return False
-    
+
     log_message(f"Successfully processed {files_processed} checkpoint files")
     return True
 
 def monitor_checkpoints() -> None:
     """Main service loop - monitor for checkpoint files and process them."""
     log_message("Starting checkpoint monitoring service")
-    
+
     while True:
         try:
             log_message("Checking for checkpoint files...")
-            
+
             if acquire_lock():
                 try:
                     start_time = time.time()
                     success = process_checkpoint_files()
                     duration = time.time() - start_time
-                    
+
                     if success:
                         log_message(f"Checkpoint processing completed successfully in {duration:.2f} seconds")
                     else:
                         log_message(f"Checkpoint processing failed after {duration:.2f} seconds", "ERROR")
-                        
+
                 except Exception as e:
                     log_message(f"Error during checkpoint processing: {str(e)}", "ERROR")
                 finally:
                     release_lock()
             else:
                 log_message("Could not acquire lock, skipping this cycle", "WARNING")
-            
+
             # Sleep in smaller chunks to avoid systemd timeout issues
             sleep_duration = CONFIG['check_interval_seconds']
             log_message(f"Sleeping for {sleep_duration} seconds...")
-            
+
             # Sleep in 60-second chunks to keep the service responsive
             for i in range(0, sleep_duration, 60):
                 remaining = min(60, sleep_duration - i)
@@ -221,7 +223,7 @@ def monitor_checkpoints() -> None:
                     elapsed_minutes = i // 60
                     remaining_minutes = (sleep_duration - i) // 60
                     log_message(f"Service running - slept for {elapsed_minutes}m, {remaining_minutes}m remaining")
-            
+
         except Exception as e:
             log_message(f"Error in checkpoint monitoring: {str(e)}", "ERROR")
             time.sleep(60)  # Short sleep before retrying
@@ -238,18 +240,18 @@ def main() -> None:
     if not CONFIG['network_name'] or not CONFIG['eth_chain_id']:
         log_message("Missing required environment variables: NETWORK_NAME or ETH_CHAIN_ID", "ERROR")
         sys.exit(1)
-    
+
     # Setup signal handlers for graceful shutdown
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
-    
+
     log_message(f"Starting checkpoint service with configuration:")
     log_message(f"  Network: {CONFIG['network_name']}")
     log_message(f"  Chain ID: {CONFIG['eth_chain_id']}")
     log_message(f"  Checkpoint Directory: {CONFIG['checkpoint_dir']}")
     log_message(f"  GCS Bucket: {CONFIG['gcs_bucket']}")
     log_message(f"  Check Interval: {CONFIG['check_interval_seconds']} seconds")
-    
+
     # Start the monitoring service
     monitor_checkpoints()
 
