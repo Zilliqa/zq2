@@ -1,7 +1,9 @@
 use revm::context_interface::ContextSetters;
 use revm::handler::{EthFrame, EvmTr, FrameInitOrResult, FrameTr, ItemOrResult, PrecompileProvider};
 use revm::handler::instructions::EthInstructions;
+use revm::interpreter::FrameInput;
 use revm::interpreter::interpreter::EthInterpreter;
+use revm::primitives::Address;
 use revm::primitives::hardfork::SpecId;
 use revm_context::{BlockEnv, CfgEnv, Context, ContextError, ContextTr, Database, Evm, FrameStack, Journal, TxEnv};
 use revm_inspector::{Inspector, InspectorEvmTr, JournalExt};
@@ -74,6 +76,24 @@ impl<'a, I> EvmTr for ZQ2Evm<'a, I>
         ItemOrResult<&mut Self::Frame, <Self::Frame as FrameTr>::FrameResult>,
         ContextError<<<Self::Context as ContextTr>::Db as Database>::Error>,
     > {
+        // Reserve enough space to store the caller.
+        let current_depth = self.0.journaled_state.depth;
+        let caller_depth = self.0.chain.callers.len();
+        self.0.chain.callers.reserve(
+            (current_depth + 1).saturating_sub(caller_depth),
+        );
+        for _ in self.0.chain.callers.len()..(self.0.journaled_state.depth + 1) {
+            self.0.chain.callers.push(Address::ZERO);
+        }
+
+        let caller = match &frame_input.frame_input {
+            FrameInput::Empty => Address::ZERO,
+            FrameInput::Call(call) => call.caller,
+            FrameInput::Create(create) => create.caller,
+        };
+        let depth = self.0.journaled_state.depth;
+        self.0.chain.callers[depth] = caller;
+
         self.0.frame_init(frame_input)
     }
 
@@ -92,7 +112,11 @@ impl<'a, I> EvmTr for ZQ2Evm<'a, I>
     ) -> Result<
         Option<<Self::Frame as FrameTr>::FrameResult>,
         ContextError<<<Self::Context as ContextTr>::Db as Database>::Error>,
-    > {
+    >
+    {
+        if frame_result.interpreter_result().is_error() || frame_result.interpreter_result().is_revert() {
+            self.0.chain.has_evm_failed = true;
+        }
         self.0.frame_return_result(frame_result)
     }
 }
