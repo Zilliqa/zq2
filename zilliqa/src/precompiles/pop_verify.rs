@@ -4,7 +4,7 @@ use ethabi::{ParamType, Token, decode, encode, short_signature};
 use revm::{
     precompile::PrecompileError,
 };
-use revm::interpreter::InputsImpl;
+use revm::interpreter::{Gas, InputsImpl, InstructionResult, InterpreterResult};
 use revm_inspector::Inspector;
 use revm_precompile::{PrecompileOutput, PrecompileResult};
 use crate::evm::ZQ2EvmContext;
@@ -20,39 +20,38 @@ impl PopVerify {
         input: &[u8],
         gas_limit: u64,
         _: &mut ZQ2EvmContext<'a>,
-    ) -> PrecompileResult {
+    ) -> Result<Option<InterpreterResult>, String> {
         if gas_limit < Self::POP_VERIFY_GAS_PRICE {
-            return Err(PrecompileError::OutOfGas);
+            return Err(PrecompileError::OutOfGas.to_string());
         }
 
         let Ok(decoded) = decode(&[ParamType::Bytes, ParamType::Bytes], input) else {
-            return Err(PrecompileError::Other("ABI input decoding error!".into()).into());
+            return Err("ABI input decoding error!".into());
         };
         if decoded.len() != 2 {
             // expected 2 arguments
-            return Err(PrecompileError::Other("ABI inputs missing".into()).into());
+            return Err("ABI inputs missing".into());
         };
 
         let Ok(pop) = blsful::ProofOfPossession::<Bls12381G2Impl>::try_from(
             decoded[0].to_owned().into_bytes().unwrap(),
         ) else {
-            return Err(PrecompileError::Other("ABI signature invalid".into()).into());
+            return Err("ABI signature invalid".into())
         };
 
         let Ok(pk) = blsful::PublicKey::<Bls12381G2Impl>::try_from(
             decoded[1].to_owned().into_bytes().unwrap(),
         ) else {
-            return Err(PrecompileError::Other("ABI pubkey invalid".into()).into());
+            return Err("ABI pubkey invalid".into())
         };
 
         let result = pop.verify(pk).is_ok();
 
-        // FIXME: Gas?
         let output = encode(&[Token::Bool(result)]);
-        Ok(PrecompileOutput::new(
-            Self::POP_VERIFY_GAS_PRICE,
+        Ok(Some(InterpreterResult::new(InstructionResult::default(),
             output.into(),
-        ))
+            Gas::new_spent(Self::POP_VERIFY_GAS_PRICE)
+        )))
     }
 }
 
@@ -60,17 +59,13 @@ impl ContextPrecompile for PopVerify {
     fn call<'a>(
         &self,
         ctx: &mut ZQ2EvmContext<'a>,
-        _inspector: &mut (impl Inspector<ZQ2EvmContext<'a>> + ScillaInspector),
         _dest: Address,
         input: &InputsImpl,
         _is_static: bool,
         gas_limit: u64
-    ) -> PrecompileResult {
+    ) -> Result<Option<InterpreterResult>, String> {
         if input.input.len() < 4 {
-            return Err(PrecompileError::Other(
-                "Provided input must be at least 4-byte long".into(),
-            )
-            .into());
+            return Err("Provided input must be at least 4-byte long".into())
         }
 
         let dispatch_table: [([u8; 4], _); 1] = [(
@@ -83,10 +78,8 @@ impl ContextPrecompile for PopVerify {
             .iter()
             .find(|&predicate| predicate.0 == raw_input[..4])
         else {
-            return Err(PrecompileError::Other(
-                "Unable to find handler with given selector".to_string(),
-            )
-            .into());
+            return Err(
+                "Unable to find handler with given selector".into())
         };
 
         handler.1(&raw_input[4..], gas_limit, ctx)

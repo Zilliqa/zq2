@@ -49,6 +49,7 @@ use crate::{
     },
 };
 use crate::evm::{new_zq2_evm_ctx, ZQ2Evm, ZQ2EvmContext, SPEC_ID};
+use crate::inspector::TouchedAddressInspector;
 use crate::precompiles::ZQ2PrecompileProvider;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -432,6 +433,7 @@ impl State {
 
 /// The external context used by [Evm].
 pub struct ExternalContext<'a> {
+    pub touched_address_inspector: TouchedAddressInspector,
     pub fork: &'a Fork,
     // This flag is only used for zq1 whitelisted contracts, and it's used to detect if the entire transaction should be marked as failed
     pub enforce_transaction_failure: bool,
@@ -555,6 +557,7 @@ impl State {
 
         let fork = self.forks.get(current_block.number).clone();
         let external_context = ExternalContext {
+            touched_address_inspector: TouchedAddressInspector::default(),
             fork: &fork,
             enforce_transaction_failure: false,
             callers: vec![from_addr],

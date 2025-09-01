@@ -4,7 +4,7 @@ use ethabi::{ParamType, Token, decode, encode, short_signature};
 use revm::{
     precompile::PrecompileError,
 };
-use revm::interpreter::InputsImpl;
+use revm::interpreter::{Gas, InputsImpl, InstructionResult, InterpreterResult};
 use revm::interpreter::interpreter::EthInterpreter;
 use revm::precompile::{PrecompileOutput, PrecompileResult};
 use revm_inspector::Inspector;
@@ -26,20 +26,20 @@ impl BlsVerify {
         input: &[u8],
         gas_limit: u64,
         _: &mut ZQ2EvmContext<'a>,
-    ) -> PrecompileResult {
+    ) -> Result<Option<InterpreterResult>, String> {
         if gas_limit < Self::BLS_VERIFY_GAS_PRICE {
-            return Err(PrecompileError::OutOfGas);
+            return Err(PrecompileError::OutOfGas.to_string());
         }
 
         let Ok(decoded) = decode(
             &[ParamType::Bytes, ParamType::Bytes, ParamType::Bytes],
             input,
         ) else {
-            return Err(PrecompileError::Other("ABI input decoding error!".into()).into());
+            return Err("ABI input decoding error!".into());
         };
         if decoded.len() != 3 {
             // expected 3 arguments
-            return Err(PrecompileError::Other("ABI inputs missing".into()).into());
+            return Err("ABI inputs missing".into());
         };
 
         let message = decoded[0].to_owned().into_bytes().unwrap();
@@ -47,13 +47,13 @@ impl BlsVerify {
         let Ok(signature) = <blsful::Bls12381G2Impl as blsful::Pairing>::Signature::try_from(
             decoded[1].to_owned().into_bytes().unwrap(),
         ) else {
-            return Err(PrecompileError::Other("ABI signature invalid".into()).into());
+            return Err("ABI signature invalid".into())
         };
 
         let Ok(pk) = blsful::PublicKey::<Bls12381G2Impl>::try_from(
             decoded[2].to_owned().into_bytes().unwrap(),
         ) else {
-            return Err(PrecompileError::Other("ABI pubkey invalid".into()).into());
+            return Err("ABI pubkey invalid".into());
         };
 
         let result = blsful::Signature::Basic(signature)
@@ -62,10 +62,11 @@ impl BlsVerify {
 
         // FIXME: Gas?
         let output = encode(&[Token::Bool(result)]);
-        Ok(PrecompileOutput::new(
-            Self::BLS_VERIFY_GAS_PRICE,
+        Ok(Some(InterpreterResult::new(
+            InstructionResult::default(),
             output.into(),
-        ))
+            Gas::new_spent(Self::BLS_VERIFY_GAS_PRICE)
+        )))
     }
 }
 
@@ -73,17 +74,14 @@ impl ContextPrecompile for BlsVerify {
     fn call<'a>(
         &self,
         ctx: &mut ZQ2EvmContext<'a>,
-        _inspector: &mut (impl Inspector<ZQ2EvmContext<'a>> + ScillaInspector),
         _target: Address,
         input: &InputsImpl,
         _is_static: bool,
         gas_limit: u64
-    ) -> PrecompileResult {
+    ) -> Result<Option<InterpreterResult>, String> {
         if input.input.len() < 4 {
-            return Err(PrecompileError::Other(
-                "Provided input must be at least 4-byte long".into(),
-            )
-            .into());
+            return Err(
+                "Provided input must be at least 4-byte long".into())
         }
 
         let dispatch_table: [([u8; 4], _); 1] = [(
@@ -99,10 +97,8 @@ impl ContextPrecompile for BlsVerify {
             .iter()
             .find(|&predicate| predicate.0 == raw_input[..4])
         else {
-            return Err(PrecompileError::Other(
-                "Unable to find handler with given selector".to_string(),
-            )
-            .into());
+            return Err(
+                "Unable to find handler with given selector".into());
         };
 
         handler.1(&raw_input[4..], gas_limit, ctx)

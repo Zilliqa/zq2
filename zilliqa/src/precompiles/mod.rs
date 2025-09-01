@@ -51,8 +51,7 @@ impl PrecompileProvider<ZQ2EvmContext<'_>> for ZQ2PrecompileProvider
     ) -> Result<Option<Self::Output>, String> {
 
         if let Some(custom_precompile) = CUSTOM_PRECOMPILES.iter().find(|&&(ref a, _)| a == address) {
-            //let mut noop_inspector = NoOpInspector::default();
-            //return custom_precompile.1.call(context, &mut noop_inspector, *address, inputs, is_static, gas_limit);
+            return custom_precompile.1.call(context, *address, inputs, is_static, gas_limit);
         }
 
         // Otherwise, delegate to standard Ethereum precompiles
@@ -77,37 +76,35 @@ pub trait ContextPrecompile {
     fn call<'a>(
         &self,
         ctx: &mut ZQ2EvmContext<'a>,
-        inspector: &mut (impl Inspector<ZQ2EvmContext<'a>> + ScillaInspector),
         target: Address,
         input: &InputsImpl,
         is_static: bool,
         gas_limit: u64,
-    ) -> PrecompileResult;
+    ) -> Result<Option<InterpreterResult>, String>;
 }
 
 impl CustomPrecompile {
     pub fn call<'a>(
         &self,
         ctx: &mut ZQ2EvmContext<'a>,
-        inspector: &mut (impl Inspector<ZQ2EvmContext<'a>> + ScillaInspector),
         target: Address,
         input: &InputsImpl,
         is_static: bool,
         gas_limit: u64,
-    ) -> PrecompileResult
+    ) -> Result<Option<InterpreterResult>, String>
     {
         match self {
             CustomPrecompile::PopVerify(p) => {
-                p.call(ctx, inspector, target, input, is_static, gas_limit)
+                p.call(ctx, target, input, is_static, gas_limit)
             }
             CustomPrecompile::BlsVerify(p) => {
-                p.call(ctx, inspector, target, input, is_static, gas_limit)
+                p.call(ctx, target, input, is_static, gas_limit)
             }
             CustomPrecompile::ScillaRead(p) => {
-                p.call(ctx, inspector, target, input, is_static, gas_limit)
+                p.call(ctx, target, input, is_static, gas_limit)
             },
             CustomPrecompile::ScillaCall(p) => {
-                p.call(ctx, inspector, target, input, is_static, gas_limit)
+                p.call(ctx, target, input, is_static, gas_limit)
             }
         }
     }
