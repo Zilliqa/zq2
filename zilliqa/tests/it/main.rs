@@ -9,7 +9,10 @@ use parking_lot::{RwLock, RwLockWriteGuard};
 use primitive_types::{H160, U256};
 use serde_json::{Value, value::RawValue};
 use zilliqa::{
-    cfg::new_view_broadcast_interval_default, contracts, crypto::NodePublicKey, db::BlockFilter,
+    cfg::{DbConfig, new_view_broadcast_interval_default},
+    contracts,
+    crypto::NodePublicKey,
+    db::BlockFilter,
     state::contract_addr,
 };
 mod admin;
@@ -403,13 +406,8 @@ impl Network {
             load_checkpoint: None,
             do_checkpoints,
             block_request_limit: block_request_limit_default(),
-            sync: SyncConfig {
-                max_blocks_in_flight: max_blocks_in_flight_default(),
-                block_request_batch_size: block_request_batch_size_default(),
-                prune_interval: u64_max(),
-                base_height: u64_max(),
-                ignore_passive: false,
-            },
+            sync: SyncConfig::default(),
+            db: DbConfig::default(),
             state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: true,
@@ -563,6 +561,7 @@ impl Network {
                 base_height: options.base_height.unwrap_or(u64_max()),
                 ignore_passive: false,
             },
+            db: DbConfig::default(),
             state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: true,
