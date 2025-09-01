@@ -230,6 +230,9 @@ pub struct BlockAndReceiptsAndTransactions {
     pub transactions: Vec<VerifiedTransaction>,
 }
 
+const ROCKSDB_MIGRATE_AT: &str = "migrate_at";
+const ROCKSDB_RESTORE_AT: &str = "restore_at";
+
 /// Version string that is written to disk along with the persisted database. This should be bumped whenever we make a
 /// backwards incompatible change to our database format. This should be done rarely, since it forces all node
 /// operators to re-sync.
@@ -1248,6 +1251,37 @@ impl Db {
     pub fn get_total_transaction_count(&self) -> Result<usize> {
         Ok(0)
     }
+
+    pub fn init_rocksdb(&self) -> Result<()> {
+        let rdb = self.kvdb.clone();
+        if rdb.get(ROCKSDB_MIGRATE_AT)?.is_none() {
+            let n = self
+                .pool
+                .get()?
+                .query_row(
+                    "SELECT MAX(height) FROM blocks WHERE is_canonical = 1",
+                    [],
+                    |row| row.get::<_, u64>(0),
+                )
+                .optional()?
+                .unwrap_or_default();
+            rdb.put(ROCKSDB_MIGRATE_AT, n.to_be_bytes())?;
+        }
+        if rdb.get(ROCKSDB_RESTORE_AT)?.is_none() {
+            let n = self
+                .pool
+                .get()?
+                .query_row(
+                    "SELECT MAX(height) FROM blocks WHERE is_canonical = 1",
+                    [],
+                    |row| row.get::<_, u64>(0),
+                )
+                .optional()?
+                .unwrap_or_default();
+            rdb.put(ROCKSDB_RESTORE_AT, n.to_be_bytes())?;
+        }
+        Ok(())
+    }
 }
 
 pub fn get_checkpoint_filename<P: AsRef<Path> + Debug>(
@@ -1309,6 +1343,87 @@ impl TrieStorage {
             cache.insert(key, value).ok(); // write-thru policy; silent errors
         }
         Ok(self.kvdb.write(batch)?)
+    }
+
+    #[inline]
+    fn get_migrate_at(&self) -> Result<u64> {
+        Ok(u64::from_be_bytes(
+            self.kvdb
+                .get(ROCKSDB_MIGRATE_AT)?
+                .map(|v| v.try_into().expect("must be 8-bytes"))
+                .expect("inserted at constructor"),
+        ))
+    }
+
+    #[inline]
+    fn get_root_hash(&self, height: u64) -> Result<Hash> {
+        Ok(self
+            .pool
+            .get()?
+            .prepare_cached(
+                "SELECT state_root_hash FROM blocks WHERE is_canonical = TRUE AND height = ?1",
+            )?
+            .query_one([height], |row| row.get::<_, Hash>(0))?)
+    }
+
+    // actively migrate state_trie from sqlite to rocksdb,
+    // by iterating over every node in the trie (forced read)
+    pub fn migrate_state_trie(&self) -> Result<()> {
+        // if !self.active_migrate {
+        //     return Ok(());
+        // }
+
+        let migrate_at = self.get_migrate_at()?;
+        if migrate_at == 0 {
+            // unlikely that the state_root for block_0 == block_n;
+            // so, if height = 0 it means that we're done.
+            // TODO: drop the sqlite state_trie table in a subsequent release.
+            return Ok(());
+        }
+        let root_hash = self.get_root_hash(migrate_at)?;
+
+        let trie_store = Arc::new(Self {
+            pool: self.pool.clone(),
+            cache: self.cache.clone(),
+            kvdb: self.kvdb.clone(),
+            // active_migrate: self.active_migrate,
+        });
+
+        // pre-load the entire state_trie at this state_root
+        let mut count = 0;
+        let state_trie = EthTrie::new(trie_store.clone()).at_root(root_hash.into());
+        for (_, v) in state_trie.iter() {
+            // for each account, load its storage trie
+            let account_state = bincode::serde::decode_from_slice::<Account, _>(
+                v.as_slice(),
+                bincode::config::legacy(), // for legacy compatibility
+            )?
+            .0
+            .storage_root;
+            let account_trie = EthTrie::new(trie_store.clone()).at_root(account_state.0.into());
+            // force read account_storage trie
+            count += account_trie.iter().count() + 1;
+        }
+        tracing::debug!(%count, block=%migrate_at, %root_hash, "Migrated");
+
+        // save next migrate_at, fast-reversing past the same states
+        // do this only after successfully migrating the previous migrate_at
+        for n in (0..migrate_at).rev() {
+            let next_root_hash = self.get_root_hash(n)?;
+            if next_root_hash != root_hash {
+                self.kvdb.put(ROCKSDB_MIGRATE_AT, n.to_be_bytes())?;
+                break;
+            } else if n == 0 {
+                // migration complete
+                tracing::info!("State migration complete");
+                self.kvdb.put(ROCKSDB_MIGRATE_AT, n.to_be_bytes())?;
+                self.pool
+                    .get()?
+                    .execute("ALTER TABLE state_trie RENAME TO state_trie_migrated", [])
+                    .ok(); // ignore errors, can only mean that the table is renamed.
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1440,6 +1555,7 @@ mod tests {
             "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE is_canonical = true AND height = (SELECT MAX(height) FROM blocks WHERE is_canonical = TRUE)",
             "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE height = (SELECT MAX(height) FROM blocks) LIMIT 1",
             "SELECT data, transactions.tx_hash FROM transactions INNER JOIN receipts ON transactions.tx_hash = receipts.tx_hash WHERE receipts.block_hash = ?1 ORDER BY receipts.tx_index ASC",
+            "SELECT state_root_hash FROM blocks WHERE is_canonical = TRUE AND height = ?1",
             // TODO: Add more queries
         ];
 
