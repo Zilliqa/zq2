@@ -114,6 +114,34 @@ pub struct ApiServer {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct DbConfig {
+    /// SQLite per-connection cache; default 1_024 i.e. 32MB
+    #[serde(default = "sql_cache_size_default")]
+    pub conn_cache_size: u64,
+    /// SQLite auto-checkpoint threshold; 0 to disable; default 1_000
+    #[serde(default = "sql_auto_checkpoint_default")]
+    pub auto_checkpoint: u64,
+}
+
+fn sql_cache_size_default() -> u64 {
+    1_024
+}
+
+fn sql_auto_checkpoint_default() -> u64 {
+    1_000
+}
+
+impl Default for DbConfig {
+    fn default() -> Self {
+        Self {
+            conn_cache_size: sql_cache_size_default(),
+            auto_checkpoint: sql_auto_checkpoint_default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SyncConfig {
     /// The maximum number of blocks to have outstanding requests for at a time when syncing.
     #[serde(default = "max_blocks_in_flight_default")]
@@ -190,6 +218,9 @@ pub struct NodeConfig {
     /// Sync configuration
     #[serde(default)]
     pub sync: SyncConfig,
+    /// Database configuration
+    #[serde(default)]
+    pub db: DbConfig,
 }
 
 impl Default for NodeConfig {
@@ -204,13 +235,8 @@ impl Default for NodeConfig {
             load_checkpoint: None,
             do_checkpoints: false,
             block_request_limit: block_request_limit_default(),
-            sync: SyncConfig {
-                max_blocks_in_flight: max_blocks_in_flight_default(),
-                block_request_batch_size: block_request_batch_size_default(),
-                base_height: u64_max(),
-                prune_interval: u64_max(),
-                ignore_passive: false,
-            },
+            sync: SyncConfig::default(),
+            db: DbConfig::default(),
             state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: false,
@@ -249,8 +275,8 @@ impl NodeConfig {
             ));
         }
         // 100 is a reasonable minimum for a node to be useful.
-        if self.sync.block_request_batch_size < 100 {
-            return Err(anyhow!("block_request_batch_size must be at least 100"));
+        if self.sync.block_request_batch_size < 10 {
+            return Err(anyhow!("block_request_batch_size must be at least 10"));
         }
         // 1000 would saturate a typical node.
         if self.sync.max_blocks_in_flight > 1000 {

@@ -220,6 +220,7 @@ impl Node {
             config.eth_chain_id,
             config.state_cache_size,
             executable_blocks_height,
+            config.db.clone(),
         )?);
         let node = Node {
             config: config.clone(),

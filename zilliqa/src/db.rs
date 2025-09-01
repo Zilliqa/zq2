@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
 use crate::{
+    cfg::DbConfig,
     crypto::{BlsSignature, Hash},
     exec::{ScillaError, ScillaException, ScillaTransition},
     message::{AggregateQc, Block, BlockHeader, QuorumCertificate},
@@ -249,6 +250,7 @@ impl Db {
         shard_id: u64,
         state_cache_size: usize,
         executable_blocks_height: Option<u64>,
+        config: DbConfig,
     ) -> Result<Self>
     where
         P: AsRef<Path>,
@@ -279,7 +281,8 @@ impl Db {
                 let db_path = path.join("db.sqlite3");
 
                 (
-                    SqliteConnectionManager::file(db_path).with_init(Self::init_connection),
+                    SqliteConnectionManager::file(db_path)
+                        .with_init(move |conn| Self::init_connection(conn, config.clone())),
                     Some(path.into_boxed_path()),
                 )
             }
@@ -431,7 +434,10 @@ impl Db {
     }
 
     // SQLite performance tweaks
-    fn init_connection(connection: &mut Connection) -> Result<(), rusqlite::Error> {
+    fn init_connection(
+        connection: &mut Connection,
+        config: DbConfig,
+    ) -> Result<(), rusqlite::Error> {
         // large page_size is more compact/efficient, 64K is hard-coded maximum
         connection.pragma_update(None, "page_size", 1 << 15)?;
         // reduced non-critical fsync() calls, reducing disk I/O
@@ -442,8 +448,10 @@ impl Db {
         connection.pragma_update(None, "journal_mode", "WAL")?;
         // journal size of 32MB - empirical value
         connection.pragma_update(None, "journal_size_limit", 1 << 25)?;
-        // page cache 32MB/connection
-        connection.pragma_update(None, "cache_size", 1 << 10)?;
+        // page cache 32MB/connection default
+        connection.pragma_update(None, "cache_size", config.conn_cache_size)?;
+        // page cache 1000 auto checkpoint default
+        connection.pragma_update(None, "wal_autocheckpoint", config.auto_checkpoint)?;
         // larger prepared cache, due to many prepared statements
         connection.set_prepared_statement_cache_capacity(1 << 8); // default is 16, which is small
         // enable QPSG - https://github.com/Zilliqa/zq2/issues/2870
@@ -1402,7 +1410,14 @@ mod tests {
     fn query_planner_stability_guarantee() {
         let base_path = tempdir().unwrap();
         let base_path = base_path.path();
-        let db = Db::new(Some(base_path), 0, 1024, None).unwrap();
+        let db = Db::new(
+            Some(base_path),
+            0,
+            1024,
+            None,
+            crate::cfg::DbConfig::default(),
+        )
+        .unwrap();
 
         let sql = db.pool.get().unwrap();
 
@@ -1465,7 +1480,14 @@ mod tests {
     fn checkpoint_export_import() {
         let base_path = tempdir().unwrap();
         let base_path = base_path.path();
-        let db = Db::new(Some(base_path), 0, 1024, None).unwrap();
+        let db = Db::new(
+            Some(base_path),
+            0,
+            1024,
+            None,
+            crate::cfg::DbConfig::default(),
+        )
+        .unwrap();
 
         // Seed db with data
         let mut rng = ChaCha8Rng::seed_from_u64(0);
