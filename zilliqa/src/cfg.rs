@@ -115,19 +115,19 @@ pub struct ApiServer {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DbConfig {
-    /// SQLite per-connection cache; default 1_024 i.e. 32MB
+    /// SQLite per-connection cache; default 8_192 i.e. 256MB
     #[serde(default = "sql_cache_size_default")]
-    pub conn_cache_size: u64,
+    pub conn_cache_size: usize,
     /// SQLite auto-checkpoint threshold; 0 to disable; default 1_000
     #[serde(default = "sql_auto_checkpoint_default")]
-    pub auto_checkpoint: u64,
+    pub auto_checkpoint: usize,
 }
 
-fn sql_cache_size_default() -> u64 {
-    1_024
+fn sql_cache_size_default() -> usize {
+    8_192
 }
 
-fn sql_auto_checkpoint_default() -> u64 {
+fn sql_auto_checkpoint_default() -> usize {
     1_000
 }
 
@@ -326,7 +326,7 @@ pub fn allowed_timestamp_skew_default() -> Duration {
 }
 
 pub fn state_cache_size_default() -> usize {
-    256 * 1024 * 1024 // 256 MiB
+    1024 * 1024 * 1024 // 1 GB
 }
 
 pub fn eth_chain_id_default() -> u64 {
