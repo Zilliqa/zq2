@@ -6,9 +6,7 @@ import {
     Test,
     console2 as console
 } from "@openzeppelin/lib/forge-std/src/Test.sol";
-import {
-    ERC1967Proxy
-} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 // Testing contract for deposit_v4 development
 /* solhint-disable no-console,func-name-mixedcase,explicit-types */
