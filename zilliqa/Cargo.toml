@@ -131,6 +131,7 @@ dashmap = "6.1.0"
 sled = { version = "0.34.7", features = ["no_logs"] }
 r2d2 = "0.8.10"
 r2d2_sqlite = "0.31.0"
+rocksdb = { version = "0.24.0", default-features = false, features = ["bindgen-runtime", "snappy"] }
 zip = { version = "4.5.0", default-features = false, features = ["zstd"] }
 
 [dev-dependencies]

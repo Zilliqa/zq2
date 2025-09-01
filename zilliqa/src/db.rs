@@ -13,12 +13,14 @@ use alloy::primitives::Address;
 use anyhow::{Context, Result, anyhow};
 #[allow(unused_imports)]
 use eth_trie::{DB, EthTrie, MemoryDB, Trie};
-use itertools::Itertools;
 use lru_mem::LruCache;
 use lz4::Decoder;
 use parking_lot::RwLock;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
+use rocksdb::{
+    BlockBasedOptions, Cache, DBWithThreadMode, Options, SingleThreaded, WriteBatchWithTransaction,
+};
 use rusqlite::{
     Connection, OptionalExtension, Row, ToSql, named_params,
     types::{FromSql, FromSqlError, ToSqlOutput},
@@ -237,6 +239,7 @@ const CURRENT_DB_VERSION: &str = "1";
 pub struct Db {
     pool: Arc<Pool<SqliteConnectionManager>>,
     state_cache: Arc<RwLock<LruCache<Vec<u8>, Vec<u8>>>>,
+    kvdb: Arc<rocksdb::DB>,
     path: Option<Box<Path>>,
     /// The block height at which ZQ2 blocks begin.
     /// This value should be required only for proto networks to distinguise between ZQ1 and ZQ2 blocks.
@@ -302,11 +305,37 @@ impl Db {
         let connection = pool.get()?;
         Self::ensure_schema(&connection)?;
 
+        // RocksDB
+        let rdb_path = if let Some(s) = path.clone() {
+            s.join("state.rocksdb")
+        } else {
+            tempfile::tempdir().unwrap().path().join("state.rocksdb")
+        };
+
+        let cache = Cache::new_lru_cache(state_cache_size); // same as SQLite in-memory page cache
+        let mut block_opts = BlockBasedOptions::default();
+        block_opts.set_block_cache(&cache);
+
+        let mut rdb_opts = Options::default();
+        rdb_opts.create_if_missing(true);
+        rdb_opts.set_block_based_table_factory(&block_opts);
+
+        // Should be safe in single-threaded mode, since we shouldn't have race conditions
+        // i.e. same entry being read and written to, due to the way that the state-trie is structured.
+        let rdb = DBWithThreadMode::<SingleThreaded>::open(&rdb_opts, rdb_path)?;
+
+        tracing::info!(
+            "State database: {} ({})",
+            rdb.path().display(),
+            rdb.latest_sequence_number()
+        );
+
         Ok(Db {
             pool: Arc::new(pool),
             state_cache: Arc::new(RwLock::new(LruCache::new(state_cache_size))),
             path,
             executable_blocks_height,
+            kvdb: Arc::new(rdb),
         })
     }
 
@@ -640,6 +669,7 @@ impl Db {
         Ok(TrieStorage {
             pool: self.pool.clone(),
             cache: self.state_cache.clone(),
+            kvdb: self.kvdb.clone(),
         })
     }
 
@@ -1261,92 +1291,79 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
 pub struct TrieStorage {
     pool: Arc<Pool<SqliteConnectionManager>>,
     cache: Arc<RwLock<LruCache<Vec<u8>, Vec<u8>>>>,
+    kvdb: Arc<rocksdb::DB>,
 }
 
 impl TrieStorage {
-    pub fn write_batch(
-        &self,
-        keys: Vec<Vec<u8>>,
-        values: Vec<Vec<u8>>,
-    ) -> Result<(), rusqlite::Error> {
+    pub fn write_batch(&self, keys: Vec<Vec<u8>>, values: Vec<Vec<u8>>) -> Result<()> {
         if keys.is_empty() {
             return Ok(());
         }
 
-        assert_eq!(keys.len(), values.len());
+        anyhow::ensure!(keys.len() == values.len(), "Keys != Values");
 
-        // https://www.sqlite.org/limits.html#max_variable_number
-        let maximum_sql_parameters = 32766;
-        // Each key-value pair needs two parameters.
-        let chunk_size = maximum_sql_parameters / 2;
-
-        let keys = keys.chunks(chunk_size);
-        let values = values.chunks(chunk_size);
-
-        for (keys, values) in keys.zip(values) {
-            // Generate the SQL substring of the form "(?1, ?2), (?3, ?4), (?5, ?6), ...". There will be one pair of
-            // parameters for each key. Note that parameters are one-indexed.
-            #[allow(unstable_name_collisions)]
-            let params_stmt: String = (0..keys.len())
-                .map(|i| format!("(?{}, ?{})", i * 2 + 1, i * 2 + 2))
-                .intersperse(",".to_owned())
-                .collect();
-            let query =
-                format!("INSERT OR REPLACE INTO state_trie (key, value) VALUES {params_stmt}");
-
-            let params = keys.iter().zip(values).flat_map(|(k, v)| [k, v]);
-            self.pool
-                .get()
-                .unwrap()
-                .prepare(&query)? // do not cache, since it's unique
-                .execute(rusqlite::params_from_iter(params))?;
-            // take lock once
-            let mut cache = self.cache.write();
-            for (key, value) in keys.iter().zip(values) {
-                let _ = cache.insert(key.to_vec(), value.to_vec());
-            }
+        let mut batch = WriteBatchWithTransaction::<false>::default();
+        let mut cache = self.cache.write();
+        for (key, value) in keys.into_iter().zip(values.into_iter()) {
+            batch.put(key.as_slice(), value.as_slice());
+            cache.insert(key, value).ok(); // write-thru policy; silent errors
         }
-        Ok(())
+        Ok(self.kvdb.write(batch)?)
     }
 }
 
 impl eth_trie::DB for TrieStorage {
-    type Error = rusqlite::Error;
+    type Error = eth_trie::TrieError;
 
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, Self::Error> {
+        // L1 - in-memory cache
         // does not mark the entry as MRU, but allows concurrent cache reads;
         if let Some(cached) = self.cache.read().peek(key) {
             return Ok(Some(cached.to_vec()));
         }
 
+        // L2 - rocksdb
+        if let Some(value) = self
+            .kvdb
+            .get(key)
+            .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?
+        {
+            self.cache.write().insert(key.to_vec(), value.clone()).ok(); // silent errors
+            return Ok(Some(value));
+        }
+
+        // L3 - sqlite migration
         let value: Option<Vec<u8>> = self
             .pool
             .get()
             .unwrap()
-            .prepare_cached("SELECT value FROM state_trie WHERE key = ?1")?
+            .prepare_cached("SELECT value FROM state_trie WHERE key = ?1")
+            .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?
             .query_row([key], |row| row.get(0))
-            .optional()?;
+            .optional()
+            .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?;
 
         if let Some(value) = value {
-            let _ = self.cache.write().insert(key.to_vec(), value.clone());
+            self.kvdb
+                .put(key, value.as_slice())
+                .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?;
+            self.cache.write().insert(key.to_vec(), value.clone()).ok(); // silent errors
             return Ok(Some(value));
         }
 
         Ok(None)
     }
 
+    #[inline]
     fn insert(&self, key: &[u8], value: Vec<u8>) -> Result<(), Self::Error> {
-        self.pool
-            .get()
-            .unwrap()
-            .prepare_cached("INSERT OR REPLACE INTO state_trie (key, value) VALUES (?1, ?2)")?
-            .execute((key, &value))?;
-        let _ = self.cache.write().insert(key.to_vec(), value);
-        Ok(())
+        self.write_batch(vec![key.to_vec()], vec![value])
+            .map_err(|e| eth_trie::TrieError::DB(e.to_string()))
     }
 
+    #[inline]
     fn insert_batch(&self, keys: Vec<Vec<u8>>, values: Vec<Vec<u8>>) -> Result<(), Self::Error> {
         self.write_batch(keys, values)
+            .map_err(|e| eth_trie::TrieError::DB(e.to_string()))
     }
 
     fn remove(&self, _key: &[u8]) -> Result<(), Self::Error> {
