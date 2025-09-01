@@ -65,7 +65,13 @@ async fn main() -> Result<()> {
 
     let dbpath = tempdir()?.keep();
     let path = PathBuf::from(args.input.clone());
-    let db = Arc::new(Db::new::<PathBuf>(Some(dbpath.clone()), args.id, 0, None)?);
+    let db = Arc::new(Db::new::<PathBuf>(
+        Some(dbpath.clone()),
+        args.id,
+        0,
+        None,
+        zilliqa::cfg::DbConfig::default(),
+    )?);
 
     let now = Instant::now();
     println!("READ {} -> {}", args.input, dbpath.display());
@@ -95,7 +101,13 @@ async fn main() -> Result<()> {
 
     let dbpath = tempdir()?.keep();
     let path = PathBuf::from(args.output.clone());
-    let db = Arc::new(Db::new::<PathBuf>(Some(dbpath.clone()), args.id, 0, None)?);
+    let db = Arc::new(Db::new::<PathBuf>(
+        Some(dbpath.clone()),
+        args.id,
+        0,
+        None,
+        zilliqa::cfg::DbConfig::default(),
+    )?);
 
     let now = Instant::now();
     println!("VERIFY {} -> {}", args.output, dbpath.display());
