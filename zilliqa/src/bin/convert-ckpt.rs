@@ -71,6 +71,7 @@ async fn main() -> Result<()> {
         0,
         None,
         zilliqa::cfg::DbConfig::default(),
+        false,
     )?);
 
     let now = Instant::now();
@@ -107,6 +108,7 @@ async fn main() -> Result<()> {
         0,
         None,
         zilliqa::cfg::DbConfig::default(),
+        false,
     )?);
 
     let now = Instant::now();
