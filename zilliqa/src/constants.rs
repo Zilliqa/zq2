@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use revm::primitives::{B256, b256};
+
 use crate::transaction::{EvmGas, ScillaGas};
 
 // How big data slot a transaction can use
@@ -89,3 +91,7 @@ pub const MAX_REQUEST_SIZE: usize = 1024 * 1024;
 /// Size thresholds
 pub const PROPOSAL_THRESHOLD: usize = MAX_GOSSIP_SIZE * 8 / 10; // 80%
 pub const SYNC_THRESHOLD: usize = MAX_RESPONSE_SIZE - MAX_GOSSIP_SIZE;
+
+/// Empty state trie hash
+pub const EMPTY_ROOT_HASH: B256 =
+    b256!("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421");

@@ -19,7 +19,7 @@ use tokio::fs;
 use zilliqa::{
     api,
     cfg::{
-        ApiServer, SyncConfig, genesis_fork_default, max_rpc_response_size_default,
+        ApiServer, DbConfig, SyncConfig, genesis_fork_default, max_rpc_response_size_default,
         new_view_broadcast_interval_default, state_cache_size_default,
     },
     crypto::{SecretKey, TransactionPublicKey},
@@ -27,9 +27,8 @@ use zilliqa::{
 use zilliqa::{
     cfg::{
         self, Amount, ConsensusConfig, ContractUpgrades, GenesisDeposit,
-        allowed_timestamp_skew_default, block_request_batch_size_default,
-        block_request_limit_default, block_time_default, consensus_timeout_default,
-        eth_chain_id_default, failed_request_sleep_duration_default, max_blocks_in_flight_default,
+        allowed_timestamp_skew_default, block_request_limit_default, block_time_default,
+        consensus_timeout_default, eth_chain_id_default, failed_request_sleep_duration_default,
         scilla_address_default, scilla_ext_libs_path_default,
         scilla_server_socket_directory_default, scilla_stdlib_dir_default, state_rpc_limit_default,
         total_native_token_supply_default,
@@ -159,7 +158,7 @@ impl Setup {
         secret_key_hex: &str,
         is_validator: bool,
     ) -> Result<Self> {
-        let chain_config = validators::ChainConfig::new(chain).await?;
+        let chain_config = validators::ChainConfig::new(chain, false).await?;
         let mut node_data = HashMap::new();
         let secret_key =
             SecretKey::from_hex(secret_key_hex).map_err(|err| anyhow!(Box::new(err)))?;
@@ -214,7 +213,7 @@ impl Setup {
             .await?
             .ok_or(anyhow!("Couldn't load configuration from {config_dir}"))?;
         let chain_config = if let Some(v) = &config.chain {
-            Some(validators::ChainConfig::new(&chain::Chain::from_str(v)?).await?)
+            Some(validators::ChainConfig::new(&chain::Chain::from_str(v)?, false).await?)
         } else {
             None
         };
@@ -550,13 +549,8 @@ impl Setup {
                     new_view_broadcast_interval: new_view_broadcast_interval_default(),
                 },
                 block_request_limit: block_request_limit_default(),
-                sync: SyncConfig {
-                    max_blocks_in_flight: max_blocks_in_flight_default(),
-                    block_request_batch_size: block_request_batch_size_default(),
-                    prune_interval: cfg::u64_max(),
-                    base_height: cfg::u64_max(),
-                    ignore_passive: false,
-                },
+                sync: SyncConfig::default(),
+                db: DbConfig::default(),
                 state_rpc_limit: state_rpc_limit_default(),
                 failed_request_sleep_duration: failed_request_sleep_duration_default(),
                 enable_ots_indices: false,
