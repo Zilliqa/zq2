@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity 0.8.28;
 
-import {
-    UUPSUpgradeable
-} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {Deque, Withdrawal} from "./utils/deque.sol";
 
 using Deque for Deque.Withdrawals;
@@ -542,8 +540,7 @@ contract Deposit is UUPSUpgradeable {
         futureCommittee.totalStake += msg.value;
         futureCommittee.stakers[blsPubKey].balance = msg.value;
         futureCommittee.stakers[blsPubKey].index =
-            futureCommittee.stakerKeys.length +
-            1;
+            futureCommittee.stakerKeys.length + 1;
         futureCommittee.stakerKeys.push(blsPubKey);
 
         emit StakerAdded(blsPubKey, nextUpdate(), msg.value);
