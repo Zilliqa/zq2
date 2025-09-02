@@ -33,11 +33,11 @@ impl ZQ2PrecompileProvider {
     }
 }
 
-impl PrecompileProvider<ZQ2EvmContext<'_>> for ZQ2PrecompileProvider
+impl PrecompileProvider<ZQ2EvmContext> for ZQ2PrecompileProvider
 {
     type Output = InterpreterResult;
 
-    fn set_spec(&mut self, spec: <<revm::Context<BlockEnv, TxEnv, CfgEnv, PendingState, Journal<PendingState>, ExternalContext<'_>> as ContextTr>::Cfg as Cfg>::Spec) -> bool {
+    fn set_spec(&mut self, spec: <<revm::Context<BlockEnv, TxEnv, CfgEnv, PendingState, Journal<PendingState>, ExternalContext> as ContextTr>::Cfg as Cfg>::Spec) -> bool {
         <EthPrecompiles as PrecompileProvider<ZQ2EvmContext>>::set_spec(&mut self.inner, spec)
     }
 
@@ -73,9 +73,9 @@ impl PrecompileProvider<ZQ2EvmContext<'_>> for ZQ2PrecompileProvider
 }
 
 pub trait ContextPrecompile {
-    fn call<'a>(
+    fn call(
         &self,
-        ctx: &mut ZQ2EvmContext<'a>,
+        ctx: &mut ZQ2EvmContext,
         target: Address,
         input: &InputsImpl,
         is_static: bool,
@@ -84,9 +84,9 @@ pub trait ContextPrecompile {
 }
 
 impl CustomPrecompile {
-    pub fn call<'a>(
+    pub fn call(
         &self,
-        ctx: &mut ZQ2EvmContext<'a>,
+        ctx: &mut ZQ2EvmContext,
         target: Address,
         input: &InputsImpl,
         is_static: bool,

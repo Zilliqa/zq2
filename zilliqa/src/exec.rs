@@ -27,6 +27,7 @@ use revm::context_interface::DBErrorMarker;
 use revm::context_interface::transaction::AccessList;
 use revm::handler::{EvmTr};
 use revm_context::{ContextTr, TxEnv};
+use revm_inspector::{InspectEvm, InspectorEvmTr};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -432,9 +433,9 @@ impl State {
 }
 
 /// The external context used by [Evm].
-pub struct ExternalContext<'a> {
+pub struct ExternalContext {
     pub touched_address_inspector: TouchedAddressInspector,
-    pub fork: &'a Fork,
+    pub fork: Fork,
     // This flag is only used for zq1 whitelisted contracts, and it's used to detect if the entire transaction should be marked as failed
     pub enforce_transaction_failure: bool,
     /// The caller of each call in the call-stack. This is needed because the `scilla_call` precompile needs to peek
@@ -531,7 +532,7 @@ impl State {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn apply_transaction_evm<'a, I: Inspector<ZQ2EvmContext<'a>> + ScillaInspector>(
+    pub fn apply_transaction_evm<I: Inspector<ZQ2EvmContext> + ScillaInspector>(
         &self,
         from_addr: Address,
         to_addr: Option<Address>,
@@ -555,10 +556,10 @@ impl State {
         let mut padded_view_number = [0u8; 32];
         padded_view_number[24..].copy_from_slice(&current_block.view.to_be_bytes());
 
-        let fork = self.forks.get(current_block.number).clone();
+        let fork = self.forks.get(current_block.number);
         let external_context = ExternalContext {
             touched_address_inspector: TouchedAddressInspector::default(),
-            fork: &fork,
+            fork: fork.clone(),
             enforce_transaction_failure: false,
             callers: vec![from_addr],
             has_evm_failed: false,
@@ -570,8 +571,7 @@ impl State {
             AccessList::default()
         };
         let gas_priority_fee = if fork.use_max_gas_priority_fee {
-            max_priority_fee_per_gas.map(u128::from)
-        } else {
+            max_priority_fee_per_gas} else {
             None
         };
         let pending_state = PendingState::new(self.clone(), fork.clone());
@@ -601,7 +601,11 @@ impl State {
             prevrandao: Some(Hash::builder().with(padded_view_number).finalize().into()),
             blob_excess_gas_and_price: None,
             beneficiary: Default::default()
-        }).with_tx(TxEnv {
+        });
+
+        let mut evm = ZQ2Evm::new(evm_ctx, inspector);
+
+        let tx = TxEnv {
             tx_type: TxType::Legacy.into(),
             caller: from_addr.0.into(),
             gas_limit: gas_limit.0,
@@ -616,9 +620,7 @@ impl State {
             blob_hashes: vec![],
             max_fee_per_blob_gas: 0,
             authorization_list: Vec::default(),
-        });
-
-        let mut evm = ZQ2Evm::new(evm_ctx, inspector);// evm_ctx.build_mainnet().with_inspector(inspector).with_precompiles(ZQ2PrecompileProvider::new());
+        };
 
         /*
         let mut evm = Evm::builder()
@@ -680,7 +682,14 @@ impl State {
         }
         let mut evm = evm.build();
         */
-        let result_and_state = evm.0.replay()?;
+        let result_and_state = {
+            if enable_inspector {
+                evm.inspect_txn(tx)?
+            }
+            else {
+                evm.transact(tx)?
+            }
+        };
         let ctx_with_handler = evm.ctx();
 
         // If the scilla precompile failed for whitelisted zq1 contract we mark the entire transaction as failed
@@ -822,7 +831,7 @@ impl State {
     }
 
     /// Apply a transaction to the account state.
-    pub fn apply_transaction<'a, I: Inspector<ZQ2EvmContext<'a>> + ScillaInspector>(
+    pub fn apply_transaction<I: Inspector<ZQ2EvmContext> + ScillaInspector>(
         &mut self,
         txn: VerifiedTransaction,
         current_block: BlockHeader,

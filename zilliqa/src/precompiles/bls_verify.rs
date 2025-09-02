@@ -22,10 +22,10 @@ impl BlsVerify {
     ///     - Single pairing check on BLS12-381 (ref: EIP-1108)         = 79_000
     ///                                                                 = 180_000
     const BLS_VERIFY_GAS_PRICE: u64 = 180_000u64;
-    fn bls_verify<'a>(
+    fn bls_verify(
         input: &[u8],
         gas_limit: u64,
-        _: &mut ZQ2EvmContext<'a>,
+        _: &mut ZQ2EvmContext,
     ) -> Result<Option<InterpreterResult>, String> {
         if gas_limit < Self::BLS_VERIFY_GAS_PRICE {
             return Err(PrecompileError::OutOfGas.to_string());
@@ -71,9 +71,9 @@ impl BlsVerify {
 }
 
 impl ContextPrecompile for BlsVerify {
-    fn call<'a>(
+    fn call(
         &self,
-        ctx: &mut ZQ2EvmContext<'a>,
+        ctx: &mut ZQ2EvmContext,
         _target: Address,
         input: &InputsImpl,
         _is_static: bool,

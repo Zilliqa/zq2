@@ -646,7 +646,7 @@ impl Node {
         Err(anyhow!("transaction not found in block: {txn_hash}"))
     }
 
-    pub fn replay_transaction<'a, I: Inspector<ZQ2EvmContext<'a>> + ScillaInspector>(
+    pub fn replay_transaction<I: Inspector<ZQ2EvmContext> + ScillaInspector>(
         &self,
         txn_hash: Hash,
         inspector: I,

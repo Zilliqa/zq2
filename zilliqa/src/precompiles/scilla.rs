@@ -253,9 +253,9 @@ const BASE_COST: u64 = 15;
 const PER_BYTE_COST: u64 = 3;
 
 impl ContextPrecompile for ScillaRead {
-    fn call<'a>(
+    fn call(
         &self,
-        ctx: &mut ZQ2EvmContext<'a>,
+        ctx: &mut ZQ2EvmContext,
         _dest: Address,
         input: &InputsImpl,
         _is_static: bool,
@@ -392,9 +392,9 @@ impl ContextPrecompile for ScillaRead {
 pub(crate) struct ScillaCall;
 
 impl ContextPrecompile for ScillaCall {
-    fn call<'a>(
+    fn call(
         &self,
-        ctx: &mut ZQ2EvmContext<'a>,
+        ctx: &mut ZQ2EvmContext,
         _dest: Address,
         input: &InputsImpl,
         _is_static: bool,
@@ -610,10 +610,10 @@ impl ContextPrecompile for ScillaCall {
 }
 */
 
- fn scilla_call_precompile<'a>(
+ fn scilla_call_precompile(
     input: &InputsImpl,
     gas_limit: u64,
-    ctx: &mut ZQ2EvmContext<'a>,
+    ctx: &mut ZQ2EvmContext,
     gas_exempt: bool,
 ) -> std::result::Result<Option<InterpreterResult>, String> {
      let Ok(input_len) = u64::try_from(input.input.len()) else {
@@ -753,7 +753,7 @@ impl ContextPrecompile for ScillaCall {
          serde_json::to_string(&message).unwrap(),
          &mut ctx.chain.touched_address_inspector,
          &scilla_ext_libs_path_default(),
-         ctx.chain.fork,
+         &ctx.chain.fork,
          ctx.block.number.to(),
      ) else {
          return fatal("scilla call failed");

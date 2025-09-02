@@ -19,7 +19,7 @@ impl PopVerify {
     fn pop_verify<'a>(
         input: &[u8],
         gas_limit: u64,
-        _: &mut ZQ2EvmContext<'a>,
+        _: &mut ZQ2EvmContext,
     ) -> Result<Option<InterpreterResult>, String> {
         if gas_limit < Self::POP_VERIFY_GAS_PRICE {
             return Err(PrecompileError::OutOfGas.to_string());
@@ -56,9 +56,9 @@ impl PopVerify {
 }
 
 impl ContextPrecompile for PopVerify {
-    fn call<'a>(
+    fn call(
         &self,
-        ctx: &mut ZQ2EvmContext<'a>,
+        ctx: &mut ZQ2EvmContext,
         _dest: Address,
         input: &InputsImpl,
         _is_static: bool,

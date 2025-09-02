@@ -1050,7 +1050,7 @@ impl Consensus {
     }
 
     /// For a given State apply the given transaction
-    pub fn apply_transaction_at<I: for<'a> Inspector<ZQ2EvmContext<'a>> + ScillaInspector>(
+    pub fn apply_transaction_at<I: Inspector<ZQ2EvmContext> + ScillaInspector>(
         state: &mut State,
         txn: VerifiedTransaction,
         current_block: BlockHeader,
