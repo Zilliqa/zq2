@@ -1,6 +1,10 @@
 //! An administrative API
 
-use std::{ops::RangeInclusive, sync::Arc};
+use std::{
+    ops::RangeInclusive,
+    sync::Arc,
+    collections::{VecDeque, HashMap},
+};
 
 use alloy::{eips::BlockId, primitives::U64};
 use anyhow::{Result, anyhow};
@@ -18,6 +22,7 @@ use crate::{
     crypto::NodePublicKey,
     message::{BitArray, BlockHeader},
     node::Node,
+    constants::{LAG_BEHIND_CURRENT_VIEW, MISSED_VIEW_WINDOW},
 };
 
 pub fn rpc_module(
@@ -36,8 +41,44 @@ pub fn rpc_module(
             ("admin_votesReceived", votes_received),
             ("admin_clearMempool", clear_mempool),
             ("admin_getLeaders", get_leaders),
+            ("admin_missedViewHistory", missed_view_history),
         ]
     )
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct NodeMissedViewHistory {
+    pub min_view: u64,
+    pub node_history: HashMap<&NodePublicKey, Vec<u64>>,
+}
+
+fn missed_view_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<NodeMissedViewHistory> {
+    let mut params = params.sequence();
+    let current_view: u64 = params.next()?;
+    let node = node.read();
+    //let current_view = node.consensus.get_view()?;
+    let history = node.consensus.state().view_history;
+    let min_view = history.min_view.lock().unwrap();
+    let missed_views = history.missed_views.lock().unwrap();
+    let missed_map = missed_views
+        .iter()
+        .filter(|&(view, _)| {
+            *view
+                >= current_view
+                    .saturating_sub(LAG_BEHIND_CURRENT_VIEW + MISSED_VIEW_WINDOW)
+                && *view
+                    < current_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW)
+        })
+        .fold(HashMap::new(), |mut acc, (view, leader)| {
+            acc.entry(leader)
+                .and_modify(|views: &mut Vec<u64>| views.push(*view))
+                .or_insert_with(|| vec![*view]);
+            acc
+        });
+    Ok(NodeMissedViewHistory {
+        min_view: *min_view,
+        node_history: missed_map,
+    })
 }
 
 #[derive(Clone, Debug, Serialize)]
