@@ -2,15 +2,14 @@ use alloy::primitives::Address;
 use blsful::Bls12381G2Impl;
 use ethabi::{ParamType, Token, decode, encode, short_signature};
 use revm::{
-    precompile::PrecompileError,
+    interpreter::{
+        Gas, InputsImpl, InstructionResult, InterpreterResult, interpreter::EthInterpreter,
+    },
+    precompile::{PrecompileError, PrecompileOutput, PrecompileResult},
 };
-use revm::interpreter::{Gas, InputsImpl, InstructionResult, InterpreterResult};
-use revm::interpreter::interpreter::EthInterpreter;
-use revm::precompile::{PrecompileOutput, PrecompileResult};
 use revm_inspector::Inspector;
-use crate::evm::{ZQ2EvmContext};
-use crate::inspector::ScillaInspector;
-use crate::precompiles::ContextPrecompile;
+
+use crate::{evm::ZQ2EvmContext, inspector::ScillaInspector, precompiles::ContextPrecompile};
 
 pub struct BlsVerify;
 
@@ -47,7 +46,7 @@ impl BlsVerify {
         let Ok(signature) = <blsful::Bls12381G2Impl as blsful::Pairing>::Signature::try_from(
             decoded[1].to_owned().into_bytes().unwrap(),
         ) else {
-            return Err("ABI signature invalid".into())
+            return Err("ABI signature invalid".into());
         };
 
         let Ok(pk) = blsful::PublicKey::<Bls12381G2Impl>::try_from(
@@ -65,7 +64,7 @@ impl BlsVerify {
         Ok(Some(InterpreterResult::new(
             InstructionResult::default(),
             output.into(),
-            Gas::new_spent(Self::BLS_VERIFY_GAS_PRICE)
+            Gas::new_spent(Self::BLS_VERIFY_GAS_PRICE),
         )))
     }
 }
@@ -77,11 +76,10 @@ impl ContextPrecompile for BlsVerify {
         _target: Address,
         input: &InputsImpl,
         _is_static: bool,
-        gas_limit: u64
+        gas_limit: u64,
     ) -> Result<Option<InterpreterResult>, String> {
         if input.input.len() < 4 {
-            return Err(
-                "Provided input must be at least 4-byte long".into())
+            return Err("Provided input must be at least 4-byte long".into());
         }
 
         let dispatch_table: [([u8; 4], _); 1] = [(
@@ -97,8 +95,7 @@ impl ContextPrecompile for BlsVerify {
             .iter()
             .find(|&predicate| predicate.0 == raw_input[..4])
         else {
-            return Err(
-                "Unable to find handler with given selector".into());
+            return Err("Unable to find handler with given selector".into());
         };
 
         handler.1(&raw_input[4..], gas_limit, ctx)

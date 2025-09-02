@@ -3,9 +3,9 @@ use std::collections::HashSet;
 use alloy::primitives::{Address, U256};
 use revm::{
     Inspector,
+    context_interface::{ContextTr, CreateScheme, JournalTr},
     interpreter::{CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome},
 };
-use revm::context_interface::{ContextTr, CreateScheme, JournalTr};
 use revm_inspector::NoOpInspector;
 use revm_inspectors::tracing::{
     FourByteInspector, MuxInspector, TracingInspector, js::JsInspector,
@@ -73,12 +73,7 @@ impl<CTX: ContextTr> Inspector<CTX> for TouchedAddressInspector {
         None
     }
 
-    fn create_end(
-        &mut self,
-        _: &mut CTX,
-        inputs: &CreateInputs,
-        outcome: &mut CreateOutcome,
-    ) {
+    fn create_end(&mut self, _: &mut CTX, inputs: &CreateInputs, outcome: &mut CreateOutcome) {
         self.touched.insert(inputs.caller);
         if let Some(address) = outcome.address {
             self.touched.insert(address);
@@ -128,12 +123,7 @@ impl CreatorInspector {
 }
 
 impl<CTX> Inspector<CTX> for CreatorInspector {
-    fn create_end(
-        &mut self,
-        _: &mut CTX,
-        inputs: &CreateInputs,
-        outcome: &mut CreateOutcome,
-    ) {
+    fn create_end(&mut self, _: &mut CTX, inputs: &CreateInputs, outcome: &mut CreateOutcome) {
         if let Some(address) = outcome.address {
             if address == self.contract {
                 self.creator = Some(inputs.caller);
@@ -162,11 +152,7 @@ impl OtterscanTraceInspector {
 }
 
 impl<CTX: ContextTr> Inspector<CTX> for OtterscanTraceInspector {
-    fn call(
-        &mut self,
-        context: &mut CTX,
-        inputs: &mut CallInputs,
-    ) -> Option<CallOutcome> {
+    fn call(&mut self, context: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
         let ty = match inputs.scheme {
             CallScheme::Call => TraceEntryType::Call,
             CallScheme::CallCode => TraceEntryType::CallCode,
@@ -185,17 +171,18 @@ impl<CTX: ContextTr> Inspector<CTX> for OtterscanTraceInspector {
         None
     }
 
-    fn create(
-        &mut self,
-        context: &mut CTX,
-        inputs: &mut CreateInputs,
-    ) -> Option<CreateOutcome> {
+    fn create(&mut self, context: &mut CTX, inputs: &mut CreateInputs) -> Option<CreateOutcome> {
         let ty = match inputs.scheme {
             CreateScheme::Create => TraceEntryType::Create,
             CreateScheme::Create2 { .. } => TraceEntryType::Create2,
             _ => TraceEntryType::Create,
         };
-        let nonce = context.journal_mut().load_account(inputs.caller).unwrap().info.nonce;
+        let nonce = context
+            .journal_mut()
+            .load_account(inputs.caller)
+            .unwrap()
+            .info
+            .nonce;
         self.entries.push(TraceEntry {
             ty,
             depth: context.journal().depth().try_into().unwrap_or_default(),
@@ -270,11 +257,7 @@ impl OtterscanOperationInspector {
 }
 
 impl<CTX: ContextTr> Inspector<CTX> for OtterscanOperationInspector {
-    fn call(
-        &mut self,
-        context: &mut CTX,
-        inputs: &mut CallInputs,
-    ) -> Option<CallOutcome> {
+    fn call(&mut self, context: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
         if context.journal().depth() != 0 && inputs.transfers_value() {
             self.entries.push(Operation {
                 ty: OperationType::Transfer,
@@ -287,18 +270,19 @@ impl<CTX: ContextTr> Inspector<CTX> for OtterscanOperationInspector {
         None
     }
 
-    fn create(
-        &mut self,
-        context: &mut CTX,
-        inputs: &mut CreateInputs,
-    ) -> Option<CreateOutcome> {
+    fn create(&mut self, context: &mut CTX, inputs: &mut CreateInputs) -> Option<CreateOutcome> {
         if context.journal().depth() != 0 {
             let ty = match inputs.scheme {
                 CreateScheme::Create => OperationType::Create,
                 CreateScheme::Create2 { .. } => OperationType::Create2,
-                _ => OperationType::Create
+                _ => OperationType::Create,
             };
-            let nonce = context.journal_mut().load_account(inputs.caller).unwrap().info.nonce;
+            let nonce = context
+                .journal_mut()
+                .load_account(inputs.caller)
+                .unwrap()
+                .info
+                .nonce;
             self.entries.push(Operation {
                 ty,
                 from: inputs.caller,

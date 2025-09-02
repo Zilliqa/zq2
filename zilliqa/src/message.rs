@@ -866,7 +866,13 @@ impl revm_context::Block for Block {
     }
 
     fn timestamp(&self) -> U256 {
-        U256::from(self.header.timestamp.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs())
+        U256::from(
+            self.header
+                .timestamp
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        )
     }
 
     fn gas_limit(&self) -> u64 {

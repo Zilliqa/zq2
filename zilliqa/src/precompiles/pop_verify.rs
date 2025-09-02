@@ -2,14 +2,13 @@ use alloy::primitives::Address;
 use blsful::Bls12381G2Impl;
 use ethabi::{ParamType, Token, decode, encode, short_signature};
 use revm::{
+    interpreter::{Gas, InputsImpl, InstructionResult, InterpreterResult},
     precompile::PrecompileError,
 };
-use revm::interpreter::{Gas, InputsImpl, InstructionResult, InterpreterResult};
 use revm_inspector::Inspector;
 use revm_precompile::{PrecompileOutput, PrecompileResult};
-use crate::evm::ZQ2EvmContext;
-use crate::inspector::ScillaInspector;
-use crate::precompiles::ContextPrecompile;
+
+use crate::{evm::ZQ2EvmContext, inspector::ScillaInspector, precompiles::ContextPrecompile};
 
 pub struct PopVerify;
 
@@ -36,21 +35,22 @@ impl PopVerify {
         let Ok(pop) = blsful::ProofOfPossession::<Bls12381G2Impl>::try_from(
             decoded[0].to_owned().into_bytes().unwrap(),
         ) else {
-            return Err("ABI signature invalid".into())
+            return Err("ABI signature invalid".into());
         };
 
         let Ok(pk) = blsful::PublicKey::<Bls12381G2Impl>::try_from(
             decoded[1].to_owned().into_bytes().unwrap(),
         ) else {
-            return Err("ABI pubkey invalid".into())
+            return Err("ABI pubkey invalid".into());
         };
 
         let result = pop.verify(pk).is_ok();
 
         let output = encode(&[Token::Bool(result)]);
-        Ok(Some(InterpreterResult::new(InstructionResult::default(),
+        Ok(Some(InterpreterResult::new(
+            InstructionResult::default(),
             output.into(),
-            Gas::new_spent(Self::POP_VERIFY_GAS_PRICE)
+            Gas::new_spent(Self::POP_VERIFY_GAS_PRICE),
         )))
     }
 }
@@ -62,10 +62,10 @@ impl ContextPrecompile for PopVerify {
         _dest: Address,
         input: &InputsImpl,
         _is_static: bool,
-        gas_limit: u64
+        gas_limit: u64,
     ) -> Result<Option<InterpreterResult>, String> {
         if input.input.len() < 4 {
-            return Err("Provided input must be at least 4-byte long".into())
+            return Err("Provided input must be at least 4-byte long".into());
         }
 
         let dispatch_table: [([u8; 4], _); 1] = [(
@@ -78,8 +78,7 @@ impl ContextPrecompile for PopVerify {
             .iter()
             .find(|&predicate| predicate.0 == raw_input[..4])
         else {
-            return Err(
-                "Unable to find handler with given selector".into())
+            return Err("Unable to find handler with given selector".into());
         };
 
         handler.1(&raw_input[4..], gas_limit, ctx)

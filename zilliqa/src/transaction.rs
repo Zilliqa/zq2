@@ -10,19 +10,19 @@ use alloy::{
     consensus::{
         SignableTransaction, TxEip1559, TxEip2930, TxLegacy, transaction::RlpEcdsaEncodableTx,
     },
-    primitives::{Address, B256, TxKind, U256, keccak256},
+    eips::{
+        eip2930::AccessListItem,
+        eip7702::{RecoveredAuthorization, SignedAuthorization},
+    },
+    primitives::{Address, B256, Bytes, Signature, TxKind, U256, keccak256},
     rlp::{EMPTY_STRING_CODE, Encodable, Header},
     sol_types::SolValue,
 };
-use alloy::eips::eip2930::AccessListItem;
-use alloy::eips::eip7702::{RecoveredAuthorization, SignedAuthorization};
-use alloy::primitives::{Bytes, Signature};
 use anyhow::{Result, anyhow};
 use bytes::{BufMut, BytesMut};
 use itertools::Itertools;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
-use revm::context_interface::either::Either;
-use revm::context_interface::transaction::AccessList;
+use revm::context_interface::{either::Either, transaction::AccessList};
 use revm_context::TxEnv;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
@@ -833,7 +833,7 @@ impl TryFrom<VerifiedTransaction> for TxEnv {
             gas_price: inner.max_fee_per_gas(),
             kind: match inner.to_addr() {
                 Some(addr) => TxKind::Call(addr),
-                _ => TxKind::Create
+                _ => TxKind::Create,
             },
             value: inner.amount().try_into()?,
             data: inner.payload().to_vec().into(),
@@ -847,7 +847,6 @@ impl TryFrom<VerifiedTransaction> for TxEnv {
         })
     }
 }
-
 
 impl From<TxLegacy> for Transaction {
     fn from(tx: TxLegacy) -> Self {

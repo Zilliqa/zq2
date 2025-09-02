@@ -7,25 +7,30 @@ use std::{
     fs, mem,
     num::NonZeroU128,
     path::Path,
-    sync::{MutexGuard},
+    sync::MutexGuard,
 };
 
 use alloy::{
     consensus::TxType,
     primitives::{Address, Bytes, U256, address, hex},
 };
-use anyhow::{Result, anyhow, Context};
+use anyhow::{Context, Result, anyhow};
 use eth_trie::{EthTrie, Trie};
 use ethabi::Token;
 use jsonrpsee::types::ErrorObjectOwned;
 use libp2p::PeerId;
-use revm::{Database, DatabaseRef, Inspector, Journal, context::{
-    BlockEnv, CfgEnv,
-    result::{ExecutionResult, HaltReason, Output, ResultAndState},
-}, database::InMemoryDB, primitives::{B256, KECCAK_EMPTY}, state::{AccountInfo, Bytecode}, MainBuilder, ExecuteEvm};
-use revm::context_interface::DBErrorMarker;
-use revm::context_interface::transaction::AccessList;
-use revm::handler::{EvmTr};
+use revm::{
+    Database, DatabaseRef, ExecuteEvm, Inspector, Journal, MainBuilder,
+    context::{
+        BlockEnv, CfgEnv,
+        result::{ExecutionResult, HaltReason, Output, ResultAndState},
+    },
+    context_interface::{DBErrorMarker, transaction::AccessList},
+    database::InMemoryDB,
+    handler::EvmTr,
+    primitives::{B256, KECCAK_EMPTY},
+    state::{AccountInfo, Bytecode},
+};
 use revm_context::{ContextTr, TxEnv};
 use revm_inspector::{InspectEvm, InspectorEvmTr};
 use serde::{Deserialize, Serialize};
@@ -39,8 +44,10 @@ use crate::{
     crypto::{Hash, NodePublicKey},
     db::TrieStorage,
     error::ensure_success,
-    inspector::{self, ScillaInspector},
+    evm::{SPEC_ID, ZQ2Evm, ZQ2EvmContext, new_zq2_evm_ctx},
+    inspector::{self, ScillaInspector, TouchedAddressInspector},
     message::{Block, BlockHeader},
+    precompiles::ZQ2PrecompileProvider,
     scilla::{self, ParamValue, Scilla, split_storage_key, storage_key},
     state::{Account, Code, ContractInit, ExternalLibrary, State, contract_addr},
     time::SystemTime,
@@ -49,9 +56,6 @@ use crate::{
         ZilAmount, total_scilla_gas_price,
     },
 };
-use crate::evm::{new_zq2_evm_ctx, ZQ2Evm, ZQ2EvmContext, SPEC_ID};
-use crate::inspector::TouchedAddressInspector;
-use crate::precompiles::ZQ2PrecompileProvider;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum ExecType {
@@ -445,8 +449,6 @@ pub struct ExternalContext {
     pub has_called_scilla_precompile: bool,
 }
 
-
-
 pub enum BaseFeeCheck {
     /// Transaction gas price will be validated to be at least the block gas price.
     Validate,
@@ -512,11 +514,7 @@ impl State {
     fn failed(
         mut result_and_state: ResultAndState,
         env: CfgEnv,
-    ) -> Result<(
-        ResultAndState,
-        HashMap<Address, PendingAccount>,
-        CfgEnv,
-    )> {
+    ) -> Result<(ResultAndState, HashMap<Address, PendingAccount>, CfgEnv)> {
         result_and_state.state.clear();
         Ok((
             ResultAndState {
@@ -548,11 +546,7 @@ impl State {
         enable_inspector: bool,
         base_fee_check: BaseFeeCheck,
         extra_opts: ExtraOpts,
-    ) -> Result<(
-        ResultAndState,
-        HashMap<Address, PendingAccount>,
-        CfgEnv,
-    )> {
+    ) -> Result<(ResultAndState, HashMap<Address, PendingAccount>, CfgEnv)> {
         let mut padded_view_number = [0u8; 32];
         padded_view_number[24..].copy_from_slice(&current_block.view.to_be_bytes());
 
@@ -571,37 +565,39 @@ impl State {
             AccessList::default()
         };
         let gas_priority_fee = if fork.use_max_gas_priority_fee {
-            max_priority_fee_per_gas} else {
+            max_priority_fee_per_gas
+        } else {
             None
         };
         let pending_state = PendingState::new(self.clone(), fork.clone());
 
-        
-        let evm_ctx = new_zq2_evm_ctx(pending_state, external_context).with_cfg({
-            let mut cfg = CfgEnv::new_with_spec(SPEC_ID);
-            cfg.disable_eip3607 = extra_opts.disable_eip3607;
-            cfg.chain_id = self.chain_id.eth;
-            cfg.disable_base_fee = match base_fee_check {
-                BaseFeeCheck::Validate => false,
-                BaseFeeCheck::Ignore => true,
-            };
-            cfg
-        }).with_block(BlockEnv {
-            number: U256::from(current_block.number),
-            timestamp: U256::from(
-                current_block
-                    .timestamp
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs(),
-            ),
-            gas_limit: self.block_gas_limit.0,
-            basefee: self.gas_price.try_into()?,
-            difficulty: U256::from(1),
-            prevrandao: Some(Hash::builder().with(padded_view_number).finalize().into()),
-            blob_excess_gas_and_price: None,
-            beneficiary: Default::default()
-        });
+        let evm_ctx = new_zq2_evm_ctx(pending_state, external_context)
+            .with_cfg({
+                let mut cfg = CfgEnv::new_with_spec(SPEC_ID);
+                cfg.disable_eip3607 = extra_opts.disable_eip3607;
+                cfg.chain_id = self.chain_id.eth;
+                cfg.disable_base_fee = match base_fee_check {
+                    BaseFeeCheck::Validate => false,
+                    BaseFeeCheck::Ignore => true,
+                };
+                cfg
+            })
+            .with_block(BlockEnv {
+                number: U256::from(current_block.number),
+                timestamp: U256::from(
+                    current_block
+                        .timestamp
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                ),
+                gas_limit: self.block_gas_limit.0,
+                basefee: self.gas_price.try_into()?,
+                difficulty: U256::from(1),
+                prevrandao: Some(Hash::builder().with(padded_view_number).finalize().into()),
+                blob_excess_gas_and_price: None,
+                beneficiary: Default::default(),
+            });
 
         let mut evm = ZQ2Evm::new(evm_ctx, inspector);
 
@@ -685,17 +681,14 @@ impl State {
         let result_and_state = {
             if enable_inspector {
                 evm.inspect_txn(tx)?
-            }
-            else {
+            } else {
                 evm.transact(tx)?
             }
         };
         let ctx_with_handler = evm.ctx();
 
         // If the scilla precompile failed for whitelisted zq1 contract we mark the entire transaction as failed
-        if ctx_with_handler.chain
-            .enforce_transaction_failure
-        {
+        if ctx_with_handler.chain.enforce_transaction_failure {
             return Self::failed(result_and_state, ctx_with_handler.cfg.clone());
         }
 

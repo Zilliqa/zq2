@@ -24,8 +24,7 @@ use alloy::{
 use anyhow::{Result, anyhow};
 use libp2p::{PeerId, request_response::OutboundFailure};
 use rand::RngCore;
-use revm::context_interface::result::ExecutionResult;
-use revm::context_interface::transaction::AccessList;
+use revm::context_interface::{result::ExecutionResult, transaction::AccessList};
 use revm_context::TxEnv;
 use revm_inspector::Inspector;
 use revm_inspectors::tracing::{
@@ -41,6 +40,7 @@ use crate::{
     consensus::Consensus,
     crypto::{Hash, SecretKey},
     db::{BlockFilter, Db},
+    evm::ZQ2EvmContext,
     exec::{PendingState, TransactionApplyResult},
     inspector::{self, ScillaInspector},
     message::{
@@ -56,7 +56,6 @@ use crate::{
         EvmGas, SignedTransaction, TransactionReceipt, TxIntershard, VerifiedTransaction,
     },
 };
-use crate::evm::ZQ2EvmContext;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
 pub struct RequestId(u64);
@@ -877,7 +876,8 @@ impl Node {
                         .map_err(|e| anyhow!("Unable to create js inspector: {e}"))?;
 
                 let signed_txn = txn.tx.clone().into_transaction();
-                let result = state.apply_transaction(txn.clone(), block.header, &mut inspector, true)?;
+                let result =
+                    state.apply_transaction(txn.clone(), block.header, &mut inspector, true)?;
 
                 let TransactionApplyResult::Evm(result, env) = result else {
                     return Ok(None);

@@ -5,20 +5,25 @@ mod scilla;
 use std::sync::Arc;
 
 use alloy::primitives::Address;
-use revm::context_interface::{Cfg, ContextTr};
-use revm::handler::{EthPrecompiles, PrecompileProvider};
-use revm::interpreter::{InputsImpl, InterpreterResult};
-use revm::primitives::address;
+use bls_verify::BlsVerify;
+use pop_verify::PopVerify;
+use revm::{
+    context_interface::{Cfg, ContextTr},
+    handler::{EthPrecompiles, PrecompileProvider},
+    interpreter::{InputsImpl, InterpreterResult},
+    primitives::address,
+};
 use revm_context::{BlockEnv, CfgEnv, Journal, TxEnv};
 use revm_inspector::{Inspector, NoOpInspector};
 use revm_precompile::PrecompileResult;
-use bls_verify::BlsVerify;
-use pop_verify::PopVerify;
 use scilla::ScillaRead;
-use crate::evm::ZQ2EvmContext;
-use crate::exec::{ExternalContext, PendingState};
-use crate::inspector::ScillaInspector;
-use crate::precompiles::scilla::ScillaCall;
+
+use crate::{
+    evm::ZQ2EvmContext,
+    exec::{ExternalContext, PendingState},
+    inspector::ScillaInspector,
+    precompiles::scilla::ScillaCall,
+};
 
 #[derive(Debug, Clone)]
 pub struct ZQ2PrecompileProvider {
@@ -33,11 +38,20 @@ impl ZQ2PrecompileProvider {
     }
 }
 
-impl PrecompileProvider<ZQ2EvmContext> for ZQ2PrecompileProvider
-{
+impl PrecompileProvider<ZQ2EvmContext> for ZQ2PrecompileProvider {
     type Output = InterpreterResult;
 
-    fn set_spec(&mut self, spec: <<revm::Context<BlockEnv, TxEnv, CfgEnv, PendingState, Journal<PendingState>, ExternalContext> as ContextTr>::Cfg as Cfg>::Spec) -> bool {
+    fn set_spec(
+        &mut self,
+        spec: <<revm::Context<
+            BlockEnv,
+            TxEnv,
+            CfgEnv,
+            PendingState,
+            Journal<PendingState>,
+            ExternalContext,
+        > as ContextTr>::Cfg as Cfg>::Spec,
+    ) -> bool {
         <EthPrecompiles as PrecompileProvider<ZQ2EvmContext>>::set_spec(&mut self.inner, spec)
     }
 
@@ -49,9 +63,11 @@ impl PrecompileProvider<ZQ2EvmContext> for ZQ2PrecompileProvider
         is_static: bool,
         gas_limit: u64,
     ) -> Result<Option<Self::Output>, String> {
-
-        if let Some(custom_precompile) = CUSTOM_PRECOMPILES.iter().find(|&&(ref a, _)| a == address) {
-            return custom_precompile.1.call(context, *address, inputs, is_static, gas_limit);
+        if let Some(custom_precompile) = CUSTOM_PRECOMPILES.iter().find(|&&(ref a, _)| a == address)
+        {
+            return custom_precompile
+                .1
+                .call(context, *address, inputs, is_static, gas_limit);
         }
 
         // Otherwise, delegate to standard Ethereum precompiles
@@ -91,56 +107,42 @@ impl CustomPrecompile {
         input: &InputsImpl,
         is_static: bool,
         gas_limit: u64,
-    ) -> Result<Option<InterpreterResult>, String>
-    {
+    ) -> Result<Option<InterpreterResult>, String> {
         match self {
-            CustomPrecompile::PopVerify(p) => {
-                p.call(ctx, target, input, is_static, gas_limit)
-            }
-            CustomPrecompile::BlsVerify(p) => {
-                p.call(ctx, target, input, is_static, gas_limit)
-            }
-            CustomPrecompile::ScillaRead(p) => {
-                p.call(ctx, target, input, is_static, gas_limit)
-            },
-            CustomPrecompile::ScillaCall(p) => {
-                p.call(ctx, target, input, is_static, gas_limit)
-            }
+            CustomPrecompile::PopVerify(p) => p.call(ctx, target, input, is_static, gas_limit),
+            CustomPrecompile::BlsVerify(p) => p.call(ctx, target, input, is_static, gas_limit),
+            CustomPrecompile::ScillaRead(p) => p.call(ctx, target, input, is_static, gas_limit),
+            CustomPrecompile::ScillaCall(p) => p.call(ctx, target, input, is_static, gas_limit),
         }
     }
 }
-
 
 pub enum CustomPrecompile {
     PopVerify(PopVerify),
     BlsVerify(BlsVerify),
     ScillaRead(ScillaRead),
-    ScillaCall(ScillaCall)
+    ScillaCall(ScillaCall),
 }
 
-
-const CUSTOM_PRECOMPILES: [(Address, CustomPrecompile);4]  =
-    [
-        (
-            //Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x80"),
-            address!("0x000000000000000000000000000000005a494c80"),
-            CustomPrecompile::PopVerify(PopVerify),
-        ),
-        (
-            //Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x81"),
-            address!("0x000000000000000000000000000000005a494c81"),
-            CustomPrecompile::BlsVerify(BlsVerify),
-        ),
-        (
-            //Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x92"),
-            address!("0x000000000000000000000000000000005a494c92"),
-            CustomPrecompile::ScillaRead(ScillaRead),
-        ),
-        (
-            //Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x53"),
-            address!("0x000000000000000000000000000000005a494c53"),
-            CustomPrecompile::ScillaCall(ScillaCall),
-        ),
-    ];
-
-
+const CUSTOM_PRECOMPILES: [(Address, CustomPrecompile); 4] = [
+    (
+        //Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x80"),
+        address!("0x000000000000000000000000000000005a494c80"),
+        CustomPrecompile::PopVerify(PopVerify),
+    ),
+    (
+        //Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x81"),
+        address!("0x000000000000000000000000000000005a494c81"),
+        CustomPrecompile::BlsVerify(BlsVerify),
+    ),
+    (
+        //Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x92"),
+        address!("0x000000000000000000000000000000005a494c92"),
+        CustomPrecompile::ScillaRead(ScillaRead),
+    ),
+    (
+        //Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x53"),
+        address!("0x000000000000000000000000000000005a494c53"),
+        CustomPrecompile::ScillaCall(ScillaCall),
+    ),
+];

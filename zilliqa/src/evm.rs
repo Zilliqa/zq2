@@ -1,22 +1,36 @@
-use revm::context_interface::ContextSetters;
-use revm::context_interface::result::{EVMError, ExecResultAndState, ExecutionResult, HaltReason, InvalidTransaction, ResultAndState};
-use revm::ExecuteEvm;
-use revm::handler::{EthFrame, EvmTr, FrameInitOrResult, FrameTr, ItemOrResult, MainnetHandler, PrecompileProvider};
-use revm::handler::instructions::EthInstructions;
-use revm::interpreter::FrameInput;
-use revm::interpreter::interpreter::EthInterpreter;
-use revm::primitives::Address;
-use revm::primitives::hardfork::SpecId;
-use revm::state::EvmState;
-use revm_context::{BlockEnv, CfgEnv, Context, ContextError, ContextTr, Database, Evm, FrameStack, Journal, TxEnv};
+use revm::{
+    ExecuteEvm,
+    context_interface::{
+        ContextSetters,
+        result::{
+            EVMError, ExecResultAndState, ExecutionResult, HaltReason, InvalidTransaction,
+            ResultAndState,
+        },
+    },
+    handler::{
+        EthFrame, EvmTr, FrameInitOrResult, FrameTr, ItemOrResult, MainnetHandler,
+        PrecompileProvider, instructions::EthInstructions,
+    },
+    interpreter::{FrameInput, interpreter::EthInterpreter},
+    primitives::{Address, hardfork::SpecId},
+    state::EvmState,
+};
+use revm_context::{
+    BlockEnv, CfgEnv, Context, ContextError, ContextTr, Database, Evm, FrameStack, Journal, TxEnv,
+};
 use revm_inspector::{InspectEvm, Inspector, InspectorEvmTr, InspectorHandler, JournalExt};
-use crate::exec::{DatabaseError, ExternalContext, PendingState};
-use crate::precompiles::ZQ2PrecompileProvider;
 
-pub (crate) const SPEC_ID: SpecId = SpecId::SHANGHAI;
-pub type ZQ2EvmContext = Context<BlockEnv, TxEnv, CfgEnv, PendingState, Journal<PendingState>, ExternalContext>;
-pub (crate) fn new_zq2_evm_ctx(db: PendingState, chain: ExternalContext) -> ZQ2EvmContext {
-    let ctx: Context<BlockEnv, TxEnv, CfgEnv, PendingState, Journal<PendingState>> = Context::new(db, SPEC_ID);
+use crate::{
+    exec::{DatabaseError, ExternalContext, PendingState},
+    precompiles::ZQ2PrecompileProvider,
+};
+
+pub(crate) const SPEC_ID: SpecId = SpecId::SHANGHAI;
+pub type ZQ2EvmContext =
+    Context<BlockEnv, TxEnv, CfgEnv, PendingState, Journal<PendingState>, ExternalContext>;
+pub(crate) fn new_zq2_evm_ctx(db: PendingState, chain: ExternalContext) -> ZQ2EvmContext {
+    let ctx: Context<BlockEnv, TxEnv, CfgEnv, PendingState, Journal<PendingState>> =
+        Context::new(db, SPEC_ID);
     ctx.with_chain(chain)
 }
 
@@ -30,12 +44,14 @@ pub struct ZQ2Evm<I>(
     >,
 );
 
-impl<I: Inspector<ZQ2EvmContext>> ZQ2Evm<I>
-{
+impl<I: Inspector<ZQ2EvmContext>> ZQ2Evm<I> {
     pub fn new(ctx: ZQ2EvmContext, inspector: I) -> ZQ2Evm<I> {
         let mut precompiles = ZQ2PrecompileProvider::new();
-        <ZQ2PrecompileProvider as PrecompileProvider<ZQ2EvmContext>>::set_spec(&mut precompiles, SPEC_ID);
-        ZQ2Evm (Evm {
+        <ZQ2PrecompileProvider as PrecompileProvider<ZQ2EvmContext>>::set_spec(
+            &mut precompiles,
+            SPEC_ID,
+        );
+        ZQ2Evm(Evm {
             ctx,
             inspector,
             instruction: EthInstructions::new_mainnet(),
@@ -44,20 +60,25 @@ impl<I: Inspector<ZQ2EvmContext>> ZQ2Evm<I>
         })
     }
 
-    pub fn transact(&mut self, tx: TxEnv) -> Result<ResultAndState<HaltReason>, EVMError<DatabaseError>> {
+    pub fn transact(
+        &mut self,
+        tx: TxEnv,
+    ) -> Result<ResultAndState<HaltReason>, EVMError<DatabaseError>> {
         self.0.set_tx(tx);
         self.replay()
     }
 
-    pub fn inspect_txn(&mut self, tx: TxEnv) -> Result<ResultAndState<HaltReason>, EVMError<DatabaseError>> {
+    pub fn inspect_txn(
+        &mut self,
+        tx: TxEnv,
+    ) -> Result<ResultAndState<HaltReason>, EVMError<DatabaseError>> {
         let output = self.inspect_one_tx(tx)?;
         let state = self.0.finalize();
         Ok(ExecResultAndState::new(output, state))
     }
 }
 
-impl<I> EvmTr for ZQ2Evm<I>
-{
+impl<I> EvmTr for ZQ2Evm<I> {
     type Context = ZQ2EvmContext;
     type Instructions = EthInstructions<EthInterpreter, ZQ2EvmContext>;
     type Precompiles = ZQ2PrecompileProvider;
@@ -93,9 +114,10 @@ impl<I> EvmTr for ZQ2Evm<I>
         // Reserve enough space to store the caller.
         let current_depth = self.0.journaled_state.depth;
         let caller_depth = self.0.chain.callers.len();
-        self.0.chain.callers.reserve(
-            (current_depth + 1).saturating_sub(caller_depth),
-        );
+        self.0
+            .chain
+            .callers
+            .reserve((current_depth + 1).saturating_sub(caller_depth));
         for _ in self.0.chain.callers.len()..(self.0.journaled_state.depth + 1) {
             self.0.chain.callers.push(Address::ZERO);
         }
@@ -126,9 +148,10 @@ impl<I> EvmTr for ZQ2Evm<I>
     ) -> Result<
         Option<<Self::Frame as FrameTr>::FrameResult>,
         ContextError<<<Self::Context as ContextTr>::Db as Database>::Error>,
-    >
-    {
-        if frame_result.interpreter_result().is_error() || frame_result.interpreter_result().is_revert() {
+    > {
+        if frame_result.interpreter_result().is_error()
+            || frame_result.interpreter_result().is_revert()
+        {
             self.0.chain.has_evm_failed = true;
         }
         self.0.frame_return_result(frame_result)
@@ -154,13 +177,14 @@ impl<I: Inspector<ZQ2EvmContext, EthInterpreter>> ExecuteEvm for ZQ2Evm<I> {
         self.0.finalize()
     }
 
-    fn replay(&mut self) -> Result<ExecResultAndState<Self::ExecutionResult, Self::State>, Self::Error> {
+    fn replay(
+        &mut self,
+    ) -> Result<ExecResultAndState<Self::ExecutionResult, Self::State>, Self::Error> {
         self.0.replay()
     }
 }
 
-impl<'a, I: Inspector<ZQ2EvmContext, EthInterpreter>> InspectEvm for ZQ2Evm<I>
-{
+impl<'a, I: Inspector<ZQ2EvmContext, EthInterpreter>> InspectEvm for ZQ2Evm<I> {
     type Inspector = I;
 
     fn set_inspector(&mut self, inspector: Self::Inspector) {
@@ -172,8 +196,7 @@ impl<'a, I: Inspector<ZQ2EvmContext, EthInterpreter>> InspectEvm for ZQ2Evm<I>
     }
 }
 
-impl<I: Inspector<ZQ2EvmContext, EthInterpreter>> InspectorEvmTr for ZQ2Evm<I>
-{
+impl<I: Inspector<ZQ2EvmContext, EthInterpreter>> InspectorEvmTr for ZQ2Evm<I> {
     type Inspector = I;
 
     fn inspector(&mut self) -> &mut Self::Inspector {

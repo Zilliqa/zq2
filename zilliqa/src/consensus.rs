@@ -33,7 +33,8 @@ use crate::{
     constants::{EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, TIME_TO_ALLOW_PROPOSAL_BROADCAST},
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey, verify_messages},
     db::{self, BlockFilter, Db},
-    exec::{TransactionApplyResult},
+    evm::ZQ2EvmContext,
+    exec::TransactionApplyResult,
     inspector::{self, ScillaInspector, TouchedAddressInspector},
     message::{
         AggregateQc, BitArray, BitSlice, Block, BlockHeader, BlockRef, BlockStrategy,
@@ -55,7 +56,6 @@ use crate::{
         EvmGas, SignedTransaction, TransactionReceipt, ValidationOutcome, VerifiedTransaction,
     },
 };
-use crate::evm::ZQ2EvmContext;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct NewViewVote {

@@ -20,7 +20,7 @@ impl EthereumAddress {
             secret_key,
             bls_public_key: secret_key.node_public_key(),
             peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
-            address: secret_key.into(),
+            address: secret_key.to_evm_address(),
         })
     }
 }
