@@ -20,6 +20,7 @@ mod consensus;
 mod debug;
 mod eth;
 mod ots;
+mod penalty;
 mod persistence;
 mod staking;
 mod sync;
@@ -355,10 +356,17 @@ impl Network {
                     )),
                     None,
                     None,
-                    None,
+                    Some(ContractUpgradeConfig::from_height(
+                        deposit_v3_upgrade_block_height_value,
+                    )),
                 )
             } else {
-                ContractUpgrades::new(None, None, None, None)
+                ContractUpgrades::new(
+                    None,
+                    None,
+                    None,
+                    Some(ContractUpgradeConfig::from_height(0)),
+                )
             }
         };
 
