@@ -49,7 +49,7 @@ async fn jailed_node_must_not_propose_blocks(mut network: Network) {
                             && *view < current_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW)
                     })
                     .fold(HashMap::new(), |mut acc, (view, leader)| {
-                        let id = (&leader.as_bytes()[..3]).to_vec();
+                        let id = (leader.as_bytes()[..3]).to_vec();
                         acc.entry(id)
                             .and_modify(|views: &mut Vec<u64>| views.push(*view))
                             .or_insert_with(|| vec![*view]);
@@ -96,7 +96,7 @@ async fn jailed_node_must_not_propose_blocks(mut network: Network) {
                                     < current_block.view().saturating_sub(LAG_BEHIND_CURRENT_VIEW)
                         })
                         .fold(HashMap::new(), |mut acc, (view, leader)| {
-                            let id = (&leader.as_bytes()[..3]).to_vec();
+                            let id = (leader.as_bytes()[..3]).to_vec();
                             acc.entry(id)
                                 .and_modify(|views: &mut Vec<u64>| views.push(*view))
                                 .or_insert_with(|| vec![*view]);
@@ -166,7 +166,7 @@ async fn jailed_node_must_not_cause_timeouts(mut network: Network) {
                             && *view < current_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW)
                     })
                     .fold(HashMap::new(), |mut acc, (view, leader)| {
-                        let id = (&leader.as_bytes()[..3]).to_vec();
+                        let id = (leader.as_bytes()[..3]).to_vec();
                         acc.entry(id)
                             .and_modify(|views: &mut Vec<u64>| views.push(*view))
                             .or_insert_with(|| vec![*view]);
@@ -238,7 +238,7 @@ async fn jailed_node_must_not_cause_timeouts(mut network: Network) {
                                     < current_block.view().saturating_sub(LAG_BEHIND_CURRENT_VIEW)
                         })
                         .fold(HashMap::new(), |mut acc, (view, leader)| {
-                            let id = (&leader.as_bytes()[..3]).to_vec();
+                            let id = (leader.as_bytes()[..3]).to_vec();
                             acc.entry(id)
                                 .and_modify(|views: &mut Vec<u64>| views.push(*view))
                                 .or_insert_with(|| vec![*view]);
