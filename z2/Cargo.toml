@@ -31,7 +31,7 @@ alloy = { version = "0.12.4", default-features = false, features = [
 anyhow = "1.0.99"
 base64 = "0.22.1"
 bitvec = "1.0.1"
-clap = { version = "4.5.45", features = ["derive"] }
+clap = { version = "4.5.46", features = ["derive"] }
 clap-verbosity-flag = "3.0.4"
 cliclack = "0.3.6"
 colored = "3.0.0"
@@ -50,7 +50,7 @@ parking_lot = "0.12.4"
 primitive-types = "0.12.2"
 prost = "0.14.1"
 rand = "0.8.5"
-regex = "1.11.1"
+regex = "1.11.2"
 reqwest = { version = "0.12.15", features = [
     "json",
     "rustls-tls",
@@ -62,7 +62,7 @@ rs-leveldb = "0.1.5"
 rustls = "0.23.31"
 scopeguard = "1.2.0"
 serde = { version = "1.0.219", features = ["derive"] }
-serde_json = { version = "1.0.142", features = ["preserve_order"] }
+serde_json = { version = "1.0.143", features = ["preserve_order"] }
 serde_yaml = "0.9.34"
 sha2 = "0.10.8"
 sha3 = "0.10.8"

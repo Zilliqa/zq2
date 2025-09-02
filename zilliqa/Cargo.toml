@@ -44,7 +44,7 @@ base64 = "0.22.1"
 bincode = { version = "2.0.1", features = ["serde"] }
 bitvec = { version = "1.0.1", features = ["serde"] }
 bytes = "1.10.1"
-clap = { version = "4.5.45", features = ["derive"] }
+clap = { version = "4.5.46", features = ["derive"] }
 eth_trie = { path = "../eth-trie.rs" }
 ethabi = "18.0.0"
 futures = "0.3.31"
@@ -92,7 +92,7 @@ revm-inspectors = { version = "0.16.0", features = ["js-tracer"] }
 rusqlite = { version = "0.37.0", features = ["bundled", "trace"] }
 serde = { version = "1.0.219", features = ["derive", "rc"] }
 serde_bytes = "0.11.17"
-serde_json = { version = "1.0.142", features = [
+serde_json = { version = "1.0.143", features = [
     "raw_value",
     "arbitrary_precision",
 ] }
@@ -110,7 +110,7 @@ toml = "0.9.5"
 tower = "0.5.2"
 tower-http = { version = "0.6.6", features = ["cors"] }
 tracing = "0.1.41"
-tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
+tracing-subscriber = { version = "0.3.20", features = ["env-filter", "json"] }
 cbor4ii = { version = "1.0.0", features = ["serde1"] }
 scilla-parser = "2.0.0"
 scopeguard = "1.2.0"
@@ -131,6 +131,7 @@ dashmap = "6.1.0"
 sled = { version = "0.34.7", features = ["no_logs"] }
 r2d2 = "0.8.10"
 r2d2_sqlite = "0.31.0"
+zip = { version = "4.5.0", default-features = false, features = ["zstd"] }
 
 [dev-dependencies]
 alloy = { version = "0.12.4", default-features = false, features = [
