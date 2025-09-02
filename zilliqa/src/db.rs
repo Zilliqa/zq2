@@ -33,6 +33,7 @@ use crate::{
     crypto::{BlsSignature, Hash},
     exec::{ScillaError, ScillaException, ScillaTransition},
     message::{AggregateQc, Block, BlockHeader, QuorumCertificate},
+    state::Account,
     time::SystemTime,
     transaction::{EvmGas, Log, SignedTransaction, TransactionReceipt, VerifiedTransaction},
 };
@@ -247,6 +248,8 @@ pub struct Db {
     /// The block height at which ZQ2 blocks begin.
     /// This value should be required only for proto networks to distinguise between ZQ1 and ZQ2 blocks.
     executable_blocks_height: Option<u64>,
+    /// Active state migration
+    active_migrate: bool,
 }
 
 impl Db {
@@ -256,6 +259,7 @@ impl Db {
         state_cache_size: usize,
         executable_blocks_height: Option<u64>,
         config: DbConfig,
+        active_migrate: bool,
     ) -> Result<Self>
     where
         P: AsRef<Path>,
@@ -339,6 +343,7 @@ impl Db {
             path,
             executable_blocks_height,
             kvdb: Arc::new(rdb),
+            active_migrate,
         })
     }
 
@@ -673,6 +678,7 @@ impl Db {
             pool: self.pool.clone(),
             cache: self.state_cache.clone(),
             kvdb: self.kvdb.clone(),
+            active_migrate: self.active_migrate,
         })
     }
 
@@ -1326,6 +1332,7 @@ pub struct TrieStorage {
     pool: Arc<Pool<SqliteConnectionManager>>,
     cache: Arc<RwLock<LruCache<Vec<u8>, Vec<u8>>>>,
     kvdb: Arc<rocksdb::DB>,
+    active_migrate: bool,
 }
 
 impl TrieStorage {
@@ -1366,16 +1373,16 @@ impl TrieStorage {
             .query_one([height], |row| row.get::<_, Hash>(0))?)
     }
 
-    // actively migrate state_trie from sqlite to rocksdb,
-    // by iterating over every node in the trie (forced read)
+    /// Actively migrate state_trie from sqlite to rocksdb.
+    /// By iterating over every node in the trie, forcibly invoking the lazy migration code to run on every node.
     pub fn migrate_state_trie(&self) -> Result<()> {
-        // if !self.active_migrate {
-        //     return Ok(());
-        // }
+        if !self.active_migrate {
+            return Ok(());
+        }
 
         let migrate_at = self.get_migrate_at()?;
         if migrate_at == 0 {
-            // unlikely that the state_root for block_0 == block_n;
+            // extremely unlikely that the state_root for block_0 == block_N;
             // so, if height = 0 it means that we're done.
             // TODO: drop the sqlite state_trie table in a subsequent release.
             return Ok(());
@@ -1386,22 +1393,17 @@ impl TrieStorage {
             pool: self.pool.clone(),
             cache: self.cache.clone(),
             kvdb: self.kvdb.clone(),
-            // active_migrate: self.active_migrate,
+            active_migrate: self.active_migrate,
         });
 
-        // pre-load the entire state_trie at this state_root
+        // forcilby load the entire state_trie at this state_root_hash
         let mut count = 0;
         let state_trie = EthTrie::new(trie_store.clone()).at_root(root_hash.into());
         for (_, v) in state_trie.iter() {
-            // for each account, load its storage trie
-            let account_state = bincode::serde::decode_from_slice::<Account, _>(
-                v.as_slice(),
-                bincode::config::legacy(), // for legacy compatibility
-            )?
-            .0
-            .storage_root;
+            // for each account, load its corresponding storage trie
+            let account_state = Account::try_from(v.as_slice())?.storage_root;
             let account_trie = EthTrie::new(trie_store.clone()).at_root(account_state.0.into());
-            // force read account_storage trie
+            // repeatedly calling next() to read entire trie
             count += account_trie.iter().count() + 1;
         }
         tracing::debug!(%count, block=%migrate_at, %root_hash, "Migrated");
@@ -1518,6 +1520,7 @@ mod tests {
             1024,
             None,
             crate::cfg::DbConfig::default(),
+            false,
         )
         .unwrap();
 
@@ -1589,6 +1592,7 @@ mod tests {
             1024,
             None,
             crate::cfg::DbConfig::default(),
+            false,
         )
         .unwrap();
 

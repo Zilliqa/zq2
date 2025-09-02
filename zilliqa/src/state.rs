@@ -474,6 +474,18 @@ pub struct Account {
     pub storage_root: B256,
 }
 
+impl TryFrom<&[u8]> for Account {
+    type Error = bincode::error::DecodeError;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        Ok(bincode::serde::decode_from_slice::<Account, _>(
+            bytes,
+            bincode::config::legacy(), // for legacy compatibility
+        )?
+        .0)
+    }
+}
+
 impl Default for Account {
     fn default() -> Self {
         Self {
@@ -655,7 +667,8 @@ mod tests {
 
     #[test]
     fn deposit_contract_updateability() {
-        let db = Db::new::<PathBuf>(None, 0, 0, None, crate::cfg::DbConfig::default()).unwrap();
+        let db =
+            Db::new::<PathBuf>(None, 0, 0, None, crate::cfg::DbConfig::default(), false).unwrap();
         let db = Arc::new(db);
         let config = NodeConfig::default();
 
