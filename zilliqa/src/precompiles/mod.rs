@@ -2,8 +2,6 @@ mod bls_verify;
 mod pop_verify;
 mod scilla;
 
-use std::sync::Arc;
-
 use alloy::primitives::Address;
 use bls_verify::BlsVerify;
 use pop_verify::PopVerify;
@@ -14,14 +12,11 @@ use revm::{
     primitives::address,
 };
 use revm_context::{BlockEnv, CfgEnv, Journal, TxEnv};
-use revm_inspector::{Inspector, NoOpInspector};
-use revm_precompile::PrecompileResult;
 use scilla::ScillaRead;
 
 use crate::{
     evm::ZQ2EvmContext,
     exec::{ExternalContext, PendingState},
-    inspector::ScillaInspector,
     precompiles::scilla::ScillaCall,
 };
 
@@ -63,8 +58,7 @@ impl PrecompileProvider<ZQ2EvmContext> for ZQ2PrecompileProvider {
         is_static: bool,
         gas_limit: u64,
     ) -> Result<Option<Self::Output>, String> {
-        if let Some(custom_precompile) = CUSTOM_PRECOMPILES.iter().find(|&&(ref a, _)| a == address)
-        {
+        if let Some(custom_precompile) = CUSTOM_PRECOMPILES.iter().find(|&&(a, _)| a == *address) {
             return custom_precompile
                 .1
                 .call(context, *address, inputs, is_static, gas_limit);

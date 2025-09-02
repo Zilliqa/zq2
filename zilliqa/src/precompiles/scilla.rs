@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use alloy::{
     primitives::{I256, U256},
     sol_types::{SolValue, abi::Decoder},
@@ -8,15 +6,11 @@ use anyhow::{Result, anyhow};
 use revm::{
     context_interface::ContextTr,
     interpreter::{
-        CallInputs, Gas, InputsImpl, InstructionResult, InterpreterResult,
-        interpreter_types::InputsTr,
+        Gas, InputsImpl, InstructionResult, InterpreterResult, interpreter_types::InputsTr,
     },
-    precompile::PrecompileError,
     primitives::{Address, Bytes, LogData},
 };
 use revm_context::JournalTr;
-use revm_inspector::Inspector;
-use revm_precompile::{PrecompileOutput, PrecompileResult};
 use scilla_parser::{
     ast::nodes::{
         NodeAddressType, NodeByteStr, NodeMetaIdentifier, NodeScillaType, NodeTypeMapKey,
@@ -30,8 +24,7 @@ use crate::{
     cfg::scilla_ext_libs_path_default,
     constants::SCILLA_INVOKE_RUNNER,
     evm::ZQ2EvmContext,
-    exec::{ExternalContext, PendingState, ScillaError, scilla_call},
-    inspector::ScillaInspector,
+    exec::{PendingState, ScillaError, scilla_call},
     precompiles::ContextPrecompile,
     state::Code,
     transaction::{EvmGas, ZilAmount},
@@ -423,7 +416,7 @@ impl ContextPrecompile for ScillaCall {
         // 2. if precompile failed and gas_exempt -> mark entire txn as failed (not only the current precompile)
         // 3. Otherwise, let it run with what it's given and let the caller decide
 
-        let outcome = scilla_call_precompile(&input, gas.limit(), ctx, gas_exempt);
+        let outcome = scilla_call_precompile(input, gas.limit(), ctx, gas_exempt);
 
         // Copied from `EvmContext::call_precompile`
         let mut result = InterpreterResult {
@@ -701,7 +694,7 @@ fn scilla_call_precompile(
 
     let message = serde_json::json!({"_tag": transition.name, "params": params });
 
-    let mut empty_state =
+    let empty_state =
         PendingState::new(ctx.journal().db().pre_state.clone(), ctx.chain.fork.clone());
     // Temporarily move the `PendingState` out of `ctx`, replacing it with an empty state.
     let mut state = std::mem::replace(&mut ctx.journaled_state.database, empty_state);

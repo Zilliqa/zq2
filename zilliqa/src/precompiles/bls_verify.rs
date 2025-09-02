@@ -2,14 +2,11 @@ use alloy::primitives::Address;
 use blsful::Bls12381G2Impl;
 use ethabi::{ParamType, Token, decode, encode, short_signature};
 use revm::{
-    interpreter::{
-        Gas, InputsImpl, InstructionResult, InterpreterResult, interpreter::EthInterpreter,
-    },
-    precompile::{PrecompileError, PrecompileOutput, PrecompileResult},
+    interpreter::{Gas, InputsImpl, InstructionResult, InterpreterResult},
+    precompile::PrecompileError,
 };
-use revm_inspector::Inspector;
 
-use crate::{evm::ZQ2EvmContext, inspector::ScillaInspector, precompiles::ContextPrecompile};
+use crate::{evm::ZQ2EvmContext, precompiles::ContextPrecompile};
 
 pub struct BlsVerify;
 

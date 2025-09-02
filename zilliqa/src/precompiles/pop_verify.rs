@@ -5,17 +5,15 @@ use revm::{
     interpreter::{Gas, InputsImpl, InstructionResult, InterpreterResult},
     precompile::PrecompileError,
 };
-use revm_inspector::Inspector;
-use revm_precompile::{PrecompileOutput, PrecompileResult};
 
-use crate::{evm::ZQ2EvmContext, inspector::ScillaInspector, precompiles::ContextPrecompile};
+use crate::{evm::ZQ2EvmContext, precompiles::ContextPrecompile};
 
 pub struct PopVerify;
 
 // keep in-sync with zilliqa/src/contracts/deposit_v2.sol
 impl PopVerify {
     const POP_VERIFY_GAS_PRICE: u64 = 1_000_000u64; // FIXME: Gas Price?
-    fn pop_verify<'a>(
+    fn pop_verify(
         input: &[u8],
         gas_limit: u64,
         _: &mut ZQ2EvmContext,

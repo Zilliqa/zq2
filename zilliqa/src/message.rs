@@ -880,7 +880,7 @@ impl revm_context::Block for Block {
     }
 
     fn basefee(&self) -> u64 {
-        self.basefee()
+        0
     }
 
     fn difficulty(&self) -> U256 {

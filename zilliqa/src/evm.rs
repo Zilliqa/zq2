@@ -8,8 +8,8 @@ use revm::{
         },
     },
     handler::{
-        EthFrame, EvmTr, FrameInitOrResult, FrameTr, ItemOrResult, MainnetHandler,
-        PrecompileProvider, instructions::EthInstructions,
+        EthFrame, EvmTr, FrameInitOrResult, FrameTr, ItemOrResult, PrecompileProvider,
+        instructions::EthInstructions,
     },
     interpreter::{FrameInput, interpreter::EthInterpreter},
     primitives::{Address, hardfork::SpecId},
@@ -18,7 +18,7 @@ use revm::{
 use revm_context::{
     BlockEnv, CfgEnv, Context, ContextError, ContextTr, Database, Evm, FrameStack, Journal, TxEnv,
 };
-use revm_inspector::{InspectEvm, Inspector, InspectorEvmTr, InspectorHandler, JournalExt};
+use revm_inspector::{InspectEvm, Inspector, InspectorEvmTr};
 
 use crate::{
     exec::{DatabaseError, ExternalContext, PendingState},
@@ -184,7 +184,7 @@ impl<I: Inspector<ZQ2EvmContext, EthInterpreter>> ExecuteEvm for ZQ2Evm<I> {
     }
 }
 
-impl<'a, I: Inspector<ZQ2EvmContext, EthInterpreter>> InspectEvm for ZQ2Evm<I> {
+impl<I: Inspector<ZQ2EvmContext, EthInterpreter>> InspectEvm for ZQ2Evm<I> {
     type Inspector = I;
 
     fn set_inspector(&mut self, inspector: Self::Inspector) {

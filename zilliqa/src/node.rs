@@ -875,11 +875,10 @@ impl Node {
                     JsInspector::with_transaction_context(js_code, config, transaction_context)
                         .map_err(|e| anyhow!("Unable to create js inspector: {e}"))?;
 
-                let signed_txn = txn.tx.clone().into_transaction();
                 let result =
                     state.apply_transaction(txn.clone(), block.header, &mut inspector, true)?;
 
-                let TransactionApplyResult::Evm(result, env) = result else {
+                let TransactionApplyResult::Evm(result, _) = result else {
                     return Ok(None);
                 };
 

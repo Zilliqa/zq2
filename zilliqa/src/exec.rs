@@ -20,7 +20,7 @@ use ethabi::Token;
 use jsonrpsee::types::ErrorObjectOwned;
 use libp2p::PeerId;
 use revm::{
-    Database, DatabaseRef, ExecuteEvm, Inspector, Journal, MainBuilder,
+    Database, DatabaseRef, Inspector, Journal,
     context::{
         BlockEnv, CfgEnv,
         result::{ExecutionResult, HaltReason, Output, ResultAndState},
@@ -32,7 +32,6 @@ use revm::{
     state::{AccountInfo, Bytecode},
 };
 use revm_context::{ContextTr, TxEnv};
-use revm_inspector::{InspectEvm, InspectorEvmTr};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -47,7 +46,6 @@ use crate::{
     evm::{SPEC_ID, ZQ2Evm, ZQ2EvmContext, new_zq2_evm_ctx},
     inspector::{self, ScillaInspector, TouchedAddressInspector},
     message::{Block, BlockHeader},
-    precompiles::ZQ2PrecompileProvider,
     scilla::{self, ParamValue, Scilla, split_storage_key, storage_key},
     state::{Account, Code, ContractInit, ExternalLibrary, State, contract_addr},
     time::SystemTime,
@@ -605,7 +603,7 @@ impl State {
             tx_type: TxType::Legacy.into(),
             caller: from_addr.0.into(),
             gas_limit: gas_limit.0,
-            gas_price: u128::from(gas_price),
+            gas_price,
             kind: to_addr.into(),
             value: U256::from(amount),
             data: payload.clone().into(),

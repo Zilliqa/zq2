@@ -10,11 +10,7 @@ use alloy::{
     consensus::{
         SignableTransaction, TxEip1559, TxEip2930, TxLegacy, transaction::RlpEcdsaEncodableTx,
     },
-    eips::{
-        eip2930::AccessListItem,
-        eip7702::{RecoveredAuthorization, SignedAuthorization},
-    },
-    primitives::{Address, B256, Bytes, Signature, TxKind, U256, keccak256},
+    primitives::{Address, B256, Signature, TxKind, U256, keccak256},
     rlp::{EMPTY_STRING_CODE, Encodable, Header},
     sol_types::SolValue,
 };
@@ -22,7 +18,7 @@ use anyhow::{Result, anyhow};
 use bytes::{BufMut, BytesMut};
 use itertools::Itertools;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
-use revm::context_interface::{either::Either, transaction::AccessList};
+use revm::context_interface::transaction::AccessList;
 use revm_context::TxEnv;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
