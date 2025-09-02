@@ -4,6 +4,7 @@ use std::{
     error::Error,
     fmt::Display,
     ops::RangeInclusive,
+    path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -263,7 +264,8 @@ impl Consensus {
         // Start chain from checkpoint. Load data file and initialise data in tables
         let checkpoint_data = if let Some(checkpoint) = &config.load_checkpoint {
             trace!("Loading state from checkpoint: {:?}", checkpoint);
-            db.load_trusted_checkpoint(&checkpoint.file, &checkpoint.hash, config.eth_chain_id)?
+            let path = PathBuf::from(checkpoint.file.clone());
+            db.load_trusted_checkpoint(path, &checkpoint.hash, config.eth_chain_id)?
         } else {
             None
         };
