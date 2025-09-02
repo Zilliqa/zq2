@@ -256,7 +256,7 @@ pub fn dispatch<I: ScillaInspector>(
     if min_view > 1
         && view.as_u64().saturating_sub(LAG_BEHIND_CURRENT_VIEW) < min_view + MISSED_VIEW_WINDOW
         || view.as_u64()
-            > external_context.finalized_view + LAG_BEHIND_CURRENT_VIEW + MISSED_VIEW_WINDOW
+            > external_context.finalized_view + LAG_BEHIND_CURRENT_VIEW + 1
     {
         info!(
             ?view,

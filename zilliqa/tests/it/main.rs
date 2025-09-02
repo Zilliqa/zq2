@@ -9,7 +9,7 @@ use parking_lot::{RwLock, RwLockWriteGuard};
 use primitive_types::{H160, U256};
 use serde_json::{Value, value::RawValue};
 use zilliqa::{
-    cfg::{DbConfig, new_view_broadcast_interval_default, max_missed_view_age_default},
+    cfg::{DbConfig, max_missed_view_age_default, new_view_broadcast_interval_default},
     contracts,
     crypto::NodePublicKey,
     db::BlockFilter,
