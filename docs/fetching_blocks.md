@@ -87,5 +87,9 @@ It is designed to import the state from the older checkpoint, and replay blocks 
 However, it requires that the node must already be in posession of the blocks stored in the checkpoint used (both the checkpoint block itself and its parent block).
 This implies that the node must have completed both *Active Sync* and *Passive Sync* prior to this; and has synced beyond the checkpoint height.
 
-To enable this feature, set the `node.load_checkpoint` to a value that corresponds to the checkpoint being used - just like how a node is being restored from a checkpoint.
-Note that the checkpoint being used must be an older one, and the node must be in possession of the blocks (both the checkpoint block and its parent block).
+To use this feature:
+1. Start the node with `node.load_checkpoint` configured to the first checkpoint e.g. `013737600.dat`. Allow the node to active-sync up to the latest block.
+2. Restart the node with the `node.sync.base_height` set below the height of the second checkpoint e.g. `13651100`. Allow the node to passive-sync down to the base height.
+3. Restart the node with the `node.load_checkpoint` configured to the second checkpoint e.g. `013651200.dat`. Allow state-sync replay the blocks between the two checkpoints.
+
+Note: This feature may take a while to run and the node is unable to participate in consensus during this time.
