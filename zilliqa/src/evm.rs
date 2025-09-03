@@ -15,10 +15,11 @@ use revm::{
     primitives::{Address, hardfork::SpecId},
     state::EvmState,
 };
+use revm::handler::{Handler, MainnetHandler};
 use revm_context::{
     BlockEnv, CfgEnv, Context, ContextError, ContextTr, Database, Evm, FrameStack, Journal, TxEnv,
 };
-use revm_inspector::{InspectEvm, Inspector, InspectorEvmTr};
+use revm_inspector::{InspectEvm, Inspector, InspectorEvmTr, InspectorHandler};
 
 use crate::{
     exec::{DatabaseError, ExternalContext, PendingState},
@@ -64,16 +65,16 @@ impl<I: Inspector<ZQ2EvmContext>> ZQ2Evm<I> {
         &mut self,
         tx: TxEnv,
     ) -> Result<ResultAndState<HaltReason>, EVMError<DatabaseError>> {
-        self.0.set_tx(tx);
+        self.0.ctx.set_tx(tx);
         self.replay()
     }
 
-    pub fn inspect_txn(
+    pub fn inspect(
         &mut self,
         tx: TxEnv,
     ) -> Result<ResultAndState<HaltReason>, EVMError<DatabaseError>> {
         let output = self.inspect_one_tx(tx)?;
-        let state = self.0.finalize();
+        let state = self.finalize();
         Ok(ExecResultAndState::new(output, state))
     }
 }
@@ -170,17 +171,23 @@ impl<I: Inspector<ZQ2EvmContext, EthInterpreter>> ExecuteEvm for ZQ2Evm<I> {
     }
 
     fn transact_one(&mut self, tx: Self::Tx) -> Result<Self::ExecutionResult, Self::Error> {
-        self.0.transact_one(tx)
+        self.0.ctx.set_tx(tx);
+        let mut handler = MainnetHandler::default();
+        handler.run(self)
     }
 
     fn finalize(&mut self) -> Self::State {
-        self.0.finalize()
+        self.ctx().journal_mut().finalize()
     }
 
     fn replay(
         &mut self,
     ) -> Result<ExecResultAndState<Self::ExecutionResult, Self::State>, Self::Error> {
-        self.0.replay()
+        let mut handler = MainnetHandler::default();
+        handler.run(self).map(|result| {
+            let state = self.finalize();
+            ExecResultAndState::new(result, state)
+        })
     }
 }
 
@@ -192,7 +199,9 @@ impl<I: Inspector<ZQ2EvmContext, EthInterpreter>> InspectEvm for ZQ2Evm<I> {
     }
 
     fn inspect_one_tx(&mut self, tx: Self::Tx) -> Result<Self::ExecutionResult, Self::Error> {
-        self.0.inspect_one_tx(tx)
+       self.0.ctx.set_tx(tx);
+        let mut handler = MainnetHandler::default();
+        handler.inspect_run(self)
     }
 }
 

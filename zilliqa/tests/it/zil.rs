@@ -1574,6 +1574,13 @@ async fn call_scilla_precompile_with_value(mut network: Network) {
     let receipt = network.run_until_receipt(&wallet, tx_hash, 100).await;
     assert_eq!(receipt.status.unwrap().as_u64(), 1);
 
+    // Scilla contract balance received the value
+    let scilla_contract_zero_balance = wallet
+        .get_balance(scilla_contract_address, None)
+        .await
+        .unwrap();
+    assert_eq!(scilla_contract_zero_balance.as_u128(), value_to_send);
+
     // Evm contract balance modified by sent amount
     let evm_contract_zero_balance = wallet
         .get_balance(evm_contract_address, None)
@@ -1583,13 +1590,6 @@ async fn call_scilla_precompile_with_value(mut network: Network) {
         evm_contract_zero_balance.as_u128(),
         evm_contract_value - value_to_send
     );
-
-    // Scilla contract balance received the value
-    let scilla_contract_zero_balance = wallet
-        .get_balance(scilla_contract_address, None)
-        .await
-        .unwrap();
-    assert_eq!(scilla_contract_zero_balance.as_u128(), value_to_send);
 }
 
 #[zilliqa_macros::test(restrict_concurrency)]

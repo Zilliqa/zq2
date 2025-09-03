@@ -11,6 +11,7 @@ use revm::{
     primitives::{Address, Bytes, LogData},
 };
 use revm_context::JournalTr;
+use revm_inspector::JournalExt;
 use scilla_parser::{
     ast::nodes::{
         NodeAddressType, NodeByteStr, NodeMetaIdentifier, NodeScillaType, NodeTypeMapKey,
@@ -698,9 +699,9 @@ fn scilla_call_precompile(
         PendingState::new(ctx.journal().db().pre_state.clone(), ctx.chain.fork.clone());
     // Temporarily move the `PendingState` out of `ctx`, replacing it with an empty state.
     let mut state = std::mem::replace(&mut ctx.journaled_state.database, empty_state);
-    let depth = ctx.journal_mut().depth;
+    let depth = ctx.journal().depth;
     if ctx.chain.fork.scilla_call_respects_evm_state_changes {
-        state.evm_state = ctx.journal().database.evm_state.clone()
+        state.evm_state = Some(ctx.journal().evm_state().clone());
     }
 
     // 1. if evm_exec_failure_causes_scilla_precompile_to_fail == true then we take converted value
@@ -754,7 +755,7 @@ fn scilla_call_precompile(
     };
     trace!(?result, "scilla_call complete");
     if !&result.success {
-        *ctx.journal_mut().db_mut() = state;
+        ctx.journaled_state.database = state;
         if result.errors.values().any(|errs| {
             errs.iter()
                 .any(|err| matches!(err, ScillaError::GasNotSufficient))
@@ -783,7 +784,7 @@ fn scilla_call_precompile(
 
         false
     });
-    *ctx.journal_mut().db_mut() = state;
+    ctx.journaled_state.database = state;
 
     for log in result.logs {
         let log = log.into_evm();

@@ -20,17 +20,17 @@ use ethabi::Token;
 use jsonrpsee::types::ErrorObjectOwned;
 use libp2p::PeerId;
 use revm::{
-    Database, DatabaseRef, Inspector, Journal,
+    Database, DatabaseRef, Inspector,
     context::{
         BlockEnv, CfgEnv,
         result::{ExecutionResult, HaltReason, Output, ResultAndState},
     },
     context_interface::{DBErrorMarker, transaction::AccessList},
-    database::InMemoryDB,
     handler::EvmTr,
     primitives::{B256, KECCAK_EMPTY},
     state::{AccountInfo, Bytecode},
 };
+use revm::state::EvmState;
 use revm_context::{ContextTr, TxEnv};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -447,7 +447,7 @@ pub struct ExternalContext {
     pub has_called_scilla_precompile: bool,
 }
 
-pub enum BaseFeeCheck {
+pub enum BaseFeeAndNonceCheck {
     /// Transaction gas price will be validated to be at least the block gas price.
     Validate,
     /// Transaction gas price will not be validated.
@@ -477,7 +477,7 @@ impl State {
             current_block,
             inspector::noop(),
             false,
-            BaseFeeCheck::Ignore,
+            BaseFeeAndNonceCheck::Ignore,
             ExtraOpts {
                 disable_eip3607: false,
                 exec_type: ExecType::Transact,
@@ -542,7 +542,7 @@ impl State {
         current_block: BlockHeader,
         inspector: I,
         enable_inspector: bool,
-        base_fee_check: BaseFeeCheck,
+        base_fee_and_nonce_check: BaseFeeAndNonceCheck,
         extra_opts: ExtraOpts,
     ) -> Result<(ResultAndState, HashMap<Address, PendingAccount>, CfgEnv)> {
         let mut padded_view_number = [0u8; 32];
@@ -574,9 +574,13 @@ impl State {
                 let mut cfg = CfgEnv::new_with_spec(SPEC_ID);
                 cfg.disable_eip3607 = extra_opts.disable_eip3607;
                 cfg.chain_id = self.chain_id.eth;
-                cfg.disable_base_fee = match base_fee_check {
-                    BaseFeeCheck::Validate => false,
-                    BaseFeeCheck::Ignore => true,
+                cfg.disable_base_fee = match base_fee_and_nonce_check {
+                    BaseFeeAndNonceCheck::Validate => false,
+                    BaseFeeAndNonceCheck::Ignore => true,
+                };
+                cfg.disable_nonce_check = match base_fee_and_nonce_check {
+                    BaseFeeAndNonceCheck::Validate => false,
+                    BaseFeeAndNonceCheck::Ignore => true,
                 };
                 cfg
             })
@@ -678,7 +682,7 @@ impl State {
         */
         let result_and_state = {
             if enable_inspector {
-                evm.inspect_txn(tx)?
+                evm.inspect(tx)?
             } else {
                 evm.transact(tx)?
             }
@@ -883,9 +887,9 @@ impl State {
                     inspector,
                     enable_inspector,
                     if blessed {
-                        BaseFeeCheck::Ignore
+                        BaseFeeAndNonceCheck::Ignore
                     } else {
-                        BaseFeeCheck::Validate
+                        BaseFeeAndNonceCheck::Validate
                     },
                     ExtraOpts {
                         disable_eip3607: false,
@@ -1307,7 +1311,7 @@ impl State {
                 current_block,
                 inspector::noop(),
                 false,
-                BaseFeeCheck::Validate,
+                BaseFeeAndNonceCheck::Ignore,
                 ExtraOpts {
                     disable_eip3607: true,
                     exec_type: ExecType::Estimate,
@@ -1351,7 +1355,7 @@ impl State {
             current_block,
             inspector::noop(),
             false,
-            BaseFeeCheck::Validate,
+            BaseFeeAndNonceCheck::Ignore,
             ExtraOpts {
                 disable_eip3607: true,
                 exec_type: ExecType::Estimate,
@@ -1386,7 +1390,7 @@ impl State {
             current_block,
             inspector::noop(),
             false,
-            BaseFeeCheck::Ignore,
+            BaseFeeAndNonceCheck::Ignore,
             ExtraOpts {
                 disable_eip3607: true,
                 exec_type: ExecType::Call,
@@ -1419,7 +1423,7 @@ impl State {
             current_block,
             inspector::noop(),
             false,
-            BaseFeeCheck::Ignore,
+            BaseFeeAndNonceCheck::Ignore,
             ExtraOpts {
                 disable_eip3607: false,
                 exec_type: ExecType::Transact,
@@ -1447,7 +1451,7 @@ pub struct PendingState {
     pub new_state: HashMap<Address, PendingAccount>,
     // Read-only copy of the current cached EVM state. Only `Some` when this Scilla call is made by the `scilla_call`
     // precompile.
-    pub evm_state: Option<Journal<InMemoryDB>>,
+    pub evm_state: Option<EvmState>,
     pub fork: Fork,
 }
 
@@ -1457,12 +1461,12 @@ pub struct PendingState {
 fn load_account<'a>(
     pre_state: &State,
     new_state: &'a mut HashMap<Address, PendingAccount>,
-    evm_state: &Option<Journal<InMemoryDB>>,
+    evm_state: &Option<EvmState>,
     address: Address,
 ) -> Result<&'a mut PendingAccount> {
     match (
         new_state.entry(address),
-        evm_state.as_ref().and_then(|s| s.state.get(&address)),
+        evm_state.as_ref().and_then(|evm_state| evm_state.get(&address)),
     ) {
         (Entry::Occupied(entry), _) => Ok(entry.into_mut()),
         (Entry::Vacant(vac), Some(account)) => {
