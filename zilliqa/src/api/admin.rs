@@ -1,10 +1,6 @@
 //! An administrative API
 
-use std::{
-    ops::RangeInclusive,
-    sync::Arc,
-    collections::HashMap,
-};
+use std::{collections::HashMap, ops::RangeInclusive, sync::Arc};
 
 use alloy::{eips::BlockId, primitives::U64};
 use anyhow::{Result, anyhow};
@@ -19,10 +15,10 @@ use crate::{
     api::{to_hex::ToHex, types::admin::VoteCount},
     cfg::EnabledApi,
     consensus::{BlockVotes, NewViewVote, Validator},
+    constants::{LAG_BEHIND_CURRENT_VIEW, MISSED_VIEW_WINDOW},
     crypto::NodePublicKey,
     message::{BitArray, BlockHeader},
     node::Node,
-    constants::{LAG_BEHIND_CURRENT_VIEW, MISSED_VIEW_WINDOW},
 };
 
 pub fn rpc_module(
@@ -68,11 +64,8 @@ fn missed_views(params: Params, node: &Arc<RwLock<Node>>) -> Result<NodeMissedVi
     let missed_map = missed_views
         .iter()
         .filter(|&(view, _)| {
-            *view
-                >= current_view
-                    .saturating_sub(LAG_BEHIND_CURRENT_VIEW + MISSED_VIEW_WINDOW)
-                && *view
-                    < current_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW)
+            *view >= current_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW + MISSED_VIEW_WINDOW)
+                && *view < current_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW)
         })
         .fold(HashMap::new(), |mut acc, (view, leader)| {
             acc.entry(*leader)
@@ -262,10 +255,7 @@ fn get_leaders(params: Params, node: &Arc<RwLock<Node>>) -> Result<Vec<(u64, Val
 
     while leaders.len() <= count {
         if let Some(leader) = node.consensus.leader_at_block(&head_block, view) {
-            leaders.push((
-                view,
-                leader,
-            ));
+            leaders.push((view, leader));
         } else {
             break; // missed view history not available
         }
