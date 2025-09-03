@@ -724,6 +724,9 @@ fn get_transactions_for_tx_block(
     let Some(block) = node.get_block(block_number)? else {
         return Err(anyhow!("Tx Block does not exist"));
     };
+    if block.transactions.is_empty() {
+        return Err(anyhow!("TxBlock has no transactions"));
+    }
 
     Ok(vec![
         block
