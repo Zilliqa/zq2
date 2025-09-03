@@ -221,7 +221,6 @@ impl Node {
             config.state_cache_size,
             executable_blocks_height,
             config.db.clone(),
-            config.active_state_migration,
         )?);
         let node = Node {
             config: config.clone(),

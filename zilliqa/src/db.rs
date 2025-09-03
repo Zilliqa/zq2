@@ -259,11 +259,11 @@ impl Db {
         state_cache_size: usize,
         executable_blocks_height: Option<u64>,
         config: DbConfig,
-        active_migrate: bool,
     ) -> Result<Self>
     where
         P: AsRef<Path>,
     {
+        let active_migrate = config.active_state_migration;
         let (manager, path) = match data_dir {
             Some(path) => {
                 let path = path.as_ref().join(shard_id.to_string());
@@ -327,8 +327,8 @@ impl Db {
         rdb_opts.create_if_missing(true);
         rdb_opts.set_block_based_table_factory(&block_opts);
 
-        // Should be safe in single-threaded mode, since we shouldn't have race conditions
-        // i.e. same entry being read and written to, due to the way that the state-trie is structured.
+        // Should be safe in single-threaded mode
+        // https://docs.rs/rocksdb/latest/rocksdb/type.DB.html#limited-performance-implication-for-single-threaded-mode
         let rdb = DBWithThreadMode::<SingleThreaded>::open(&rdb_opts, rdb_path)?;
 
         tracing::info!(
@@ -1520,7 +1520,6 @@ mod tests {
             1024,
             None,
             crate::cfg::DbConfig::default(),
-            false,
         )
         .unwrap();
 
@@ -1592,7 +1591,6 @@ mod tests {
             1024,
             None,
             crate::cfg::DbConfig::default(),
-            false,
         )
         .unwrap();
 

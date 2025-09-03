@@ -121,6 +121,9 @@ pub struct DbConfig {
     /// SQLite auto-checkpoint threshold; 0 to disable; default 1_000
     #[serde(default = "sql_auto_checkpoint_default")]
     pub auto_checkpoint: usize,
+    /// Active state migration - defaults to false as it can be a 'heavy' operation.
+    #[serde(default)]
+    pub active_state_migration: bool,
 }
 
 fn sql_cache_size_default() -> usize {
@@ -136,6 +139,7 @@ impl Default for DbConfig {
         Self {
             conn_cache_size: sql_cache_size_default(),
             auto_checkpoint: sql_auto_checkpoint_default(),
+            active_state_migration: false,
         }
     }
 }
@@ -221,9 +225,6 @@ pub struct NodeConfig {
     /// Database configuration
     #[serde(default)]
     pub db: DbConfig,
-    /// Active state migration - defaults to false as it can be a 'heavy' operation.
-    #[serde(default)]
-    pub active_state_migration: bool,
 }
 
 impl Default for NodeConfig {
@@ -244,7 +245,6 @@ impl Default for NodeConfig {
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: false,
             max_rpc_response_size: max_rpc_response_size_default(),
-            active_state_migration: false,
         }
     }
 }
