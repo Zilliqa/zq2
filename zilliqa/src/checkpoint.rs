@@ -74,12 +74,7 @@ pub fn load_state_trie(
             account_trie.insert(storage_key, storage_val)?;
         }
 
-        let account_trie_root = bincode::serde::decode_from_slice::<Account, _>(
-            &serialised_account,
-            bincode::config::legacy(),
-        )?
-        .0
-        .storage_root;
+        let account_trie_root = Account::try_from(serialised_account.as_slice())?.storage_root;
         if account_trie.root_hash()?.as_slice() != account_trie_root {
             return Err(anyhow!(
                 "Account trie root hash mismatch: {} != {}",
@@ -298,12 +293,7 @@ pub fn load_ckpt_state(
 
             // compute the root trie for this account
             let root_hash = account_trie.root_hash()?;
-            let account_root = bincode::serde::decode_from_slice::<Account, _>(
-                account_val.as_slice(),
-                bincode::config::legacy(), // for backwards compatibility with existing data
-            )?
-            .0
-            .storage_root;
+            let account_root = Account::try_from(account_val.as_slice())?.storage_root;
             ensure!(
                 root_hash == account_root,
                 "Account storage root {} mismatch",
