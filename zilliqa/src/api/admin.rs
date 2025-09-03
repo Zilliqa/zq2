@@ -75,7 +75,7 @@ fn missed_views(params: Params, node: &Arc<RwLock<Node>>) -> Result<NodeMissedVi
                     < current_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW)
         })
         .fold(HashMap::new(), |mut acc, (view, leader)| {
-            acc.entry(leader.clone())
+            acc.entry(*leader)
                 .and_modify(|views: &mut Vec<u64>| views.push(*view))
                 .or_insert_with(|| vec![*view]);
             acc
