@@ -404,7 +404,8 @@ pub fn save_ckpt(
     let mut record_count = 0;
     // iterate over accounts and save the accounts to the checkpoint file.
     // do not save intermediate state trie values.
-    for (key, serialised_account) in accounts.iter() {
+    for a in accounts.iter() {
+        let (key, serialised_account) = a?;
         bincode::encode_into_std_write(&key, &mut zipwriter, BIN_CONFIG)?;
         bincode::encode_into_std_write(&serialised_account, &mut zipwriter, BIN_CONFIG)?;
 
@@ -419,7 +420,8 @@ pub fn save_ckpt(
         let account_trie = account_storage.at_root(account_root);
         let count = account_trie.iter().count();
         bincode::serde::encode_into_std_write(count, &mut zipwriter, BIN_CONFIG)?;
-        for (storage_key, storage_val) in account_trie.iter() {
+        for s in account_trie.iter() {
+            let (storage_key, storage_val) = s?;
             bincode::encode_into_std_write(&storage_key, &mut zipwriter, BIN_CONFIG)?;
             bincode::encode_into_std_write(&storage_val, &mut zipwriter, BIN_CONFIG)?;
             record_count += 1;
