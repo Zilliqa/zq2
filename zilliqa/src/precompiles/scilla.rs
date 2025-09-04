@@ -19,7 +19,7 @@ use scilla_parser::{
     },
     parser::{lexer::Lexer, parser::ScillaTypeParser},
 };
-use tracing::{trace};
+use tracing::trace;
 
 use crate::{
     cfg::scilla_ext_libs_path_default,
@@ -731,7 +731,10 @@ fn scilla_call_precompile(
     if effective_value.get() > 0 {
         let evm_state = ctx.journal_mut().evm_state_mut();
         let precompile_acc = evm_state.get_mut(&input.target_address).unwrap();
-        precompile_acc.info.balance = precompile_acc.info.balance.saturating_sub(U256::from(effective_value.get()));
+        precompile_acc.info.balance = precompile_acc
+            .info
+            .balance
+            .saturating_sub(U256::from(effective_value.get()));
         let sender_acc = evm_state.get_mut(&sender).unwrap();
         sender_acc.info.balance += U256::from(effective_value.get());
     }

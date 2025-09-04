@@ -8,14 +8,13 @@ use revm::{
         },
     },
     handler::{
-        EthFrame, EvmTr, FrameInitOrResult, FrameTr, ItemOrResult, PrecompileProvider,
-        instructions::EthInstructions,
+        EthFrame, EvmTr, FrameInitOrResult, FrameTr, Handler, ItemOrResult, MainnetHandler,
+        PrecompileProvider, instructions::EthInstructions,
     },
     interpreter::{FrameInput, interpreter::EthInterpreter},
     primitives::{Address, hardfork::SpecId},
     state::EvmState,
 };
-use revm::handler::{Handler, MainnetHandler};
 use revm_context::{
     BlockEnv, CfgEnv, Context, ContextError, ContextTr, Database, Evm, FrameStack, Journal, TxEnv,
 };
@@ -199,7 +198,7 @@ impl<I: Inspector<ZQ2EvmContext, EthInterpreter>> InspectEvm for ZQ2Evm<I> {
     }
 
     fn inspect_one_tx(&mut self, tx: Self::Tx) -> Result<Self::ExecutionResult, Self::Error> {
-       self.0.ctx.set_tx(tx);
+        self.0.ctx.set_tx(tx);
         let mut handler = MainnetHandler::default();
         handler.inspect_run(self)
     }

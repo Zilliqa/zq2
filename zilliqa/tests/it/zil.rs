@@ -1242,7 +1242,6 @@ async fn scilla_precompiles(mut network: Network) {
         .data(function.encode_input(input).unwrap())
         .gas(84_000_000);
 
-    info!("BZ, wallet addr: {:?}, evm_contract_addr: {:?}", wallet.address(), evm_contract_address);
     // Run the transaction.
     let tx_hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
     let receipt = network.run_until_receipt(&wallet, tx_hash, 100).await;

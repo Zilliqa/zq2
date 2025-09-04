@@ -28,9 +28,8 @@ use revm::{
     context_interface::{DBErrorMarker, transaction::AccessList},
     handler::EvmTr,
     primitives::{B256, KECCAK_EMPTY},
-    state::{AccountInfo, Bytecode},
+    state::{AccountInfo, Bytecode, EvmState},
 };
-use revm::state::EvmState;
 use revm_context::{ContextTr, TxEnv};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -620,66 +619,6 @@ impl State {
             authorization_list: Vec::default(),
         };
 
-        /*
-        let mut evm = Evm::builder()
-            .with_db(pending_state)
-            .with_block_env(BlockEnv {
-                number: U256::from(current_block.number),
-                coinbase: Address::ZERO,
-                timestamp: U256::from(
-                    current_block
-                        .timestamp
-                        .duration_since(SystemTime::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs(),
-                ),
-                gas_limit: U256::from(self.block_gas_limit.0),
-                basefee: U256::from(self.gas_price),
-                difficulty: U256::from(1),
-                prevrandao: Some(Hash::builder().with(padded_view_number).finalize().into()),
-                blob_excess_gas_and_price: None,
-                beneficiary: Default::default(),
-            })
-            .with_external_context(external_context)
-            .with_handler_cfg(HandlerCfg { spec_id: SPEC_ID })
-            .append_handler_register(scilla_call_handle_register)
-            .modify_cfg_env(|c| {
-                c.disable_eip3607 = extra_opts.disable_eip3607;
-                c.chain_id = self.chain_id.eth;
-                c.disable_base_fee = match base_fee_check {
-                    BaseFeeCheck::Validate => false,
-                    BaseFeeCheck::Ignore => true,
-                };
-            })
-            .with_tx_env(TxEnv {
-                tx_type: TxType::Legacy,
-                caller: from_addr.0.into(),
-                gas_limit: gas_limit.0,
-                gas_price: U256::from(gas_price),
-                kind: to_addr.into(),
-                value: U256::from(amount),
-                data: payload.clone().into(),
-                nonce,
-                chain_id: Some(self.chain_id.eth),
-                access_list,
-                gas_priority_fee,
-                blob_hashes: vec![],
-                max_fee_per_blob_gas: None,
-                authorization_list: None,
-            })
-            .append_handler_register(|handler| {
-                let precompiles = handler.pre_execution.load_precompiles();
-                handler.pre_execution.load_precompiles = Arc::new(move || {
-                    let mut precompiles = precompiles.clone();
-                    precompiles.extend(get_custom_precompiles());
-                    precompiles
-                });
-            });
-        if enable_inspector {
-            evm = evm.append_handler_register(inspector_handle_register);
-        }
-        let mut evm = evm.build();
-        */
         let result_and_state = {
             if enable_inspector {
                 evm.inspect(tx)?
@@ -709,10 +648,12 @@ impl State {
             return Self::failed(result_and_state, ctx_with_handler.cfg.clone());
         }
 
+        let finalized_state = ctx_with_handler.db_mut().finalize();
+
         Ok((
             result_and_state,
-            ctx_with_handler.db_mut().finalize(),
-            evm.0.cfg.clone(),
+            finalized_state,
+            ctx_with_handler.cfg.clone(),
         ))
     }
 
@@ -1466,7 +1407,9 @@ fn load_account<'a>(
 ) -> Result<&'a mut PendingAccount> {
     match (
         new_state.entry(address),
-        evm_state.as_ref().and_then(|evm_state| evm_state.get(&address)),
+        evm_state
+            .as_ref()
+            .and_then(|evm_state| evm_state.get(&address)),
     ) {
         (Entry::Occupied(entry), _) => Ok(entry.into_mut()),
         (Entry::Vacant(vac), Some(account)) => {
