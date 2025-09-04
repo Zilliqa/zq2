@@ -80,12 +80,12 @@ use zilliqa::{
     api,
     cfg::{
         Amount, ApiServer, Checkpoint, ConsensusConfig, ContractUpgradeConfig, ContractUpgrades,
-        Fork, GenesisDeposit, NodeConfig, SyncConfig, allowed_timestamp_skew_default,
-        block_request_batch_size_default, block_request_limit_default, consensus_timeout_default,
-        eth_chain_id_default, failed_request_sleep_duration_default, genesis_fork_default,
-        max_blocks_in_flight_default, max_rpc_response_size_default, scilla_ext_libs_path_default,
-        state_cache_size_default, state_rpc_limit_default, total_native_token_supply_default,
-        u64_max,
+        Fork, GenesisDeposit, NodeConfig, ReinitialiseParams, SyncConfig,
+        allowed_timestamp_skew_default, block_request_batch_size_default,
+        block_request_limit_default, consensus_timeout_default, eth_chain_id_default,
+        failed_request_sleep_duration_default, genesis_fork_default, max_blocks_in_flight_default,
+        max_rpc_response_size_default, scilla_ext_libs_path_default, state_cache_size_default,
+        state_rpc_limit_default, total_native_token_supply_default, u64_max,
     },
     crypto::{SecretKey, TransactionPublicKey},
     db,
@@ -355,7 +355,10 @@ impl Network {
                         deposit_v3_upgrade_block_height_value,
                     )),
                     None,
-                    None,
+                    Some(ContractUpgradeConfig {
+                        height: deposit_v3_upgrade_block_height_value,
+                        reinitialise_params: Some(ReinitialiseParams::default()),
+                    }),
                     Some(ContractUpgradeConfig::from_height(
                         deposit_v3_upgrade_block_height_value,
                     )),
@@ -364,7 +367,10 @@ impl Network {
                 ContractUpgrades::new(
                     None,
                     None,
-                    None,
+                    Some(ContractUpgradeConfig {
+                        height: 0,
+                        reinitialise_params: Some(ReinitialiseParams::default()),
+                    }),
                     Some(ContractUpgradeConfig::from_height(0)),
                 )
             }
@@ -515,11 +521,24 @@ impl Network {
                     self.deposit_v3_upgrade_block_height.unwrap(),
                 )),
                 None,
-                None,
-                None,
+                Some(ContractUpgradeConfig {
+                    height: self.deposit_v3_upgrade_block_height.unwrap(),
+                    reinitialise_params: Some(ReinitialiseParams::default()),
+                }),
+                Some(ContractUpgradeConfig::from_height(
+                    self.deposit_v3_upgrade_block_height.unwrap(),
+                )),
             )
         } else {
-            ContractUpgrades::new(None, None, None, None)
+            ContractUpgrades::new(
+                None,
+                None,
+                Some(ContractUpgradeConfig {
+                    height: 0,
+                    reinitialise_params: Some(ReinitialiseParams::default()),
+                }),
+                Some(ContractUpgradeConfig::from_height(0)),
+            )
         };
         let config = NodeConfig {
             eth_chain_id: self.shard_id,

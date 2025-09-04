@@ -161,7 +161,7 @@ impl State {
 
         state.deploy_initial_deposit_contract(&config)?;
 
-        let deposit_contract = Lazy::<contracts::Contract>::force(&contracts::deposit::CONTRACT);
+        let deposit_contract = Lazy::<contracts::Contract>::force(&contracts::deposit_v2::CONTRACT);
         let block_header = BlockHeader::genesis(Hash::ZERO);
         state.upgrade_deposit_contract(block_header, deposit_contract, None)?;
 

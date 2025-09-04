@@ -1,4 +1,4 @@
-pub use deposit_v2 as deposit;
+pub use deposit_v6 as deposit;
 use serde_json::Value;
 
 pub mod deposit_init {
