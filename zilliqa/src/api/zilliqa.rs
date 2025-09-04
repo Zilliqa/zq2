@@ -1484,7 +1484,8 @@ fn get_smart_contract_sub_state(params: Params, node: &Arc<RwLock<Node>>) -> Res
             .collect::<std::result::Result<Vec<_>, _>>()?;
         let prefix = storage_key(requested_var_name, &indicies_encoded);
         let mut n = 0;
-        for (k, v) in trie.iter_by_prefix(&prefix)? {
+        for kv in trie.iter_by_prefix(&prefix)? {
+            let (k, v) = kv?;
             n += 1;
             if n > node.config.state_rpc_limit {
                 return Err(anyhow!(
