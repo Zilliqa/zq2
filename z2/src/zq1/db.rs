@@ -105,6 +105,10 @@ impl DB for StateDatabase {
 
         Ok(())
     }
+
+    fn flush(&self) -> Result<(), Self::Error> {
+        Ok(())
+    }
 }
 
 pub struct Db {
@@ -421,7 +425,8 @@ impl Db {
     }
 
     pub fn accounts(&self) -> impl Iterator<Item = (Address, ProtoAccountBase)> + '_ {
-        self.state.iter().map(|(k, v)| {
+        self.state.iter().map(|kv| {
+            let (k, v) = kv.unwrap();
             (
                 Address::from_slice(&hex::decode(String::from_utf8(k).unwrap()).unwrap()),
                 ProtoAccountBase::decode(v.as_slice()).unwrap(),
