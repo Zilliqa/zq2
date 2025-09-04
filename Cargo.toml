@@ -1,12 +1,7 @@
 [workspace]
 resolver = "2"
 
-members = [
-    "eth-trie.rs",
-    "zilliqa",
-    "zilliqa-macros",
-    "z2",
-]
+members = ["zilliqa", "zilliqa-macros", "z2"]
 
 [workspace.package]
 version = "0.1.0"

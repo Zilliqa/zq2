@@ -601,7 +601,8 @@ fn get_smart_contract_state(params: Params, node: &Arc<RwLock<Node>>) -> Result<
         let limit = node.config.state_rpc_limit;
 
         let trie = state.get_account_trie(address)?;
-        for (i, (k, v)) in trie.iter().enumerate() {
+        for (i, kv) in trie.iter().enumerate() {
+            let (k, v) = kv?;
             if i >= limit {
                 return Err(anyhow!(
                     "State of contract returned has size greater than the allowed maximum"
