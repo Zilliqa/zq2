@@ -19,7 +19,7 @@ use scilla_parser::{
     },
     parser::{lexer::Lexer, parser::ScillaTypeParser},
 };
-use tracing::{info, trace};
+use tracing::{trace};
 
 use crate::{
     cfg::scilla_ext_libs_path_default,
@@ -699,7 +699,7 @@ fn scilla_call_precompile(
     let sender = if keep_origin {
         if ctx.chain.fork.call_mode_1_sets_caller_to_parent_caller {
             // Use the caller of the parent call-stack.
-            ctx.chain.callers[depth - 1]
+            ctx.chain.callers[depth - 2]
         } else {
             // Use the original transaction signer.
             ctx.tx.caller
@@ -744,14 +744,6 @@ fn scilla_call_precompile(
     if ctx.chain.fork.scilla_call_respects_evm_state_changes {
         state.evm_state = Some(ctx.journal().evm_state().clone());
     }
-
-    info!("Precompile, sender address: {sender:?}");
-
-    info!("All stack senders: ");0x05079ff26b3cf67424d7b2c08c3763d8d162df62
-    for caller in &ctx.chain.callers {
-        info!("Stack sender: {caller:?} ");
-    }
-
 
     let scilla = ctx.journaled_state.database.pre_state.scilla();
     let Ok((result, mut state)) = scilla_call(
