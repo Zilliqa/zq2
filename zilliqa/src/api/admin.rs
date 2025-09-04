@@ -55,7 +55,7 @@ fn missed_views(params: Params, node: &Arc<RwLock<Node>>) -> Result<NodeMissedVi
     let history = &node.consensus.state().view_history;
     let min_view = history.min_view.lock().unwrap();
     if *min_view > 1
-        && *min_view + MISSED_VIEW_WINDOW > current_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW)
+        && current_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW) < *min_view + MISSED_VIEW_WINDOW
         || current_view > node.consensus.get_finalized_view()? + LAG_BEHIND_CURRENT_VIEW + 1
     {
         return Err(anyhow!("Missed view history not available"));

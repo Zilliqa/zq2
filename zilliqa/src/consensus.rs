@@ -419,6 +419,10 @@ impl Consensus {
             .find_height_fork_first_activated(ForkName::ExecutableBlocks)
             .unwrap_or_default();
         let max_missed_view_age = consensus.config.max_missed_view_age;
+        {
+            let mut min_view = consensus.state.view_history.min_view.lock().unwrap();
+            *min_view = consensus.db.get_min_view_of_view_history()?;
+        }
         let (first, last) = consensus.db.get_first_last_from_view_history()?;
         let finalized_view = consensus.get_finalized_view()?;
         consensus.state.finalized_view = finalized_view;
@@ -475,19 +479,20 @@ impl Consensus {
                     }
                 }
             }
-            // missed views up to last was imported from the db and there can't exist any missed views before earliest
+            // missed views up to last were imported from the db and there can't exist any missed views before earliest
             if start < last || start < earliest {
-                let mut min_view = consensus.state().view_history.min_view.lock().unwrap();
-                *min_view =
-                    finalized_view.saturating_sub(max_missed_view_age + LAG_BEHIND_CURRENT_VIEW);
+                //                let mut min_view = consensus.state().view_history.min_view.lock().unwrap();
+                //                *min_view =
+                //                    finalized_view.saturating_sub(max_missed_view_age + LAG_BEHIND_CURRENT_VIEW);
                 break;
             }
             block = parent;
             if block.view() + max_missed_view_age + LAG_BEHIND_CURRENT_VIEW < finalized_view {
-                let mut min_view = consensus.state().view_history.min_view.lock().unwrap();
-                *min_view = start + 1;
+                //                let mut min_view = consensus.state().view_history.min_view.lock().unwrap();
+                //                *min_view = start + 1;
                 break;
             }
+            //TODO(#3080): remove lines commented out above
         }
         let _ = consensus
             .state
@@ -2482,8 +2487,10 @@ impl Consensus {
                     self.db.extend_view_history(*view, leader.as_bytes())?;
                 }
             }
+            let min_view = self.state.view_history.min_view.lock().unwrap();
+            //TODO(#3080): the next line can be skipped if min_view did not increase in prune_history()
+            self.db.set_min_view_of_view_history(*min_view)?;
             if pruned {
-                let min_view = self.state.view_history.min_view.lock().unwrap();
                 self.db.prune_view_history(*min_view)?;
             }
         }
