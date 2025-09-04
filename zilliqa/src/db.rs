@@ -475,6 +475,8 @@ impl Db {
 
                 CREATE TABLE IF NOT EXISTS view_history (view INTEGER NOT NULL PRIMARY KEY, leader BLOB) WITHOUT ROWID;
 
+                INSERT INTO view_history (view, leader) VALUES (1000000000000, NULL);
+
                 COMMIT;
             ",
             )?;
@@ -519,19 +521,22 @@ impl Db {
     }
 
     pub fn get_min_view_of_view_history(&self) -> Result<u64> {
-        Ok(self
+        let min_view: u64 = self
             .pool
             .get()?
             .prepare_cached("SELECT view FROM view_history WHERE leader IS NULL LIMIT 1")?
             .query_row([], |row| row.get(0))
-            .unwrap_or_default())
+            .unwrap_or_default();
+        // to prevent primary key collision with missed views stored in the table
+        Ok(min_view - 1_000_000_000_000)
     }
 
     pub fn set_min_view_of_view_history(&self, min_view: u64) -> Result<()> {
         self.pool
             .get()?
             .prepare_cached("UPDATE view_history SET view = ?1 WHERE leader IS NULL")?
-            .execute([min_view])?;
+            // to prevent primary key collision with missed views stored in the table 
+            .execute([min_view + 1_000_000_000_000])?;
         Ok(())
     }
 

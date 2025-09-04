@@ -70,7 +70,7 @@ impl ViewHistory {
         let mut min_view = self.min_view.lock().unwrap();
         // min_view must not be decreased
         *min_view =
-            min_view.min(view.saturating_sub(LAG_BEHIND_CURRENT_VIEW + max_missed_view_age));
+            min_view.max(view.saturating_sub(LAG_BEHIND_CURRENT_VIEW + max_missed_view_age));
         while let Some((view, leader)) = deque.front() {
             if *view < *min_view {
                 info!(
