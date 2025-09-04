@@ -45,7 +45,6 @@ bincode = { version = "2.0.1", features = ["serde"] }
 bitvec = { version = "1.0.1", features = ["serde"] }
 bytes = "1.10.1"
 clap = { version = "4.5.46", features = ["derive"] }
-eth_trie = { path = "../eth-trie.rs" }
 ethabi = "18.0.0"
 futures = "0.3.31"
 hex = { version = "0.4.3", features = ["serde"] }
@@ -131,8 +130,12 @@ dashmap = "6.1.0"
 sled = { version = "0.34.7", features = ["no_logs"] }
 r2d2 = "0.8.10"
 r2d2_sqlite = "0.31.0"
-rocksdb = { version = "0.24.0", default-features = false, features = ["bindgen-runtime", "snappy"] }
+rocksdb = { version = "0.24.0", default-features = false, features = [
+    "bindgen-runtime",
+    "snappy",
+] }
 zip = { version = "4.5.0", default-features = false, features = ["zstd"] }
+eth_trie = { git = "https://github.com/Zilliqa/eth-trie.rs.git", branch = "zilliqa" }
 
 [dev-dependencies]
 alloy = { version = "0.12.4", default-features = false, features = [

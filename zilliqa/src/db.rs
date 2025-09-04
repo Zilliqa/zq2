@@ -1399,7 +1399,8 @@ impl TrieStorage {
         // forcilby load the entire state_trie at this state_root_hash
         let mut count = 0;
         let state_trie = EthTrie::new(trie_store.clone()).at_root(root_hash.into());
-        for (_, v) in state_trie.iter() {
+        for kv in state_trie.iter() {
+            let (_, v) = kv?;
             // for each account, load its corresponding storage trie
             let account_state = Account::try_from(v.as_slice())?.storage_root;
             let account_trie = EthTrie::new(trie_store.clone()).at_root(account_state.0.into());
@@ -1481,6 +1482,10 @@ impl eth_trie::DB for TrieStorage {
     fn insert_batch(&self, keys: Vec<Vec<u8>>, values: Vec<Vec<u8>>) -> Result<(), Self::Error> {
         self.write_batch(keys, values)
             .map_err(|e| eth_trie::TrieError::DB(e.to_string()))
+    }
+
+    fn flush(&self) -> Result<(), Self::Error> {
+        Ok(())
     }
 
     fn remove(&self, _key: &[u8]) -> Result<(), Self::Error> {
