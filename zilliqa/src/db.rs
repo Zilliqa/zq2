@@ -1485,7 +1485,9 @@ impl eth_trie::DB for TrieStorage {
     }
 
     fn flush(&self) -> Result<(), Self::Error> {
-        Ok(())
+        self.kvdb
+            .flush()
+            .map_err(|e| eth_trie::TrieError::DB(e.to_string()))
     }
 
     fn remove(&self, _key: &[u8]) -> Result<(), Self::Error> {
