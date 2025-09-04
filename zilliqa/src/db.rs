@@ -535,7 +535,7 @@ impl Db {
         self.pool
             .get()?
             .prepare_cached("UPDATE view_history SET view = ?1 WHERE leader IS NULL")?
-            // to prevent primary key collision with missed views stored in the table 
+            // to prevent primary key collision with missed views stored in the table
             .execute([min_view + 1_000_000_000_000])?;
         Ok(())
     }
