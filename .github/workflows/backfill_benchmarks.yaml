@@ -26,7 +26,7 @@ jobs:
       - name: Install default toolchain
         run: rustup toolchain install
       - name: Install dependencies
-        run: sudo add-apt-repository ppa:ethereum/ethereum && sudo apt update && sudo apt install -y solc build-essential pkg-config libssl-dev cmake protobuf-compiler
+        run: sudo add-apt-repository ppa:ethereum/ethereum && sudo apt update && sudo apt install -y solc build-essential pkg-config libssl-dev cmake protobuf-compiler libclang-dev
 
       - name: Backfill benchmarks
         run: |

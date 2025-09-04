@@ -474,6 +474,19 @@ pub struct Account {
     pub storage_root: B256,
 }
 
+impl TryFrom<&[u8]> for Account {
+    type Error = bincode::error::DecodeError;
+
+    #[inline]
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        Ok(bincode::serde::decode_from_slice::<Account, _>(
+            bytes,
+            bincode::config::legacy(), // for legacy compatibility
+        )?
+        .0)
+    }
+}
+
 impl Default for Account {
     fn default() -> Self {
         Self {
