@@ -601,8 +601,7 @@ fn get_smart_contract_state(params: Params, node: &Arc<RwLock<Node>>) -> Result<
         let limit = node.config.state_rpc_limit;
 
         let trie = state.get_account_trie(address)?;
-        for (i, kv) in trie.iter().enumerate() {
-            let (k, v) = kv?;
+        for (i, (k, v)) in trie.iter().flatten().enumerate() {
             if i >= limit {
                 return Err(anyhow!(
                     "State of contract returned has size greater than the allowed maximum"
@@ -1484,8 +1483,7 @@ fn get_smart_contract_sub_state(params: Params, node: &Arc<RwLock<Node>>) -> Res
             .collect::<std::result::Result<Vec<_>, _>>()?;
         let prefix = storage_key(requested_var_name, &indicies_encoded);
         let mut n = 0;
-        for kv in trie.iter_by_prefix(&prefix)? {
-            let (k, v) = kv?;
+        for (k, v) in trie.iter_by_prefix(&prefix)?.flatten() {
             n += 1;
             if n > node.config.state_rpc_limit {
                 return Err(anyhow!(

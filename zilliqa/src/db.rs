@@ -1399,8 +1399,7 @@ impl TrieStorage {
         // forcilby load the entire state_trie at this state_root_hash
         let mut count = 0;
         let state_trie = EthTrie::new(trie_store.clone()).at_root(root_hash.into());
-        for kv in state_trie.iter() {
-            let (_, v) = kv?;
+        for (_, v) in state_trie.iter().flatten() {
             // for each account, load its corresponding storage trie
             let account_state = Account::try_from(v.as_slice())?.storage_root;
             let account_trie = EthTrie::new(trie_store.clone()).at_root(account_state.0.into());
