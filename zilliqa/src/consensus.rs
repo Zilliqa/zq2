@@ -472,7 +472,8 @@ impl Consensus {
             }
         }
 
-        consensus.db.init_rocksdb()?;
+        // Initialize state trie storage
+        consensus.db.state_trie()?.init_state_trie()?;
 
         // If timestamp of when current high_qc was written exists then use it to estimate the minimum number of blocks the network has moved on since shut down
         // This is useful in scenarios in which consensus has failed since this node went down

@@ -10,7 +10,8 @@ use eth_trie::{DB, EthTrie, MemoryDB, Trie};
 use lz4::Decoder;
 
 use crate::{
-    crypto::Hash, db::TrieStorage, message::Block, state::Account, transaction::SignedTransaction,
+    crypto::Hash, message::Block, state::Account, transaction::SignedTransaction,
+    trie_storage::TrieStorage,
 };
 
 pub const CHECKPOINT_HEADER_BYTES: [u8; 8] = *b"ZILCHKPT";

@@ -95,3 +95,7 @@ pub const SYNC_THRESHOLD: usize = MAX_RESPONSE_SIZE - MAX_GOSSIP_SIZE;
 /// Empty state trie hash
 pub const EMPTY_ROOT_HASH: B256 =
     b256!("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421");
+
+/// Special storage keys
+pub const ROCKSDB_MIGRATE_AT: &str = "migrate_at";
+pub const ROCKSDB_STARTED_AT: &str = "started_at";

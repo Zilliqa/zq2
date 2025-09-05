@@ -15,9 +15,9 @@ use sha3::{Digest, Keccak256};
 
 use crate::{
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey},
-    db::TrieStorage,
     time::SystemTime,
     transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
+    trie_storage::TrieStorage,
 };
 
 /// The maximum number of validators in the consensus committee. This is passed to the deposit contract and we expect

@@ -21,13 +21,14 @@ use crate::{
     cfg::{Amount, ConsensusConfig, Forks, NodeConfig, ReinitialiseParams, ScillaExtLibsPath},
     contracts::{self, Contract},
     crypto::{self, Hash},
-    db::{BlockFilter, Db, TrieStorage},
+    db::{BlockFilter, Db},
     error::ensure_success,
     message::{Block, BlockHeader, MAX_COMMITTEE_SIZE},
     node::ChainId,
     scilla::{ParamValue, Scilla, Transition},
     serde_util::vec_param_value,
     transaction::EvmGas,
+    trie_storage::TrieStorage,
 };
 
 #[derive(Clone, Debug)]
