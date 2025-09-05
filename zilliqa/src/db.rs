@@ -466,6 +466,86 @@ impl Db {
             )?;
         }
 
+        if version < 5 {
+            connection.execute_batch(
+                "
+                BEGIN;
+
+                INSERT INTO schema_version VALUES (5);
+
+                CREATE TABLE IF NOT EXISTS view_history (view INTEGER NOT NULL PRIMARY KEY, leader BLOB) WITHOUT ROWID;
+
+                INSERT INTO view_history (view, leader) VALUES (1000000000000, NULL);
+
+                COMMIT;
+            ",
+            )?;
+        }
+
+        Ok(())
+    }
+
+    pub fn read_recent_view_history(&self, view: u64) -> Result<Vec<(u64, Vec<u8>)>> {
+        Ok(self
+            .pool
+            .get()?
+            .prepare_cached(
+                "SELECT view, leader FROM view_history WHERE view > ?1 AND leader NOT NULL",
+            )?
+            .query_map([view], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?)
+    }
+
+    pub fn prune_view_history(&self, view: u64) -> Result<()> {
+        self.pool
+            .get()?
+            .prepare_cached("DELETE FROM view_history WHERE view < ?1 AND leader NOT NULL")?
+            .execute([view])?;
+        Ok(())
+    }
+
+    pub fn get_first_last_from_view_history(&self) -> Result<(u64, u64)> {
+        let min = self
+            .pool
+            .get()?
+            .prepare_cached("SELECT MIN(view) FROM view_history WHERE leader NOT NULL")?
+            .query_row([], |row| row.get(0))
+            .unwrap_or_default();
+        let max = self
+            .pool
+            .get()?
+            .prepare_cached("SELECT MAX(view) FROM view_history WHERE leader NOT NULL")?
+            .query_row([], |row| row.get(0))
+            .unwrap_or_default();
+        Ok((min, max))
+    }
+
+    pub fn get_min_view_of_view_history(&self) -> Result<u64> {
+        let min_view: u64 = self
+            .pool
+            .get()?
+            .prepare_cached("SELECT view FROM view_history WHERE leader IS NULL LIMIT 1")?
+            .query_row([], |row| row.get(0))
+            .unwrap_or_default();
+        // to prevent primary key collision with missed views stored in the table
+        Ok(min_view - 1_000_000_000_000)
+    }
+
+    pub fn set_min_view_of_view_history(&self, min_view: u64) -> Result<()> {
+        self.pool
+            .get()?
+            .prepare_cached("UPDATE view_history SET view = ?1 WHERE leader IS NULL")?
+            // to prevent primary key collision with missed views stored in the table
+            .execute([min_view + 1_000_000_000_000])?;
+        Ok(())
+    }
+
+    pub fn extend_view_history(&self, view: u64, leader: Vec<u8>) -> Result<()> {
+        self.pool
+            .get()?
+            .prepare_cached("INSERT INTO view_history (view, leader) VALUES (?1, ?2)")?
+            //.execute(rusqlite::params![view, leader])?;
+            .execute((view, leader))?;
         Ok(())
     }
 

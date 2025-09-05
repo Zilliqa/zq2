@@ -39,6 +39,16 @@ sync.ignore_passive = true
 {%- endif %}
 {%- if role == "private-api" %}
 sync.ignore_passive = true
+max_missed_view_age = 10000000
+{%- endif %}
+{%- if role == "api" %}
+max_missed_view_age = 10000000
+{%- endif %}
+{%- if role == "persistence" %}
+max_missed_view_age = 10000000
+{%- endif %}
+{%- if role == "checkpoint" %}
+max_missed_view_age = 10000000
 {%- endif %}
 
 api_servers = {{ api_servers }}

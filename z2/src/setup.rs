@@ -19,8 +19,9 @@ use tokio::fs;
 use zilliqa::{
     api,
     cfg::{
-        ApiServer, DbConfig, SyncConfig, genesis_fork_default, max_rpc_response_size_default,
-        new_view_broadcast_interval_default, state_cache_size_default,
+        ApiServer, DbConfig, SyncConfig, genesis_fork_default, max_missed_view_age_default,
+        max_rpc_response_size_default, new_view_broadcast_interval_default,
+        state_cache_size_default,
     },
     crypto::{SecretKey, TransactionPublicKey},
 };
@@ -555,6 +556,7 @@ impl Setup {
                 failed_request_sleep_duration: failed_request_sleep_duration_default(),
                 enable_ots_indices: false,
                 max_rpc_response_size: max_rpc_response_size_default(),
+                max_missed_view_age: max_missed_view_age_default(),
             };
             println!("🧩  Node {node_index} has RPC port {port}");
 
