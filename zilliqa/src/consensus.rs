@@ -34,7 +34,8 @@ use crate::{
     constants::{EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, TIME_TO_ALLOW_PROPOSAL_BROADCAST},
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey, verify_messages},
     db::{self, BlockFilter, Db},
-    exec::{PendingState, TransactionApplyResult},
+    evm::ZQ2EvmContext,
+    exec::TransactionApplyResult,
     inspector::{self, ScillaInspector, TouchedAddressInspector},
     message::{
         AggregateQc, BitArray, BitSlice, Block, BlockHeader, BlockRef, BlockStrategy,
@@ -1051,7 +1052,7 @@ impl Consensus {
     }
 
     /// For a given State apply the given transaction
-    pub fn apply_transaction_at<I: Inspector<PendingState> + ScillaInspector>(
+    pub fn apply_transaction_at<I: Inspector<ZQ2EvmContext> + ScillaInspector>(
         state: &mut State,
         txn: VerifiedTransaction,
         current_block: BlockHeader,

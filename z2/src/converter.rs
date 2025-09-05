@@ -7,7 +7,7 @@ use std::{
 
 use alloy::{
     consensus::{EMPTY_ROOT_HASH, TxEip1559, TxEip2930, TxLegacy},
-    primitives::{Address, B256, PrimitiveSignature, TxKind, U256},
+    primitives::{Address, B256, Signature, TxKind, U256},
 };
 use anyhow::{Context, Result, anyhow};
 use bitvec::{bitarr, order::Msb0};
@@ -805,7 +805,7 @@ fn infer_eth_signature(
         .context("Can retrieve s item from signature!")?;
 
     for y_is_odd in [false, true] {
-        let sig = PrimitiveSignature::new(r, s, y_is_odd);
+        let sig = Signature::new(r, s, y_is_odd);
         let payload = transaction
             .code
             .as_ref()
