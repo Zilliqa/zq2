@@ -223,16 +223,12 @@ contract Deposit is UUPSUpgradeable {
         uint256 index;
         bytes memory output;
         do {
-            randomness = uint256(
-                keccak256(bytes.concat(bytes32(randomness)))
-            );
+            randomness = uint256(keccak256(bytes.concat(bytes32(randomness))));
             (stakerKey, index) = leaderFromRandomness(randomness);
             // skip the precompile if this stakerKey has already been checked
-            if (bitmap & (1 << index) != 0)
-                continue;
+            if (bitmap & (1 << index) != 0) continue;
             // return the stakerKey if it is the only one left even if jailed
-            if (number == 1)
-                break;
+            if (number == 1) break;
             number--;
             bitmap |= 1 << index;
             bytes memory input = abi.encodeWithSelector(
@@ -254,7 +250,7 @@ contract Deposit is UUPSUpgradeable {
                 )
             }
             require(success, "Penalty precompile failed");
-        } while(abi.decode(output, (bool)));
+        } while (abi.decode(output, (bool)));
     }
 
     function getStakers() public view returns (bytes[] memory) {
@@ -624,8 +620,7 @@ contract Deposit is UUPSUpgradeable {
         futureCommittee.totalStake += msg.value;
         futureCommittee.stakers[blsPubKey].balance = msg.value;
         futureCommittee.stakers[blsPubKey].index =
-            futureCommittee.stakerKeys.length +
-            1;
+            futureCommittee.stakerKeys.length + 1;
         futureCommittee.stakerKeys.push(blsPubKey);
 
         emit StakerAdded(blsPubKey, nextUpdate(), msg.value);
