@@ -1621,7 +1621,7 @@ impl PendingState {
         let cached = account.storage.get(var_name);
 
         // Un-flatten the values from disk into their true representation.
-        for (k, v) in values_from_disk {
+        for (k, v) in values_from_disk.into_iter().flatten() {
             let (disk_var_name, disk_indices) = split_storage_key(&k)?;
             if var_name != disk_var_name {
                 // There is a hazard caused by the storage key format when a contract contains a variable which is a
