@@ -1430,7 +1430,7 @@ impl Consensus {
         );
 
         // Ensure sane state
-        let mut state = self.state.clone();
+        let state = self.state.clone();
         if state.root_hash()? != parent.state_root_hash() {
             warn!(
                 "state root hash mismatch, expected: {:?}, actual: {:?}",

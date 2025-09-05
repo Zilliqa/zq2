@@ -12,6 +12,7 @@ use anyhow::{Result, anyhow};
 use eth_trie::{EthTrie as PatriciaTrie, Trie};
 use ethabi::Token;
 use once_cell::sync::Lazy;
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 use tracing::{debug, info};
@@ -41,7 +42,7 @@ use crate::{
 pub struct State {
     sql: Arc<Db>,
     db: Arc<TrieStorage>,
-    accounts: Arc<Mutex<PatriciaTrie<TrieStorage>>>,
+    accounts: Arc<RwLock<PatriciaTrie<TrieStorage>>>,
     /// The Scilla interpreter interface. Note that it is lazily initialized - This is a bit of a hack to ensure that
     /// tests which don't invoke Scilla, don't spawn the Scilla communication threads or TCP listeners.
     scilla: Arc<OnceLock<Mutex<Scilla>>>,
@@ -61,7 +62,7 @@ impl State {
         let consensus_config = &config.consensus;
         Ok(Self {
             db: db.clone(),
-            accounts: Arc::new(Mutex::new(PatriciaTrie::new(db))),
+            accounts: Arc::new(RwLock::new(PatriciaTrie::new(db))),
             scilla: Arc::new(OnceLock::new()),
             scilla_address: consensus_config.scilla_address.clone(),
             socket_dir: consensus_config.scilla_server_socket_directory.clone(),
@@ -319,7 +320,7 @@ impl State {
     pub fn at_root(&self, root_hash: B256) -> Self {
         Self {
             db: self.db.clone(),
-            accounts: Arc::new(Mutex::new(self.accounts.lock().unwrap().at_root(root_hash))),
+            accounts: Arc::new(RwLock::new(self.accounts.read().at_root(root_hash))),
             scilla: self.scilla.clone(),
             scilla_address: self.scilla_address.clone(),
             socket_dir: self.socket_dir.clone(),
@@ -334,17 +335,17 @@ impl State {
     }
 
     pub fn set_to_root(&mut self, root_hash: B256) {
-        let at_root = self.accounts.lock().unwrap().at_root(root_hash);
-        self.accounts = Arc::new(Mutex::new(at_root));
+        let at_root = self.accounts.read().at_root(root_hash);
+        self.accounts = Arc::new(RwLock::new(at_root));
     }
 
-    pub fn try_clone(&mut self) -> Result<Self> {
-        let root_hash = self.accounts.lock().unwrap().root_hash()?;
+    pub fn try_clone(&self) -> Result<Self> {
+        let root_hash = self.accounts.write().root_hash()?;
         Ok(self.at_root(root_hash))
     }
 
-    pub fn root_hash(&mut self) -> Result<crypto::Hash> {
-        let hash = self.accounts.lock().unwrap().root_hash()?;
+    pub fn root_hash(&self) -> Result<crypto::Hash> {
+        let hash = self.accounts.write().root_hash()?;
         Ok(crypto::Hash(hash.into()))
     }
 
@@ -367,12 +368,7 @@ impl State {
     /// Returns an error on failures to access the state tree, or decode the account; or an empty
     /// account if one didn't exist yet
     pub fn get_account(&self, address: Address) -> Result<Account> {
-        let Some(bytes) = self
-            .accounts
-            .lock()
-            .unwrap()
-            .get(&Self::account_key(address).0)?
-        else {
+        let Some(bytes) = self.accounts.read().get(&Self::account_key(address).0)? else {
             return Ok(Account::default());
         };
 
@@ -430,13 +426,12 @@ impl State {
     pub fn has_account(&self, address: Address) -> Result<bool> {
         Ok(self
             .accounts
-            .lock()
-            .unwrap()
+            .read()
             .contains(&Self::account_key(address).0)?)
     }
 
     pub fn save_account(&mut self, address: Address, account: Account) -> Result<()> {
-        Ok(self.accounts.lock().unwrap().insert(
+        Ok(self.accounts.write().insert(
             &Self::account_key(address).0,
             &bincode::serde::encode_to_vec(&account, bincode::config::legacy())?,
         )?)
@@ -451,7 +446,7 @@ impl State {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.accounts.lock().unwrap().iter().next().is_none()
+        self.accounts.read().iter().next().is_none()
     }
 }
 
