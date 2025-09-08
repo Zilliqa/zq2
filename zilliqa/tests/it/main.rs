@@ -1037,6 +1037,7 @@ impl Network {
                         transactions,
                         parent,
                         trie_storage,
+                        view_history,
                         output,
                     ) => {
                         assert!(
@@ -1051,6 +1052,7 @@ impl Network {
                             parent,
                             trie_storage.clone(),
                             *source_shard,
+                            view_history.clone(),
                             output,
                         )
                         .unwrap();

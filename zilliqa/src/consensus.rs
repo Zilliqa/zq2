@@ -297,6 +297,18 @@ impl Consensus {
             State::new_with_genesis(db.state_trie()?, config.clone(), db.clone())
         }?;
 
+        let (ckpt_block, ckpt_transactions, ckpt_parent) =
+            if let Some((block, transactions, parent, view_history)) = checkpoint_data {
+                info!(
+                    history = display(&view_history),
+                    "~~~~~~~~~~> loaded from checkpoint"
+                );
+                state.view_history = view_history;
+                (Some(block), Some(transactions), Some(parent))
+            } else {
+                (None, None, None)
+            };
+
         let (latest_block, latest_block_view) = match latest_block {
             Some(l) => (Some(l.clone()), l.view()),
             None => {
@@ -449,8 +461,6 @@ impl Consensus {
             history = display(&consensus.state.view_history),
             "~~~~~~~~~~> imported in"
         );
-        //TODO(#3080): add the missed view history to the checkpoint file
-        //             and store it in the db at each epoch boundary
         let mut block = consensus
             .db
             .get_block(BlockFilter::View(finalized_view))?
@@ -481,18 +491,12 @@ impl Consensus {
             }
             // missed views up to last were imported from the db and there can't exist any missed views before earliest
             if start < last || start < earliest {
-                //                let mut min_view = consensus.state().view_history.min_view.lock().unwrap();
-                //                *min_view =
-                //                    finalized_view.saturating_sub(max_missed_view_age + LAG_BEHIND_CURRENT_VIEW);
                 break;
             }
             block = parent;
             if block.view() + max_missed_view_age + LAG_BEHIND_CURRENT_VIEW < finalized_view {
-                //                let mut min_view = consensus.state().view_history.min_view.lock().unwrap();
-                //                *min_view = start + 1;
                 break;
             }
-            //TODO(#3080): remove lines commented out above
         }
         let _ = consensus
             .state
@@ -507,7 +511,9 @@ impl Consensus {
         );
 
         // If we started from a checkpoint, execute the checkpointed block now
-        if let Some((block, transactions, mut parent)) = checkpoint_data {
+        if let (Some(block), Some(transactions), Some(mut parent)) =
+            (ckpt_block, ckpt_transactions, ckpt_parent)
+        {
             if consensus
                 .db
                 .get_transactionless_block(BlockFilter::Hash(block.hash()))?
@@ -2554,6 +2560,7 @@ impl Consensus {
                         transactions,
                         Box::new(parent),
                         self.db.state_trie()?.clone(),
+                        self.state.view_history.clone(),
                         checkpoint_path,
                     ),
                 )?;
@@ -2593,12 +2600,25 @@ impl Consensus {
             .ok_or(anyhow!("No checkpoint directory configured"))?;
         let file_name = db::get_checkpoint_filename(checkpoint_dir.clone(), &block)?;
         let hash = block.hash();
+        let max_missed_view_age = self.config.max_missed_view_age;
+        //TODO(#3080): export more than the minimum MISSED_VIEW_WINDOW but not the whole history max_missed_view_age mandates
+        let view_history = self
+            .state
+            .view_history
+            .new_at(block.view(), max_missed_view_age);
+        info!(
+            view = self.get_view()?,
+            checkpoint = block.view(),
+            view_history = display(&view_history),
+            "~~~~~~~~~~> saving in current"
+        );
         self.message_sender
             .send_message_to_coordinator(InternalMessage::ExportBlockCheckpoint(
                 Box::new(block),
                 transactions,
                 Box::new(parent),
                 self.db.state_trie()?.clone(),
+                view_history,
                 checkpoint_dir,
             ))?;
         Ok((file_name.display().to_string(), hash.to_string()))

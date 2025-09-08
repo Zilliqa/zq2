@@ -12,7 +12,7 @@ use std::{path::PathBuf, sync::Arc, time::Instant};
 use anyhow::Result;
 use clap::Parser;
 use tempfile::tempdir;
-use zilliqa::{crypto::Hash, db::Db};
+use zilliqa::{crypto::Hash, db::Db, precompiles::ViewHistory};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -92,6 +92,7 @@ async fn main() -> Result<()> {
         &transactions,
         &parent,
         args.id,
+        ViewHistory::default(),
     )?;
     println!("WRITE {:?}", now.elapsed());
 

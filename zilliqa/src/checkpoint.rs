@@ -10,7 +10,8 @@ use eth_trie::{DB, EthTrie, MemoryDB, Trie};
 use lz4::Decoder;
 
 use crate::{
-    crypto::Hash, db::TrieStorage, message::Block, state::Account, transaction::SignedTransaction,
+    crypto::Hash, db::TrieStorage, message::Block, precompiles::ViewHistory, state::Account,
+    transaction::SignedTransaction,
 };
 
 pub const CHECKPOINT_HEADER_BYTES: [u8; 8] = *b"ZILCHKPT";
@@ -320,12 +321,23 @@ pub fn load_ckpt_state(
     Ok((account_count, record_count))
 }
 
+pub fn load_ckpt_history(path: &Path) -> Result<ViewHistory> {
+    let mut zipreader = zip::ZipArchive::new(std::fs::File::open(path)?)?;
+    ensure!(
+        zipreader.comment() == CKPT_VERSION.as_bytes(),
+        "Invalid checkpoint version",
+    );
+    let mut file = zipreader.by_name("history.bincode")?;
+    let view_history: ViewHistory = bincode::serde::decode_from_std_read(&mut file, BIN_CONFIG)?;
+    Ok(view_history)
+}
+
 pub fn load_ckpt(
     path: &Path,
     trie_storage: Arc<TrieStorage>,
     chain_id: u64,
     block_hash: &Hash,
-) -> Result<Option<(Block, Vec<SignedTransaction>, Block)>> {
+) -> Result<Option<(Block, Vec<SignedTransaction>, Block, ViewHistory)>> {
     let meta = load_ckpt_meta(path, chain_id, block_hash)?;
     let (block, transactions, parent) = load_ckpt_blocks(path)?;
     let (account_count, record_count) =
@@ -342,7 +354,9 @@ pub fn load_ckpt(
         account_count
     );
 
-    Ok(Some((block, transactions, parent)))
+    let view_history = load_ckpt_history(path)?;
+
+    Ok(Some((block, transactions, parent, view_history)))
 }
 
 pub fn save_ckpt(
@@ -352,6 +366,7 @@ pub fn save_ckpt(
     transactions: &Vec<SignedTransaction>,
     parent: &Block,
     chain_id: u64,
+    view_history: ViewHistory,
 ) -> Result<()> {
     // parent
     ensure!(
@@ -379,6 +394,10 @@ pub fn save_ckpt(
         .compression_method(zip::CompressionMethod::Zstd);
 
     let mut zipwriter = zip::ZipWriter::new(zipfile);
+
+    // write history.json
+    zipwriter.start_file("history.bincode", options)?;
+    bincode::serde::encode_into_std_write(view_history, &mut zipwriter, BIN_CONFIG)?;
 
     // write block.json
     zipwriter.start_file("block.bincode", options)?;

@@ -17,6 +17,7 @@ use revm::{
         alloy_primitives::private::alloy_rlp::Encodable,
     },
 };
+use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use crate::{
@@ -26,7 +27,7 @@ use crate::{
     inspector::ScillaInspector,
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ViewHistory {
     pub missed_views: Arc<Mutex<VecDeque<(u64, NodePublicKey)>>>,
     pub min_view: Arc<Mutex<u64>>,
@@ -43,6 +44,22 @@ impl ViewHistory {
         ViewHistory {
             missed_views: Arc::new(Mutex::new(VecDeque::new())),
             min_view: Arc::new(Mutex::new(0)),
+        }
+    }
+
+    pub fn new_at(&self, finalized_view: u64, max_missed_view_age: u64) -> ViewHistory {
+        let min_view = finalized_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW + max_missed_view_age);
+        let mut deque = VecDeque::new();
+        let source = self.missed_views.lock().unwrap();
+        //TODO(#3080): use binary search to find the range to be copied
+        for (view, leader) in source.iter() {
+            if *view >= min_view && *view < finalized_view {
+                deque.push_back((*view, *leader));
+            }
+        }
+        ViewHistory {
+            missed_views: Arc::new(Mutex::new(deque)),
+            min_view: Arc::new(Mutex::new(min_view)),
         }
     }
 

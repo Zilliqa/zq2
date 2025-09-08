@@ -33,6 +33,7 @@ use crate::{
     crypto::{BlsSignature, Hash},
     exec::{ScillaError, ScillaException, ScillaTransition},
     message::{AggregateQc, Block, BlockHeader, QuorumCertificate},
+    precompiles::ViewHistory,
     state::Account,
     time::SystemTime,
     transaction::{EvmGas, Log, SignedTransaction, TransactionReceipt, VerifiedTransaction},
@@ -648,7 +649,7 @@ impl Db {
         path: PathBuf,
         hash: &Hash,
         our_shard_id: u64,
-    ) -> Result<Option<(Block, Vec<SignedTransaction>, Block)>> {
+    ) -> Result<Option<(Block, Vec<SignedTransaction>, Block, ViewHistory)>> {
         let trie_storage = Arc::new(self.state_trie()?);
         let state_trie = EthTrie::new(trie_storage.clone());
 
@@ -658,7 +659,7 @@ impl Db {
             && self.get_highest_canonical_block_number()?.is_none()
         {
             tracing::info!(%hash, "Restoring checkpoint");
-            let (block, transactions, parent) = crate::checkpoint::load_ckpt(
+            let (block, transactions, parent, view_history) = crate::checkpoint::load_ckpt(
                 path.as_path(),
                 trie_storage.clone(),
                 our_shard_id,
@@ -675,7 +676,7 @@ impl Db {
                 Ok(())
             })?;
 
-            return Ok(Some((block, transactions, parent)));
+            return Ok(Some((block, transactions, parent, view_history)));
         }
 
         let (block, transactions, parent) = crate::checkpoint::load_ckpt_blocks(path.as_path())?;
@@ -690,6 +691,8 @@ impl Db {
             "Critical checkpoint error"
         );
 
+        let view_history = crate::checkpoint::load_ckpt_history(path.as_path())?;
+
         // check if state-sync is needed i.e. state is missing
         if trie_storage
             .get(ckpt_parent.state_root_hash().as_bytes())?
@@ -702,10 +705,8 @@ impl Db {
                 trie_storage.clone(),
                 &ckpt_parent.state_root_hash(),
             )?;
-            return Ok(Some((block, transactions, parent)));
         }
-
-        Ok(Some((block, transactions, parent)))
+        Ok(Some((block, transactions, parent, view_history)))
     }
 
     // old checkpoint format
@@ -1385,6 +1386,7 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
     parent: &Block,
     state_trie_storage: TrieStorage,
     shard_id: u64,
+    view_history: ViewHistory,
     output_dir: P,
 ) -> Result<()> {
     fs::create_dir_all(&output_dir)?;
@@ -1397,6 +1399,7 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
         transactions,
         parent,
         shard_id,
+        view_history,
     )?;
 
     // rename file when done
@@ -1725,6 +1728,8 @@ mod tests {
             EvmGas(0),
         );
 
+        let view_history: ViewHistory = ViewHistory::default();
+
         let checkpoint_path = db.get_checkpoint_dir().unwrap().unwrap();
 
         const SHARD_ID: u64 = 5000;
@@ -1736,12 +1741,13 @@ mod tests {
             &checkpoint_parent,
             db.state_trie().unwrap(),
             SHARD_ID,
+            view_history,
             &checkpoint_path,
         )
         .unwrap();
 
         // now load the checkpoint
-        let (block, transactions, parent) = db
+        let (block, transactions, parent, view_history) = db
             .load_trusted_checkpoint(
                 checkpoint_path.join(checkpoint_block.number().to_string()),
                 &checkpoint_block.hash(),
@@ -1752,9 +1758,10 @@ mod tests {
         assert_eq!(checkpoint_block, block);
         assert_eq!(checkpoint_transactions, transactions);
         assert_eq!(checkpoint_parent, parent);
+        //TODO(#3080): check the loaded view history
 
         // load the checkpoint again, to ensure idempotency
-        let (block, transactions, parent) = db
+        let (block, transactions, parent, view_history) = db
             .load_trusted_checkpoint(
                 checkpoint_path.join(checkpoint_block.number().to_string()),
                 &checkpoint_block.hash(),
@@ -1765,6 +1772,7 @@ mod tests {
         assert_eq!(checkpoint_block, block);
         assert_eq!(checkpoint_transactions, transactions);
         assert_eq!(checkpoint_parent, parent);
+        //TODO(#3080): check the loaded view history
 
         // Always return Some, even if checkpointed block already executed
         db.insert_block(&checkpoint_block).unwrap();
