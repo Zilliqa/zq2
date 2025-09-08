@@ -386,8 +386,7 @@ impl State {
             return Ok(Account::default());
         };
 
-        let account =
-            bincode::serde::decode_from_slice::<Account, _>(&bytes, bincode::config::legacy())?.0;
+        let account = Account::try_from(bytes.as_slice())?;
         Ok(account)
     }
 
