@@ -57,7 +57,7 @@ reqwest = { version = "0.12.15", features = [
     "http2",
     "charset",
 ], default-features = false }
-revm = { version = "19.6.0", features = ["optional_balance_check"] }
+revm = { version = "20.0.0", features = ["optional_balance_check"] }
 rs-leveldb = { version = "0.1.5", default-features = false }
 rustls = "0.23.31"
 scopeguard = "1.2.0"
