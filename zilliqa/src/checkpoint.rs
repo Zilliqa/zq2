@@ -332,6 +332,7 @@ pub fn load_ckpt_history(path: &Path) -> Result<ViewHistory> {
     Ok(view_history)
 }
 
+#[allow(clippy::type_complexity)]
 pub fn load_ckpt(
     path: &Path,
     trie_storage: Arc<TrieStorage>,

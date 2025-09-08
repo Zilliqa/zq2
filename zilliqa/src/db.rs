@@ -644,6 +644,7 @@ impl Db {
     /// Fetch checkpoint data from file and initialise db state
     /// Return checkpointed block and transactions which must be executed after this function
     /// Return None if checkpoint already loaded
+    #[allow(clippy::type_complexity)]
     pub fn load_trusted_checkpoint(
         &self,
         path: PathBuf,
