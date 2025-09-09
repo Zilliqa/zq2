@@ -601,7 +601,7 @@ fn get_smart_contract_state(params: Params, node: &Arc<RwLock<Node>>) -> Result<
         let limit = node.config.state_rpc_limit;
 
         let trie = state.get_account_trie(address)?;
-        for (i, (k, v)) in trie.iter().enumerate() {
+        for (i, (k, v)) in trie.iter().flatten().enumerate() {
             if i >= limit {
                 return Err(anyhow!(
                     "State of contract returned has size greater than the allowed maximum"
@@ -724,6 +724,9 @@ fn get_transactions_for_tx_block(
     let Some(block) = node.get_block(block_number)? else {
         return Err(anyhow!("Tx Block does not exist"));
     };
+    if block.transactions.is_empty() {
+        return Err(anyhow!("TxBlock has no transactions"));
+    }
 
     Ok(vec![
         block
@@ -1480,7 +1483,7 @@ fn get_smart_contract_sub_state(params: Params, node: &Arc<RwLock<Node>>) -> Res
             .collect::<std::result::Result<Vec<_>, _>>()?;
         let prefix = storage_key(requested_var_name, &indicies_encoded);
         let mut n = 0;
-        for (k, v) in trie.iter_by_prefix(&prefix)? {
+        for (k, v) in trie.iter_by_prefix(&prefix)?.flatten() {
             n += 1;
             if n > node.config.state_rpc_limit {
                 return Err(anyhow!(
