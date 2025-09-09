@@ -3,9 +3,8 @@ use std::collections::HashMap;
 use alloy::{
     consensus::TxEip1559,
     primitives::{Address, B256, U64, U128, U256},
-    rpc::types::TransactionInput,
+    rpc::types::{AccessList, TransactionInput},
 };
-use revm::primitives::AccessListItem;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
@@ -451,7 +450,7 @@ pub struct CallParams {
     #[serde(default, flatten)]
     pub data: TransactionInput,
     #[serde(default)]
-    pub access_list: Option<Vec<AccessListItem>>,
+    pub access_list: Option<AccessList>,
 }
 
 #[derive(Clone, Serialize)]

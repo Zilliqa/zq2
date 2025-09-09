@@ -9,6 +9,7 @@ pub mod contracts;
 pub mod crypto;
 pub mod db;
 mod error;
+mod evm;
 pub mod exec;
 mod health;
 pub mod inspector;

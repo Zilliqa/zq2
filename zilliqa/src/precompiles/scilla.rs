@@ -1,19 +1,17 @@
-use std::sync::Arc;
-
 use alloy::{
     primitives::{I256, U256},
     sol_types::{SolValue, abi::Decoder},
 };
 use anyhow::{Result, anyhow};
 use revm::{
-    ContextStatefulPrecompile, FrameOrResult, InnerEvmContext,
-    handler::register::EvmHandler,
-    interpreter::{CallInputs, Gas, InstructionResult, InterpreterResult},
-    precompile::PrecompileError,
-    primitives::{
-        Address, Bytes, EVMError, LogData, PrecompileErrors, PrecompileOutput, PrecompileResult,
+    context_interface::ContextTr,
+    interpreter::{
+        Gas, InputsImpl, InstructionResult, InterpreterResult, interpreter_types::InputsTr,
     },
+    primitives::{Address, Bytes, LogData},
 };
+use revm_context::JournalTr;
+use revm_inspector::JournalExt;
 use scilla_parser::{
     ast::nodes::{
         NodeAddressType, NodeByteStr, NodeMetaIdentifier, NodeScillaType, NodeTypeMapKey,
@@ -26,8 +24,9 @@ use tracing::trace;
 use crate::{
     cfg::scilla_ext_libs_path_default,
     constants::SCILLA_INVOKE_RUNNER,
-    exec::{ExternalContext, PendingState, ScillaError, scilla_call},
-    inspector::ScillaInspector,
+    evm::ZQ2EvmContext,
+    exec::{PendingState, ScillaError, scilla_call},
+    precompiles::ContextPrecompile,
     state::Code,
     transaction::{EvmGas, ZilAmount},
 };
@@ -212,14 +211,15 @@ fn get_indices(
 pub(crate) struct ScillaRead;
 
 #[track_caller]
-fn oog<T>() -> Result<T, PrecompileErrors> {
+fn oog<T>() -> Result<T, String> {
     let location = std::panic::Location::caller();
-    trace!(%location, "scilla_call out of gas");
-    Err(PrecompileErrors::Error(PrecompileError::OutOfGas))
+    let msg = "scilla_call out of gas";
+    trace!(%location, msg);
+    Err(msg.to_owned())
 }
 
 #[track_caller]
-fn err<T>(message: impl Into<String>) -> Result<T, PrecompileErrors> {
+fn err<T>(message: impl Into<String>) -> Result<T, String> {
     let location = std::panic::Location::caller();
     let message = message.into();
     trace!(%location, message, "scilla_call failed");
@@ -227,48 +227,52 @@ fn err<T>(message: impl Into<String>) -> Result<T, PrecompileErrors> {
 }
 
 #[track_caller]
-fn err_inner(message: impl Into<String>) -> PrecompileErrors {
+fn err_inner(message: impl Into<String>) -> String {
     let location = std::panic::Location::caller();
     let message = message.into();
     trace!(%location, message, "scilla_call failed");
-    PrecompileErrors::Error(PrecompileError::other(message))
+    message
 }
 
 #[track_caller]
-fn fatal<T>(message: &'static str) -> Result<T, PrecompileErrors> {
+fn fatal<T>(message: &'static str) -> Result<T, String> {
     let location = std::panic::Location::caller();
     trace!(%location, message, "scilla_call failed");
-    Err(PrecompileErrors::Fatal {
-        msg: message.to_owned(),
-    })
+    Err(message.to_owned())
 }
 
 // ZQ1 suggests revisiting these costs in the future.
 const BASE_COST: u64 = 15;
 const PER_BYTE_COST: u64 = 3;
 
-impl ContextStatefulPrecompile<PendingState> for ScillaRead {
+impl ContextPrecompile for ScillaRead {
     fn call(
         &self,
-        input: &Bytes,
+        ctx: &mut ZQ2EvmContext,
+        _dest: Address,
+        input: &InputsImpl,
+        _is_static: bool,
         gas_limit: u64,
-        context: &mut InnerEvmContext<PendingState>,
-    ) -> PrecompileResult {
-        let Ok(input_len) = u64::try_from(input.len()) else {
+    ) -> std::result::Result<Option<InterpreterResult>, String> {
+        let Ok(input_len) = u64::try_from(input.input().len()) else {
             return err("input too long");
         };
+
+        let mut gas_tracker = Gas::new(gas_limit);
         let required_gas = input_len * PER_BYTE_COST + BASE_COST;
-        if gas_limit < required_gas {
+        if !gas_tracker.record_cost(required_gas) {
             return oog();
         }
 
-        let mut decoder = Decoder::new(input, false);
+        let raw_input = input.input().bytes(ctx);
+
+        let mut decoder = Decoder::new(&raw_input);
 
         let address =
             Address::detokenize(decoder.decode().map_err(|_| err_inner("invalid address"))?);
         let field = String::detokenize(decoder.decode().map_err(|_| err_inner("invalid field"))?);
 
-        let account = match context.db.load_account(address) {
+        let account = match ctx.db_mut().load_account(address) {
             Ok(account) => account,
             Err(e) => {
                 tracing::error!(?e, "state access failed");
@@ -322,7 +326,11 @@ impl ContextStatefulPrecompile<PendingState> for ScillaRead {
                     };
                     value.abi_encode()
                 } else {
-                    let Ok(value) = context.db.load_storage(address, &field, &indices) else {
+                    let Ok(value) = ctx
+                        .journal_mut()
+                        .db_mut()
+                        .load_storage(address, &field, &indices)
+                    else {
                         return fatal("failed to read value");
                     };
                     if let Some(value) = value {
@@ -357,7 +365,11 @@ impl ContextStatefulPrecompile<PendingState> for ScillaRead {
                     };
                     value.abi_encode()
                 } else {
-                    let Ok(value) = context.db.load_storage(address, &field, &indices) else {
+                    let Ok(value) = ctx
+                        .journal_mut()
+                        .db_mut()
+                        .load_storage(address, &field, &indices)
+                    else {
                         return fatal("failed to read value");
                     };
                     if let Some(value) = value {
@@ -373,99 +385,41 @@ impl ContextStatefulPrecompile<PendingState> for ScillaRead {
             ScillaType::Map(_, _) => unreachable!("map will not be returned from `get_indices`"),
         };
 
-        Ok(PrecompileOutput::new(required_gas, value.into()))
+        Ok(Some(InterpreterResult::new(
+            InstructionResult::default(),
+            value.into(),
+            gas_tracker,
+        )))
     }
 }
 
-pub fn scilla_call_handle_register<I: ScillaInspector>(
-    handler: &mut EvmHandler<'_, ExternalContext<I>, PendingState>,
-) {
-    // Create handler
-    let prev_handle = handler.execution.create.clone();
-    handler.execution.create = Arc::new(move |ctx, inputs| {
-        // Reserve enough space to store the caller.
-        ctx.external.callers.reserve(
-            (ctx.evm.journaled_state.depth + 1).saturating_sub(ctx.external.callers.len()),
-        );
-        for _ in ctx.external.callers.len()..(ctx.evm.journaled_state.depth + 1) {
-            ctx.external.callers.push(Address::ZERO);
-        }
-        ctx.external.callers[ctx.evm.journaled_state.depth] = inputs.caller;
+pub(crate) struct ScillaCall;
 
-        prev_handle(ctx, inputs)
-    });
-
-    // Create result handler
-    let prev_handle = handler.execution.insert_create_outcome.clone();
-    handler.execution.insert_create_outcome = Arc::new(move |ctx, frame, outcome| {
-        if outcome.result.is_error() || outcome.result.is_revert() {
-            ctx.external.has_evm_failed = true;
-        }
-        prev_handle(ctx, frame, outcome)
-    });
-
-    // EOF create handler
-    let prev_handle = handler.execution.eofcreate.clone();
-    handler.execution.eofcreate = Arc::new(move |ctx, inputs| {
-        // Reserve enough space to store the caller.
-        ctx.external.callers.reserve(
-            (ctx.evm.journaled_state.depth + 1).saturating_sub(ctx.external.callers.len()),
-        );
-        for _ in ctx.external.callers.len()..(ctx.evm.journaled_state.depth + 1) {
-            ctx.external.callers.push(Address::ZERO);
-        }
-        ctx.external.callers[ctx.evm.journaled_state.depth] = inputs.caller;
-
-        prev_handle(ctx, inputs)
-    });
-
-    // EOF result handler
-    let prev_handle = handler.execution.insert_eofcreate_outcome.clone();
-    handler.execution.insert_eofcreate_outcome = Arc::new(move |ctx, frame, outcome| {
-        if outcome.result.is_error() || outcome.result.is_revert() {
-            ctx.external.has_evm_failed = true;
-        }
-        prev_handle(ctx, frame, outcome)
-    });
-
-    // Call handler
-    let prev_handle = handler.execution.call.clone();
-    handler.execution.call = Arc::new(move |ctx, inputs| {
-        // Reserve enough space to store the caller.
-        ctx.external.callers.reserve(
-            (ctx.evm.journaled_state.depth + 1).saturating_sub(ctx.external.callers.len()),
-        );
-        for _ in ctx.external.callers.len()..(ctx.evm.journaled_state.depth + 1) {
-            ctx.external.callers.push(Address::ZERO);
-        }
-        ctx.external.callers[ctx.evm.journaled_state.depth] = inputs.caller;
-
-        if inputs.bytecode_address != Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x53") {
-            return prev_handle(ctx, inputs);
-        }
-
-        let gas = Gas::new(inputs.gas_limit);
+impl ContextPrecompile for ScillaCall {
+    fn call(
+        &self,
+        ctx: &mut ZQ2EvmContext,
+        _dest: Address,
+        input: &InputsImpl,
+        _is_static: bool,
+        gas_limit: u64,
+    ) -> Result<Option<InterpreterResult>, String> {
+        let mut gas = Gas::new(gas_limit);
         let gas_exempt = ctx
-            .external
+            .chain
             .fork
             .scilla_call_gas_exempt_addrs
-            .contains(&inputs.caller);
+            .contains(&input.caller_address);
 
         // Record access of scilla precompile
-        ctx.external.has_called_scilla_precompile = true;
+        ctx.chain.has_called_scilla_precompile = true;
 
         // The behaviour is different for contracts having 21k gas and/or deployed with zq1
         // 1. If gas == 21k and gas_exempt -> allow it to run with gas_left()
         // 2. if precompile failed and gas_exempt -> mark entire txn as failed (not only the current precompile)
         // 3. Otherwise, let it run with what it's given and let the caller decide
 
-        let outcome = scilla_call_precompile(
-            &inputs,
-            gas.limit(),
-            &mut ctx.evm.inner,
-            &mut ctx.external,
-            gas_exempt,
-        );
+        let outcome = scilla_call_precompile(input, &mut gas, ctx, gas_exempt);
 
         // Copied from `EvmContext::call_precompile`
         let mut result = InterpreterResult {
@@ -475,26 +429,14 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
         };
 
         match outcome {
-            Ok(output) => {
-                if result.gas.record_cost(output.gas_used) {
-                    result.result = InstructionResult::Return;
-                    result.output = output.bytes;
-                } else {
-                    result.result = InstructionResult::PrecompileOOG;
-                }
+            Ok(Some(output)) => {
+                result.output = output.output;
             }
-            Err(PrecompileErrors::Error(e)) => {
-                result.result = if e.is_oog() {
-                    InstructionResult::PrecompileOOG
-                } else {
-                    InstructionResult::PrecompileError
-                };
-            }
-            Err(PrecompileErrors::Fatal { msg }) => return Err(EVMError::Precompile(msg)),
+            _ => result.result = InstructionResult::PrecompileError,
         }
 
         if ctx
-            .external
+            .chain
             .fork
             .failed_scilla_call_from_gas_exempt_caller_causes_revert
         {
@@ -503,46 +445,35 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
                 InstructionResult::Return => {}
                 _ => {
                     if gas_exempt {
-                        ctx.external.enforce_transaction_failure = true;
+                        ctx.chain.enforce_transaction_failure = true;
                     }
                 }
             }
         }
 
-        Ok(FrameOrResult::new_call_result(
-            result,
-            inputs.return_memory_offset.clone(),
-        ))
-    });
-
-    // Call result handler
-    let prev_handle = handler.execution.insert_call_outcome.clone();
-    handler.execution.insert_call_outcome = Arc::new(move |ctx, frame, memory, outcome| {
-        if outcome.result.is_error() || outcome.result.is_revert() {
-            ctx.external.has_evm_failed = true;
-        }
-        prev_handle(ctx, frame, memory, outcome)
-    });
+        Ok(Some(result))
+    }
 }
 
-fn scilla_call_precompile<I: ScillaInspector>(
-    input: &CallInputs,
-    gas_limit: u64,
-    evmctx: &mut InnerEvmContext<PendingState>,
-    external_context: &mut ExternalContext<I>,
+fn scilla_call_precompile(
+    input: &InputsImpl,
+    gas_tracker: &mut Gas,
+    ctx: &mut ZQ2EvmContext,
     gas_exempt: bool,
-) -> PrecompileResult {
+) -> std::result::Result<Option<InterpreterResult>, String> {
     let Ok(input_len) = u64::try_from(input.input.len()) else {
         return err("input too long");
     };
 
     let required_gas = input_len * PER_BYTE_COST + BASE_COST + EvmGas::from(SCILLA_INVOKE_RUNNER).0;
+    let input_gas_limit = gas_tracker.limit();
 
-    if !gas_exempt && gas_limit < required_gas {
+    if !gas_exempt && input_gas_limit < required_gas {
         return oog();
     }
 
-    let mut decoder = Decoder::new(&input.input, false);
+    let bytes_input = input.input.bytes(ctx);
+    let mut decoder = Decoder::new(&bytes_input);
 
     let address = Address::detokenize(decoder.decode().map_err(|_| err_inner("invalid address"))?);
     let transition = String::detokenize(
@@ -565,7 +496,7 @@ fn scilla_call_precompile<I: ScillaInspector>(
     };
     trace!(%address, transition, %keep_origin, "scilla_call");
 
-    let account = match evmctx.db.pre_state.get_account(address) {
+    let account = match ctx.journal().db().pre_state.get_account(address) {
         Ok(account) => account,
         Err(e) => {
             tracing::error!(?e, "state access failed");
@@ -613,69 +544,86 @@ fn scilla_call_precompile<I: ScillaInspector>(
 
     let message = serde_json::json!({"_tag": transition.name, "params": params });
 
-    let empty_state = PendingState::new(evmctx.db.pre_state.clone(), external_context.fork.clone());
-    // Temporarily move the `PendingState` out of `evmctx`, replacing it with an empty state.
-    let mut state = std::mem::replace(&mut evmctx.db, empty_state);
-    let depth = evmctx.journaled_state.depth;
-    if external_context.fork.scilla_call_respects_evm_state_changes {
-        state.evm_state = Some(evmctx.journaled_state.clone());
-    }
+    let depth = ctx.journal().depth;
+    let sender = if keep_origin {
+        if ctx.chain.fork.call_mode_1_sets_caller_to_parent_caller {
+            // Use the caller of the parent call-stack.
+            ctx.chain.callers[depth - 2]
+        } else {
+            // Use the original transaction signer.
+            ctx.tx.caller
+        }
+    } else {
+        input.caller_address
+    };
 
     // 1. if evm_exec_failure_causes_scilla_precompile_to_fail == true then we take converted value
     // 2. if evm_exec_failure_causes_scilla_precompile_to_fail == false and evm_to_scilla_value_transfer_zero == true -> we return 0
     // 3. else we take converted value
     let effective_value = {
         match (
-            external_context
+            ctx.chain
                 .fork
                 .evm_exec_failure_causes_scilla_precompile_to_fail,
-            external_context.fork.evm_to_scilla_value_transfer_zero,
+            ctx.chain.fork.evm_to_scilla_value_transfer_zero,
         ) {
-            (true, _) => ZilAmount::from_amount(input.transfer_value().unwrap_or_default().to()),
+            (true, _) => ZilAmount::from_amount(input.call_value.to()),
             (false, true) => ZilAmount::from_amount(0),
-            _ => ZilAmount::from_amount(input.transfer_value().unwrap_or_default().to()),
+            _ => ZilAmount::from_amount(input.call_value.to()),
         }
     };
 
-    let scilla = evmctx.db.pre_state.scilla();
+    // In recent revm version the precompile keeps the amount passed to call()
+    // However, we deduct the amount from the sender's account in scilla_call()
+    // Therefore, we need to transfer the amount back to the sender's account from the precompile address
+
+    if effective_value.get() > 0 {
+        let evm_state = ctx.journal_mut().evm_state_mut();
+        let precompile_acc = evm_state.get_mut(&input.target_address).unwrap();
+        precompile_acc.info.balance = precompile_acc
+            .info
+            .balance
+            .saturating_sub(U256::from(effective_value.get()));
+        let sender_acc = evm_state.get_mut(&sender).unwrap();
+        sender_acc.info.balance += U256::from(effective_value.get());
+    }
+
+    let empty_state =
+        PendingState::new(ctx.journal().db().pre_state.clone(), ctx.chain.fork.clone());
+    // Temporarily move the `PendingState` out of `ctx`, replacing it with an empty state.
+    let mut state = std::mem::replace(&mut ctx.journaled_state.database, empty_state);
+
+    if ctx.chain.fork.scilla_call_respects_evm_state_changes {
+        state.evm_state = Some(ctx.journal().evm_state().clone());
+    }
+
+    let scilla = ctx.journaled_state.database.pre_state.scilla();
+
     let Ok((result, mut state)) = scilla_call(
         state,
         scilla,
-        evmctx.env.tx.caller,
-        if keep_origin {
-            if external_context
-                .fork
-                .call_mode_1_sets_caller_to_parent_caller
-            {
-                // Use the caller of the parent call-stack.
-                external_context.callers[depth - 1]
-            } else {
-                // Use the original transaction signer.
-                evmctx.env.tx.caller
-            }
-        } else {
-            input.caller
-        },
+        input.caller_address,
+        sender,
         // If this call is gas exempt the gas limit likely is not enough to invoke the Scilla call, therefore we lie
         // and pass a large number instead.
         if gas_exempt {
             EvmGas(u64::MAX).into()
         } else {
-            EvmGas(gas_limit - required_gas).into()
+            EvmGas(input_gas_limit - required_gas).into()
         },
         address,
         effective_value,
         serde_json::to_string(&message).unwrap(),
-        &mut external_context.inspector,
+        &mut ctx.chain.touched_address_inspector,
         &scilla_ext_libs_path_default(),
-        external_context.fork,
-        evmctx.env.block.number.to(),
+        &ctx.chain.fork,
+        ctx.block.number.to(),
     ) else {
         return fatal("scilla call failed");
     };
     trace!(?result, "scilla_call complete");
     if !&result.success {
-        evmctx.db = state;
+        ctx.journaled_state.database = state;
         if result.errors.values().any(|errs| {
             errs.iter()
                 .any(|err| matches!(err, ScillaError::GasNotSufficient))
@@ -694,7 +642,7 @@ fn scilla_call_precompile<I: ScillaInspector>(
         }
 
         // Apply changes made to EVM accounts back to the EVM `JournaledState`.
-        let before = evmctx.journaled_state.state.get_mut(address).unwrap();
+        let before = ctx.journal_mut().state.get_mut(address).unwrap();
 
         // The only thing that Scilla is able to update is the balance.
         if before.info.balance.to::<u128>() != account.account.balance {
@@ -704,11 +652,11 @@ fn scilla_call_precompile<I: ScillaInspector>(
 
         false
     });
-    evmctx.db = state;
+    ctx.journaled_state.database = state;
 
     for log in result.logs {
         let log = log.into_evm();
-        evmctx.journaled_state.log(alloy::primitives::Log {
+        ctx.journaled_state.log(alloy::primitives::Log {
             address: log.address,
             data: LogData::new_unchecked(log.topics, log.data.into()),
         });
@@ -716,12 +664,19 @@ fn scilla_call_precompile<I: ScillaInspector>(
 
     // TODO(#767): Handle transfer to Scilla contract if `result.accepted`.
 
-    Ok(PrecompileOutput::new(
-        if gas_exempt {
-            u64::min(required_gas, gas_limit)
-        } else {
-            required_gas + result.gas_used.0
-        },
-        Bytes::new(),
-    ))
+    let gas_result = if gas_exempt {
+        gas_tracker.record_cost(u64::min(required_gas, input_gas_limit))
+    } else {
+        gas_tracker.record_cost(required_gas + result.gas_used.0)
+    };
+
+    if !gas_result {
+        return oog();
+    }
+
+    Ok(Some(InterpreterResult::new(
+        InstructionResult::default(),
+        Bytes::default(),
+        *gas_tracker,
+    )))
 }
