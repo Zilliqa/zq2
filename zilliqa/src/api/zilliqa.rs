@@ -38,6 +38,7 @@ use crate::{
     api::types::zil::{CreateTransactionResponse, GetTxResponse, RPCErrorCode},
     cfg::EnabledApi,
     crypto::Hash,
+    db::Db,
     exec::zil_contract_address,
     message::Block,
     node::Node,
@@ -478,12 +479,15 @@ fn get_current_mini_epoch(_: Params, node: &Arc<RwLock<Node>>) -> Result<String>
 
 // GetLatestTxBlock
 fn get_latest_tx_block(_: Params, node: &Arc<RwLock<Node>>) -> Result<zil::TxBlock> {
-    let node = node.read();
-    let block = node
-        .get_block(BlockId::finalized())?
-        .ok_or_else(|| anyhow!("no finalized blocks"))?;
+    let (block, db) = {
+        let node = node.read();
+        let block = node
+            .get_block(BlockId::finalized())?
+            .ok_or_else(|| anyhow!("no finalized blocks"))?;
+        (block, node.db.clone())
+    };
 
-    let txn_fees = get_txn_fees_for_block(&node, block.hash())?;
+    let txn_fees = get_txn_fees_for_block(db, block.hash())?;
     let tx_block: zil::TxBlock = zil::TxBlock::new(&block, txn_fees);
     Ok(tx_block)
 }
@@ -574,14 +578,17 @@ fn get_smart_contract_state(params: Params, node: &Arc<RwLock<Node>>) -> Result<
     let address: ZilAddress = seq.next()?;
     let address: Address = address.into();
 
-    let node = node.read();
+    let (state, state_rpc_limit) = {
+        let node = node.read();
 
-    // First get the account and check that its a scilla account
-    let block = node
-        .get_block(BlockId::finalized())?
-        .ok_or_else(|| anyhow!("Unable to get finalized block!"))?;
+        // First get the account and check that its a scilla account
+        let block = node
+            .get_block(BlockId::finalized())?
+            .ok_or_else(|| anyhow!("Unable to get finalized block!"))?;
 
-    let state = node.get_state(&block)?;
+        let state = node.get_state(&block)?;
+        (state, node.config.state_rpc_limit)
+    };
     if !state.has_account(address)? {
         return Err(anyhow!(
             "Address does not exist: {}",
@@ -598,11 +605,9 @@ fn get_smart_contract_state(params: Params, node: &Arc<RwLock<Node>>) -> Result<
     };
 
     if account.code.is_scilla() {
-        let limit = node.config.state_rpc_limit;
-
         let trie = state.get_account_trie(address)?;
         for (i, (k, v)) in trie.iter().flatten().enumerate() {
-            if i >= limit {
+            if i >= state_rpc_limit {
                 return Err(anyhow!(
                     "State of contract returned has size greater than the allowed maximum"
                 ));
@@ -659,11 +664,13 @@ fn get_smart_contract_code(params: Params, node: &Arc<RwLock<Node>>) -> Result<V
     let address: ZilAddress = params.one()?;
     let address: Address = address.into();
 
-    let node = node.read();
-    let block = node
-        .get_block(BlockId::finalized())?
-        .ok_or_else(|| anyhow!("Unable to get the finalized block!"))?;
-    let state = node.get_state(&block)?;
+    let state = {
+        let node = node.read();
+        let block = node
+            .get_block(BlockId::finalized())?
+            .ok_or_else(|| anyhow!("Unable to get the finalized block!"))?;
+        node.get_state(&block)?
+    };
 
     if !state.has_account(address)? {
         return Err(ErrorObject::owned(
@@ -688,12 +695,14 @@ fn get_smart_contract_init(params: Params, node: &Arc<RwLock<Node>>) -> Result<V
     let address: ZilAddress = params.one()?;
     let address: Address = address.into();
 
-    let node = node.read();
-    let block = node
-        .get_block(BlockId::finalized())?
-        .ok_or_else(|| anyhow!("Unable to get the finalized block!"))?;
+    let state = {
+        let node = node.read();
+        let block = node
+            .get_block(BlockId::finalized())?
+            .ok_or_else(|| anyhow!("Unable to get the finalized block!"))?;
 
-    let state = node.get_state(&block)?;
+        node.get_state(&block)?
+    };
 
     if !state.has_account(address)? {
         return Err(ErrorObject::owned(
@@ -719,11 +728,13 @@ fn get_transactions_for_tx_block(
 ) -> Result<Vec<Vec<String>>> {
     let block_number: String = params.one()?;
     let block_number: u64 = block_number.parse()?;
-
-    let node = node.read();
-    let Some(block) = node.get_block(block_number)? else {
+    let Some(block) = ({
+        let node = node.read();
+        node.get_block(block_number)?
+    }) else {
         return Err(anyhow!("Tx Block does not exist"));
     };
+
     if block.transactions.is_empty() {
         return Err(anyhow!("TxBlock has no transactions"));
     }
@@ -745,22 +756,27 @@ fn get_tx_block(params: Params, node: &Arc<RwLock<Node>>) -> Result<Option<zil::
     let block_number: String = params.one()?;
     let block_number: u64 = block_number.parse()?;
 
-    let node = node.read();
-    let Some(block) = node.get_block(block_number)? else {
-        return Ok(None);
+    let (block, db) = {
+        let node = node.read();
+        let Some(block) = node.get_block(block_number)? else {
+            return Ok(None);
+        };
+        if block.number() > node.get_finalized_height()? {
+            return Err(anyhow!("Block not finalized"));
+        }
+
+        (block, node.db.clone())
     };
-    if block.number() > node.get_finalized_height()? {
-        return Err(anyhow!("Block not finalized"));
-    }
-    let txn_fees = get_txn_fees_for_block(&node, block.hash())?;
+
+    let txn_fees = get_txn_fees_for_block(db, block.hash())?;
     let block: zil::TxBlock = zil::TxBlock::new(&block, txn_fees);
 
     Ok(Some(block))
 }
 
-fn get_txn_fees_for_block(node: &Node, hash: Hash) -> Result<EvmGas> {
-    Ok(node
-        .get_transaction_receipts_in_block(hash)?
+fn get_txn_fees_for_block(db: Arc<Db>, hash: Hash) -> Result<EvmGas> {
+    Ok(db
+        .get_transaction_receipts_in_block(&hash)?
         .iter()
         .fold(EvmGas(0), |acc, txnrcpt| acc + txnrcpt.gas_used))
 }
@@ -773,17 +789,20 @@ fn get_tx_block_verbose(
     let block_number: String = params.one()?;
     let block_number: u64 = block_number.parse()?;
 
-    let node = node.read();
-    let Some(block) = node.get_block(block_number)? else {
-        return Ok(None);
+    let (block, proposer, db) = {
+        let node = node.read();
+        let Some(block) = node.get_block(block_number)? else {
+            return Ok(None);
+        };
+        if block.number() > node.get_finalized_height()? {
+            return Err(anyhow!("Block not finalized"));
+        }
+        let proposer = node
+            .get_proposer_reward_address(block.header)?
+            .expect("No proposer");
+        (block, proposer, node.db.clone())
     };
-    if block.number() > node.get_finalized_height()? {
-        return Err(anyhow!("Block not finalized"));
-    }
-    let proposer = node
-        .get_proposer_reward_address(block.header)?
-        .expect("No proposer");
-    let txn_fees = get_txn_fees_for_block(&node, block.hash())?;
+    let txn_fees = get_txn_fees_for_block(db, block.hash())?;
     let block: zil::TxBlockVerbose = zil::TxBlockVerbose::new(&block, txn_fees, proposer);
 
     Ok(Some(block))
@@ -793,13 +812,16 @@ fn get_tx_block_verbose(
 fn get_smart_contracts(params: Params, node: &Arc<RwLock<Node>>) -> Result<Vec<SmartContract>> {
     let address: ZilAddress = params.one()?;
     let address: Address = address.into();
-    let node = node.read();
 
-    let block = node
-        .get_finalized_block()?
-        .ok_or_else(|| anyhow!("Unable to get the finalized block!"))?;
+    let state = {
+        let node = node.read();
 
-    let state = node.get_state(&block)?;
+        let block = node
+            .get_finalized_block()?
+            .ok_or_else(|| anyhow!("Unable to get the finalized block!"))?;
+
+        node.get_state(&block)?
+    };
 
     if !state.has_account(address)? {
         return Err(ErrorObject::owned(
@@ -828,8 +850,7 @@ fn get_smart_contracts(params: Params, node: &Arc<RwLock<Node>>) -> Result<Vec<S
     for i in 0..nonce {
         let contract_address = zil_contract_address(address, i);
 
-        let is_scilla = node
-            .get_state(&block)?
+        let is_scilla = state
             .get_account(contract_address)?
             .code
             .scilla_code_and_init_data()
@@ -1446,20 +1467,27 @@ fn get_smart_contract_sub_state(params: Params, node: &Arc<RwLock<Node>>) -> Res
         x => x,
     };
     let requested_indices: Vec<String> = seq.next()?;
-    let node = node.read();
-    if requested_indices.len() > node.config.state_rpc_limit {
-        return Err(anyhow!(
-            "Requested indices exceed the limit of {}",
-            node.config.state_rpc_limit
-        ));
-    }
 
-    // First get the account and check that its a scilla account
-    let block = node
-        .get_finalized_block()?
-        .ok_or_else(|| anyhow!("Unable to get finalized block!"))?;
+    let (state, node_rpc_limit) = {
+        let node = node.read();
 
-    let state = node.get_state(&block)?;
+        let state_rpc_limit = node.config.state_rpc_limit;
+
+        if requested_indices.len() > node.config.state_rpc_limit {
+            return Err(anyhow!(
+                "Requested indices exceed the limit of {}",
+                node.config.state_rpc_limit
+            ));
+        }
+
+        // First get the account and check that its a scilla account
+        let block = node
+            .get_finalized_block()?
+            .ok_or_else(|| anyhow!("Unable to get finalized block!"))?;
+
+        let state = node.get_state(&block)?;
+        (state, state_rpc_limit)
+    };
 
     if !state.has_account(address)? {
         return Err(ErrorObject::owned(
@@ -1485,10 +1513,10 @@ fn get_smart_contract_sub_state(params: Params, node: &Arc<RwLock<Node>>) -> Res
         let mut n = 0;
         for (k, v) in trie.iter_by_prefix(&prefix)?.flatten() {
             n += 1;
-            if n > node.config.state_rpc_limit {
+            if n > node_rpc_limit {
                 return Err(anyhow!(
                     "Requested indices exceed the limit of {}",
-                    node.config.state_rpc_limit
+                    node_rpc_limit
                 ));
             }
 
