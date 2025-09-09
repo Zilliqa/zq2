@@ -905,7 +905,7 @@ impl Db {
         hash: Hash,
         block: &Block,
     ) -> Result<()> {
-        sqlite_tx.prepare_cached("INSERT OR IGNORE INTO blocks
+        sqlite_tx.prepare_cached("INSERT INTO blocks
         (block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg, is_canonical)
     VALUES (:block_hash, :view, :height, :qc, :signature, :state_root_hash, :transactions_root_hash, :receipts_root_hash, :timestamp, :gas_used, :gas_limit, :agg, TRUE)",)?.execute(
             named_params! {
