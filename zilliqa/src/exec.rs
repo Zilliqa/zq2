@@ -10,10 +10,7 @@ use std::{
     sync::MutexGuard,
 };
 
-use alloy::{
-    consensus::TxType,
-    primitives::{Address, Bytes, U256, address, hex},
-};
+use alloy::primitives::{Address, Bytes, U256, address, hex};
 use anyhow::{Context, Result, anyhow};
 use eth_trie::{EthTrie, Trie};
 use ethabi::Token;
@@ -25,7 +22,7 @@ use revm::{
         BlockEnv, CfgEnv,
         result::{ExecutionResult, HaltReason, Output, ResultAndState},
     },
-    context_interface::{DBErrorMarker, transaction::AccessList},
+    context_interface::{DBErrorMarker, TransactionType, transaction::AccessList},
     handler::EvmTr,
     primitives::{B256, KECCAK_EMPTY},
     state::{AccountInfo, Bytecode, EvmState},
@@ -65,6 +62,7 @@ pub enum ExecType {
 pub struct ExtraOpts {
     pub(crate) disable_eip3607: bool,
     pub(crate) exec_type: ExecType,
+    pub(crate) tx_type: TransactionType,
 }
 
 type ScillaResultAndState = (ScillaResult, HashMap<Address, PendingAccount>);
@@ -480,6 +478,7 @@ impl State {
             ExtraOpts {
                 disable_eip3607: false,
                 exec_type: ExecType::Transact,
+                tx_type: TransactionType::Legacy,
             },
         )?;
 
@@ -603,7 +602,7 @@ impl State {
         let mut evm = ZQ2Evm::new(evm_ctx, inspector);
 
         let tx = TxEnv {
-            tx_type: TxType::Legacy.into(),
+            tx_type: extra_opts.tx_type.into(),
             caller: from_addr.0.into(),
             gas_limit: gas_limit.0,
             gas_price,
@@ -626,6 +625,13 @@ impl State {
                 evm.transact(tx)?
             }
         };
+        if enable_inspector {
+            let touched_address = &evm.0.ctx.chain.touched_address_inspector.touched;
+            let inspector = &mut evm.0.inspector;
+            for touched_address in touched_address.iter() {
+                ScillaInspector::call(inspector, *touched_address, *touched_address, 0, 0);
+            }
+        }
         let ctx_with_handler = evm.ctx();
 
         // If the scilla precompile failed for whitelisted zq1 contract we mark the entire transaction as failed
@@ -639,13 +645,15 @@ impl State {
             .forks
             .get(current_block.number)
             .evm_exec_failure_causes_scilla_precompile_to_fail;
-        let ext_ctx = &ctx_with_handler.chain;
-        if evm_exec_failure_causes_scilla_precompile_to_fail
-            && ext_ctx.has_evm_failed
-            && ext_ctx.has_called_scilla_precompile
-            && extra_opts.exec_type == ExecType::Transact
         {
-            return Self::failed(result_and_state, ctx_with_handler.cfg.clone());
+            let ext_ctx = &ctx_with_handler.chain;
+            if evm_exec_failure_causes_scilla_precompile_to_fail
+                && ext_ctx.has_evm_failed
+                && ext_ctx.has_called_scilla_precompile
+                && extra_opts.exec_type == ExecType::Transact
+            {
+                return Self::failed(result_and_state, ctx_with_handler.cfg.clone());
+            }
         }
 
         let finalized_state = ctx_with_handler.db_mut().finalize();
@@ -835,6 +843,7 @@ impl State {
                     ExtraOpts {
                         disable_eip3607: false,
                         exec_type: ExecType::Transact,
+                        tx_type: txn.revm_transaction_type(),
                     },
                 )?;
 
@@ -1256,6 +1265,7 @@ impl State {
                 ExtraOpts {
                     disable_eip3607: true,
                     exec_type: ExecType::Estimate,
+                    tx_type: TransactionType::Legacy,
                 },
             )?;
 
@@ -1300,6 +1310,7 @@ impl State {
             ExtraOpts {
                 disable_eip3607: true,
                 exec_type: ExecType::Estimate,
+                tx_type: TransactionType::Legacy,
             },
         )?;
 
@@ -1335,6 +1346,7 @@ impl State {
             ExtraOpts {
                 disable_eip3607: true,
                 exec_type: ExecType::Call,
+                tx_type: TransactionType::Legacy,
             },
         )?;
 
@@ -1368,6 +1380,7 @@ impl State {
             ExtraOpts {
                 disable_eip3607: false,
                 exec_type: ExecType::Transact,
+                tx_type: TransactionType::Legacy,
             },
         )?;
         self.apply_delta_evm(&state, current_block.number)?;

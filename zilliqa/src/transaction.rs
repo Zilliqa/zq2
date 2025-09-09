@@ -18,7 +18,7 @@ use anyhow::{Result, anyhow};
 use bytes::{BufMut, BytesMut};
 use itertools::Itertools;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
-use revm::context_interface::transaction::AccessList;
+use revm::context_interface::{TransactionType, transaction::AccessList};
 use revm_context::TxEnv;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
@@ -814,6 +814,16 @@ impl Transaction {
             Transaction::Intershard(_) => 90_73_77,
         }
     }
+
+    pub fn revm_transaction_type(&self) -> TransactionType {
+        match self {
+            Transaction::Legacy(_) => TransactionType::Legacy,
+            Transaction::Eip2930(_) => TransactionType::Eip2930,
+            Transaction::Eip1559(_) => TransactionType::Eip1559,
+            Transaction::Zilliqa(_) => TransactionType::Custom,
+            Transaction::Intershard(_) => TransactionType::Custom,
+        }
+    }
 }
 
 impl TryFrom<VerifiedTransaction> for TxEnv {
@@ -823,7 +833,7 @@ impl TryFrom<VerifiedTransaction> for TxEnv {
         let signer = txn.signer;
         let inner = txn.tx.into_transaction();
         Ok(Self {
-            tx_type: inner.transaction_type().try_into()?,
+            tx_type: inner.revm_transaction_type().into(),
             caller: signer,
             gas_limit: inner.gas_limit().0,
             gas_price: inner.max_fee_per_gas(),

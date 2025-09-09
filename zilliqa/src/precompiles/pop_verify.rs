@@ -18,7 +18,9 @@ impl PopVerify {
         gas_limit: u64,
         _: &mut ZQ2EvmContext,
     ) -> Result<Option<InterpreterResult>, String> {
-        if gas_limit < Self::POP_VERIFY_GAS_PRICE {
+        let mut gas_tracker = Gas::new(gas_limit);
+
+        if !gas_tracker.record_cost(Self::POP_VERIFY_GAS_PRICE) {
             return Err(PrecompileError::OutOfGas.to_string());
         }
 
@@ -48,7 +50,7 @@ impl PopVerify {
         Ok(Some(InterpreterResult::new(
             InstructionResult::default(),
             output.into(),
-            Gas::new_spent(Self::POP_VERIFY_GAS_PRICE),
+            gas_tracker,
         )))
     }
 }
