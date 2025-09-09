@@ -94,7 +94,7 @@ macro_rules! declare_module {
                 .build();
             module
                 .register_method($name, move |params, context, _| {
-                    tracing::debug!("{}: params: {:?}", $name, params);
+                    tracing::debug!("API Call start {}: params: {:?}", $name, params);
                     if !enabled {
                         return Err(jsonrpsee::types::ErrorObject::owned(
                             jsonrpsee::types::error::ErrorCode::InvalidRequest.code(),
@@ -195,6 +195,7 @@ macro_rules! declare_module {
                         start.elapsed().map_or(0.0, |d| d.as_secs_f64()),
                         &attributes,
                     );
+                    tracing::debug!("API Call end {}", $name);
                     result
                 })
                 .unwrap();
