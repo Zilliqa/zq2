@@ -475,7 +475,7 @@ impl Node {
 
     // handle timeout - true if something happened
     pub fn handle_timeout(&mut self) -> Result<bool> {
-        if self.consensus.db.config.active_state_migration {
+        if self.consensus.db.config.state_migration {
             if let Err(e) = self.consensus.migrate_state_trie() {
                 tracing::error!(err=%e, "Migration failed");
             }; // log and ignore errors

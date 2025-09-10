@@ -65,6 +65,8 @@ impl TrieStorage {
             rdb.put(ROCKSDB_CUTOVER_AT, n.to_be_bytes())?;
         };
 
+        // If we start from a checkpoint, this will be Some(u64).
+        // Otherwise, do not migrate any ZQ1 state.
         if rdb.get(ROCKSDB_MIGRATE_AT)?.is_none() {
             let migrate_at = forks
                 .find_height_fork_first_activated(ForkName::ExecutableBlocks)

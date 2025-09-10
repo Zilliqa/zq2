@@ -123,7 +123,7 @@ pub struct DbConfig {
     pub auto_checkpoint: usize,
     /// Active state migration - defaults to false as it can be a 'heavy' operation.
     #[serde(default)]
-    pub active_state_migration: bool,
+    pub state_migration: bool,
 }
 
 fn sql_cache_size_default() -> usize {
@@ -139,7 +139,7 @@ impl Default for DbConfig {
         Self {
             conn_cache_size: sql_cache_size_default(),
             auto_checkpoint: sql_auto_checkpoint_default(),
-            active_state_migration: false,
+            state_migration: false,
         }
     }
 }

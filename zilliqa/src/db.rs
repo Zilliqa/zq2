@@ -571,7 +571,7 @@ impl Db {
         if state_trie.iter().next().is_none()
             && self.get_highest_canonical_block_number()?.is_none()
         {
-            tracing::info!(%hash, "Restoring checkpoint");
+            tracing::info!(%hash, "Restoring checkpoint...");
             let (block, transactions, parent) = crate::checkpoint::load_ckpt(
                 path.as_path(),
                 trie_storage.clone(),
@@ -594,9 +594,8 @@ impl Db {
 
         let (block, transactions, parent) = crate::checkpoint::load_ckpt_blocks(path.as_path())?;
 
-        // OTHER SANITY CHECKS
-        // Check if the parent block is sane
-        let Some(ckpt_parent) = self.get_block(parent.hash().into())? else {
+        // Populated database; check if the parent block exists in the DB.
+        let Some(ckpt_parent) = self.get_transactionless_block(parent.hash().into())? else {
             return Err(anyhow!("Invalid checkpoint attempt"));
         };
         anyhow::ensure!(
@@ -604,20 +603,14 @@ impl Db {
             "Critical checkpoint error"
         );
 
-        // check if state-sync is needed i.e. state is missing
-        if trie_storage
-            .get(ckpt_parent.state_root_hash().as_bytes())?
-            .is_none()
-        {
-            // If the corresponding state is missing, load it from the checkpoint
-            tracing::info!(state = %ckpt_parent.state_root_hash(), "Syncing checkpoint");
-            crate::checkpoint::load_ckpt_state(
-                path.as_path(),
-                trie_storage.clone(),
-                &ckpt_parent.state_root_hash(),
-            )?;
-            return Ok(Some((block, transactions, parent)));
-        }
+        // Since it exists, this must either be a state-sync/state-migration
+        // If this is not desired, remove the config setting.
+        tracing::info!(state = %ckpt_parent.state_root_hash(), "Loading checkpoint...");
+        crate::checkpoint::load_ckpt_state(
+            path.as_path(),
+            trie_storage.clone(),
+            &ckpt_parent.state_root_hash(),
+        )?;
 
         Ok(Some((block, transactions, parent)))
     }
