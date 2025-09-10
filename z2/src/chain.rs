@@ -36,7 +36,7 @@ pub enum Chain {
             genesis_deposits_amount = "20_000_000_000_000_000_000_000_000",
             subdomain = "zq2-devnet.zilliqa.com",
             project_id = "prj-d-zq2-devnet-c83bkpsd",
-            log_level = "zilliqa=trace",
+            log_level = "zilliqa=info",
             enable_kms = "false"
         )
     )]
@@ -49,7 +49,7 @@ pub enum Chain {
             genesis_deposits_amount = "20_000_000_000_000_000_000_000_000",
             subdomain = "zq2-testnet.zilliqa.com",
             project_id = "prj-d-zq2-testnet-g13pnaa8",
-            log_level = "zilliqa=trace",
+            log_level = "zilliqa=info",
             enable_kms = "true"
         )
     )]
@@ -63,7 +63,7 @@ pub enum Chain {
             validator_control_address = "0xf865745c75E585718c8f115A9317E7Fc8e1195f3",
             subdomain = "zq2-mainnet.zilliqa.com",
             project_id = "prj-p-zq2-mainnet-sn5n8wfl",
-            log_level = "zilliqa=trace",
+            log_level = "zilliqa=info",
             enable_kms = "true"
         )
     )]

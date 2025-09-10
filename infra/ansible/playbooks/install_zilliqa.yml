@@ -7,7 +7,6 @@
     - all
 
   tasks:
-
     - name: Clean config temp directory
       delegate_to: localhost
       connection: local
