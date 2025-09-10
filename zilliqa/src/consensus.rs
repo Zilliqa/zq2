@@ -364,6 +364,7 @@ impl Consensus {
             peers.clone(),
         )?;
 
+        let forks = config.consensus.get_forks()?;
         let enable_ots_indices = config.enable_ots_indices;
 
         let mut consensus = Consensus {
@@ -473,7 +474,7 @@ impl Consensus {
         }
 
         // Initialize state trie storage
-        consensus.db.state_trie()?.init_state_trie()?;
+        consensus.db.state_trie()?.init_state_trie(forks)?;
 
         // If timestamp of when current high_qc was written exists then use it to estimate the minimum number of blocks the network has moved on since shut down
         // This is useful in scenarios in which consensus has failed since this node went down
@@ -3595,5 +3596,43 @@ impl Consensus {
 
     pub fn clear_mempool(&self) {
         self.transaction_pool.write().clear();
+    }
+
+    pub fn migrate_state_trie(&mut self) -> Result<()> {
+        let state_trie = self.db.state_trie()?;
+        let mut migrate_at = state_trie.get_migrate_at()?;
+        if migrate_at == u64::MAX {
+            return Ok(()); // done
+        }
+
+        // replay one block - writing new state to RocksDB.
+        let parent_hash = state_trie.get_root_hash(migrate_at.saturating_sub(1))?;
+        if state_trie.state_exists(&parent_hash)? {
+            let brt = self
+                .db
+                .get_block_and_receipts_and_transactions(BlockFilter::Height(migrate_at))?
+                .expect("block must exist");
+            self.replay_proposal(
+                brt.block,
+                brt.transactions.into_iter().map(|t| t.tx).collect_vec(),
+                parent_hash,
+            )?;
+            tracing::info!(number=%migrate_at, "Migrated");
+        }
+
+        // fast forward to next block, skipping empty blocks, up to cutover threshold
+        let cutover_at = state_trie.get_cutover_at()?;
+        let block_hash = state_trie.get_root_hash(migrate_at)?;
+        while migrate_at < cutover_at {
+            migrate_at = migrate_at.saturating_add(1); // check next block
+            if state_trie.get_root_hash(migrate_at)? != block_hash {
+                return state_trie.set_migrate_at(migrate_at);
+            }
+        }
+        // done
+        tracing::info!("Migration complete!");
+        state_trie.set_migrate_at(u64::MAX)?;
+
+        Ok(())
     }
 }

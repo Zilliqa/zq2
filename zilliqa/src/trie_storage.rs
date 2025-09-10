@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use eth_trie::{EthTrie, MemoryDB, Trie};
 use lru_mem::LruCache;
 use parking_lot::RwLock;
 use r2d2::Pool;
@@ -9,8 +8,14 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rocksdb::WriteBatchWithTransaction;
 use rusqlite::OptionalExtension;
 
-use crate::crypto::Hash;
-use crate::state::Account;
+use crate::{
+    cfg::{ForkName, Forks},
+    crypto::Hash,
+};
+
+/// Special storage keys
+const ROCKSDB_MIGRATE_AT: &str = "migrate_at";
+const ROCKSDB_CUTOVER_AT: &str = "cutover_at";
 
 /// An implementor of [eth_trie::DB] which uses a [rocksdb::DB]/[rusqlite::Connection] to persist data.
 #[derive(Debug, Clone)]
@@ -45,124 +50,76 @@ impl TrieStorage {
         Ok(self.kvdb.write(batch)?)
     }
 
-    pub fn init_state_trie(&self) -> Result<()> {
+    pub fn init_state_trie(&self, forks: Forks) -> Result<()> {
         let rdb = self.kvdb.clone();
-        let started_at = match rdb.get(crate::constants::ROCKSDB_STARTED_AT)? {
-            Some(b) => u64::from_be_bytes(b.try_into().expect("must be 8-bytes")),
-            None => {
-                let n = self
-                    .pool
-                    .get()?
-                    .query_one(
-                        "SELECT MAX(height) FROM blocks WHERE is_canonical = 1",
-                        [],
-                        |row| row.get::<_, u64>(0),
-                    )
-                    .unwrap_or_default();
-                rdb.put(crate::constants::ROCKSDB_STARTED_AT, n.to_be_bytes())?;
-                n
-            }
+        if rdb.get(ROCKSDB_CUTOVER_AT)?.is_none() {
+            let n = self
+                .pool
+                .get()?
+                .query_one(
+                    "SELECT MAX(height) FROM blocks WHERE is_canonical = 1",
+                    [],
+                    |row| row.get::<_, u64>(0),
+                )
+                .unwrap_or_default();
+            rdb.put(ROCKSDB_CUTOVER_AT, n.to_be_bytes())?;
         };
-        if rdb.get(crate::constants::ROCKSDB_MIGRATE_AT)?.is_none() {
-            rdb.put(
-                crate::constants::ROCKSDB_MIGRATE_AT,
-                started_at.to_be_bytes(),
-            )?;
+
+        if rdb.get(ROCKSDB_MIGRATE_AT)?.is_none() {
+            let migrate_at = forks
+                .find_height_fork_first_activated(ForkName::ExecutableBlocks)
+                .unwrap_or_default()
+                .saturating_add(1); // start replaying from second lowest block
+            rdb.put(ROCKSDB_MIGRATE_AT, migrate_at.to_be_bytes())?;
         }
+
         Ok(())
     }
 
     #[inline]
-    fn get_migrate_at(&self) -> Result<u64> {
-        Ok(u64::from_be_bytes(
-            self.kvdb
-                .get(crate::constants::ROCKSDB_MIGRATE_AT)?
-                .map(|v| v.try_into().expect("must be 8-bytes"))
-                .expect("inserted at constructor"),
-        ))
+    pub fn get_migrate_at(&self) -> Result<u64> {
+        Ok(self
+            .kvdb
+            .get(ROCKSDB_MIGRATE_AT)?
+            .map(|v| u64::from_be_bytes(v.try_into().expect("must be 8-bytes")))
+            .unwrap_or_default())
     }
 
     #[inline]
-    fn get_root_hash(&self, height: u64) -> Result<Hash> {
+    pub fn get_cutover_at(&self) -> Result<u64> {
         Ok(self
+            .kvdb
+            .get(ROCKSDB_CUTOVER_AT)?
+            .map(|v| u64::from_be_bytes(v.try_into().expect("must be 8-bytes")))
+            .unwrap_or_default())
+    }
+
+    #[inline]
+    pub fn get_root_hash(&self, height: u64) -> Result<Hash> {
+        Ok(self.pool.get()?.query_one(
+            "SELECT state_root_hash FROM blocks WHERE is_canonical = TRUE AND height = ?1",
+            [height],
+            |row| row.get::<_, Hash>(0),
+        )?)
+    }
+
+    #[inline]
+    pub fn set_migrate_at(&self, height: u64) -> Result<()> {
+        self.kvdb.put(ROCKSDB_MIGRATE_AT, height.to_be_bytes())?;
+        Ok(())
+    }
+
+    #[inline]
+    pub fn state_exists(&self, hash: &Hash) -> Result<bool> {
+        let exists = self
             .pool
             .get()?
-            .prepare_cached(
-                "SELECT state_root_hash FROM blocks WHERE is_canonical = TRUE AND height = ?1",
-            )?
-            .query_one([height], |row| row.get::<_, Hash>(0))?)
-    }
-
-    /// Actively migrate state_trie from sqlite to rocksdb.
-    /// By iterating over every node in the trie, flushing the data to disk.
-    pub fn migrate_state_trie(&self) -> Result<()> {
-        let migrate_at = self.get_migrate_at()?;
-        if migrate_at == 0 {
-            // extremely unlikely that the state_root for block_0 == block_N;
-            // so, if height = 0 it means that we're done.
-            // TODO: drop the sqlite state_trie table in a subsequent release.
-            return Ok(());
-        }
-        let root_hash = self.get_root_hash(migrate_at)?;
-
-        let trie_store = Arc::new(Self {
-            pool: self.pool.clone(),
-            cache: self.cache.clone(),
-            kvdb: self.kvdb.clone(),
-        });
-
-        let mut count = 0;
-        // skip if state trie already exists
-        let state_trie = EthTrie::new(trie_store.clone()).at_root(root_hash.into());
-        let mut state_mem = EthTrie::new(Arc::new(MemoryDB::new(true)));
-        for (k, v) in state_trie.iter().flatten() {
-            state_mem.insert(k.as_slice(), v.as_slice())?;
-            count += 1;
-
-            // for each account, load its corresponding storage trie
-            let account_state = Account::try_from(v.as_slice())?.storage_root;
-
-            // skip if storage trie already exists
-            if trie_store
-                .kvdb
-                .get_pinned(account_state.0.as_slice())?
-                .is_none()
-            {
-                let account_trie = EthTrie::new(trie_store.clone()).at_root(account_state.0.into());
-                let mut account_mem = EthTrie::new(Arc::new(MemoryDB::new(true)));
-                account_trie.iter().flatten().for_each(|(k, v)| {
-                    account_mem.insert(k.as_slice(), v.as_slice()).ok();
-                    count += 1;
-                });
-                assert_eq!(account_state, account_mem.root_hash()?);
-                // flush account storage to disk
-                let (keys, values): (Vec<_>, Vec<_>) =
-                    account_mem.db.storage.write().drain().unzip();
-                trie_store.write_batch(keys, values)?;
-            }
-        }
-        // flush new state_trie nodes to disk
-        assert_eq!(root_hash.0, state_mem.root_hash()?.0);
-        let (keys, values) = state_mem.db.storage.write().drain().unzip();
-        trie_store.write_batch(keys, values)?;
-        tracing::debug!(%count, block=%migrate_at, %root_hash, "Migrated");
-
-        // save next migrate_at, fast-reversing past the same states
-        // do this only after successfully migrating the previous migrate_at
-        for n in (0..migrate_at).rev() {
-            let next_root_hash = self.get_root_hash(n)?;
-            if next_root_hash != root_hash {
-                self.kvdb
-                    .put(crate::constants::ROCKSDB_MIGRATE_AT, n.to_be_bytes())?;
-                break;
-            } else if n == 0 {
-                // migration complete
-                tracing::info!("State migration complete");
-                self.kvdb
-                    .put(crate::constants::ROCKSDB_MIGRATE_AT, n.to_be_bytes())?;
-            }
-        }
-        Ok(())
+            .query_row("SELECT 1 FROM state_trie WHERE key = ?1", [hash], |row| {
+                row.get::<_, i32>(0)
+            })
+            .optional()?
+            .is_some();
+        Ok(exists)
     }
 }
 
@@ -198,7 +155,6 @@ impl eth_trie::DB for TrieStorage {
             .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?;
 
         if let Some(value) = value {
-            // lazy migration skipped during manual migration
             self.kvdb
                 .put(key, value.as_slice())
                 .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?;
