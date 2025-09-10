@@ -38,6 +38,7 @@ use crate::{
     api::types::zil::{CreateTransactionResponse, GetTxResponse, RPCErrorCode},
     cfg::EnabledApi,
     crypto::Hash,
+    data_access,
     db::Db,
     exec::zil_contract_address,
     message::Block,
@@ -412,26 +413,25 @@ fn get_transaction(params: Params, node: &Arc<RwLock<Node>>) -> Result<GetTxResp
     let hash: B256 = params.one()?;
     let hash: Hash = Hash(hash.0);
 
-    let node = node.read();
+    let db = node.read().db.clone();
 
-    let tx = node.get_transaction_by_hash(hash)?.ok_or_else(|| {
+    let tx = data_access::get_transaction_by_hash(db.clone(), None, hash)?.ok_or_else(|| {
         ErrorObject::owned(
             RPCErrorCode::RpcDatabaseError as i32,
             "Txn Hash not Present".to_string(),
             jsonrpc_error_data.clone(),
         )
     })?;
-    let receipt = node.get_transaction_receipt(hash)?.ok_or_else(|| {
+    let receipt = data_access::get_transaction_receipt(db.clone(), hash)?.ok_or_else(|| {
         jsonrpsee::types::ErrorObject::owned(
             RPCErrorCode::RpcDatabaseError as i32,
             "Txn Hash not Present".to_string(),
             jsonrpc_error_data.clone(),
         )
     })?;
-    let block = node
-        .get_block(receipt.block_hash)?
+    let block = data_access::get_block_by_hash(db.clone(), &receipt.block_hash)?
         .ok_or_else(|| anyhow!("block does not exist"))?;
-    if block.number() > node.get_finalized_height()? {
+    if block.number() > data_access::get_finalized_height(db)? {
         return Err(ErrorObject::owned(
             RPCErrorCode::RpcDatabaseError as i32,
             "Block not finalized".to_string(),
@@ -448,12 +448,14 @@ fn get_balance(params: Params, node: &Arc<RwLock<Node>>) -> Result<Value> {
     let address: ZilAddress = params.one()?;
     let address: Address = address.into();
 
-    let node = node.read();
-    let block = node
-        .get_block(BlockId::finalized())?
-        .ok_or_else(|| anyhow!("Unable to get finalized block!"))?;
+    let state = {
+        let node = node.read();
+        let block = node
+            .get_block(BlockId::finalized())?
+            .ok_or_else(|| anyhow!("Unable to get finalized block!"))?;
 
-    let state = node.get_state(&block)?;
+        node.get_state(&block)?
+    };
 
     if !state.has_account(address)? {
         return Err(ErrorObject::owned(
@@ -523,27 +525,30 @@ fn get_blockchain_info(_: Params, node: &Arc<RwLock<Node>>) -> Result<Blockchain
     let tx_block_rate = calculate_tx_block_rate(node)?;
     let sharding_structure = get_sharding_structure(Params::new(None), node)?;
 
-    let node = node.read();
+    let (num_peers, db) = {
+        let node = node.read();
 
-    let num_peers = node.get_peer_num();
-    let num_tx_blocks = node.get_finalized_block_number()?;
+        let num_peers = node.get_peer_num();
+        (num_peers, node.db.clone())
+    };
+
+    let num_tx_blocks = data_access::get_finalized_block_number(db.clone())?;
     let num_ds_blocks = (num_tx_blocks / TX_BLOCKS_PER_DS_BLOCK) + 1;
-    let num_transactions = node.consensus.get_num_transactions()?;
+    let num_transactions = data_access::get_num_transactions(db.clone())?;
     let ds_block_rate = tx_block_rate / TX_BLOCKS_PER_DS_BLOCK as f64;
 
     // num_txns_ds_epoch
-    let current_epoch = node.get_finalized_block_number()? / TX_BLOCKS_PER_DS_BLOCK;
+    let current_epoch = num_tx_blocks / TX_BLOCKS_PER_DS_BLOCK;
     let current_epoch_first = current_epoch * TX_BLOCKS_PER_DS_BLOCK;
     let mut num_txns_ds_epoch = 0;
-    for i in current_epoch_first..node.get_finalized_block_number()? {
-        let block = node
-            .get_block(i)?
+    for i in current_epoch_first..num_tx_blocks {
+        let block = data_access::get_block_by_number(db.clone(), i)?
             .ok_or_else(|| anyhow!("Block not found"))?;
         num_txns_ds_epoch += block.transactions.len();
     }
 
     // num_txns_tx_epoch
-    let finalized_block = node.get_finalized_block()?;
+    let finalized_block = data_access::get_finalized_block(db.clone())?;
     let num_txns_tx_epoch = match finalized_block {
         Some(block) => block.transactions.len(),
         None => 0,
@@ -581,7 +586,7 @@ fn get_smart_contract_state(params: Params, node: &Arc<RwLock<Node>>) -> Result<
     let (state, state_rpc_limit) = {
         let node = node.read();
 
-        // First get the account and check that its a scilla account
+        // First get the account and check that it's a scilla account
         let block = node
             .get_block(BlockId::finalized())?
             .ok_or_else(|| anyhow!("Unable to get finalized block!"))?;
@@ -940,8 +945,8 @@ pub fn get_ds_block_verbose(params: Params, _node: &Arc<RwLock<Node>>) -> Result
 // GetLatestDSBlock
 pub fn get_latest_ds_block(_params: Params, node: &Arc<RwLock<Node>>) -> Result<DSBlock> {
     // Dummy implementation
-    let node = node.read();
-    let num_tx_blocks = node.get_finalized_block_number()?;
+    let db = node.read().db.clone();
+    let num_tx_blocks = data_access::get_finalized_block_number(db)?;
     let num_ds_blocks = (num_tx_blocks / TX_BLOCKS_PER_DS_BLOCK) + 1;
     Ok(get_example_ds_block(num_ds_blocks, num_tx_blocks))
 }
@@ -966,8 +971,8 @@ pub fn get_current_ds_comm(
 // GetCurrentDSEpoch
 pub fn get_current_ds_epoch(_params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
     // Dummy implementation
-    let node = node.read();
-    let num_tx_blocks = node.get_finalized_block_number()?;
+    let db = node.read().db.clone();
+    let num_tx_blocks = data_access::get_finalized_block_number(db)?;
     let num_ds_blocks = (num_tx_blocks / TX_BLOCKS_PER_DS_BLOCK) + 1;
     Ok(num_ds_blocks.to_string())
 }
@@ -1011,16 +1016,16 @@ pub fn ds_block_listing(params: Params, node: &Arc<RwLock<Node>>) -> Result<DSBl
 
 // utility function to calculate the tx block rate for get_ds_block_rate and get_tx_block_rate
 pub fn calculate_tx_block_rate(node: &Arc<RwLock<Node>>) -> Result<f64> {
-    let node = node.read();
+    let db = node.read().db.clone();
     let max_measurement_blocks = 5;
-    let height = node.get_finalized_block_number()?;
+    let height = data_access::get_finalized_block_number(db.clone())?;
     if height == 0 {
         return Ok(0.0);
     }
     let measurement_blocks = height.min(max_measurement_blocks);
-    let start_measure_block = node
-        .get_block(height - measurement_blocks + 1)?
-        .ok_or(anyhow!("Unable to get block"))?;
+    let start_measure_block =
+        data_access::get_block_by_number(db, height - measurement_blocks + 1)?
+            .ok_or(anyhow!("Unable to get block"))?;
     let start_measure_time = start_measure_block.header.timestamp;
     let end_measure_time = SystemTime::now();
     let elapsed_time = end_measure_time.duration_since(start_measure_time)?;
@@ -1049,8 +1054,8 @@ fn get_tx_block_rate(_params: Params, node: &Arc<RwLock<Node>>) -> Result<TXBloc
 fn tx_block_listing(params: Params, node: &Arc<RwLock<Node>>) -> Result<TxBlockListingResult> {
     let page_number: u64 = params.one()?;
 
-    let node = node.read();
-    let num_tx_blocks = node.get_finalized_block_number()?;
+    let db = node.read().db.clone();
+    let num_tx_blocks = data_access::get_finalized_block_number(db.clone())?;
     let max_pages = (num_tx_blocks / 10) + if num_tx_blocks % 10 == 0 { 0 } else { 1 };
 
     if page_number == 0 || page_number > max_pages {
@@ -1066,7 +1071,7 @@ fn tx_block_listing(params: Params, node: &Arc<RwLock<Node>>) -> Result<TxBlockL
     let listings: Vec<TxBlockListing> = (start_block..end_block)
         .rev()
         .filter_map(|block_number| {
-            node.get_block(block_number)
+            data_access::get_block_by_number(db.clone(), block_number)
                 .ok()
                 .flatten()
                 .map(|block| TxBlockListing {
@@ -1092,17 +1097,15 @@ fn get_num_peers(_params: Params, node: &Arc<RwLock<Node>>) -> Result<u64> {
 // GetTransactionRate
 // Calculates transaction rate over the most recent block
 fn get_tx_rate(_params: Params, node: &Arc<RwLock<Node>>) -> Result<f64> {
-    let node = node.read();
-    let head_block_num = node.get_finalized_block_number()?;
+    let db = node.read().db.clone();
+    let head_block_num = data_access::get_finalized_block_number(db.clone())?;
     if head_block_num <= 1 {
         return Ok(0.0);
     }
     let prev_block_num = head_block_num - 1;
-    let head_block = node
-        .get_block(head_block_num)?
+    let head_block = data_access::get_block_by_number(db.clone(), head_block_num)?
         .ok_or(anyhow!("Unable to get block"))?;
-    let prev_block = node
-        .get_block(prev_block_num)?
+    let prev_block = data_access::get_block_by_number(db, prev_block_num)?
         .ok_or(anyhow!("Unable to get block"))?;
     let transactions_both = prev_block.transactions.len() + head_block.transactions.len();
     let time_between = head_block
@@ -1124,11 +1127,10 @@ fn get_transactions_for_tx_block_ex(
     let block_number: u64 = block_number.parse()?;
     let page_number: usize = page_number.parse()?;
 
-    let node = node.read();
-    let block = node
-        .get_block(block_number)?
+    let db = node.read().db.clone();
+    let block = data_access::get_block_by_number(db.clone(), block_number)?
         .ok_or_else(|| anyhow!("Block not found"))?;
-    if block.number() > node.get_finalized_height()? {
+    if block.number() > data_access::get_finalized_height(db.clone())? {
         return Err(anyhow!("Block not finalized"));
     }
 
@@ -1165,18 +1167,16 @@ fn get_transactions_for_tx_block_ex(
 }
 
 // GetTransactionsForTxBlockEx
-fn extract_transaction_bodies(block: &Block, node: &Node) -> Result<Vec<TransactionBody>> {
+fn extract_transaction_bodies(block: &Block, db: Arc<Db>) -> Result<Vec<TransactionBody>> {
     let mut transactions = Vec::with_capacity(block.transactions.len());
     for hash in &block.transactions {
-        let tx = node
-            .get_transaction_by_hash(*hash)?
+        let tx = data_access::get_transaction_by_hash(db.clone(), None, *hash)?
             .ok_or(anyhow!("Transaction hash missing"))?;
         let nonce = tx.tx.nonce().unwrap_or_default();
         let amount = tx.tx.zil_amount();
         let gas_price = tx.tx.gas_price_per_scilla_gas();
         let gas_limit = tx.tx.gas_limit_scilla();
-        let receipt = node
-            .get_transaction_receipt(*hash)?
+        let receipt = data_access::get_transaction_receipt(db.clone(), *hash)?
             .ok_or(anyhow!("Transaction receipt missing"))?;
         let receipt_response = ReceiptResponse::new(receipt, block.number());
         let (version, to_addr, sender_pub_key, signature, code, data) = match tx.tx {
@@ -1258,16 +1258,15 @@ fn get_txn_bodies_for_tx_block(
     let params: Vec<String> = params.parse()?;
     let block_number: u64 = params[0].parse()?;
 
-    let node = node.read();
-    let block = node
-        .get_block(block_number)?
+    let db = node.read().db.clone();
+    let block = data_access::get_block_by_number(db.clone(), block_number)?
         .ok_or_else(|| anyhow!("Block not found"))?;
 
-    if block.number() > node.get_finalized_height()? {
+    if block.number() > data_access::get_finalized_height(db.clone())? {
         return Err(anyhow!("Block not finalized"));
     }
 
-    extract_transaction_bodies(&block, &node)
+    extract_transaction_bodies(&block, db)
 }
 
 // GetTxnBodiesForTxBlockEx
@@ -1279,12 +1278,11 @@ fn get_txn_bodies_for_tx_block_ex(
     let block_number: u64 = params[0].parse()?;
     let page_number: usize = params[1].parse()?;
 
-    let node = node.read();
-    let block = node
-        .get_block(block_number)?
+    let db = node.read().db.clone();
+    let block = data_access::get_block_by_number(db.clone(), block_number)?
         .ok_or_else(|| anyhow!("Block not found"))?;
 
-    if block.number() > node.get_finalized_height()? {
+    if block.number() > data_access::get_finalized_height(db.clone())? {
         return Err(anyhow!("Block not finalized"));
     }
 
@@ -1308,7 +1306,7 @@ fn get_txn_bodies_for_tx_block_ex(
     let start = std::cmp::min(page_number * TRANSACTIONS_PER_PAGE, total_transactions);
     let end = std::cmp::min(start + TRANSACTIONS_PER_PAGE, total_transactions);
 
-    let transactions = extract_transaction_bodies(&block, &node)?
+    let transactions = extract_transaction_bodies(&block, db)?
         .into_iter()
         .skip(start)
         .take(end - start)
@@ -1323,8 +1321,8 @@ fn get_txn_bodies_for_tx_block_ex(
 
 // GetNumDSBlocks
 fn get_num_ds_blocks(_params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
-    let node = node.read();
-    let num_tx_blocks = node.get_finalized_block_number()?;
+    let db = node.read().db.clone();
+    let num_tx_blocks = data_access::get_finalized_block_number(db)?;
     let num_ds_blocks = (num_tx_blocks / TX_BLOCKS_PER_DS_BLOCK) + 1;
     Ok(num_ds_blocks.to_string())
 }
@@ -1334,12 +1332,12 @@ fn get_recent_transactions(
     _params: Params,
     node: &Arc<RwLock<Node>>,
 ) -> Result<RecentTransactionsResponse> {
-    let node = node.read();
-    let mut block_number = node.get_finalized_block_number()?;
+    let db = node.read().db.clone();
+    let mut block_number = data_access::get_finalized_block_number(db.clone())?;
     let mut txns = Vec::new();
     let mut blocks_searched = 0;
     while block_number > 0 && txns.len() < 100 && blocks_searched < 100 {
-        let block = match node.get_block(block_number)? {
+        let block = match data_access::get_block_by_number(db.clone(), block_number)? {
             Some(block) => block,
             None => continue,
         };
@@ -1361,15 +1359,15 @@ fn get_recent_transactions(
 
 // GetNumTransactions
 fn get_num_transactions(_params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
-    let node = node.read();
-    let num_transactions = node.consensus.get_num_transactions()?;
+    let db = node.read().db.clone();
+    let num_transactions = data_access::get_num_transactions(db)?;
     Ok(num_transactions.to_string())
 }
 
 // GetNumTxnsTXEpoch
 fn get_num_txns_tx_epoch(_params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
-    let node = node.read();
-    let finalized_block = node.get_finalized_block()?;
+    let db = node.read().db.clone();
+    let finalized_block = data_access::get_finalized_block(db)?;
     let num_transactions = match finalized_block {
         Some(block) => block.transactions.len(),
         None => 0,
@@ -1379,14 +1377,13 @@ fn get_num_txns_tx_epoch(_params: Params, node: &Arc<RwLock<Node>>) -> Result<St
 
 // GetNumTxnsDSEpoch
 fn get_num_txns_ds_epoch(_params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
-    let node = node.read();
+    let db = node.read().db.clone();
     let ds_epoch_size = TX_BLOCKS_PER_DS_BLOCK;
-    let current_epoch = node.get_finalized_block_number()? / ds_epoch_size;
+    let current_epoch = data_access::get_finalized_block_number(db.clone())? / ds_epoch_size;
     let current_epoch_first = current_epoch * ds_epoch_size;
     let mut num_txns_epoch = 0;
-    for i in current_epoch_first..node.get_finalized_block_number()? {
-        let block = node
-            .get_block(i)?
+    for i in current_epoch_first..current_epoch {
+        let block = data_access::get_block_by_number(db.clone(), i)?
             .ok_or_else(|| anyhow!("Block not found"))?;
         num_txns_epoch += block.transactions.len();
     }
@@ -1398,16 +1395,18 @@ fn get_total_coin_supply_as_zil_amount(
     _params: Params,
     node: &Arc<RwLock<Node>>,
 ) -> Result<ZilAmount> {
-    let node = node.read();
-    let finalized_block_number = node.get_finalized_block_number()?;
-    let null_address_balance = node
-        .consensus
-        .state_at(finalized_block_number)?
-        .unwrap()
-        .get_account(Address::ZERO)
-        .unwrap()
-        .balance;
-    let native_supply = node.config.consensus.total_native_token_supply.0;
+    let (state, native_supply) = {
+        let node = node.read();
+        let native_supply = node.config.consensus.total_native_token_supply.0;
+        let finalized_block_number = node
+            .get_finalized_block()?
+            .ok_or(anyhow!("Cannot find finalized block"))?;
+        let state = node.get_state(&finalized_block_number)?;
+        (state, native_supply)
+    };
+
+    let null_address_balance = state.get_account(Address::ZERO)?.balance;
+
     Ok(ZilAmount::from_amount(native_supply - null_address_balance))
 }
 

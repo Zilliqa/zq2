@@ -104,26 +104,34 @@ fn get_block_transactions(
     let page_number: usize = params.next()?;
     let page_size: usize = params.next()?;
 
-    let node = node.read();
+    let (pool, db, miner, block, block_gas_limit) = {
+        let node = node.read();
 
-    let Some(block) = node.get_block(block_number)? else {
-        return Ok(None);
+        let Some(block) = node.get_block(block_number)? else {
+            return Ok(None);
+        };
+        let miner = node.get_proposer_reward_address(block.header)?;
+        (
+            node.consensus.transaction_pool.clone(),
+            node.db.clone(),
+            miner,
+            block,
+            node.config.consensus.eth_block_gas_limit,
+        )
     };
-    let miner = node.get_proposer_reward_address(block.header)?;
 
     let start = usize::min(page_number * page_size, block.transactions.len());
     let end = usize::min((page_number + 1) * page_size, block.transactions.len());
 
-    let receipts = old_get_block_transaction_receipts_inner(&node, block_number)?;
+    let receipts = old_get_block_transaction_receipts_inner(db.clone(), &block)?;
     let transactions = block.transactions[start..end]
         .iter()
-        .map(|hash| get_transaction_inner(*hash, &node))
+        .map(|hash| get_transaction_inner(*hash, pool.clone(), db.clone()))
         .collect::<Result<Vec<_>>>()?
         .into_iter()
         .flatten()
         .collect::<Vec<_>>();
 
-    let block_gas_limit = node.config.consensus.eth_block_gas_limit;
     let full_block = ots::BlockWithTransactions {
         transactions,
         block: ots::Block::from_block(&block, miner.unwrap_or_default(), block_gas_limit),
@@ -259,8 +267,15 @@ fn search_transactions_inner(
     // This will be set to false if we break out of the loop, indicating to the caller there are further pages.
     let mut finished = true;
 
+    let (pool, db) = {
+        let node = node.read();
+        (node.consensus.transaction_pool.clone(), node.db.clone())
+    };
+
     for hash in touched {
-        let txn = get_transaction_inner(hash, &node.read()).unwrap().unwrap();
+        let txn = get_transaction_inner(hash, pool.clone(), db.clone())
+            .unwrap()
+            .unwrap();
 
         let txn_block_number = match txn.block_number {
             Some(txn_block_number) => txn_block_number,

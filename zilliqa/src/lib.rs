@@ -7,6 +7,7 @@ pub mod consensus;
 pub mod constants;
 pub mod contracts;
 pub mod crypto;
+mod data_access;
 pub mod db;
 mod error;
 pub mod exec;

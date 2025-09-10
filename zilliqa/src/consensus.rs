@@ -224,7 +224,7 @@ pub struct Consensus {
     pub db: Arc<Db>,
     receipts_cache: Mutex<ReceiptsCache>,
     /// Actions that act on newly created blocks
-    pub transaction_pool: RwLock<TransactionPool>,
+    pub transaction_pool: Arc<RwLock<TransactionPool>>,
     /// Pending proposal. Gets created as soon as we become aware that we are leader for this view.
     early_proposal: RwLock<Option<EarlyProposal>>,
     /// Flag indicating that block broadcasting should be postponed at least until block_time is reached
@@ -3537,8 +3537,8 @@ impl Consensus {
         Ok(range)
     }
 
-    pub fn get_sync_data(&self) -> Result<Option<SyncingStruct>> {
-        self.sync.get_sync_data()
+    pub fn get_sync_data(&self, db: Arc<Db>) -> Result<Option<SyncingStruct>> {
+        self.sync.get_sync_data(db)
     }
 
     /// This function is intended for use only by admin_forceView API. It is dangerous and should not be touched outside of testing or test network recovery.

@@ -100,21 +100,21 @@ async fn main() -> Result<()> {
         "At least one shard must be configured"
     );
 
-    // if let Some(endpoint) = &config.otlp_collector_endpoint {
-    //     let export_config = ExportConfig {
-    //         endpoint: Some(endpoint.clone()),
-    //         ..Default::default()
-    //     };
-    //     let exporter = opentelemetry_otlp::MetricExporter::builder()
-    //         .with_tonic()
-    //         .with_export_config(export_config)
-    //         .build()?;
-    //     let reader = PeriodicReader::builder(exporter).build();
-    //     let provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
-    //         .with_reader(reader)
-    //         .build();
-    //     opentelemetry::global::set_meter_provider(provider);
-    // };
+    if let Some(endpoint) = &config.otlp_collector_endpoint {
+        let export_config = ExportConfig {
+            endpoint: Some(endpoint.clone()),
+            ..Default::default()
+        };
+        let exporter = opentelemetry_otlp::MetricExporter::builder()
+            .with_tonic()
+            .with_export_config(export_config)
+            .build()?;
+        let reader = PeriodicReader::builder(exporter).build();
+        let provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
+            .with_reader(reader)
+            .build();
+        opentelemetry::global::set_meter_provider(provider);
+    };
 
     let mut node = P2pNode::new(args.secret_key, config.clone())?;
 

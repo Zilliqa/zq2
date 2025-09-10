@@ -40,11 +40,13 @@ use crate::{
     cfg::EnabledApi,
     constants::BASE_FEE_PER_GAS,
     crypto::Hash,
+    data_access,
+    db::Db,
     error::ensure_success,
     exec::zil_contract_address,
     message::Block,
     node::Node,
-    pool::TxAddResult,
+    pool::{TransactionPool, TxAddResult},
     state::Code,
     time::SystemTime,
     transaction::{EvmGas, Log, SignedTransaction, VerifiedTransaction},
@@ -197,8 +199,8 @@ fn accounts(params: Params, _: &Arc<RwLock<Node>>) -> Result<[(); 0]> {
 
 fn block_number(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
     expect_end_of_params(&mut params.sequence(), 0, 0)?;
-    let node = node.read();
-    Ok(node.consensus.get_highest_canonical_block_number().to_hex())
+    let db = node.read().db.clone();
+    Ok(data_access::get_highest_canonical_block_number(db).to_hex())
 }
 
 fn call_many(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
@@ -212,12 +214,20 @@ fn call(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
     let block_id: BlockId = params.optional_next()?.unwrap_or_default();
     expect_end_of_params(&mut params, 1, 2)?;
 
-    let node = node.read();
-    let block = node.get_block(block_id)?;
-    let block = build_errored_response_for_missing_block(block_id, block)?;
+    let (state, block) = {
+        let node = node.read();
+        let block = node.get_block(block_id)?;
+        let block = build_errored_response_for_missing_block(block_id, block)?;
+        let state = node.get_state(&block)?;
+        (state, block)
+    };
+    if state.is_empty() {
+        return Err(anyhow!("State required to execute request does not exist"));
+    }
 
-    let result = node.call_contract(
-        &block,
+    trace!("call_contract: block={:?}", block);
+
+    let result = state.call_contract(
         call_params.from,
         call_params.to,
         call_params
@@ -226,6 +236,7 @@ fn call(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
             .unwrap_or_default()
             .to_vec(),
         call_params.value.to(),
+        block.header,
     )?;
 
     match ensure_success(result) {
@@ -245,8 +256,19 @@ fn estimate_gas(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
     let block_number: BlockNumberOrTag = params.optional_next()?.unwrap_or_default();
     expect_end_of_params(&mut params, 1, 2)?;
 
-    let return_value = node.read().estimate_gas(
-        block_number,
+    let (block, state) = {
+        let node = node.read();
+        let block = node
+            .get_block(block_number)?
+            .ok_or_else(|| anyhow!("missing block: {block_number}"))?;
+        let state = node.get_state(&block)?;
+        if state.is_empty() {
+            return Err(anyhow!("State required to execute request does not exist"));
+        }
+        (block, state)
+    };
+
+    let return_value = state.estimate_gas(
         call_params.from,
         call_params.to,
         call_params
@@ -254,6 +276,7 @@ fn estimate_gas(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
             .try_into_unique_input()?
             .unwrap_or_default()
             .to_vec(),
+        block.header,
         call_params.gas.map(|g| EvmGas(g.to())),
         call_params.gas_price.map(|g| g.to()),
         call_params.value.to(),
@@ -271,16 +294,15 @@ fn get_balance(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
     let block_id: BlockId = params.next()?;
     expect_end_of_params(&mut params, 2, 2)?;
 
-    let node = node.read();
-    let block = node.get_block(block_id)?;
+    let state = {
+        let node = node.read();
+        let block = node.get_block(block_id)?;
 
-    let block = build_errored_response_for_missing_block(block_id, block)?;
+        let block = build_errored_response_for_missing_block(block_id, block)?;
+        node.get_state(&block)?
+    };
 
-    Ok(node
-        .get_state(&block)?
-        .get_account(address)?
-        .balance
-        .to_hex())
+    Ok(state.get_account(address)?.balance.to_hex())
 }
 
 pub fn brt_to_eth_receipts(
@@ -367,22 +389,20 @@ pub fn brt_to_eth_receipts(
 }
 
 pub fn old_get_block_transaction_receipts_inner(
-    node: &RwLockReadGuard<Node>,
-    block_id: impl Into<BlockId>,
+    db: Arc<Db>,
+    block: &Block,
 ) -> Result<Vec<eth::TransactionReceipt>> {
-    let Some(block) = node.get_block(block_id)? else {
-        return Err(anyhow!("Block not found"));
-    };
-
     let mut log_index = 0;
     let mut receipts = Vec::new();
 
-    let receipts_retrieved = node.get_transaction_receipts_in_block(block.header.hash)?;
+    let receipts_retrieved =
+        data_access::get_transaction_receipts_in_block(db.clone(), block.header.hash)?;
 
     for (transaction_index, receipt_retrieved) in receipts_retrieved.iter().enumerate() {
         // This could maybe be a bit faster if we had a db function that queried transactions by
         // block hash, joined on receipts, but this would be quite a bit of new code.
-        let Some(verified_transaction) = node.get_transaction_by_hash(receipt_retrieved.tx_hash)?
+        let Some(verified_transaction) =
+            data_access::get_transaction_by_hash(db.clone(), None, receipt_retrieved.tx_hash)?
         else {
             warn!(
                 "Failed to get TX by hash when getting TX receipt! {}",
@@ -465,7 +485,13 @@ pub fn get_transaction_receipt_inner_slow(
     block_id: impl Into<BlockId>,
     txn_hash: Hash,
 ) -> Result<Option<eth::TransactionReceipt>> {
-    let receipts = old_get_block_transaction_receipts_inner(node, block_id)?;
+    let (db, block) = {
+        let Some(block) = node.get_block(block_id)? else {
+            return Err(anyhow!("Block not found"));
+        };
+        (node.db.clone(), block)
+    };
+    let receipts = old_get_block_transaction_receipts_inner(db, &block)?;
     Ok(receipts
         .into_iter()
         .find(|r| r.transaction_hash == txn_hash.as_bytes()))
@@ -473,9 +499,16 @@ pub fn get_transaction_receipt_inner_slow(
 
 fn get_block_receipts(params: Params, node: &Arc<RwLock<Node>>) -> Result<Vec<TransactionReceipt>> {
     let block_id: BlockId = params.one()?;
-    let node = node.read();
 
-    old_get_block_transaction_receipts_inner(&node, block_id)
+    let (db, block) = {
+        let node = node.read();
+        let Some(block) = node.get_block(block_id)? else {
+            return Err(anyhow!("Block not found"));
+        };
+        (node.db.clone(), block)
+    };
+
+    old_get_block_transaction_receipts_inner(db, &block)
 }
 
 fn get_code(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
@@ -484,13 +517,16 @@ fn get_code(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
     let block_id: BlockId = params.next()?;
     expect_end_of_params(&mut params, 2, 2)?;
 
-    let node = node.read();
-    let block = node.get_block(block_id)?;
+    let state = {
+        let node = node.read();
+        let block = node.get_block(block_id)?;
 
-    let block = build_errored_response_for_missing_block(block_id, block)?;
+        let block = build_errored_response_for_missing_block(block_id, block)?;
+        node.get_state(&block)?
+    };
 
     // For compatibility with Zilliqa 1, eth_getCode also returns Scilla code if any is present.
-    let code = node.get_state(&block)?.get_account(address)?.code;
+    let code = state.get_account(address)?.code;
 
     // do it this way so the compiler will tell us when another option inevitably
     // turns up and we have to deal with it ..
@@ -514,13 +550,14 @@ fn get_storage_at(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
     let block_id: BlockId = params.next()?;
     expect_end_of_params(&mut params, 3, 3)?;
 
-    let node = node.read();
-    let block = node.get_block(block_id)?;
-    let block = build_errored_response_for_missing_block(block_id, block)?;
+    let state = {
+        let node = node.read();
+        let block = node.get_block(block_id)?;
+        let block = build_errored_response_for_missing_block(block_id, block)?;
+        node.get_state(&block)?
+    };
 
-    let value = node
-        .get_state(&block)?
-        .get_account_storage(address, position)?;
+    let value = state.get_account_storage(address, position)?;
 
     Ok(value.to_hex())
 }
@@ -730,16 +767,24 @@ fn get_transaction_by_block_hash_and_index(
     let block_hash: B256 = params.next()?;
     let index: U64 = params.next()?;
     expect_end_of_params(&mut params, 2, 2)?;
-    let node = node.read();
 
-    let Some(block) = node.get_block(block_hash)? else {
-        return Ok(None);
-    };
-    let Some(txn_hash) = block.transactions.get(index.to::<usize>()) else {
-        return Ok(None);
+    let (pool, db, txn_hash) = {
+        let node = node.read();
+
+        let Some(block) = node.get_block(block_hash)? else {
+            return Ok(None);
+        };
+        let Some(txn_hash) = block.transactions.get(index.to::<usize>()).copied() else {
+            return Ok(None);
+        };
+        (
+            node.consensus.transaction_pool.clone(),
+            node.db.clone(),
+            txn_hash,
+        )
     };
 
-    get_transaction_inner(*txn_hash, &node)
+    get_transaction_inner(txn_hash, pool, db)
 }
 
 fn get_transaction_by_block_number_and_index(
@@ -751,16 +796,23 @@ fn get_transaction_by_block_number_and_index(
     let index: U64 = params.next()?;
     expect_end_of_params(&mut params, 2, 2)?;
 
-    let node = node.read();
+    let (pool, db, txn_hash) = {
+        let node = node.read();
 
-    let Some(block) = node.get_block(block_number)? else {
-        return Ok(None);
-    };
-    let Some(txn_hash) = block.transactions.get(index.to::<usize>()) else {
-        return Ok(None);
+        let Some(block) = node.get_block(block_number)? else {
+            return Ok(None);
+        };
+        let Some(txn_hash) = block.transactions.get(index.to::<usize>()).copied() else {
+            return Ok(None);
+        };
+        (
+            node.consensus.transaction_pool.clone(),
+            node.db.clone(),
+            txn_hash,
+        )
     };
 
-    get_transaction_inner(*txn_hash, &node)
+    get_transaction_inner(txn_hash, pool, db)
 }
 
 fn get_transaction_by_hash(
@@ -769,22 +821,26 @@ fn get_transaction_by_hash(
 ) -> Result<Option<eth::Transaction>> {
     let hash: B256 = params.one()?;
     let hash: Hash = Hash(hash.0);
-    let node = node.read();
+    let (pool, db) = {
+        let node = node.read();
+        (node.consensus.transaction_pool.clone(), node.db.clone())
+    };
 
-    get_transaction_inner(hash, &node)
+    get_transaction_inner(hash, pool, db)
 }
 
 pub(super) fn get_transaction_inner(
     hash: Hash,
-    node: &RwLockReadGuard<Node>,
+    pool: Arc<RwLock<TransactionPool>>,
+    db: Arc<Db>,
 ) -> Result<Option<eth::Transaction>> {
-    let Some(tx) = node.get_transaction_by_hash(hash)? else {
+    let Some(tx) = data_access::get_transaction_by_hash(db.clone(), Some(pool), hash)? else {
         return Ok(None);
     };
 
     // The block can either be null or some based on whether the tx exists
-    let block = if let Some(receipt) = node.get_transaction_receipt(hash)? {
-        node.get_block(receipt.block_hash)?
+    let block = if let Some(receipt) = data_access::get_transaction_receipt(db.clone(), hash)? {
+        data_access::get_block_by_hash(db.clone(), &receipt.block_hash)?
     } else {
         // Even if it has not been mined, the tx may still be in the mempool and should return
         // a correct tx, with pending/null fields
@@ -893,7 +949,8 @@ fn protocol_version(_: Params, _: &Arc<RwLock<Node>>) -> Result<String> {
 
 fn syncing(params: Params, node: &Arc<RwLock<Node>>) -> Result<SyncingResult> {
     expect_end_of_params(&mut params.sequence(), 0, 0)?;
-    if let Some(result) = node.read().consensus.get_sync_data()? {
+    let db = node.read().consensus.db.clone();
+    if let Some(result) = node.read().consensus.get_sync_data(db)? {
         Ok(SyncingResult::Struct(result))
     } else {
         Ok(SyncingResult::Bool(false))
@@ -955,10 +1012,13 @@ async fn subscribe(
                 if !filter.filter_block_hash(receipt.block_hash.into()) {
                     continue;
                 }
+                let block = node_lock
+                    .get_block(receipt.block_hash)?
+                    .ok_or("Block not found")?;
 
                 // We track log index plus one because we have to increment before we use the log index, and log indexes are 0-based.
                 let mut log_index_plus_one: i64 =
-                    old_get_block_transaction_receipts_inner(&node_lock, receipt.block_hash)?
+                    old_get_block_transaction_receipts_inner(node_lock.db.clone(), &block)?
                         .iter()
                         .take_while(|x| x.transaction_index < receipt.index)
                         .map(|x| x.logs.len())
@@ -1088,11 +1148,14 @@ fn fee_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<FeeHistory> {
     }
     expect_end_of_params(&mut params, 2, 3)?;
 
-    let node = node.read();
-    let newest_block_number = node
-        .resolve_block_number(newest_block)?
-        .ok_or_else(|| anyhow!("block not found"))?
-        .number();
+    let (newest_block_number, gas_price, db) = {
+        let node = node.read();
+        let number = node
+            .resolve_block_number(newest_block)?
+            .ok_or_else(|| anyhow!("block not found"))?
+            .number();
+        (number, node.config.consensus.gas_price, node.db.clone())
+    };
     if newest_block_number < block_count {
         warn!("block_count is greater than newest_block");
         block_count = newest_block_number;
@@ -1101,8 +1164,7 @@ fn fee_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<FeeHistory> {
     let oldest_block = newest_block_number - block_count + 1;
     let (reward, gas_used_ratio) = (oldest_block..=newest_block_number)
         .map(|block_number| {
-            let block = node
-                .get_block(BlockNumberOrTag::Number(block_number))?
+            let block = data_access::get_block_by_number(db.clone(), block_number)?
                 .ok_or_else(|| anyhow!("block not found"))?;
 
             let reward = if let Some(reward_percentiles) = reward_percentiles.as_ref() {
@@ -1110,8 +1172,7 @@ fn fee_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<FeeHistory> {
                     .transactions
                     .iter()
                     .map(|tx_hash| {
-                        let tx = node
-                            .get_transaction_by_hash(*tx_hash)?
+                        let tx = data_access::get_transaction_by_hash(db.clone(), None, *tx_hash)?
                             .ok_or_else(|| anyhow!("transaction not found: {}", tx_hash))?;
                         Ok(tx.tx.effective_gas_price(BASE_FEE_PER_GAS))
                     })
@@ -1121,7 +1182,7 @@ fn fee_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<FeeHistory> {
 
                 let fees_len = effective_gas_prices.len() as f64;
                 if fees_len == 0.0 {
-                    effective_gas_prices.push(*node.config.consensus.gas_price);
+                    effective_gas_prices.push(*gas_price);
                 }
 
                 reward_percentiles
@@ -1167,11 +1228,14 @@ fn get_account(params: Params, node: &Arc<RwLock<Node>>) -> Result<GetAccountRes
     let block_id: BlockId = params.next()?;
     expect_end_of_params(&mut params, 2, 2)?;
 
-    let node = node.read();
-    let block = node.get_block(block_id)?;
-    let block = build_errored_response_for_missing_block(block_id, block)?;
+    let state = {
+        let node = node.read();
+        let block = node.get_block(block_id)?;
+        let block = build_errored_response_for_missing_block(block_id, block)?;
+        node.get_state(&block)?
+    };
 
-    let account = node.get_state(&block)?.get_account(address)?;
+    let account = state.get_account(address)?;
     let return_code = if account.code.is_eoa() {
         vec![].to_hex_no_prefix()
     } else {
