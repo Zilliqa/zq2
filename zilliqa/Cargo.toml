@@ -136,6 +136,7 @@ rocksdb = { version = "0.24.0", default-features = false, features = [
 ] }
 zip = { version = "4.5.0", default-features = false, features = ["zstd"] }
 eth_trie = { git = "https://github.com/Zilliqa/eth-trie.rs.git", branch = "zilliqa" }
+arc-swap = "1.7.1"
 
 [dev-dependencies]
 alloy = { version = "0.12.4", default-features = false, features = [
