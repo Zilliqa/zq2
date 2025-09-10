@@ -1,9 +1,6 @@
 use std::{
     fmt::Debug,
-    sync::{
-        Arc,
-        atomic::{AtomicPtr, AtomicUsize},
-    },
+    sync::{Arc, atomic::AtomicUsize},
     time::Duration,
 };
 
@@ -22,6 +19,8 @@ use alloy::{
     },
 };
 use anyhow::{Result, anyhow};
+use arc_swap::ArcSwap;
+use itertools::Itertools;
 use libp2p::{PeerId, request_response::OutboundFailure};
 use rand::RngCore;
 use revm::{
@@ -172,7 +171,7 @@ pub struct Node {
     peer_num: Arc<AtomicUsize>,
     pub chain_id: ChainId,
     pub filters: Filters,
-    swarm_peers: Arc<AtomicPtr<Vec<PeerId>>>,
+    swarm_peers: Arc<ArcSwap<Vec<PeerId>>>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -200,7 +199,7 @@ impl Node {
         reset_timeout: UnboundedSender<Duration>,
         peer_num: Arc<AtomicUsize>,
         sync_peers: Arc<SyncPeers>,
-        swarm_peers: Arc<AtomicPtr<Vec<PeerId>>>,
+        swarm_peers: Arc<ArcSwap<Vec<PeerId>>>,
     ) -> Result<Node> {
         config.validate()?;
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
@@ -1074,11 +1073,7 @@ impl Node {
 
     pub fn get_peer_ids(&self) -> Result<(Vec<PeerId>, Vec<PeerId>)> {
         let sync_peers = self.consensus.sync.peer_ids();
-        let swarm_peers: Vec<PeerId>;
-        unsafe {
-            let swarm_ptr = self.swarm_peers.load(std::sync::atomic::Ordering::Relaxed);
-            swarm_peers = (*swarm_ptr).clone();
-        }
+        let swarm_peers = self.swarm_peers.load().iter().cloned().collect_vec();
         Ok((swarm_peers, sync_peers))
     }
 }

@@ -2,14 +2,12 @@
 
 use std::{
     collections::HashMap,
-    sync::{
-        Arc,
-        atomic::{AtomicPtr, AtomicUsize},
-    },
+    sync::{Arc, atomic::AtomicUsize},
     time::Duration,
 };
 
 use anyhow::{Result, anyhow};
+use arc_swap::ArcSwap;
 use cfg_if::cfg_if;
 use itertools::Itertools;
 use libp2p::{
@@ -93,7 +91,7 @@ pub struct P2pNode {
     pending_requests: HashMap<request_response::OutboundRequestId, (u64, RequestId)>,
     // Count of current peers for API
     peer_num: Arc<AtomicUsize>,
-    swarm_peers: Arc<AtomicPtr<Vec<PeerId>>>,
+    swarm_peers: Arc<ArcSwap<Vec<PeerId>>>,
     kad_protocol: StreamProtocol,
     protocol_version: String,
 }
@@ -196,7 +194,7 @@ impl P2pNode {
             request_responses_receiver,
             pending_requests: HashMap::new(),
             peer_num: Arc::new(AtomicUsize::new(0)),
-            swarm_peers: Arc::new(AtomicPtr::new(Box::into_raw(Box::new(vec![])))),
+            swarm_peers: Arc::new(ArcSwap::from_pointee(Vec::new())),
             kad_protocol,
             protocol_version,
         })
@@ -316,11 +314,8 @@ impl P2pNode {
                         SwarmEvent::ConnectionClosed{..} |
                         SwarmEvent::ConnectionEstablished{..} => {
                             // update peers when new peer connects/disconnects
-                            let new_peers = Box::into_raw(Box::new(self.swarm.connected_peers().cloned().collect_vec()));
-                            let old_ptr = self.swarm_peers.swap(new_peers, std::sync::atomic::Ordering::Relaxed);
-                            unsafe {
-                                let _ = Box::from_raw(old_ptr); // previous vec will be dropped here
-                            }
+                            let new_peers = Arc::new(self.swarm.connected_peers().cloned().collect_vec());
+                            self.swarm_peers.store(new_peers);
                         }
                         // only dial after we have a listen address, to reuse port
                         SwarmEvent::NewListenAddr { address, .. } => {
@@ -532,18 +527,10 @@ impl P2pNode {
                 }
                 _ = terminate.recv() => {
                     self.shard_threads.shutdown().await;
-                    unsafe {
-                        let _ = Box::from_raw(self.swarm_peers.load(std::sync::atomic::Ordering::Relaxed));
-                        // previous vec will be dropped here
-                    }
                     break;
                 },
                 _ = signal::ctrl_c() => {
                     self.shard_threads.shutdown().await;
-                    unsafe {
-                        let _ = Box::from_raw(self.swarm_peers.load(std::sync::atomic::Ordering::Relaxed));
-                        // previous vec will be dropped here
-                    }
                     break;
                 },
             }
