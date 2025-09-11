@@ -480,7 +480,7 @@ impl Node {
             return Ok(true);
         }
         // migrate as many blocks as possible, otherwise
-        if self.consensus.db.config.state_migration {
+        if self.consensus.db.config.state_sync {
             let now = Instant::now();
             let period = self.config.consensus.block_time / 4; // steal 250ms typical
             while now.elapsed() < period {

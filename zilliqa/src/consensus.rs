@@ -364,6 +364,7 @@ impl Consensus {
             peers.clone(),
         )?;
 
+        let state_sync = config.db.state_sync;
         let forks = config.consensus.get_forks()?;
         let enable_ots_indices = config.enable_ots_indices;
 
@@ -431,7 +432,9 @@ impl Consensus {
                 )?;
             }
             // set starting point for state-sync/state-migration
-            consensus.db.state_trie()?.set_migrate_at(block.number())?;
+            if state_sync {
+                consensus.db.state_trie()?.set_migrate_at(block.number())?;
+            }
         }
 
         // Initialize state trie storage
