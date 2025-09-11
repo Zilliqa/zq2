@@ -126,10 +126,6 @@ impl TrieStorage {
 
     pub fn finish_migration(&self) -> Result<()> {
         self.kvdb.put(ROCKSDB_MIGRATE_AT, u64::MAX.to_be_bytes())?;
-        self.pool
-            .get()?
-            .execute("ALTER TABLE state_trie RENAME TO state_trie_backup", [])
-            .ok(); // silent errors
         Ok(())
     }
 }

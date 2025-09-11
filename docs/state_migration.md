@@ -1,15 +1,24 @@
 # State Migration Guide
 
 With version `v0.19.0` the block chain *State* is now stored in RocksDB.
-This guide explains how to migrate your state from the previous storage format to RocksDB.
+
+The entire *State* is now structured in a hierarchy:
+- L1: volatile in-memory cache.
+- L2: on-disk RocksDB database.
+- L3: existing SQLite database.
+
+An ad-hoc *lazy* migration is performed in the background whenever a state is missing in RocksDB and found in the SQLite database i.e. missing from L2 and found in L3.
+
+This guide explains how to migrate the previous state into RocksDB, by replaying the blocks and writing the relevant state to RocksDB.
+This exploits the [State Sync](docs/fetching_blocks.md) process.
 
 ## Migration Steps
 
 1. Stop the node.
 2. Restore the state from a previous checkpoint.
-3. Configure the node to perform state-sync.
+3. Configure the node to perform state-sync/state-migration.
 4. Restart the node.
-5. Verify that the state-sync completed successfully.
+5. Verify that the state-sync/state-migration completed successfully.
 
 In short, the state migration process exploits the state-sync feature to migrate the state using a previous checkpoint as a starting point.
 
@@ -60,12 +69,17 @@ Otherwise, it will restart the entire process again, upon a restart.
 #db.state_sync = true
 ```
 
+You should also rename the `state_trie` table to `state_trie_backup` as a backup.
+This will cause any *lazy* migration to fail - allowing you to catch any errors.
+
+```sql
+ALTER TABLE state_trie RENAME TO state_trie_backup;
+```
+
 ### Cleanup
 
-The node will automatically rename the `state_trie` table to `state_trie_backup`, upon finishing the state-migration process.
-
-This table is kept around as a backup, in case you need to revert it if any prior states are found to be missing.
-Once you're done with it, you can delete the table and free up the disk space.
+The `state_trie_backup` table is kept around as a backup, in case you need to revert it if any prior states are found to be missing.
+Once you're satisfied with it, you can delete the table and free up the disk space.
 
 ```sql
 DROP TABLE state_trie_backup;
