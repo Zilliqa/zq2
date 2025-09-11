@@ -255,7 +255,7 @@ fn trace_replay_transaction(params: Params, node: &Arc<RwLock<Node>>) -> Result<
     let txn_hash: Hash = txn_hash.into();
     let trace_types = params.next()?;
 
-    let trace = node.read().trace_evm_transaction(txn_hash, &trace_types)?;
+    let trace = Node::trace_evm_transaction(node, txn_hash, &trace_types)?;
 
     Ok(trace)
 }
@@ -271,7 +271,7 @@ fn trace_transaction(params: Params, node: &Arc<RwLock<Node>>) -> Result<TraceRe
         .into_iter()
         .collect();
 
-    let trace = node.read().trace_evm_transaction(txn_hash, &trace_types)?;
+    let trace = Node::trace_evm_transaction(node, txn_hash, &trace_types)?;
 
     Ok(trace)
 }

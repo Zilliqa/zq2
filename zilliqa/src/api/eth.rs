@@ -669,13 +669,12 @@ fn get_logs(params: Params, node: &Arc<RwLock<Node>>) -> Result<Vec<eth::Log>> {
     let mut seq = params.sequence();
     let params: alloy::rpc::types::Filter = seq.next()?;
     expect_end_of_params(&mut seq, 1, 1)?;
-    let node = node.read();
     get_logs_inner(&params, &node)
 }
 
 fn get_logs_inner(
     params: &alloy::rpc::types::Filter,
-    node: &RwLockReadGuard<Node>,
+    node: &Arc<RwLock<Node>>,
 ) -> Result<Vec<eth::Log>> {
     let filter_params = FilteredParams::new(Some(params.clone()));
 
@@ -683,6 +682,7 @@ fn get_logs_inner(
     let blocks = match params.block_option {
         alloy::rpc::types::FilterBlockOption::AtBlockHash(block_hash) => {
             Either::Left(std::iter::once(Ok(node
+                .read()
                 .get_block(block_hash)?
                 .ok_or_else(|| anyhow!("block not found"))?)))
         }
@@ -691,6 +691,7 @@ fn get_logs_inner(
             to_block,
         } => {
             let Some(from) = node
+                .read()
                 .resolve_block_number(from_block.unwrap_or(BlockNumberOrTag::Latest))?
                 .as_ref()
                 .map(Block::number)
@@ -699,11 +700,13 @@ fn get_logs_inner(
             };
 
             let to = match node
+                .read()
                 .resolve_block_number(to_block.unwrap_or(BlockNumberOrTag::Latest))?
                 .as_ref()
             {
                 Some(block) => block.number(),
                 None => node
+                    .read()
                     .resolve_block_number(BlockNumberOrTag::Latest)?
                     .unwrap()
                     .number(),
@@ -714,7 +717,8 @@ fn get_logs_inner(
             }
 
             Either::Right((from..=to).map(|number| {
-                node.get_block(number)?
+                node.read()
+                    .get_block(number)?
                     .ok_or_else(|| anyhow!("missing block: {number}"))
             }))
         }
@@ -722,12 +726,13 @@ fn get_logs_inner(
 
     let mut logs = vec![];
 
+    let db = node.read().db.clone();
+
     for block in blocks {
         let block = block?;
 
         for (txn_index, txn_hash) in block.transactions.iter().enumerate() {
-            let receipt = node
-                .get_transaction_receipt(*txn_hash)?
+            let receipt = data_access::get_transaction_receipt(db.clone(), *txn_hash)?
                 .ok_or(anyhow!("missing receipt"))?;
 
             for (log_index, log) in receipt.logs.into_iter().enumerate() {
@@ -1257,12 +1262,11 @@ fn get_account(params: Params, node: &Arc<RwLock<Node>>) -> Result<GetAccountRes
 fn get_filter_changes(params: Params, node: &Arc<RwLock<Node>>) -> Result<serde_json::Value> {
     let filter_id: u128 = params.one()?;
 
-    let node = node.read();
-
-    let mut filter = node
-        .filters
-        .get(filter_id)
-        .ok_or(anyhow!("filter not found"))?;
+    let filters = {
+        let node = node.read();
+        node.filters.clone()
+    };
+    let mut filter = filters.get(filter_id).ok_or(anyhow!("filter not found"))?;
 
     match &mut filter.kind {
         FilterKind::Block(block_filter) => {
@@ -1315,9 +1319,8 @@ fn get_filter_changes(params: Params, node: &Arc<RwLock<Node>>) -> Result<serde_
 /// Returns an array of all logs matching filter with given id.
 fn get_filter_logs(params: Params, node: &Arc<RwLock<Node>>) -> Result<serde_json::Value> {
     let filter_id: u128 = params.one()?;
-    let node = node.read();
 
-    if let Some(filter) = node.filters.get(filter_id) {
+    if let Some(filter) = node.read().filters.get(filter_id) {
         match &filter.kind {
             FilterKind::Block(_) => Err(anyhow!("pending tx filter not supported")),
             FilterKind::PendingTx(_) => Err(anyhow!("pending tx filter not supported")),

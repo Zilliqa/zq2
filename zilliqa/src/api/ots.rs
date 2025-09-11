@@ -154,7 +154,8 @@ fn get_contract_creator(params: Params, node: &Arc<RwLock<Node>>) -> Result<Opti
         // Replay the creation transaction to work out the creator. This is important for contracts which are created
         // by other contracts, for which the creator is not the same as `txn.from_addr`.
         let mut inspector = CreatorInspector::new(address);
-        node.read().replay_transaction(txn_hash, &mut inspector)?;
+
+        Node::replay_transaction(node, txn_hash, &mut inspector)?;
 
         if let Some(creator) = inspector.creator() {
             return Ok(Some(json!({
@@ -172,7 +173,7 @@ fn get_internal_operations(params: Params, node: &Arc<RwLock<Node>>) -> Result<V
     let txn_hash = Hash(txn_hash.0);
 
     let mut inspector = OtterscanOperationInspector::default();
-    node.read().replay_transaction(txn_hash, &mut inspector)?;
+    Node::replay_transaction(node, txn_hash, &mut inspector)?;
 
     Ok(inspector.entries())
 }
@@ -185,13 +186,16 @@ fn get_transaction_by_sender_and_nonce(
     let sender: Address = params.next()?;
     let nonce: u64 = params.next()?;
 
-    let node = node.read();
-    let touched = node.get_touched_transactions(sender)?;
+    let touched = {
+        let node = node.read();
+        node.get_touched_transactions(sender)?
+    };
 
     // Iterate over each transaction which touched the sender. This will include transactions which weren't sent by the
     // sender which we need to filter out.
     for txn_hash in touched {
         let txn = node
+            .read()
             .get_transaction_by_hash(txn_hash)?
             .ok_or_else(|| anyhow!("missing transaction: {txn_hash}"))?;
         if txn.signer == sender && txn.tx.nonce().map(|n| n == nonce).unwrap_or(false) {
@@ -206,9 +210,7 @@ fn get_transaction_error(params: Params, node: &Arc<RwLock<Node>>) -> Result<Cow
     let txn_hash: B256 = params.one()?;
     let txn_hash = Hash(txn_hash.0);
 
-    let result = node
-        .read()
-        .replay_transaction(txn_hash, inspector::noop())?;
+    let result = Node::replay_transaction(node, txn_hash, inspector::noop())?;
 
     if !result.exceptions().is_empty() {
         // If the transaction resulted in Scilla exceptions, concatenate them into a single string and ABI encode it.
@@ -235,11 +237,14 @@ fn has_code(params: Params, node: &Arc<RwLock<Node>>) -> Result<bool> {
     let address: Address = params.next()?;
     let block_id: BlockId = params.optional_next()?.unwrap_or_default();
 
-    let node = node.read();
-    let block = node
-        .get_block(block_id)?
-        .ok_or_else(|| anyhow!("Unable to get the latest block!"))?;
-    let empty = node.get_state(&block)?.get_account(address)?.code.is_eoa();
+    let state = {
+        let node = node.read();
+        let block = node
+            .get_block(block_id)?
+            .ok_or_else(|| anyhow!("Unable to get the latest block!"))?;
+        node.get_state(&block)?
+    };
+    let empty = state.get_account(address)?.code.is_eoa();
 
     Ok(!empty)
 }
@@ -377,7 +382,7 @@ fn trace_transaction(params: Params, node: &Arc<RwLock<Node>>) -> Result<Vec<Tra
     let txn_hash = Hash(txn_hash.0);
 
     let mut inspector = OtterscanTraceInspector::default();
-    node.read().replay_transaction(txn_hash, &mut inspector)?;
+    Node::replay_transaction(node, txn_hash, &mut inspector)?;
 
     Ok(inspector.entries())
 }

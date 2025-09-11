@@ -23,6 +23,7 @@ use alloy::{
 };
 use anyhow::{Result, anyhow};
 use libp2p::{PeerId, request_response::OutboundFailure};
+use parking_lot::RwLock;
 use rand::RngCore;
 use revm::{
     Inspector,
@@ -171,7 +172,7 @@ pub struct Node {
     pub consensus: Consensus,
     peer_num: Arc<AtomicUsize>,
     pub chain_id: ChainId,
-    pub filters: Filters,
+    pub filters: Arc<Filters>,
     swarm_peers: Arc<AtomicPtr<Vec<PeerId>>>,
 }
 
@@ -239,7 +240,7 @@ impl Node {
                 sync_peers,
             )?,
             peer_num,
-            filters: Filters::new(),
+            filters: Arc::new(Filters::new()),
             swarm_peers,
         };
         Ok(node)
@@ -590,25 +591,30 @@ impl Node {
     }
 
     pub fn trace_evm_transaction(
-        &self,
+        node: &Arc<RwLock<Node>>,
         txn_hash: Hash,
         trace_types: &revm::primitives::HashSet<TraceType>,
     ) -> Result<TraceResults> {
-        let txn = self
+        let txn = node
+            .read()
             .get_transaction_by_hash(txn_hash)?
             .ok_or_else(|| anyhow!("transaction not found: {txn_hash}"))?;
-        let receipt = self
+        let receipt = node
+            .read()
             .get_transaction_receipt(txn_hash)?
             .ok_or_else(|| anyhow!("transaction not mined: {txn_hash}"))?;
 
-        let block = self
+        let block = node
+            .read()
             .get_block(receipt.block_hash)?
             .ok_or_else(|| anyhow!("missing block: {}", receipt.block_hash))?;
-        let parent = self
+        let parent = node
+            .read()
             .get_block(block.parent_hash())?
             .ok_or_else(|| anyhow!("missing block: {}", block.parent_hash()))?;
 
-        let mut state = self
+        let mut state = node
+            .read()
             .consensus
             .state()
             .at_root(parent.state_root_hash().into());
@@ -620,7 +626,8 @@ impl Node {
 
         for other_txn_hash in block.transactions {
             if txn_hash != other_txn_hash {
-                let other_txn = self
+                let other_txn = node
+                    .read()
                     .get_transaction_by_hash(other_txn_hash)?
                     .ok_or_else(|| anyhow!("transaction not found: {other_txn_hash}"))?;
                 state.apply_transaction(other_txn, block.header, inspector::noop(), false)?;
@@ -647,25 +654,30 @@ impl Node {
     }
 
     pub fn replay_transaction<I: Inspector<PendingState> + ScillaInspector>(
-        &self,
+        node: &Arc<RwLock<Node>>,
         txn_hash: Hash,
         inspector: I,
     ) -> Result<TransactionApplyResult> {
-        let txn = self
+        let txn = node
+            .read()
             .get_transaction_by_hash(txn_hash)?
             .ok_or_else(|| anyhow!("transaction not found: {txn_hash}"))?;
-        let receipt = self
+        let receipt = node
+            .read()
             .get_transaction_receipt(txn_hash)?
             .ok_or_else(|| anyhow!("transaction not mined: {txn_hash}"))?;
 
-        let block = self
+        let block = node
+            .read()
             .get_block(receipt.block_hash)?
             .ok_or_else(|| anyhow!("missing block: {}", receipt.block_hash))?;
-        let parent = self
+        let parent = node
+            .read()
             .get_block(block.parent_hash())?
             .ok_or_else(|| anyhow!("missing block: {}", block.parent_hash()))?;
 
-        let mut state = self
+        let mut state = node
+            .read()
             .consensus
             .state()
             .at_root(parent.state_root_hash().into());
@@ -675,7 +687,8 @@ impl Node {
 
         for other_txn_hash in block.transactions {
             if txn_hash != other_txn_hash {
-                let other_txn = self
+                let other_txn = node
+                    .read()
                     .get_transaction_by_hash(other_txn_hash)?
                     .ok_or_else(|| anyhow!("transaction not found: {other_txn_hash}"))?;
                 state.apply_transaction(other_txn, parent.header, inspector::noop(), false)?;
