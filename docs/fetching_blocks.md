@@ -93,3 +93,5 @@ To use this feature:
 3. Restart the node with the `node.load_checkpoint` configured to the second checkpoint e.g. `013651200.ckpt` and with `node.db.state_sync` set to true. Allow state-sync to replay the blocks between the two checkpoints.
 
 The node is able to continue running on the network while the state-sync is happening in the background.
+
+For details, refer to the [State Migration](docs/state_migration.md) documentation.

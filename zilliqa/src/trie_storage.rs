@@ -123,6 +123,15 @@ impl TrieStorage {
             .is_some();
         Ok(exists)
     }
+
+    pub fn finish_migration(&self) -> Result<()> {
+        self.kvdb.put(ROCKSDB_MIGRATE_AT, u64::MAX.to_be_bytes())?;
+        self.pool
+            .get()?
+            .execute("ALTER TABLE state_trie RENAME TO state_trie_backup", [])
+            .ok(); // silent errors
+        Ok(())
+    }
 }
 
 impl eth_trie::DB for TrieStorage {

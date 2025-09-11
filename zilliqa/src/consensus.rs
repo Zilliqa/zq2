@@ -3596,7 +3596,7 @@ impl Consensus {
         }
         // done
         tracing::info!("State-sync complete!");
-        state_trie.set_migrate_at(u64::MAX)?;
+        state_trie.finish_migration()?;
 
         Ok(false)
     }

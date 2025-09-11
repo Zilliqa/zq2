@@ -59,3 +59,15 @@ Otherwise, it will restart the entire process again, upon a restart.
 #load_checkpoint.file = "/data/014169600.ckpt"
 #db.state_sync = true
 ```
+
+### Cleanup
+
+The node will automatically rename the `state_trie` table to `state_trie_backup`, upon finishing the state-migration process.
+
+This table is kept around as a backup, in case you need to revert it if any prior states are found to be missing.
+Once you're done with it, you can delete the table and free up the disk space.
+
+```sql
+DROP TABLE state_trie_backup;
+VACUUM;
+```
