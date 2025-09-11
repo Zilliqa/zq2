@@ -121,7 +121,7 @@ pub struct DbConfig {
     /// SQLite auto-checkpoint threshold; 0 to disable; default 1_000
     #[serde(default = "sql_auto_checkpoint_default")]
     pub auto_checkpoint: usize,
-    /// Active state migration - defaults to false as it can be a 'heavy' operation.
+    /// Whether to enable state-sync/state-migration
     #[serde(default)]
     pub state_sync: bool,
 }
