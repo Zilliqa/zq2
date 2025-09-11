@@ -294,7 +294,7 @@ impl NodeConfig {
         }
         // the minimum required for the next leader selection
         if self.max_missed_view_age < MISSED_VIEW_WINDOW {
-            return Err(anyhow!("max_missed_view_age must be at least 100"));
+            return Err(anyhow!("max_missed_view_age must be at least {}", MISSED_VIEW_WINDOW));
         }
         Ok(())
     }
@@ -373,7 +373,7 @@ pub fn failed_request_sleep_duration_default() -> Duration {
 }
 
 pub fn max_missed_view_age_default() -> u64 {
-    100
+    MISSED_VIEW_WINDOW
 }
 
 /// Wrapper for [u128] that (de)serializes with a string. `serde_toml` does not support `u128`s.
