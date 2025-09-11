@@ -235,6 +235,8 @@ pub struct BlockAndReceiptsAndTransactions {
 const ROCKSDB_MIGRATE_AT: &str = "migrate_at";
 const ROCKSDB_RESTORE_AT: &str = "restore_at";
 
+const LARGE_OFFSET: u64 = 1_000_000_000_000;
+
 /// Version string that is written to disk along with the persisted database. This should be bumped whenever we make a
 /// backwards incompatible change to our database format. This should be done rarely, since it forces all node
 /// operators to re-sync.
@@ -469,17 +471,17 @@ impl Db {
 
         if version < 5 {
             connection.execute_batch(
-                "
+                ("
                 BEGIN;
 
                 INSERT INTO schema_version VALUES (5);
 
                 CREATE TABLE IF NOT EXISTS view_history (view INTEGER NOT NULL PRIMARY KEY, leader BLOB) WITHOUT ROWID;
 
-                INSERT INTO view_history (view, leader) VALUES (1000000000000, NULL);
+                INSERT INTO view_history (view, leader) VALUES (".to_string() + LARGE_OFFSET.to_string().as_str() + ", NULL);
 
                 COMMIT;
-            ",
+            ").as_str(),
             )?;
         }
 
@@ -491,7 +493,7 @@ impl Db {
             .pool
             .get()?
             .prepare_cached(
-                "SELECT view, leader FROM view_history WHERE view > ?1 AND leader NOT NULL",
+                "SELECT view, leader FROM view_history WHERE view > ?1 AND leader NOT NULL ORDER BY view",
             )?
             .query_map([view], |row| Ok((row.get(0)?, row.get(1)?)))?
             .collect::<Result<Vec<_>, _>>()?)
@@ -529,7 +531,7 @@ impl Db {
             .query_row([], |row| row.get(0))
             .unwrap_or_default();
         // to prevent primary key collision with missed views stored in the table
-        Ok(min_view - 1_000_000_000_000)
+        Ok(min_view - LARGE_OFFSET)
     }
 
     pub fn set_min_view_of_view_history(&self, min_view: u64) -> Result<()> {
@@ -537,7 +539,7 @@ impl Db {
             .get()?
             .prepare_cached("UPDATE view_history SET view = ?1 WHERE leader IS NULL")?
             // to prevent primary key collision with missed views stored in the table
-            .execute([min_view + 1_000_000_000_000])?;
+            .execute([min_view + LARGE_OFFSET])?;
         Ok(())
     }
 

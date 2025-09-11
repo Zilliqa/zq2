@@ -63,11 +63,12 @@ impl ViewHistory {
         }
     }
 
-    pub fn extend_history(
+    pub fn append_history(
         &mut self,
         new_missed_views: &[(u64, NodePublicKey)],
     ) -> anyhow::Result<bool> {
         let mut deque = self.missed_views.lock().unwrap();
+        // new_missed_views are in descending order
         for (view, leader) in new_missed_views.iter().rev() {
             info!(
                 view,
