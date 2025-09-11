@@ -77,7 +77,7 @@ async fn main() -> Result<()> {
     let now = Instant::now();
     println!("READ {} -> {}", args.input, dbpath.display());
     let Some((block, transactions, parent)) =
-        db.load_trusted_checkpoint_v1(path, &hash, args.id)?
+        zilliqa::checkpoint::load_trusted_checkpoint_v1(db.clone(), path, &hash, args.id)?
     else {
         return Err(anyhow::anyhow!("Input checkpoint error"));
     };
