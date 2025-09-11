@@ -36,8 +36,35 @@ pub fn rpc_module(
             ("admin_votesReceived", votes_received),
             ("admin_clearMempool", clear_mempool),
             ("admin_getLeaders", get_leaders),
+            ("admin_syncing", syncing),
         ]
     )
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct SyncInfo {
+    cutover_at: u64,
+    migrate_at: Option<u64>,
+    block_range: RangeInclusive<u64>,
+}
+
+fn syncing(_params: Params, node: &Arc<RwLock<Node>>) -> Result<SyncInfo> {
+    let block_range = node.read().consensus.get_block_range()?;
+    let trie = node.read().db.state_trie()?;
+    let cutover_at = trie.get_cutover_at()?;
+
+    let migrate_at = trie.get_migrate_at()?;
+    let migrate_at = if migrate_at > cutover_at {
+        None
+    } else {
+        Some(migrate_at)
+    };
+
+    Ok(SyncInfo {
+        cutover_at,
+        migrate_at,
+        block_range,
+    })
 }
 
 #[derive(Clone, Debug, Serialize)]
