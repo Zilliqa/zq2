@@ -16,7 +16,7 @@ use alloy::primitives::{Address, U256};
 use anyhow::{Context, Result, anyhow};
 use bitvec::{bitarr, order::Msb0};
 use dashmap::DashMap;
-use eth_trie::{DB, EthTrie, MemoryDB, Trie};
+use eth_trie::{EthTrie, MemoryDB, Trie};
 use itertools::Itertools;
 use k256::pkcs8::der::DateTime;
 use libp2p::PeerId;
@@ -364,6 +364,8 @@ impl Consensus {
             peers.clone(),
         )?;
 
+        let state_sync = config.db.state_sync;
+        let forks = config.consensus.get_forks()?;
         let enable_ots_indices = config.enable_ots_indices;
 
         let mut consensus = Consensus {
@@ -408,8 +410,9 @@ impl Consensus {
             aux::check_and_build_ots_indices(db, latest_block_view)?;
         }
 
-        // If we started from a checkpoint, execute the checkpointed block now
-        if let Some((block, transactions, mut parent)) = checkpoint_data {
+        // If we started from a checkpoint
+        if let Some((block, transactions, parent)) = checkpoint_data {
+            // if the checkpoint block does not exist, execute the block
             if consensus
                 .db
                 .get_transactionless_block(BlockFilter::Hash(block.hash()))?
@@ -427,52 +430,15 @@ impl Consensus {
                         .get_stakers(block.header)?,
                     true,
                 )?;
-            } else if let Some(latest_block) = latest_block {
-                // if block is present, perform state-sync
-                let mut last_hash = parent.state_root_hash();
-                let range = block.number()..=latest_block.number();
-                tracing::info!(?range, "Syncing state from checkpoint");
-                for number in range {
-                    let Some(block) = consensus
-                        .db
-                        .get_transactionless_block(BlockFilter::Height(number))?
-                    else {
-                        tracing::error!("Block not found {number}");
-                        break;
-                    };
-
-                    // check that the block mutates state; and
-                    if last_hash != block.state_root_hash() {
-                        last_hash = block.state_root_hash();
-                        // the state is not already present in the db.
-                        if consensus
-                            .db
-                            .state_trie()?
-                            .get(block.state_root_hash().as_bytes())?
-                            .is_none()
-                        {
-                            tracing::info!(number = %block.number(), state=%block.state_root_hash(), "Syncing state from block");
-                            let brt = consensus
-                                .db
-                                .get_block_and_receipts_and_transactions(BlockFilter::Hash(
-                                    block.hash(),
-                                ))?
-                                .expect("block must exist due to check above");
-                            let transactions =
-                                brt.transactions.into_iter().map(|tx| tx.tx).collect();
-                            consensus.replay_proposal(
-                                brt.block,
-                                transactions,
-                                parent.state_root_hash(),
-                            )?;
-                            parent = block;
-                        }
-                    }
-                }
+            }
+            // set starting point for state-sync/state-migration
+            if state_sync {
+                consensus.db.state_trie()?.set_migrate_at(block.number())?;
             }
         }
 
-        consensus.db.init_rocksdb()?;
+        // Initialize state trie storage
+        consensus.db.state_trie()?.init_state_trie(forks)?;
 
         // If timestamp of when current high_qc was written exists then use it to estimate the minimum number of blocks the network has moved on since shut down
         // This is useful in scenarios in which consensus has failed since this node went down
@@ -3594,5 +3560,44 @@ impl Consensus {
 
     pub fn clear_mempool(&self) {
         self.transaction_pool.write().clear();
+    }
+
+    /// Migrate the state of one block - writing new state to RocksDB; returns true if done.
+    pub fn migrate_state_trie(&mut self) -> Result<bool> {
+        let state_trie = self.db.state_trie()?;
+        let mut migrate_at = state_trie.get_migrate_at()?;
+        if migrate_at == u64::MAX {
+            // TODO: Nothing to do
+            return Ok(true); // done
+        }
+
+        // replay one block - writing new state to RocksDB.
+        let parent_hash = state_trie.get_root_hash(migrate_at.saturating_sub(1))?;
+        let brt = self
+            .db
+            .get_block_and_receipts_and_transactions(BlockFilter::Height(migrate_at))?
+            .expect("block must exist");
+        let block_hash = brt.block.state_root_hash();
+        tracing::info!(number=%migrate_at,state=%block_hash, "State-sync");
+        self.replay_proposal(
+            brt.block,
+            brt.transactions.into_iter().map(|t| t.tx).collect_vec(),
+            parent_hash,
+        )?;
+
+        // fast-forward to next block, skipping empty blocks, up to cutover threshold
+        let cutover_at = state_trie.get_cutover_at()?;
+        while migrate_at < cutover_at {
+            migrate_at = migrate_at.saturating_add(1); // check next block
+            if state_trie.get_root_hash(migrate_at)? != block_hash {
+                state_trie.set_migrate_at(migrate_at)?;
+                return Ok(false);
+            }
+        }
+        // done
+        tracing::info!("State-sync complete!");
+        state_trie.finish_migration()?;
+
+        Ok(false)
     }
 }

@@ -1,6 +1,7 @@
+/// Zilliqa 2.0 Checkpoint File Converter
 /// Tool to convert a .dat checkpoint file to a .ckpt one
 ///
-/// cargo run --bin convert-ckpt -- \
+/// cargo run --release --bin convert-ckpt -- \
 /// --input 001641600.dat \
 /// --output 001641600.ckpt \
 /// --hash 2ec445e87624dd05d5ccfdd38382ab41c3b1e18893297ce7f43c89037a315693 \
@@ -76,7 +77,7 @@ async fn main() -> Result<()> {
     let now = Instant::now();
     println!("READ {} -> {}", args.input, dbpath.display());
     let Some((block, transactions, parent)) =
-        db.load_trusted_checkpoint_v1(path, &hash, args.id)?
+        zilliqa::checkpoint::load_trusted_checkpoint_v1(db.clone(), path, &hash, args.id)?
     else {
         return Err(anyhow::anyhow!("Input checkpoint error"));
     };
