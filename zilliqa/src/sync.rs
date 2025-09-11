@@ -1484,10 +1484,10 @@ impl Sync {
                 "StoreProposals : applying",
             );
 
-            // Store/Ignore it; if it already exists.
+            // Store/Ignore - if it already exists.
             self.db.with_sqlite_tx(|sqlite_tx| {
                     // Insert block
-                    self.db.insert_block_with_db_tx(sqlite_tx, &block)?;
+                    self.db.insert_block_with_db_tx(sqlite_tx, &block).ok();
                     // Insert transactions/receipts
                     for (st, rt) in transaction_receipts {
                         // Verify transaction

@@ -1,10 +1,7 @@
 use std::{
     fmt::Debug,
-    sync::{
-        Arc,
-        atomic::{AtomicPtr, AtomicUsize},
-    },
-    time::Duration,
+    sync::{Arc, atomic::AtomicUsize},
+    time::{Duration, Instant},
 };
 
 use alloy::{
@@ -22,6 +19,8 @@ use alloy::{
     },
 };
 use anyhow::{Result, anyhow};
+use arc_swap::ArcSwap;
+use itertools::Itertools;
 use libp2p::{PeerId, request_response::OutboundFailure};
 use rand::RngCore;
 use revm::{
@@ -172,7 +171,7 @@ pub struct Node {
     peer_num: Arc<AtomicUsize>,
     pub chain_id: ChainId,
     pub filters: Filters,
-    swarm_peers: Arc<AtomicPtr<Vec<PeerId>>>,
+    swarm_peers: Arc<ArcSwap<Vec<PeerId>>>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -200,7 +199,7 @@ impl Node {
         reset_timeout: UnboundedSender<Duration>,
         peer_num: Arc<AtomicUsize>,
         sync_peers: Arc<SyncPeers>,
-        swarm_peers: Arc<AtomicPtr<Vec<PeerId>>>,
+        swarm_peers: Arc<ArcSwap<Vec<PeerId>>>,
     ) -> Result<Node> {
         config.validate()?;
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
@@ -476,17 +475,22 @@ impl Node {
 
     // handle timeout - true if something happened
     pub fn handle_timeout(&mut self) -> Result<bool> {
-        self.consensus
-            .db
-            .state_trie()?
-            .migrate_state_trie()
-            .unwrap_or_else(|e| tracing::error!("{e:?}")); // log and skip errors
-
         if let Some(network_message) = self.consensus.timeout()? {
             self.handle_network_message_response(network_message)?;
             return Ok(true);
         }
-
+        // migrate as many blocks as possible, otherwise
+        if self.consensus.db.config.state_sync {
+            let now = Instant::now();
+            let period = self.config.consensus.block_time / 4; // steal 250ms typical
+            while now.elapsed() < period {
+                match self.consensus.migrate_state_trie() {
+                    Ok(done) if done => break,
+                    Err(e) => tracing::error!(err=%e, "State-sync failed"), // log and ignore errors
+                    _ => {}
+                };
+            }
+        }
         Ok(false)
     }
 
@@ -1074,11 +1078,7 @@ impl Node {
 
     pub fn get_peer_ids(&self) -> Result<(Vec<PeerId>, Vec<PeerId>)> {
         let sync_peers = self.consensus.sync.peer_ids();
-        let swarm_peers: Vec<PeerId>;
-        unsafe {
-            let swarm_ptr = self.swarm_peers.load(std::sync::atomic::Ordering::Relaxed);
-            swarm_peers = (*swarm_ptr).clone();
-        }
+        let swarm_peers = self.swarm_peers.load().iter().cloned().collect_vec();
         Ok((swarm_peers, sync_peers))
     }
 }

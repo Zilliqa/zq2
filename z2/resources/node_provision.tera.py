@@ -41,10 +41,24 @@ def query_metadata_key(key: str) -> str:
 ZQ2_IMAGE="{{ docker_image }}"
 PERSISTENCE_URL="{{ persistence_url }}"
 CHECKPOINT_URL="{{ checkpoint_url }}"
-LOG_LEVEL='{{ log_level }}'
+NODE_NAME="{{ node_name }}"
 PROJECT_ID="{{ project_id }}"
 KMS_ENABLED="{{ enable_kms }}" == "true"
 KMS_PROJECT_ID = "prj-p-kms-2vduab0g" if PROJECT_ID.startswith("prj-p") else "prj-d-kms-tw1xyxbh"
+
+# Set zilliqa trace log level for specific nodes, if not use the default
+if NODE_NAME in [
+    "zq2-testnet-api-ase1-0",
+    "zq2-testnet-validator-ase1-0",
+    "zq2-mainnet-api-ase1-0",
+    "zq2-mainnet-bootstrap-ase1-0",
+    "zq2-mainnet-checkpoint-ase1-0",
+    "zq2-mainnet-persistence-ase1-0",
+    "zq2-mainnet-apps-ase1-0",
+]:
+    LOG_LEVEL = "zilliqa=trace"
+else:
+    LOG_LEVEL = '{{ log_level }}'
 
 def mount_checkpoint_file():
     if CHECKPOINT_URL is not None and CHECKPOINT_URL != "":

@@ -1,4 +1,5 @@
 use alloy::primitives::Address;
+use arc_swap::ArcSwap;
 use ethabi::Token;
 use ethers::{
     abi::Tokenize,
@@ -41,7 +42,7 @@ use std::{
     rc::Rc,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicPtr, AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -185,7 +186,7 @@ fn node(
 
     let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
     let sync_peers = Arc::new(SyncPeers::new(peer_id));
-    let swarm_peers = Arc::new(AtomicPtr::new(Box::into_raw(Box::new(Vec::new()))));
+    let swarm_peers = Arc::new(ArcSwap::from_pointee(Vec::new()));
 
     let node = Node::new(
         NodeConfig {

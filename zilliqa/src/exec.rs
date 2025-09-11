@@ -32,7 +32,6 @@ use crate::{
     cfg::{Fork, ScillaExtLibsPath, ScillaExtLibsPathInScilla, ScillaExtLibsPathInZq2},
     constants, contracts,
     crypto::{Hash, NodePublicKey},
-    db::TrieStorage,
     error::ensure_success,
     inspector::{self, ScillaInspector},
     message::{Block, BlockHeader},
@@ -46,6 +45,7 @@ use crate::{
         EvmGas, EvmLog, Log, ScillaGas, ScillaLog, Transaction, TxZilliqa, VerifiedTransaction,
         ZilAmount, total_scilla_gas_price,
     },
+    trie_storage::TrieStorage,
 };
 
 #[derive(Clone, Copy, PartialEq)]
