@@ -46,7 +46,7 @@ indicatif = "0.18.0"
 itertools = "0.14.0"
 k256 = "0.13.4"
 libp2p = { version = "0.56.0", features = ["identify"] }
-log = "0.4.27"
+log = "0.4.28"
 parking_lot = "0.12.4"
 primitive-types = "0.12.2"
 prost = "0.14.1"
