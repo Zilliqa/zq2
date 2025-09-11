@@ -3559,12 +3559,13 @@ impl Consensus {
         self.transaction_pool.write().clear();
     }
 
-    /// Migrate the state of one block - writing new state to RocksDB
-    pub fn migrate_state_trie(&mut self) -> Result<()> {
+    /// Migrate the state of one block - writing new state to RocksDB; returns true if done.
+    pub fn migrate_state_trie(&mut self) -> Result<bool> {
         let state_trie = self.db.state_trie()?;
         let mut migrate_at = state_trie.get_migrate_at()?;
         if migrate_at == u64::MAX {
-            return Ok(()); // done
+            // TODO: Nothing to do
+            return Ok(true); // done
         }
 
         // replay one block - writing new state to RocksDB.
@@ -3586,13 +3587,14 @@ impl Consensus {
         while migrate_at < cutover_at {
             migrate_at = migrate_at.saturating_add(1); // check next block
             if state_trie.get_root_hash(migrate_at)? != block_hash {
-                return state_trie.set_migrate_at(migrate_at);
+                state_trie.set_migrate_at(migrate_at)?;
+                return Ok(false);
             }
         }
         // done
         tracing::info!("State-sync complete!");
         state_trie.set_migrate_at(u64::MAX)?;
 
-        Ok(())
+        Ok(false)
     }
 }

@@ -1,7 +1,7 @@
 use std::{
     fmt::Debug,
     sync::{Arc, atomic::AtomicUsize},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use alloy::{
@@ -475,15 +475,21 @@ impl Node {
 
     // handle timeout - true if something happened
     pub fn handle_timeout(&mut self) -> Result<bool> {
-        if self.consensus.db.config.state_migration {
-            if let Err(e) = self.consensus.migrate_state_trie() {
-                tracing::error!(err=%e, "Migration failed");
-            }; // log and ignore errors
-        }
-
         if let Some(network_message) = self.consensus.timeout()? {
             self.handle_network_message_response(network_message)?;
             return Ok(true);
+        }
+        // migrate as many blocks as possible, otherwise
+        if self.consensus.db.config.state_migration {
+            let now = Instant::now();
+            let period = self.config.consensus.block_time / 4; // steal 250ms typical
+            while now.elapsed() < period {
+                match self.consensus.migrate_state_trie() {
+                    Ok(done) if done => break,
+                    Err(e) => tracing::error!(err=%e, "State-sync failed"), // log and ignore errors
+                    _ => {}
+                };
+            }
         }
         Ok(false)
     }
