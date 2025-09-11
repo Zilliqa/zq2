@@ -43,8 +43,10 @@ pub fn rpc_module(
 
 #[derive(Clone, Debug, Serialize)]
 struct SyncInfo {
+    #[serde(serialize_with = "hex")]
     cutover_at: u64,
-    migrate_at: Option<u64>,
+    #[serde(serialize_with = "hex")]
+    migrate_at: u64,
     block_range: RangeInclusive<u64>,
 }
 
@@ -52,14 +54,7 @@ fn syncing(_params: Params, node: &Arc<RwLock<Node>>) -> Result<SyncInfo> {
     let block_range = node.read().consensus.get_block_range()?;
     let trie = node.read().db.state_trie()?;
     let cutover_at = trie.get_cutover_at()?;
-
     let migrate_at = trie.get_migrate_at()?;
-    let migrate_at = if migrate_at > cutover_at {
-        None
-    } else {
-        Some(migrate_at)
-    };
-
     Ok(SyncInfo {
         cutover_at,
         migrate_at,

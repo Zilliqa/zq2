@@ -8,10 +8,7 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rocksdb::WriteBatchWithTransaction;
 use rusqlite::OptionalExtension;
 
-use crate::{
-    cfg::{ForkName, Forks},
-    crypto::Hash,
-};
+use crate::{cfg::Forks, crypto::Hash};
 
 /// Special storage keys
 const ROCKSDB_MIGRATE_AT: &str = "migrate_at";
@@ -50,7 +47,7 @@ impl TrieStorage {
         Ok(self.kvdb.write(batch)?)
     }
 
-    pub fn init_state_trie(&self, forks: Forks) -> Result<()> {
+    pub fn init_state_trie(&self, _forks: Forks) -> Result<()> {
         let rdb = self.kvdb.clone();
         if rdb.get(ROCKSDB_CUTOVER_AT)?.is_none() {
             let n = self
@@ -64,17 +61,6 @@ impl TrieStorage {
                 .unwrap_or_default();
             rdb.put(ROCKSDB_CUTOVER_AT, n.to_be_bytes())?;
         };
-
-        // If we start from a checkpoint, this will be Some(u64).
-        // Otherwise, do not migrate any ZQ1 state.
-        if rdb.get(ROCKSDB_MIGRATE_AT)?.is_none() {
-            let migrate_at = forks
-                .find_height_fork_first_activated(ForkName::ExecutableBlocks)
-                .unwrap_or_default()
-                .saturating_add(1); // start replaying from second lowest block
-            rdb.put(ROCKSDB_MIGRATE_AT, migrate_at.to_be_bytes())?;
-        }
-
         Ok(())
     }
 
@@ -84,7 +70,7 @@ impl TrieStorage {
             .kvdb
             .get(ROCKSDB_MIGRATE_AT)?
             .map(|v| u64::from_be_bytes(v.try_into().expect("must be 8-bytes")))
-            .unwrap_or_default())
+            .unwrap_or(u64::MAX)) // default to no state-sync
     }
 
     #[inline]
