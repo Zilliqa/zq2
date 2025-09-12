@@ -53,12 +53,13 @@ impl TrieStorage {
             let n = self
                 .pool
                 .get()?
-                .query_one(
-                    "SELECT MAX(height) FROM blocks WHERE is_canonical = 1",
-                    [],
-                    |row| row.get::<_, u64>(0),
-                )
-                .unwrap_or_default();
+                // highest block seen, regardless of canonicality
+                .query_one("SELECT MAX(height) FROM blocks", [], |row| {
+                    row.get::<_, u64>(0)
+                })
+                .unwrap_or_default()
+                // slightly above highest block seen.
+                .saturating_add(2);
             rdb.put(ROCKSDB_CUTOVER_AT, n.to_be_bytes())?;
         };
         Ok(())
@@ -83,12 +84,16 @@ impl TrieStorage {
     }
 
     #[inline]
-    pub fn get_root_hash(&self, height: u64) -> Result<Hash> {
-        Ok(self.pool.get()?.query_one(
-            "SELECT state_root_hash FROM blocks WHERE is_canonical = TRUE AND height = ?1",
-            [height],
-            |row| row.get::<_, Hash>(0),
-        )?)
+    pub fn get_root_hash(&self, height: u64) -> Result<Option<Hash>> {
+        Ok(self
+            .pool
+            .get()?
+            .query_one(
+                "SELECT state_root_hash FROM blocks WHERE is_canonical = TRUE AND height = ?1",
+                [height],
+                |row| row.get::<_, Hash>(0),
+            )
+            .optional()?)
     }
 
     #[inline]
