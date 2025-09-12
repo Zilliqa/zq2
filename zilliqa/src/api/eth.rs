@@ -669,7 +669,7 @@ fn get_logs(params: Params, node: &Arc<RwLock<Node>>) -> Result<Vec<eth::Log>> {
     let mut seq = params.sequence();
     let params: alloy::rpc::types::Filter = seq.next()?;
     expect_end_of_params(&mut seq, 1, 1)?;
-    get_logs_inner(&params, &node)
+    get_logs_inner(&params, node)
 }
 
 fn get_logs_inner(
@@ -731,10 +731,9 @@ fn get_logs_inner(
     for block in blocks {
         let block = block?;
 
-        for (txn_index, txn_hash) in block.transactions.iter().enumerate() {
-            let receipt = data_access::get_transaction_receipt(db.clone(), *txn_hash)?
-                .ok_or(anyhow!("missing receipt"))?;
+        let transaction_receipts = data_access::get_transaction_receipts_in_block(db.clone(), block.hash())?;
 
+        for (index, receipt) in transaction_receipts.into_iter().enumerate() {
             for (log_index, log) in receipt.logs.into_iter().enumerate() {
                 let log = match log {
                     Log::Evm(l) => l,
@@ -752,8 +751,8 @@ fn get_logs_inner(
                 logs.push(eth::Log::new(
                     log,
                     log_index,
-                    txn_index,
-                    *txn_hash,
+                    index,
+                    receipt.tx_hash,
                     block.number(),
                     block.hash(),
                 ));
@@ -1302,7 +1301,7 @@ fn get_filter_changes(params: Params, node: &Arc<RwLock<Node>>) -> Result<serde_
             };
 
             // Get the logs
-            let logs = get_logs_inner(&adjusted_criteria, &node)?;
+            let logs = get_logs_inner(&adjusted_criteria, node)?;
 
             // Set the last recorded block in the filter to the most recent block in the returned logs
             let last_block = logs.iter().fold(None, |acc, x| {
@@ -1325,7 +1324,7 @@ fn get_filter_logs(params: Params, node: &Arc<RwLock<Node>>) -> Result<serde_jso
             FilterKind::Block(_) => Err(anyhow!("pending tx filter not supported")),
             FilterKind::PendingTx(_) => Err(anyhow!("pending tx filter not supported")),
             FilterKind::Log(log_filter) => {
-                let result = get_logs_inner(&log_filter.criteria, &node)?;
+                let result = get_logs_inner(&log_filter.criteria, node)?;
                 Ok(json!(result))
             }
         }
