@@ -1656,9 +1656,9 @@ dependencies = [
 
 [[package]]
 name = "cbor4ii"
-version = "1.0.0"
+version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "189a2a2e5eec2f203b2bb8bc4c2db55c7253770d2c6bf3ae5f79ace5a15c305f"
+checksum = "db05e2e8488783316fbab37891db4ab5b31124dab16bb2161da145c03dd0de70"
 dependencies = [
  "serde",
 ]
@@ -11021,7 +11021,7 @@ dependencies = [
  "bitvec",
  "blsful",
  "bytes",
- "cbor4ii 1.0.0",
+ "cbor4ii 1.1.1",
  "cfg-if",
  "clap",
  "criterion",
