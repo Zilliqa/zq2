@@ -10,7 +10,7 @@ use parking_lot::{RwLock, RwLockWriteGuard};
 use primitive_types::{H160, U256};
 use serde_json::{Value, value::RawValue};
 use zilliqa::{
-    cfg::{DbConfig, new_view_broadcast_interval_default},
+    cfg::{DbConfig, max_missed_view_age_default, new_view_broadcast_interval_default},
     contracts,
     crypto::NodePublicKey,
     db::BlockFilter,
@@ -21,6 +21,7 @@ mod consensus;
 mod debug;
 mod eth;
 mod ots;
+mod penalty;
 mod persistence;
 mod staking;
 mod sync;
@@ -80,12 +81,12 @@ use zilliqa::{
     api,
     cfg::{
         Amount, ApiServer, Checkpoint, ConsensusConfig, ContractUpgradeConfig, ContractUpgrades,
-        Fork, GenesisDeposit, NodeConfig, SyncConfig, allowed_timestamp_skew_default,
-        block_request_batch_size_default, block_request_limit_default, consensus_timeout_default,
-        eth_chain_id_default, failed_request_sleep_duration_default, genesis_fork_default,
-        max_blocks_in_flight_default, max_rpc_response_size_default, scilla_ext_libs_path_default,
-        state_cache_size_default, state_rpc_limit_default, total_native_token_supply_default,
-        u64_max,
+        Fork, GenesisDeposit, NodeConfig, ReinitialiseParams, SyncConfig,
+        allowed_timestamp_skew_default, block_request_batch_size_default,
+        block_request_limit_default, consensus_timeout_default, eth_chain_id_default,
+        failed_request_sleep_duration_default, genesis_fork_default, max_blocks_in_flight_default,
+        max_rpc_response_size_default, scilla_ext_libs_path_default, state_cache_size_default,
+        state_rpc_limit_default, total_native_token_supply_default, u64_max,
     },
     crypto::{SecretKey, TransactionPublicKey},
     db,
@@ -355,10 +356,24 @@ impl Network {
                         deposit_v3_upgrade_block_height_value,
                     )),
                     None,
-                    None,
+                    Some(ContractUpgradeConfig {
+                        height: deposit_v3_upgrade_block_height_value,
+                        reinitialise_params: Some(ReinitialiseParams::default()),
+                    }),
+                    Some(ContractUpgradeConfig::from_height(
+                        deposit_v3_upgrade_block_height_value,
+                    )),
                 )
             } else {
-                ContractUpgrades::new(None, None, None)
+                ContractUpgrades::new(
+                    None,
+                    None,
+                    Some(ContractUpgradeConfig {
+                        height: 0,
+                        reinitialise_params: Some(ReinitialiseParams::default()),
+                    }),
+                    Some(ContractUpgradeConfig::from_height(0)),
+                )
             }
         };
 
@@ -413,6 +428,7 @@ impl Network {
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: true,
             max_rpc_response_size: max_rpc_response_size_default(),
+            max_missed_view_age: max_missed_view_age_default(),
         };
 
         let (nodes, external_receivers, local_receivers, request_response_receivers): (
@@ -506,10 +522,24 @@ impl Network {
                     self.deposit_v3_upgrade_block_height.unwrap(),
                 )),
                 None,
-                None,
+                Some(ContractUpgradeConfig {
+                    height: self.deposit_v3_upgrade_block_height.unwrap(),
+                    reinitialise_params: Some(ReinitialiseParams::default()),
+                }),
+                Some(ContractUpgradeConfig::from_height(
+                    self.deposit_v3_upgrade_block_height.unwrap(),
+                )),
             )
         } else {
-            ContractUpgrades::new(None, None, None)
+            ContractUpgrades::new(
+                None,
+                None,
+                Some(ContractUpgradeConfig {
+                    height: 0,
+                    reinitialise_params: Some(ReinitialiseParams::default()),
+                }),
+                Some(ContractUpgradeConfig::from_height(0)),
+            )
         };
         let config = NodeConfig {
             eth_chain_id: self.shard_id,
@@ -567,6 +597,7 @@ impl Network {
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: true,
             max_rpc_response_size: max_rpc_response_size_default(),
+            max_missed_view_age: max_missed_view_age_default(),
         };
 
         let secret_key = options.secret_key_or_random(self.rng.clone());
@@ -1007,6 +1038,7 @@ impl Network {
                         transactions,
                         parent,
                         trie_storage,
+                        view_history,
                         output,
                     ) => {
                         assert!(
@@ -1021,6 +1053,7 @@ impl Network {
                             parent,
                             trie_storage.clone(),
                             *source_shard,
+                            view_history.clone(),
                             output,
                         )
                         .unwrap();

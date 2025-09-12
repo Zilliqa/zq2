@@ -30,6 +30,7 @@ use crate::{
     crypto::{BlsSignature, Hash},
     exec::{ScillaError, ScillaException, ScillaTransition},
     message::{AggregateQc, Block, BlockHeader, QuorumCertificate},
+    precompiles::ViewHistory,
     time::SystemTime,
     transaction::{EvmGas, Log, SignedTransaction, TransactionReceipt, VerifiedTransaction},
     trie_storage::TrieStorage,
@@ -227,6 +228,8 @@ pub struct BlockAndReceiptsAndTransactions {
     pub receipts: Vec<TransactionReceipt>,
     pub transactions: Vec<VerifiedTransaction>,
 }
+
+const LARGE_OFFSET: u64 = 1_000_000_000_000;
 
 /// Version string that is written to disk along with the persisted database. This should be bumped whenever we make a
 /// backwards incompatible change to our database format. This should be done rarely, since it forces all node
@@ -459,6 +462,86 @@ impl Db {
             )?;
         }
 
+        if version < 5 {
+            connection.execute_batch(
+                ("
+                BEGIN;
+
+                INSERT INTO schema_version VALUES (5);
+
+                CREATE TABLE IF NOT EXISTS view_history (view INTEGER NOT NULL PRIMARY KEY, leader BLOB) WITHOUT ROWID;
+
+                INSERT INTO view_history (view, leader) VALUES (".to_string() + LARGE_OFFSET.to_string().as_str() + ", NULL);
+
+                COMMIT;
+            ").as_str(),
+            )?;
+        }
+
+        Ok(())
+    }
+
+    pub fn read_recent_view_history(&self, view: u64) -> Result<Vec<(u64, Vec<u8>)>> {
+        Ok(self
+            .pool
+            .get()?
+            .prepare_cached(
+                "SELECT view, leader FROM view_history WHERE view > ?1 AND leader NOT NULL ORDER BY view",
+            )?
+            .query_map([view], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?)
+    }
+
+    pub fn prune_view_history(&self, view: u64) -> Result<()> {
+        self.pool
+            .get()?
+            .prepare_cached("DELETE FROM view_history WHERE view < ?1 AND leader NOT NULL")?
+            .execute([view])?;
+        Ok(())
+    }
+
+    pub fn get_first_last_from_view_history(&self) -> Result<(u64, u64)> {
+        let min = self
+            .pool
+            .get()?
+            .prepare_cached("SELECT MIN(view) FROM view_history WHERE leader NOT NULL")?
+            .query_row([], |row| row.get(0))
+            .unwrap_or_default();
+        let max = self
+            .pool
+            .get()?
+            .prepare_cached("SELECT MAX(view) FROM view_history WHERE leader NOT NULL")?
+            .query_row([], |row| row.get(0))
+            .unwrap_or_default();
+        Ok((min, max))
+    }
+
+    pub fn get_min_view_of_view_history(&self) -> Result<u64> {
+        let min_view: u64 = self
+            .pool
+            .get()?
+            .prepare_cached("SELECT view FROM view_history WHERE leader IS NULL LIMIT 1")?
+            .query_row([], |row| row.get(0))
+            .unwrap_or_default();
+        // to prevent primary key collision with missed views stored in the table
+        Ok(min_view - LARGE_OFFSET)
+    }
+
+    pub fn set_min_view_of_view_history(&self, min_view: u64) -> Result<()> {
+        self.pool
+            .get()?
+            .prepare_cached("UPDATE view_history SET view = ?1 WHERE leader IS NULL")?
+            // to prevent primary key collision with missed views stored in the table
+            .execute([min_view + LARGE_OFFSET])?;
+        Ok(())
+    }
+
+    pub fn extend_view_history(&self, view: u64, leader: Vec<u8>) -> Result<()> {
+        self.pool
+            .get()?
+            .prepare_cached("INSERT INTO view_history (view, leader) VALUES (?1, ?2)")?
+            //.execute(rusqlite::params![view, leader])?;
+            .execute((view, leader))?;
         Ok(())
     }
 
@@ -556,12 +639,13 @@ impl Db {
     /// Fetch checkpoint data from file and initialise db state
     /// Return checkpointed block and transactions which must be executed after this function
     /// Return None if checkpoint already loaded
+    #[allow(clippy::type_complexity)]
     pub fn load_trusted_checkpoint(
         &self,
         path: PathBuf,
         hash: &Hash,
         our_shard_id: u64,
-    ) -> Result<Option<(Block, Vec<SignedTransaction>, Block)>> {
+    ) -> Result<Option<(Block, Vec<SignedTransaction>, Block, ViewHistory)>> {
         let trie_storage = Arc::new(self.state_trie()?);
         let state_trie = EthTrie::new(trie_storage.clone());
 
@@ -571,7 +655,7 @@ impl Db {
             && self.get_highest_canonical_block_number()?.is_none()
         {
             tracing::info!(%hash, "Restoring checkpoint");
-            let (block, transactions, parent) = crate::checkpoint::load_ckpt(
+            let (block, transactions, parent, view_history) = crate::checkpoint::load_ckpt(
                 path.as_path(),
                 trie_storage.clone(),
                 our_shard_id,
@@ -588,7 +672,7 @@ impl Db {
                 Ok(())
             })?;
 
-            return Ok(Some((block, transactions, parent)));
+            return Ok(Some((block, transactions, parent, view_history)));
         }
 
         let (block, transactions, parent) = crate::checkpoint::load_ckpt_blocks(path.as_path())?;
@@ -602,6 +686,8 @@ impl Db {
             "Critical checkpoint error"
         );
 
+        let view_history = crate::checkpoint::load_ckpt_history(path.as_path())?;
+
         // Since it exists, this must either be a state-sync/state-migration
         // If this is not desired, remove the config setting.
         tracing::info!(%hash, "Syncing checkpoint");
@@ -611,7 +697,7 @@ impl Db {
             &ckpt_parent.state_root_hash(),
         )?;
 
-        Ok(Some((block, transactions, parent)))
+        Ok(Some((block, transactions, parent, view_history)))
     }
 
     pub fn state_trie(&self) -> Result<TrieStorage> {
@@ -1214,6 +1300,7 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
     parent: &Block,
     state_trie_storage: TrieStorage,
     shard_id: u64,
+    view_history: ViewHistory,
     output_dir: P,
 ) -> Result<()> {
     fs::create_dir_all(&output_dir)?;
@@ -1226,6 +1313,7 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
         transactions,
         parent,
         shard_id,
+        view_history,
     )?;
 
     // rename file when done
@@ -1386,6 +1474,8 @@ mod tests {
             EvmGas(0),
         );
 
+        let view_history: ViewHistory = ViewHistory::default();
+
         let checkpoint_path = db.get_checkpoint_dir().unwrap().unwrap();
 
         const SHARD_ID: u64 = 5000;
@@ -1397,12 +1487,13 @@ mod tests {
             &checkpoint_parent,
             db.state_trie().unwrap(),
             SHARD_ID,
+            view_history,
             &checkpoint_path,
         )
         .unwrap();
 
         // now load the checkpoint
-        let (block, transactions, parent) = db
+        let (block, transactions, parent, view_history) = db
             .load_trusted_checkpoint(
                 checkpoint_path.join(checkpoint_block.number().to_string()),
                 &checkpoint_block.hash(),
@@ -1413,9 +1504,14 @@ mod tests {
         assert_eq!(checkpoint_block, block);
         assert_eq!(checkpoint_transactions, transactions);
         assert_eq!(checkpoint_parent, parent);
+        if let Some((view, _)) = view_history.missed_views.lock().unwrap().front() {
+            assert!(*view >= *view_history.min_view.lock().unwrap());
+        } else {
+            assert_eq!(0, *view_history.min_view.lock().unwrap());
+        }
 
         // load the checkpoint again, to ensure idempotency
-        let (block, transactions, parent) = db
+        let (block, transactions, parent, view_history) = db
             .load_trusted_checkpoint(
                 checkpoint_path.join(checkpoint_block.number().to_string()),
                 &checkpoint_block.hash(),
@@ -1426,6 +1522,11 @@ mod tests {
         assert_eq!(checkpoint_block, block);
         assert_eq!(checkpoint_transactions, transactions);
         assert_eq!(checkpoint_parent, parent);
+        if let Some((view, _)) = view_history.missed_views.lock().unwrap().front() {
+            assert!(*view >= *view_history.min_view.lock().unwrap());
+        } else {
+            assert_eq!(0, *view_history.min_view.lock().unwrap());
+        }
 
         // Always return Some, even if checkpointed block already executed
         db.insert_block(&checkpoint_block).unwrap();

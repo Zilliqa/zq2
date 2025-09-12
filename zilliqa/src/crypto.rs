@@ -145,8 +145,14 @@ pub enum TransactionSignature {
 }
 
 /// The public key type used internally in consensus, alongside `NodeSignature`.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NodePublicKey(PublicKey<Bls12381G2Impl>);
+
+impl std::hash::Hash for NodePublicKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.as_bytes().hash(state);
+    }
+}
 
 impl NodePublicKey {
     pub fn from_bytes(bytes: &[u8]) -> Result<NodePublicKey> {

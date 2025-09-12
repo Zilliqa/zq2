@@ -1,6 +1,6 @@
 //! An administrative API
 
-use std::{ops::RangeInclusive, sync::Arc};
+use std::{collections::HashMap, ops::RangeInclusive, sync::Arc};
 
 use alloy::{eips::BlockId, primitives::U64};
 use anyhow::{Result, anyhow};
@@ -15,6 +15,7 @@ use crate::{
     api::{to_hex::ToHex, types::admin::VoteCount},
     cfg::EnabledApi,
     consensus::{BlockVotes, NewViewVote, Validator},
+    constants::{LAG_BEHIND_CURRENT_VIEW, MISSED_VIEW_WINDOW},
     crypto::NodePublicKey,
     message::{BitArray, BlockHeader},
     node::Node,
@@ -37,6 +38,7 @@ pub fn rpc_module(
             ("admin_clearMempool", clear_mempool),
             ("admin_getLeaders", get_leaders),
             ("admin_syncing", syncing),
+            ("admin_missedViews", missed_views),
         ]
     )
 }
@@ -59,6 +61,43 @@ fn syncing(_params: Params, node: &Arc<RwLock<Node>>) -> Result<SyncInfo> {
         cutover_at,
         migrate_at,
         block_range,
+    })
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct NodeMissedViews {
+    pub min_view: u64,
+    pub node_missed_views: HashMap<NodePublicKey, Vec<u64>>,
+}
+
+fn missed_views(params: Params, node: &Arc<RwLock<Node>>) -> Result<NodeMissedViews> {
+    let mut params = params.sequence();
+    let current_view: u64 = params.next::<U64>()?.to::<u64>();
+    let node = node.read();
+    let history = &node.consensus.state().view_history;
+    let min_view = history.min_view.lock().unwrap();
+    if *min_view > 1
+        && current_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW) < *min_view + MISSED_VIEW_WINDOW
+        || current_view > node.consensus.get_finalized_view()? + LAG_BEHIND_CURRENT_VIEW + 1
+    {
+        return Err(anyhow!("Missed view history not available"));
+    }
+    let missed_views = history.missed_views.lock().unwrap();
+    let missed_map = missed_views
+        .iter()
+        .filter(|&(view, _)| {
+            *view >= current_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW + MISSED_VIEW_WINDOW)
+                && *view < current_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW)
+        })
+        .fold(HashMap::new(), |mut acc, (view, leader)| {
+            acc.entry(*leader)
+                .and_modify(|views: &mut Vec<u64>| views.push(*view))
+                .or_insert_with(|| vec![*view]);
+            acc
+        });
+    Ok(NodeMissedViews {
+        min_view: *min_view,
+        node_missed_views: missed_map,
     })
 }
 
@@ -237,10 +276,11 @@ fn get_leaders(params: Params, node: &Arc<RwLock<Node>>) -> Result<Vec<(u64, Val
     let mut leaders = vec![];
 
     while leaders.len() <= count {
-        leaders.push((
-            view,
-            node.consensus.leader_at_block(&head_block, view).unwrap(),
-        ));
+        if let Some(leader) = node.consensus.leader_at_block(&head_block, view) {
+            leaders.push((view, leader));
+        } else {
+            break; // missed view history not available
+        }
         view += 1;
     }
     Ok(leaders)

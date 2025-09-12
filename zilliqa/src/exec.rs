@@ -35,7 +35,9 @@ use crate::{
     error::ensure_success,
     inspector::{self, ScillaInspector},
     message::{Block, BlockHeader},
-    precompiles::{get_custom_precompiles, scilla_call_handle_register},
+    precompiles::{
+        ViewHistory, get_custom_precompiles, penalty_handle_register, scilla_call_handle_register,
+    },
     scilla::{self, ParamValue, Scilla, split_storage_key, storage_key},
     state::{Account, Code, ContractInit, ExternalLibrary, State, contract_addr},
     time::SystemTime,
@@ -434,6 +436,8 @@ pub struct ExternalContext<'a, I> {
     pub callers: Vec<Address>,
     pub has_evm_failed: bool,
     pub has_called_scilla_precompile: bool,
+    pub finalized_view: u64,
+    pub view_history: ViewHistory,
 }
 
 impl<I: Inspector<PendingState>> GetInspector<PendingState> for ExternalContext<'_, I> {
@@ -553,6 +557,8 @@ impl State {
             callers: vec![from_addr],
             has_evm_failed: false,
             has_called_scilla_precompile: false,
+            finalized_view: self.finalized_view,
+            view_history: self.view_history.clone(),
         };
         let access_list = if fork.inject_access_list {
             access_list.unwrap_or_default()
@@ -586,6 +592,7 @@ impl State {
             .with_external_context(external_context)
             .with_handler_cfg(HandlerCfg { spec_id: SPEC_ID })
             .append_handler_register(scilla_call_handle_register)
+            .append_handler_register(penalty_handle_register)
             .modify_cfg_env(|c| {
                 c.disable_eip3607 = extra_opts.disable_eip3607;
                 c.chain_id = self.chain_id.eth;
