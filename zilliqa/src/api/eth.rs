@@ -56,7 +56,7 @@ pub fn rpc_module(
     node: Arc<RwLock<Node>>,
     enabled_apis: &[EnabledApi],
 ) -> RpcModule<Arc<RwLock<Node>>> {
-    let mut module = super::declare_module!(
+    super::declare_module!(
         node,
         enabled_apis,
         [
@@ -120,18 +120,18 @@ pub fn rpc_module(
             ("eth_syncing", syncing),
             ("eth_uninstallFilter", uninstall_filter),
         ],
-    );
+    )
 
-    module
-        .register_subscription(
-            "eth_subscribe",
-            "eth_subscription",
-            "eth_unsubscribe",
-            subscribe,
-        )
-        .unwrap();
+    // module
+    //     .register_subscription(
+    //         "eth_subscribe",
+    //         "eth_subscription",
+    //         "eth_unsubscribe",
+    //         subscribe,
+    //     )
+    //     .unwrap();
 
-    module
+    //module
 }
 
 // See https://eips.ethereum.org/EIPS/eip-1898
@@ -731,7 +731,8 @@ fn get_logs_inner(
     for block in blocks {
         let block = block?;
 
-        let transaction_receipts = data_access::get_transaction_receipts_in_block(db.clone(), block.hash())?;
+        let transaction_receipts =
+            data_access::get_transaction_receipts_in_block(db.clone(), block.hash())?;
 
         for (index, receipt) in transaction_receipts.into_iter().enumerate() {
             for (log_index, log) in receipt.logs.into_iter().enumerate() {
@@ -962,7 +963,7 @@ fn syncing(params: Params, node: &Arc<RwLock<Node>>) -> Result<SyncingResult> {
 }
 
 #[allow(clippy::redundant_allocation, clippy::await_holding_lock)]
-async fn subscribe(
+async fn _subscribe(
     params: Params<'_>,
     pending: PendingSubscriptionSink,
     node: Arc<Arc<RwLock<Node>>>,
