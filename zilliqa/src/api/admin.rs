@@ -14,6 +14,7 @@ use super::types::{admin::VotesReceivedReturnee, eth::QuorumCertificate, hex};
 use crate::{
     api::{to_hex::ToHex, types::admin::VoteCount},
     cfg::EnabledApi,
+    checkpoint::load_ckpt_history,
     consensus::{BlockVotes, NewViewVote, Validator},
     constants::{LAG_BEHIND_CURRENT_VIEW, MISSED_VIEW_WINDOW},
     crypto::NodePublicKey,
@@ -39,6 +40,7 @@ pub fn rpc_module(
             ("admin_getLeaders", get_leaders),
             ("admin_syncing", syncing),
             ("admin_missedViews", missed_views),
+            ("admin_importViewHistory", import_history),
         ]
     )
 }
@@ -99,6 +101,62 @@ fn missed_views(params: Params, node: &Arc<RwLock<Node>>) -> Result<NodeMissedVi
         min_view: *min_view,
         node_missed_views: missed_map,
     })
+}
+
+fn import_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<()> {
+    let mut params = params.sequence();
+    let param: &str = params.next::<&str>()?;
+    let path = std::path::Path::new(param);
+    let mut imported_history = load_ckpt_history(path)?;
+    let node = node.read();
+    let history = &node.consensus.state().view_history;
+    let min_view = history.min_view.lock().unwrap();
+    // make sure there is no gap between the existing and the imported history
+    let mut last_imported = {
+        match imported_history.missed_views.lock().unwrap().back() {
+            None => 0,
+            Some((view, _)) => *view,
+        }
+    };
+    if *min_view > last_imported {
+        return Err(anyhow!(
+            "Gap between imported and existing history detected"
+        ));
+    }
+    // trim the imported missed view history
+    imported_history.prune_history(
+        node.consensus.get_finalized_view()?,
+        node.config.max_missed_view_age,
+    )?;
+    let first = {
+        match history.missed_views.lock().unwrap().front() {
+            None => 0,
+            Some((view, _)) => *view,
+        }
+    };
+    let mut imported_missed_views = imported_history.missed_views.lock().unwrap();
+    // skip overlapping missed views present in both histories
+    while last_imported >= first {
+        imported_missed_views.pop_back();
+        last_imported = imported_missed_views.back().unwrap().0;
+    }
+    let mut missed_views = history.missed_views.lock().unwrap();
+    // merge the two missed view histories and store the delta in the db
+    imported_missed_views
+        .iter()
+        .rev()
+        .for_each(|(view, leader)| {
+            node.consensus
+                .db
+                .extend_view_history(*view, leader.as_bytes())
+                .unwrap();
+            missed_views.push_front((*view, *leader));
+        });
+    // update min_view in consensus state and in the db
+    let mut min_view = history.min_view.lock().unwrap();
+    *min_view = *imported_history.min_view.lock().unwrap();
+    node.consensus.db.set_min_view_of_view_history(*min_view)?;
+    Ok(())
 }
 
 #[derive(Clone, Debug, Serialize)]
