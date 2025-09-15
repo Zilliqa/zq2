@@ -1846,10 +1846,9 @@ impl Consensus {
         from_broadcast: bool,
     ) -> Result<Vec<TxAddResult>> {
         let mut inserted = Vec::with_capacity(verified_transactions.len());
-        let mut pool = self.transaction_pool.write();
         for txn in verified_transactions {
             info!(?txn, "seen new txn");
-            inserted.push(self.new_transaction(txn, from_broadcast, &mut pool)?);
+            inserted.push(self.new_transaction(txn, from_broadcast)?);
         }
         Ok(inserted)
     }
@@ -2087,7 +2086,6 @@ impl Consensus {
         &self,
         txn: VerifiedTransaction,
         from_broadcast: bool,
-        pool: &mut RwLockWriteGuard<TransactionPool>,
     ) -> Result<TxAddResult> {
         if self.db.contains_transaction(&txn.hash)? {
             debug!("Transaction {:?} already in mempool", txn.hash);
@@ -2124,7 +2122,7 @@ impl Consensus {
 
         let txn_hash = txn.hash;
 
-        let insert_result = pool.insert_transaction(txn.clone(), &early_account, from_broadcast);
+        let insert_result = self.transaction_pool.write().insert_transaction(txn.clone(), &early_account, from_broadcast);
         if insert_result.was_added() {
             let _ = self.new_transaction_hashes.send(txn_hash);
 
@@ -3154,65 +3152,68 @@ impl Consensus {
             };
         }
 
-        let mut pool = self.transaction_pool.write();
-        pool.update_with_state(&self.state);
         let mut verified_txns = Vec::new();
+        {
+            // Pool is write-lock here and has to be dropped after this scope
+            let mut pool = self.transaction_pool.write();
+            pool.update_with_state(&self.state);
 
-        let fork = self.state.forks.get(block.header.number);
+            let fork = self.state.forks.get(block.header.number);
 
-        // We re-inject any missing Intershard transactions (or really, any missing
-        // transactions) from our mempool. If any txs are unavailable in both the
-        // message or locally, the proposal cannot be applied
-        for (idx, tx_hash) in block.transactions.iter().enumerate() {
-            // Prefer to insert verified txn from pool. This is faster.
-            let txn = match pool.get_transaction(tx_hash) {
-                Some(txn) => txn.clone(),
-                _ => match transactions.get(idx) {
-                    Some(sig_txn) => {
-                        let Ok(verified) = sig_txn.clone().verify() else {
-                            warn!("Unable to verify included transaction in given block!");
-                            return Ok(());
-                        };
-                        if verified.hash != *tx_hash {
+            // We re-inject any missing Intershard transactions (or really, any missing
+            // transactions) from our mempool. If any txs are unavailable in both the
+            // message or locally, the proposal cannot be applied
+            for (idx, tx_hash) in block.transactions.iter().enumerate() {
+                // Prefer to insert verified txn from pool. This is faster.
+                let txn = match pool.get_transaction(tx_hash) {
+                    Some(txn) => txn.clone(),
+                    _ => match transactions.get(idx) {
+                        Some(sig_txn) => {
+                            let Ok(verified) = sig_txn.clone().verify() else {
+                                warn!("Unable to verify included transaction in given block!");
+                                return Ok(());
+                            };
+                            if verified.hash != *tx_hash {
+                                warn!(
+                                    "Computed txn hash doesn't match the hash provided in the given block!"
+                                );
+                                return Ok(());
+                            }
+
+                            // bypass this check during sync - since the txn has already been executed
+                            if fork.check_minimum_gas_price && !during_sync {
+                                let Ok(acc) = self.state.get_account(verified.signer) else {
+                                    warn!(
+                                        "Sender doesn't exist in recovered transaction from given block!"
+                                    );
+                                    return Ok(());
+                                };
+
+                                let Ok(ValidationOutcome::Success) = sig_txn.validate(
+                                    &acc,
+                                    self.config.consensus.eth_block_gas_limit,
+                                    self.config.consensus.gas_price.0,
+                                    self.config.eth_chain_id,
+                                ) else {
+                                    warn!("Transaction recovered from given block failed to validate!");
+                                    return Ok(());
+                                };
+                            }
+                            verified
+                        }
+                        None => {
                             warn!(
-                                "Computed txn hash doesn't match the hash provided in the given block!"
+                                "Proposal {} at view {} referenced a transaction {} that was neither included in the broadcast nor found locally - cannot apply block",
+                                block.hash(),
+                                block.view(),
+                                tx_hash
                             );
                             return Ok(());
                         }
-
-                        // bypass this check during sync - since the txn has already been executed
-                        if fork.check_minimum_gas_price && !during_sync {
-                            let Ok(acc) = self.state.get_account(verified.signer) else {
-                                warn!(
-                                    "Sender doesn't exist in recovered transaction from given block!"
-                                );
-                                return Ok(());
-                            };
-
-                            let Ok(ValidationOutcome::Success) = sig_txn.validate(
-                                &acc,
-                                self.config.consensus.eth_block_gas_limit,
-                                self.config.consensus.gas_price.0,
-                                self.config.eth_chain_id,
-                            ) else {
-                                warn!("Transaction recovered from given block failed to validate!");
-                                return Ok(());
-                            };
-                        }
-                        verified
-                    }
-                    None => {
-                        warn!(
-                            "Proposal {} at view {} referenced a transaction {} that was neither included in the broadcast nor found locally - cannot apply block",
-                            block.hash(),
-                            block.view(),
-                            tx_hash
-                        );
-                        return Ok(());
-                    }
-                },
-            };
-            verified_txns.push(txn);
+                    },
+                };
+                verified_txns.push(txn);
+            }
         }
 
         let mut block_receipts = Vec::new();
@@ -3228,7 +3229,7 @@ impl Consensus {
 
         let mut touched_addresses = vec![];
         for (tx_index, txn) in verified_txns.iter().enumerate() {
-            self.new_transaction(txn.clone(), true, &mut pool)?;
+            self.new_transaction(txn.clone(), true)?;
             let tx_hash = txn.hash;
             let mut inspector = TouchedAddressInspector::default();
             let result = Self::apply_transaction_at(
@@ -3239,7 +3240,7 @@ impl Consensus {
                 self.config.enable_ots_indices,
             )?
             .ok_or_else(|| anyhow!("proposed transaction failed to execute"))?;
-            pool.mark_executed(txn);
+            self.transaction_pool.write().mark_executed(txn);
             for address in inspector.touched {
                 touched_addresses.push((address, tx_hash));
             }
@@ -3275,7 +3276,6 @@ impl Consensus {
             debug!(?receipt, "applied transaction {:?}", receipt);
             block_receipts.push((receipt, tx_index));
         }
-        std::mem::drop(pool);
 
         self.db.with_sqlite_tx(|sqlite_tx| {
             for txn in &verified_txns {

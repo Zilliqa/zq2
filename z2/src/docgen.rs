@@ -13,7 +13,6 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, anyhow};
-use parking_lot::RwLock;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tera::Tera;
@@ -362,7 +361,7 @@ pub fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, PageStatus
     let sync_peers = Arc::new(SyncPeers::new(peer_id));
     let swarm_peers = Arc::new(AtomicPtr::new(Box::into_raw(Box::new(Vec::new()))));
 
-    let my_node = Arc::new(RwLock::new(zilliqa::node::Node::new(
+    let my_node = Arc::new(zilliqa::node::Node::new(
         config,
         secret_key,
         s1,
@@ -372,7 +371,7 @@ pub fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, PageStatus
         peers_count,
         sync_peers,
         swarm_peers,
-    )?));
+    )?);
     let module = zilliqa::api::rpc_module(my_node.clone(), &[]);
     for m in module.method_names() {
         methods.insert(

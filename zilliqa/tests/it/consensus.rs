@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-
 use alloy::eips::BlockId;
 use ethers::{
     providers::Middleware,
@@ -180,7 +179,8 @@ async fn handle_forking_correctly(mut network: Network) {
     fn verify_queued(network: &Network, expected_count: usize, index: usize) {
         let queued_count: usize = {
             let node = network.get_node(index);
-            let pool = node.consensus.transaction_pool.read();
+            let consensus = node.consensus.read();
+            let pool = consensus.transaction_pool.read();
             pool.preview_content()
                 .queued
                 .values()
@@ -457,7 +457,8 @@ async fn test_rapid_transaction_submission_during_block_production(mut network: 
 
     for index in network.nodes.iter().map(|x| x.index) {
         let node = network.get_node(index);
-        let pool_status = node.consensus.transaction_pool.read().preview_status();
+        let consensus = node.consensus.read();
+        let pool_status = consensus.transaction_pool.read().preview_status();
         total_pending += pool_status.pending + pool_status.queued;
 
         // Count how many of our transactions were processed
@@ -564,8 +565,8 @@ async fn test_transaction_replacement_during_consensus(mut network: Network) {
         }
 
         // Verify pool state consistency
-        let pool_status = node.consensus.transaction_pool.read().preview_status();
-        let content = node.consensus.transaction_pool.read().preview_content();
+        let pool_status = node.consensus.read().transaction_pool.read().preview_status();
+        let content = node.consensus.read().transaction_pool.read().preview_content();
 
         // Check that the pending count matches the actual content
         let actual_pending: usize = content.pending.values().map(|v| v.len()).sum();
@@ -635,8 +636,9 @@ async fn test_transaction_pool_during_network_partition(mut network: Network) {
     let mut node_states = Vec::new();
     for index in network.nodes.iter().map(|x| x.index) {
         let node = network.get_node(index);
-        let pool_status = node.consensus.transaction_pool.read().preview_status();
-        let content = node.consensus.transaction_pool.read().preview_content();
+        let consensus = node.consensus.read();
+        let pool_status = consensus.transaction_pool.read().preview_status();
+        let content = consensus.transaction_pool.read().preview_content();
 
         // Verify internal consistency
         let actual_pending: usize = content.pending.values().map(|v| v.len()).sum();

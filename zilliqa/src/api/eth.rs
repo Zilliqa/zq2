@@ -23,7 +23,7 @@ use jsonrpsee::{
         params::ParamsSequence,
     },
 };
-use parking_lot::{RwLock, RwLockReadGuard};
+use parking_lot::{RwLock};
 use revm::primitives::keccak256;
 use serde_json::json;
 use tracing::*;
@@ -53,10 +53,10 @@ use crate::{
 };
 
 pub fn rpc_module(
-    node: Arc<RwLock<Node>>,
+    node: Arc<Node>,
     enabled_apis: &[EnabledApi],
-) -> RpcModule<Arc<RwLock<Node>>> {
-    super::declare_module!(
+) -> RpcModule<Arc<Node>> {
+    let mut module = super::declare_module!(
         node,
         enabled_apis,
         [
@@ -192,30 +192,29 @@ fn expect_end_of_params(seq: &mut ParamsSequence, min: u32, max: u32) -> Result<
     }
 }
 
-fn accounts(params: Params, _: &Arc<RwLock<Node>>) -> Result<[(); 0]> {
+fn accounts(params: Params, _: &Arc<Node>) -> Result<[(); 0]> {
     expect_end_of_params(&mut params.sequence(), 0, 0)?;
     Ok([])
 }
 
-fn block_number(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
+fn block_number(params: Params, node: &Arc<Node>) -> Result<String> {
     expect_end_of_params(&mut params.sequence(), 0, 0)?;
-    let db = node.read().db.clone();
+    let db = node.db.clone();
     Ok(data_access::get_highest_canonical_block_number(db).to_hex())
 }
 
-fn call_many(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
+fn call_many(_params: Params, _node: &Arc<Node>) -> Result<()> {
     // TODO: disable_eip3607 for this call.
     Err(anyhow!("API method eth_callMany is not implemented yet"))
 }
 
-fn call(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
+fn call(params: Params, node: &Arc<Node>) -> Result<String> {
     let mut params = params.sequence();
     let call_params: CallParams = params.next()?;
     let block_id: BlockId = params.optional_next()?.unwrap_or_default();
     expect_end_of_params(&mut params, 1, 2)?;
 
     let (state, block) = {
-        let node = node.read();
         let block = node.get_block(block_id)?;
         let block = build_errored_response_for_missing_block(block_id, block)?;
         let state = node.get_state(&block)?;
@@ -245,19 +244,18 @@ fn call(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
     }
 }
 
-fn chain_id(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
+fn chain_id(params: Params, node: &Arc<Node>) -> Result<String> {
     expect_end_of_params(&mut params.sequence(), 0, 0)?;
-    Ok(node.read().config.eth_chain_id.to_hex())
+    Ok(node.config.eth_chain_id.to_hex())
 }
 
-fn estimate_gas(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
+fn estimate_gas(params: Params, node: &Arc<Node>) -> Result<String> {
     let mut params = params.sequence();
     let call_params: CallParams = params.next()?;
     let block_number: BlockNumberOrTag = params.optional_next()?.unwrap_or_default();
     expect_end_of_params(&mut params, 1, 2)?;
 
     let (block, state) = {
-        let node = node.read();
         let block = node
             .get_block(block_number)?
             .ok_or_else(|| anyhow!("missing block: {block_number}"))?;
@@ -286,7 +284,7 @@ fn estimate_gas(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
     Ok(return_value.to_hex())
 }
 
-fn get_balance(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
+fn get_balance(params: Params, node: &Arc<Node>) -> Result<String> {
     let mut params = params.sequence();
     let address: ZilAddress = params.next()?;
     let address: Address = address.into();
@@ -295,7 +293,6 @@ fn get_balance(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
     expect_end_of_params(&mut params, 2, 2)?;
 
     let state = {
-        let node = node.read();
         let block = node.get_block(block_id)?;
 
         let block = build_errored_response_for_missing_block(block_id, block)?;
@@ -481,7 +478,7 @@ pub fn old_get_block_transaction_receipts_inner(
 
 // This has to iterate through a whole block, so get_block_transaction_receipts_inner is more efficient for multiple receipts
 pub fn get_transaction_receipt_inner_slow(
-    node: &RwLockReadGuard<Node>,
+    node: &Node,
     block_id: impl Into<BlockId>,
     txn_hash: Hash,
 ) -> Result<Option<eth::TransactionReceipt>> {
@@ -497,11 +494,10 @@ pub fn get_transaction_receipt_inner_slow(
         .find(|r| r.transaction_hash == txn_hash.as_bytes()))
 }
 
-fn get_block_receipts(params: Params, node: &Arc<RwLock<Node>>) -> Result<Vec<TransactionReceipt>> {
+fn get_block_receipts(params: Params, node: &Arc<Node>) -> Result<Vec<TransactionReceipt>> {
     let block_id: BlockId = params.one()?;
 
     let (db, block) = {
-        let node = node.read();
         let Some(block) = node.get_block(block_id)? else {
             return Err(anyhow!("Block not found"));
         };
@@ -511,14 +507,13 @@ fn get_block_receipts(params: Params, node: &Arc<RwLock<Node>>) -> Result<Vec<Tr
     old_get_block_transaction_receipts_inner(db, &block)
 }
 
-fn get_code(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
+fn get_code(params: Params, node: &Arc<Node>) -> Result<String> {
     let mut params = params.sequence();
     let address: Address = params.next()?;
     let block_id: BlockId = params.next()?;
     expect_end_of_params(&mut params, 2, 2)?;
 
     let state = {
-        let node = node.read();
         let block = node.get_block(block_id)?;
 
         let block = build_errored_response_for_missing_block(block_id, block)?;
@@ -542,7 +537,7 @@ fn get_code(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
     Ok(return_code)
 }
 
-fn get_storage_at(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
+fn get_storage_at(params: Params, node: &Arc<Node>) -> Result<String> {
     let mut params = params.sequence();
     let address: Address = params.next()?;
     let position: U256 = params.next()?;
@@ -551,7 +546,6 @@ fn get_storage_at(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
     expect_end_of_params(&mut params, 3, 3)?;
 
     let state = {
-        let node = node.read();
         let block = node.get_block(block_id)?;
         let block = build_errored_response_for_missing_block(block_id, block)?;
         node.get_state(&block)?
@@ -562,13 +556,11 @@ fn get_storage_at(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
     Ok(value.to_hex())
 }
 
-fn get_transaction_count(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
+fn get_transaction_count(params: Params, node: &Arc<Node>) -> Result<String> {
     let mut params = params.sequence();
     let address: Address = params.next()?;
     let block_id: BlockId = params.next()?;
     expect_end_of_params(&mut params, 3, 3)?;
-
-    let node = node.read();
 
     let block = node.get_block(block_id)?;
     let block = build_errored_response_for_missing_block(block_id, block)?;
@@ -576,18 +568,18 @@ fn get_transaction_count(params: Params, node: &Arc<RwLock<Node>>) -> Result<Str
     let nonce = node.get_state(&block)?.get_account(address)?.nonce;
 
     if matches!(block_id, BlockId::Number(BlockNumberOrTag::Pending)) {
-        Ok(node.consensus.pending_transaction_count(address).to_hex())
+        Ok(node.consensus.read().pending_transaction_count(address).to_hex())
     } else {
         Ok(nonce.to_hex())
     }
 }
 
-fn get_gas_price(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
+fn get_gas_price(params: Params, node: &Arc<Node>) -> Result<String> {
     expect_end_of_params(&mut params.sequence(), 0, 0)?;
-    Ok(node.read().get_gas_price().to_hex())
+    Ok(node.get_gas_price().to_hex())
 }
 
-fn get_block_by_number(params: Params, node: &Arc<RwLock<Node>>) -> Result<Option<eth::Block>> {
+fn get_block_by_number(params: Params, node: &Arc<Node>) -> Result<Option<eth::Block>> {
     let mut params = params.sequence();
     let block_number: BlockNumberOrTag = params.next()?;
     let full: bool = params.next()?;
@@ -596,7 +588,7 @@ fn get_block_by_number(params: Params, node: &Arc<RwLock<Node>>) -> Result<Optio
     get_eth_block(node, block_number.into(), full)
 }
 
-fn get_block_by_hash(params: Params, node: &Arc<RwLock<Node>>) -> Result<Option<eth::Block>> {
+fn get_block_by_hash(params: Params, node: &Arc<Node>) -> Result<Option<eth::Block>> {
     let mut params = params.sequence();
     let hash: B256 = params.next()?;
     let full: bool = params.next()?;
@@ -606,13 +598,12 @@ fn get_block_by_hash(params: Params, node: &Arc<RwLock<Node>>) -> Result<Option<
 }
 
 pub fn get_eth_block(
-    node: &Arc<RwLock<Node>>,
+    node: &Arc<Node>,
     block_id: crate::db::BlockFilter,
     full: bool,
 ) -> Result<Option<eth::Block>> {
-    let node = node.read();
     let brt = match node
-        .consensus
+        .consensus.read()
         .db
         .get_block_and_receipts_and_transactions(block_id)?
     {
@@ -636,13 +627,12 @@ pub fn get_eth_block(
 
 fn get_block_transaction_count_by_hash(
     params: Params,
-    node: &Arc<RwLock<Node>>,
+    node: &Arc<Node>,
 ) -> Result<Option<String>> {
     let mut params = params.sequence();
     let hash: B256 = params.next()?;
     expect_end_of_params(&mut params, 1, 1)?;
 
-    let node = node.read();
     let block = node.get_block(hash)?;
 
     Ok(block.map(|b| b.transactions.len().to_hex()))
@@ -650,14 +640,13 @@ fn get_block_transaction_count_by_hash(
 
 fn get_block_transaction_count_by_number(
     params: Params,
-    node: &Arc<RwLock<Node>>,
+    node: &Arc<Node>,
 ) -> Result<Option<String>> {
     let mut params = params.sequence();
     // The ethereum RPC spec says this is optional, but it is mandatory in geth and erigon.
     let block_number: BlockNumberOrTag = params.next()?;
     expect_end_of_params(&mut params, 1, 1)?;
 
-    let node = node.read();
     let block = node.get_block(block_number)?;
 
     Ok(Some(
@@ -665,7 +654,7 @@ fn get_block_transaction_count_by_number(
     ))
 }
 
-fn get_logs(params: Params, node: &Arc<RwLock<Node>>) -> Result<Vec<eth::Log>> {
+fn get_logs(params: Params, node: &Arc<Node>) -> Result<Vec<eth::Log>> {
     let mut seq = params.sequence();
     let params: alloy::rpc::types::Filter = seq.next()?;
     expect_end_of_params(&mut seq, 1, 1)?;
@@ -674,7 +663,7 @@ fn get_logs(params: Params, node: &Arc<RwLock<Node>>) -> Result<Vec<eth::Log>> {
 
 fn get_logs_inner(
     params: &alloy::rpc::types::Filter,
-    node: &Arc<RwLock<Node>>,
+    node: &Arc<Node>,
 ) -> Result<Vec<eth::Log>> {
     let filter_params = FilteredParams::new(Some(params.clone()));
 
@@ -682,7 +671,6 @@ fn get_logs_inner(
     let blocks = match params.block_option {
         alloy::rpc::types::FilterBlockOption::AtBlockHash(block_hash) => {
             Either::Left(std::iter::once(Ok(node
-                .read()
                 .get_block(block_hash)?
                 .ok_or_else(|| anyhow!("block not found"))?)))
         }
@@ -691,7 +679,6 @@ fn get_logs_inner(
             to_block,
         } => {
             let Some(from) = node
-                .read()
                 .resolve_block_number(from_block.unwrap_or(BlockNumberOrTag::Latest))?
                 .as_ref()
                 .map(Block::number)
@@ -700,13 +687,11 @@ fn get_logs_inner(
             };
 
             let to = match node
-                .read()
                 .resolve_block_number(to_block.unwrap_or(BlockNumberOrTag::Latest))?
                 .as_ref()
             {
                 Some(block) => block.number(),
                 None => node
-                    .read()
                     .resolve_block_number(BlockNumberOrTag::Latest)?
                     .unwrap()
                     .number(),
@@ -717,7 +702,7 @@ fn get_logs_inner(
             }
 
             Either::Right((from..=to).map(|number| {
-                node.read()
+                node
                     .get_block(number)?
                     .ok_or_else(|| anyhow!("missing block: {number}"))
             }))
@@ -726,7 +711,7 @@ fn get_logs_inner(
 
     let mut logs = vec![];
 
-    let db = node.read().db.clone();
+    let db = node.db.clone();
 
     for block in blocks {
         let block = block?;
@@ -766,7 +751,7 @@ fn get_logs_inner(
 
 fn get_transaction_by_block_hash_and_index(
     params: Params,
-    node: &Arc<RwLock<Node>>,
+    node: &Arc<Node>,
 ) -> Result<Option<eth::Transaction>> {
     let mut params = params.sequence();
     let block_hash: B256 = params.next()?;
@@ -774,8 +759,6 @@ fn get_transaction_by_block_hash_and_index(
     expect_end_of_params(&mut params, 2, 2)?;
 
     let (pool, db, txn_hash) = {
-        let node = node.read();
-
         let Some(block) = node.get_block(block_hash)? else {
             return Ok(None);
         };
@@ -783,7 +766,7 @@ fn get_transaction_by_block_hash_and_index(
             return Ok(None);
         };
         (
-            node.consensus.transaction_pool.clone(),
+            node.consensus.read().transaction_pool.clone(),
             node.db.clone(),
             txn_hash,
         )
@@ -794,7 +777,7 @@ fn get_transaction_by_block_hash_and_index(
 
 fn get_transaction_by_block_number_and_index(
     params: Params,
-    node: &Arc<RwLock<Node>>,
+    node: &Arc<Node>,
 ) -> Result<Option<eth::Transaction>> {
     let mut params = params.sequence();
     let block_number: BlockNumberOrTag = params.next()?;
@@ -802,8 +785,6 @@ fn get_transaction_by_block_number_and_index(
     expect_end_of_params(&mut params, 2, 2)?;
 
     let (pool, db, txn_hash) = {
-        let node = node.read();
-
         let Some(block) = node.get_block(block_number)? else {
             return Ok(None);
         };
@@ -811,7 +792,7 @@ fn get_transaction_by_block_number_and_index(
             return Ok(None);
         };
         (
-            node.consensus.transaction_pool.clone(),
+            node.consensus.read().transaction_pool.clone(),
             node.db.clone(),
             txn_hash,
         )
@@ -822,13 +803,12 @@ fn get_transaction_by_block_number_and_index(
 
 fn get_transaction_by_hash(
     params: Params,
-    node: &Arc<RwLock<Node>>,
+    node: &Arc<Node>,
 ) -> Result<Option<eth::Transaction>> {
     let hash: B256 = params.one()?;
     let hash: Hash = Hash(hash.0);
     let (pool, db) = {
-        let node = node.read();
-        (node.consensus.transaction_pool.clone(), node.db.clone())
+        (node.consensus.read().transaction_pool.clone(), node.db.clone())
     };
 
     get_transaction_inner(hash, pool, db)
@@ -857,19 +837,18 @@ pub(super) fn get_transaction_inner(
 
 fn get_transaction_receipt(
     params: Params,
-    node: &Arc<RwLock<Node>>,
+    node: &Arc<Node>,
 ) -> Result<Option<eth::TransactionReceipt>> {
     let hash: B256 = params.one()?;
     let hash: Hash = hash.into();
-    let node = node.read();
     let block_hash = match node.get_transaction_receipt(hash)? {
         Some(receipt) => receipt.block_hash,
         None => return Ok(None),
     };
-    get_transaction_receipt_inner_slow(&node, block_hash, hash)
+    get_transaction_receipt_inner_slow(node, block_hash, hash)
 }
 
-fn send_raw_transaction(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
+fn send_raw_transaction(params: Params, node: &Arc<Node>) -> Result<String> {
     let transaction: String = params.one()?;
     let transaction = transaction
         .strip_prefix("0x")
@@ -879,7 +858,7 @@ fn send_raw_transaction(params: Params, node: &Arc<RwLock<Node>>) -> Result<Stri
 
     let transaction = transaction.verify()?;
 
-    let (hash, result) = node.read().create_transaction(transaction)?;
+    let (hash, result) = node.create_transaction(transaction)?;
     match result {
         TxAddResult::AddedToMempool
         | TxAddResult::Duplicate(_)
@@ -936,26 +915,26 @@ fn parse_eip1559_transaction(mut buf: &[u8]) -> Result<SignedTransaction> {
     Ok(SignedTransaction::Eip1559 { tx, sig })
 }
 
-fn get_uncle_count(_: Params, _: &Arc<RwLock<Node>>) -> Result<String> {
+fn get_uncle_count(_: Params, _: &Arc<Node>) -> Result<String> {
     Ok("0x0".to_string())
 }
 
-fn get_uncle(_: Params, _: &Arc<RwLock<Node>>) -> Result<Option<String>> {
+fn get_uncle(_: Params, _: &Arc<Node>) -> Result<Option<String>> {
     Ok(None)
 }
 
-fn mining(_: Params, _: &Arc<RwLock<Node>>) -> Result<bool> {
+fn mining(_: Params, _: &Arc<Node>) -> Result<bool> {
     Ok(false)
 }
 
-fn protocol_version(_: Params, _: &Arc<RwLock<Node>>) -> Result<String> {
+fn protocol_version(_: Params, _: &Arc<Node>) -> Result<String> {
     Ok("0x41".to_string())
 }
 
-fn syncing(params: Params, node: &Arc<RwLock<Node>>) -> Result<SyncingResult> {
+fn syncing(params: Params, node: &Arc<Node>) -> Result<SyncingResult> {
     expect_end_of_params(&mut params.sequence(), 0, 0)?;
-    let db = node.read().consensus.db.clone();
-    if let Some(result) = node.read().consensus.get_sync_data(db)? {
+    let db = node.db.clone();
+    if let Some(result) = node.consensus.read().get_sync_data(db)? {
         Ok(SyncingResult::Struct(result))
     } else {
         Ok(SyncingResult::Bool(false))
@@ -966,7 +945,7 @@ fn syncing(params: Params, node: &Arc<RwLock<Node>>) -> Result<SyncingResult> {
 async fn _subscribe(
     params: Params<'_>,
     pending: PendingSubscriptionSink,
-    node: Arc<Arc<RwLock<Node>>>,
+    node: Arc<Arc<Node>>,
     _: Extensions,
 ) -> Result<(), SubscriptionError> {
     let mut params = params.sequence();
@@ -976,22 +955,17 @@ async fn _subscribe(
 
     let sink = pending.accept().await?;
 
-    let node_lock = node.read();
-
     match kind {
         SubscriptionKind::NewHeads => {
-            let mut new_blocks = node_lock.subscribe_to_new_blocks();
-            std::mem::drop(node_lock);
+            let mut new_blocks = node.subscribe_to_new_blocks();
 
             while let Ok(header) = new_blocks.recv().await {
-                let node_lock = node.read();
-                let block = node_lock
-                    .consensus
+                let block = node
+                    .consensus.read()
                     .db
                     .get_transactionless_block(header.hash.into())?
                     .ok_or("Block not found")?;
-                let miner = node_lock.get_proposer_reward_address(block.header)?;
-                std::mem::drop(node_lock);
+                let miner = node.get_proposer_reward_address(block.header)?;
                 let block_gas_limit = block.gas_limit();
                 let eth_block =
                     eth::Block::from_block(&block, miner.unwrap_or_default(), block_gas_limit);
@@ -1009,21 +983,19 @@ async fn _subscribe(
             };
             let filter = FilteredParams::new(filter);
 
-            let mut receipts = node_lock.subscribe_to_receipts();
-            std::mem::drop(node_lock);
+            let mut receipts = node.subscribe_to_receipts();
 
-            'outer: while let Ok((receipt, transaction_index)) = receipts.recv().await {
-                let node_lock = node.read();
+              'outer: while let Ok((receipt, transaction_index)) = receipts.recv().await {
                 if !filter.filter_block_hash(receipt.block_hash.into()) {
                     continue;
                 }
-                let block = node_lock
+                let block = node
                     .get_block(receipt.block_hash)?
                     .ok_or("Block not found")?;
 
                 // We track log index plus one because we have to increment before we use the log index, and log indexes are 0-based.
                 let mut log_index_plus_one: i64 =
-                    old_get_block_transaction_receipts_inner(node_lock.db.clone(), &block)?
+                    old_get_block_transaction_receipts_inner(node.db.clone(), &block)?
                         .iter()
                         .take_while(|x| x.transaction_index < receipt.index)
                         .map(|x| x.logs.len())
@@ -1045,7 +1017,7 @@ async fn _subscribe(
 
                     // We defer this check to later to avoid querying the block if the log was already filtered out by
                     // something else.
-                    let block = node_lock
+                    let block = node
                         .get_block(receipt.block_hash)?
                         .ok_or_else(|| anyhow!("missing block"))?;
                     if !filter.filter_block_range(block.number()) {
@@ -1075,7 +1047,6 @@ async fn _subscribe(
                         removed: false,
                     });
                 }
-                std::mem::drop(node_lock);
                 for log in logs {
                     let _ = sink.send(serde_json::value::to_raw_value(&log)?).await;
                 }
@@ -1091,16 +1062,14 @@ async fn _subscribe(
             };
 
             if full {
-                let mut txns = node_lock.subscribe_to_new_transactions();
-                std::mem::drop(node_lock);
+                let mut txns = node.subscribe_to_new_transactions();
 
                 while let Ok(txn) = txns.recv().await {
                     let txn = eth::Transaction::new(txn, None);
                     let _ = sink.send(serde_json::value::to_raw_value(&txn)?).await;
                 }
             } else {
-                let mut txns = node_lock.subscribe_to_new_transaction_hashes();
-                std::mem::drop(node_lock);
+                let mut txns = node.subscribe_to_new_transaction_hashes();
 
                 while let Ok(txn) = txns.recv().await {
                     let _ = sink
@@ -1119,13 +1088,13 @@ async fn _subscribe(
 
 /// eth_blobBaseFee
 /// Returns the expected base fee for blobs in the next block
-fn blob_base_fee(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
+fn blob_base_fee(_params: Params, _node: &Arc<Node>) -> Result<()> {
     Err(anyhow!("API method eth_blobBaseFee is not implemented yet"))
 }
 
 /// eth_feeHistory
 /// Returns the collection of historical gas information
-fn fee_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<FeeHistory> {
+fn fee_history(params: Params, node: &Arc<Node>) -> Result<FeeHistory> {
     let mut params = params.sequence();
     let block_count: String = params.next()?;
     let block_count = if let Some(block_count) = block_count.strip_prefix("0x") {
@@ -1154,7 +1123,6 @@ fn fee_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<FeeHistory> {
     expect_end_of_params(&mut params, 2, 3)?;
 
     let (newest_block_number, gas_price, db) = {
-        let node = node.read();
         let number = node
             .resolve_block_number(newest_block)?
             .ok_or_else(|| anyhow!("block not found"))?
@@ -1226,7 +1194,7 @@ fn fee_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<FeeHistory> {
 
 /// eth_getAccount
 /// Retrieve account details by specifying an address and a block number/tag.
-fn get_account(params: Params, node: &Arc<RwLock<Node>>) -> Result<GetAccountResult> {
+fn get_account(params: Params, node: &Arc<Node>) -> Result<GetAccountResult> {
     let mut params = params.sequence();
     let address: ZilAddress = params.next()?;
     let address: Address = address.into();
@@ -1234,7 +1202,6 @@ fn get_account(params: Params, node: &Arc<RwLock<Node>>) -> Result<GetAccountRes
     expect_end_of_params(&mut params, 2, 2)?;
 
     let state = {
-        let node = node.read();
         let block = node.get_block(block_id)?;
         let block = build_errored_response_for_missing_block(block_id, block)?;
         node.get_state(&block)?
@@ -1259,11 +1226,10 @@ fn get_account(params: Params, node: &Arc<RwLock<Node>>) -> Result<GetAccountRes
 
 /// eth_getFilterChanges
 /// Polling method for a filter, which returns an array of events that have occurred since the last poll.
-fn get_filter_changes(params: Params, node: &Arc<RwLock<Node>>) -> Result<serde_json::Value> {
+fn get_filter_changes(params: Params, node: &Arc<Node>) -> Result<serde_json::Value> {
     let filter_id: u128 = params.one()?;
 
     let filters = {
-        let node = node.read();
         node.filters.clone()
     };
     let mut filter = filters.get(filter_id).ok_or(anyhow!("filter not found"))?;
@@ -1317,10 +1283,10 @@ fn get_filter_changes(params: Params, node: &Arc<RwLock<Node>>) -> Result<serde_
 
 /// eth_getFilterLogs
 /// Returns an array of all logs matching filter with given id.
-fn get_filter_logs(params: Params, node: &Arc<RwLock<Node>>) -> Result<serde_json::Value> {
+fn get_filter_logs(params: Params, node: &Arc<Node>) -> Result<serde_json::Value> {
     let filter_id: u128 = params.one()?;
 
-    if let Some(filter) = node.read().filters.get(filter_id) {
+    if let Some(filter) = node.filters.get(filter_id) {
         match &filter.kind {
             FilterKind::Block(_) => Err(anyhow!("pending tx filter not supported")),
             FilterKind::PendingTx(_) => Err(anyhow!("pending tx filter not supported")),
@@ -1336,29 +1302,27 @@ fn get_filter_logs(params: Params, node: &Arc<RwLock<Node>>) -> Result<serde_jso
 
 /// eth_getProof
 /// Returns the account and storage values of the specified account including the Merkle-proof.
-fn get_proof(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
+fn get_proof(_params: Params, _node: &Arc<Node>) -> Result<()> {
     Err(anyhow!("API method eth_getProof is not implemented yet"))
 }
 
 /// eth_hashrate
 /// Returns the number of hashes per second that the node is mining with.
-fn hashrate(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
+fn hashrate(_params: Params, _node: &Arc<Node>) -> Result<()> {
     Err(anyhow!("API method eth_hashrate is not implemented yet"))
 }
 
 /// eth_maxPriorityFeePerGas
 /// Get the priority fee needed to be included in a block.
-fn max_priority_fee_per_gas(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
+fn max_priority_fee_per_gas(params: Params, node: &Arc<Node>) -> Result<String> {
     expect_end_of_params(&mut params.sequence(), 0, 0)?;
-    Ok(node.read().get_gas_price().to_hex())
+    Ok(node.get_gas_price().to_hex())
 }
 
 /// eth_newBlockFilter
 /// Creates a filter in the node, to notify when a new block arrives. To check if the state has changed, call eth_getFilterChanges
-fn new_block_filter(params: Params, node: &Arc<RwLock<Node>>) -> Result<u128> {
+fn new_block_filter(params: Params, node: &Arc<Node>) -> Result<u128> {
     expect_end_of_params(&mut params.sequence(), 0, 0)?;
-
-    let node = node.read();
 
     let filter = BlockFilter {
         block_receiver: node.subscribe_to_new_blocks(),
@@ -1369,9 +1333,8 @@ fn new_block_filter(params: Params, node: &Arc<RwLock<Node>>) -> Result<u128> {
 
 /// eth_newFilter
 /// Creates a filter object, based on filter options, to notify when the state changes (logs). To check if the state has changed, call eth_getFilterChanges.
-fn new_filter(params: Params, node: &Arc<RwLock<Node>>) -> Result<u128> {
+fn new_filter(params: Params, node: &Arc<Node>) -> Result<u128> {
     let criteria: alloy::rpc::types::Filter = params.one()?;
-    let node = node.read();
 
     let id = node.filters.add(FilterKind::Log(LogFilter {
         criteria: Box::new(criteria),
@@ -1382,9 +1345,8 @@ fn new_filter(params: Params, node: &Arc<RwLock<Node>>) -> Result<u128> {
 
 /// eth_newPendingTransactionFilter
 /// Creates a filter in the node to notify when new pending transactions arrive. To check if the state has changed, call eth_getFilterChanges.
-fn new_pending_transaction_filter(params: Params, node: &Arc<RwLock<Node>>) -> Result<u128> {
+fn new_pending_transaction_filter(params: Params, node: &Arc<Node>) -> Result<u128> {
     expect_end_of_params(&mut params.sequence(), 0, 0)?;
-    let node = node.read();
 
     let filter = PendingTxFilter {
         pending_txn_receiver: node.subscribe_to_new_transactions(),
@@ -1395,7 +1357,7 @@ fn new_pending_transaction_filter(params: Params, node: &Arc<RwLock<Node>>) -> R
 
 /// eth_signTransaction
 /// Signs a transaction that can be submitted to the network later using eth_sendRawTransaction
-fn sign_transaction(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
+fn sign_transaction(_params: Params, _node: &Arc<Node>) -> Result<()> {
     Err(anyhow!(
         "API method eth_signTransaction is not implemented yet"
     ))
@@ -1403,23 +1365,20 @@ fn sign_transaction(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
 
 /// eth_simulateV1
 /// Simulates a series of transactions at a specific block height with optional state overrides. This method allows you to test transactions with custom block and state parameters without actually submitting them to the network.
-fn simulate_v1(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
+fn simulate_v1(_params: Params, _node: &Arc<Node>) -> Result<()> {
     // TODO: disable_eip3607 for this call.
     Err(anyhow!("API method eth_simulateV1 is not implemented yet"))
 }
 
 /// eth_submitWork
 /// Used for submitting a proof-of-work solution.
-fn submit_work(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
+fn submit_work(_params: Params, _node: &Arc<Node>) -> Result<()> {
     Err(anyhow!("API method eth_submitWork is not implemented yet"))
 }
 
 /// eth_uninstallFilter
 /// It uninstalls a filter with the given filter id.
-fn uninstall_filter(params: Params, node: &Arc<RwLock<Node>>) -> Result<bool> {
+fn uninstall_filter(params: Params, node: &Arc<Node>) -> Result<bool> {
     let filter_id: u128 = params.one()?;
-
-    let node = node.read();
-
     Ok(node.filters.remove(filter_id))
 }

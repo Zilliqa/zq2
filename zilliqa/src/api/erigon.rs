@@ -2,15 +2,14 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use jsonrpsee::{RpcModule, types::Params};
-use parking_lot::RwLock;
 
 use super::types::eth;
 use crate::{cfg::EnabledApi, node::Node};
 
 pub fn rpc_module(
-    node: Arc<RwLock<Node>>,
+    node: Arc<Node>,
     enabled_apis: &[EnabledApi],
-) -> RpcModule<Arc<RwLock<Node>>> {
+) -> RpcModule<Arc<Node>> {
     super::declare_module!(
         node,
         enabled_apis,
@@ -31,32 +30,32 @@ pub fn rpc_module(
 }
 
 /// erigon_blockNumber
-fn block_number(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
+fn block_number(_params: Params, _node: &Arc<Node>) -> Result<()> {
     todo!("Endpoint not implemented yet");
 }
 
 /// erigon_forks
-fn forks(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
+fn forks(_params: Params, _node: &Arc<Node>) -> Result<()> {
     todo!("Endpoint not implemented yet");
 }
 
 /// erigon_getBlockByTimestamp
-fn get_block_by_timestamp(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
+fn get_block_by_timestamp(_params: Params, _node: &Arc<Node>) -> Result<()> {
     todo!("Endpoint not implemented yet");
 }
 
 /// erigon_getBlockReceiptsByBlockHash
-fn get_block_receipts_by_block_hash(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
+fn get_block_receipts_by_block_hash(_params: Params, _node: &Arc<Node>) -> Result<()> {
     todo!("Endpoint not implemented yet");
 }
 
 /// erigon_getHeaderByHash
-fn get_header_by_hash(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
+fn get_header_by_hash(_params: Params, _node: &Arc<Node>) -> Result<()> {
     todo!("Endpoint not implemented yet");
 }
 
 /// erigon_getHeaderByNumber
-fn get_header_by_number(params: Params, node: &Arc<RwLock<Node>>) -> Result<Option<eth::Block>> {
+fn get_header_by_number(params: Params, node: &Arc<Node>) -> Result<Option<eth::Block>> {
     let block: u64 = params.one()?;
 
     // Erigon headers are a subset of the full block response. We choose to just return the full block.
@@ -64,11 +63,11 @@ fn get_header_by_number(params: Params, node: &Arc<RwLock<Node>>) -> Result<Opti
 }
 
 /// erigon_getLatestLogs
-fn get_latest_logs(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
+fn get_latest_logs(_params: Params, _node: &Arc<Node>) -> Result<()> {
     todo!("Endpoint not implemented yet");
 }
 
 /// erigon_getLogsByHash
-fn get_logs_by_hash(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
+fn get_logs_by_hash(_params: Params, _node: &Arc<Node>) -> Result<()> {
     todo!("Endpoint not implemented yet");
 }

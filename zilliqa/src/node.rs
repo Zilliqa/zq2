@@ -33,6 +33,7 @@ use revm_inspectors::tracing::{
     FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig, TransactionContext,
     js::JsInspector,
 };
+
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::*;
 
@@ -80,7 +81,7 @@ pub struct MessageSender {
     pub our_peer_id: PeerId,
     pub outbound_channel: UnboundedSender<OutboundMessageTuple>,
     pub local_channel: UnboundedSender<LocalMessageTuple>,
-    pub request_id: RequestId,
+    pub request_id: Arc<RwLock<RequestId>>,
 }
 
 impl MessageSender {
@@ -102,10 +103,11 @@ impl MessageSender {
         Ok(())
     }
 
-    pub fn next_request_id(&mut self) -> RequestId {
-        let request_id = self.request_id;
-        self.request_id.0 = self.request_id.0.wrapping_add(1);
-        request_id
+    pub fn next_request_id(&self) -> RequestId {
+        let request_id = self.request_id.read().0;
+        let next_id = request_id.wrapping_add(1);
+        self.request_id.write().0 = next_id;
+        RequestId(request_id)
     }
 
     /// Send a message to a remote node of the same shard.
@@ -113,7 +115,7 @@ impl MessageSender {
     /// you will need to adjust consensus.rs to attempt to retain as much of multiple block responses
     /// as possible.
     pub fn send_external_message(
-        &mut self,
+        &self,
         peer: PeerId,
         message: ExternalMessage,
     ) -> Result<RequestId> {
@@ -169,7 +171,7 @@ pub struct Node {
     /// `ResponseChannel` received via `handle_request`.
     request_responses: UnboundedSender<(ResponseChannel, ExternalMessage)>,
     reset_timeout: UnboundedSender<Duration>,
-    pub consensus: Consensus,
+    pub consensus: Arc<RwLock<Consensus>>,
     peer_num: Arc<AtomicUsize>,
     pub chain_id: ChainId,
     pub filters: Arc<Filters>,
@@ -210,7 +212,7 @@ impl Node {
             our_peer_id: peer_id,
             outbound_channel: message_sender_channel,
             local_channel: local_sender_channel,
-            request_id: RequestId::default(),
+            request_id: Arc::new(RwLock::new(RequestId::default())),
         };
         let executable_blocks_height = config
             .consensus
@@ -231,14 +233,14 @@ impl Node {
             reset_timeout: reset_timeout.clone(),
             db: db.clone(),
             chain_id: ChainId::new(config.eth_chain_id),
-            consensus: Consensus::new(
+            consensus: Arc::new(RwLock::new(Consensus::new(
                 secret_key,
                 config,
                 message_sender,
                 reset_timeout,
                 db,
                 sync_peers,
-            )?,
+            )?)),
             peer_num,
             filters: Arc::new(Filters::new()),
             swarm_peers,
@@ -247,7 +249,7 @@ impl Node {
     }
 
     pub fn handle_broadcast(
-        &mut self,
+        &self,
         from: PeerId,
         message: ExternalMessage,
         response_channel: ResponseChannel,
@@ -256,31 +258,31 @@ impl Node {
         match message {
             // Repeated `NewView`s might get broadcast.
             ExternalMessage::NewView(m) => {
-                if let Some(network_message) = self.consensus.new_view(from, *m)? {
+                if let Some(network_message) = self.consensus.write().new_view(from, *m)? {
                     self.handle_network_message_response(network_message)?;
                 }
             }
             // RFC-161 sync algorithm, phase 2.
             ExternalMessage::MultiBlockRequest(request) => {
                 let message = self
-                    .consensus
+                    .consensus.write()
                     .sync
                     .handle_multiblock_request(from, request)?;
                 self.request_responses.send((response_channel, message))?;
             }
             ExternalMessage::PassiveSyncRequest(request) => {
-                let message = self.consensus.sync.handle_passive_request(from, request)?;
+                let message = self.consensus.write().sync.handle_passive_request(from, request)?;
                 self.request_responses.send((response_channel, message))?;
             }
             // RFC-161 sync algorithm, phase 1.
             ExternalMessage::MetaDataRequest(request) => {
-                let message = self.consensus.sync.handle_active_request(from, request)?;
+                let message = self.consensus.write().sync.handle_active_request(from, request)?;
                 self.request_responses.send((response_channel, message))?;
             }
             // Respond to block probe requests.
             ExternalMessage::BlockRequest(request) => {
                 // respond with an invalid response
-                let message = self.consensus.sync.handle_block_request(from, request)?;
+                let message = self.consensus.write().sync.handle_block_request(from, request)?;
                 self.request_responses.send((response_channel, message))?;
             }
             // `Proposals` are re-routed to `handle_request()`
@@ -296,17 +298,17 @@ impl Node {
         transactions: Vec<VerifiedTransaction>,
     ) -> Result<()> {
         let from_broadcast = true;
-        self.consensus
+        self.consensus.write()
             .handle_new_transactions(transactions, from_broadcast)?;
         Ok(())
     }
 
     pub fn try_to_apply_transactions(&mut self) -> Result<()> {
-        self.consensus.try_early_proposal_after_txn_batch()
+        self.consensus.write().try_early_proposal_after_txn_batch()
     }
 
     pub fn handle_request(
-        &mut self,
+        &self,
         from: PeerId,
         id: &str,
         message: ExternalMessage,
@@ -319,7 +321,8 @@ impl Node {
                 self.request_responses
                     .send((response_channel, ExternalMessage::Acknowledgement))?;
 
-                if let Some(network_message) = self.consensus.vote(from, *m)? {
+                let network_message = self.consensus.write().vote(from, *m)?;
+                if let Some(network_message) =  network_message{
                     self.handle_network_message_response(network_message)?;
                 }
             }
@@ -328,7 +331,8 @@ impl Node {
                 self.request_responses
                     .send((response_channel, ExternalMessage::Acknowledgement))?;
 
-                if let Some(network_message) = self.consensus.new_view(from, *m)? {
+                let network_message = self.consensus.write().new_view(from, *m)?;
+                if let Some(network_message) = network_message {
                     self.handle_network_message_response(network_message)?;
                 }
             }
@@ -360,35 +364,35 @@ impl Node {
     }
 
     pub fn handle_request_failure(
-        &mut self,
+        &self,
         to: PeerId,
         failure: OutgoingMessageFailure,
     ) -> Result<()> {
         debug!(from = %self.peer_id, %to, ?failure, "handling message failure");
-        self.consensus.sync.handle_request_failure(to, failure)?;
+        self.consensus.write().sync.handle_request_failure(to, failure)?;
         Ok(())
     }
 
-    pub fn handle_response(&mut self, from: PeerId, message: ExternalMessage) -> Result<()> {
+    pub fn handle_response(&self, from: PeerId, message: ExternalMessage) -> Result<()> {
         debug!(%from, to = %self.peer_id, %message, "handling response");
         match message {
             // 0.6.0
             ExternalMessage::MultiBlockResponse(response) => self
-                .consensus
+                .consensus.write()
                 .sync
                 .handle_multiblock_response(from, Some(response))?,
             // 0.7.0
             ExternalMessage::SyncBlockHeaders(response) => self
-                .consensus
+                .consensus.write()
                 .sync
                 .handle_active_response(from, Some(response))?,
             // 0.8.0 probe response
             ExternalMessage::BlockResponse(response) => {
-                self.consensus.sync.handle_block_response(from, response)?
+                self.consensus.write().sync.handle_block_response(from, response)?
             }
             // 0.8.0 passive sync
             ExternalMessage::PassiveSyncResponse(response) => self
-                .consensus
+                .consensus.write()
                 .sync
                 .handle_passive_response(from, Some(response))?,
             ExternalMessage::PassiveSyncResponseLZ(response) => {
@@ -398,7 +402,7 @@ impl Node {
                 std::io::Read::read_to_end(&mut decoder, &mut buf).unwrap();
                 let response =
                     cbor4ii::serde::from_slice::<BlockTransactionsReceipts>(&buf).unwrap();
-                self.consensus
+                self.consensus.write()
                     .sync
                     .handle_passive_response(from, Some(vec![response]))?;
             }
@@ -446,22 +450,22 @@ impl Node {
         };
         let verified_tx = tx.verify()?;
         trace!("Injecting intershard transaction {}", verified_tx.hash);
-        self.consensus.new_transaction(
+
+        self.consensus.write().new_transaction(
             verified_tx,
             true,
-            &mut self.consensus.transaction_pool.write(),
         )?;
         Ok(())
     }
 
-    fn broadcast_and_execute_proposal(&mut self, proposal: Proposal) -> Result<()> {
+    fn broadcast_and_execute_proposal(&self, proposal: Proposal) -> Result<()> {
         self.message_sender
             .broadcast_proposal(ExternalMessage::Proposal(proposal.clone()))?;
         self.handle_proposal(self.peer_id, proposal)?;
         Ok(())
     }
 
-    fn handle_network_message_response(&mut self, message: NetworkMessage) -> Result<()> {
+    fn handle_network_message_response(&self, message: NetworkMessage) -> Result<()> {
         let (peer_id, response) = message;
         if let Some(peer_id) = peer_id {
             self.message_sender
@@ -476,8 +480,9 @@ impl Node {
     }
 
     // handle timeout - true if something happened
-    pub fn handle_timeout(&mut self) -> Result<bool> {
-        if let Some(network_message) = self.consensus.timeout()? {
+    pub fn handle_timeout(&self) -> Result<bool> {
+        let network_message = self.consensus.write().timeout()?;
+        if let Some(network_message) =  network_message{
             self.handle_network_message_response(network_message)?;
             return Ok(true);
         }
@@ -490,7 +495,7 @@ impl Node {
 
         let from_broadcast = false;
         let result = self
-            .consensus
+            .consensus.read()
             .handle_new_transactions(vec![txn], from_broadcast)?;
         if !result[0].was_added() {
             debug!(?result, "Transaction cannot be added to mempool");
@@ -499,9 +504,9 @@ impl Node {
         Ok((hash, result[0]))
     }
 
-    pub fn process_transactions_to_broadcast(&mut self) -> Result<()> {
+    pub fn process_transactions_to_broadcast(&self) -> Result<()> {
         let txns_to_broadcast = self
-            .consensus
+            .consensus.read()
             .transaction_pool
             .write()
             .pull_txns_to_broadcast()?;
@@ -513,16 +518,16 @@ impl Node {
     }
 
     pub fn number(&self) -> u64 {
-        self.consensus.head_block().header.number
+        self.consensus.read().head_block().header.number
     }
 
     pub fn resolve_block_number(&self, block_number: BlockNumberOrTag) -> Result<Option<Block>> {
         match block_number {
-            BlockNumberOrTag::Number(n) => self.consensus.get_canonical_block_by_number(n),
+            BlockNumberOrTag::Number(n) => self.consensus.read().get_canonical_block_by_number(n),
 
-            BlockNumberOrTag::Earliest => self.consensus.get_canonical_block_by_number(0),
-            BlockNumberOrTag::Latest => Ok(Some(self.consensus.head_block())),
-            BlockNumberOrTag::Pending => self.consensus.get_pending_block(),
+            BlockNumberOrTag::Earliest => self.consensus.read().get_canonical_block_by_number(0),
+            BlockNumberOrTag::Latest => Ok(Some(self.consensus.read().head_block())),
+            BlockNumberOrTag::Pending => self.consensus.read().get_pending_block(),
             BlockNumberOrTag::Finalized => {
                 let Some(view) = self.db.get_finalized_view()? else {
                     return self.resolve_block_number(BlockNumberOrTag::Earliest);
@@ -535,9 +540,9 @@ impl Node {
             // Safe block tag in our consensus refers to the block that the node's highQC points to
             // (high_qc means it's the latest = high, and it's a QC where 2/3 validators voted for it).
             BlockNumberOrTag::Safe => {
-                let block_hash = self.consensus.high_qc.block_hash;
+                let block_hash = self.consensus.read().high_qc.block_hash;
 
-                let Some(safe_block) = self.consensus.get_block(&block_hash)? else {
+                let Some(safe_block) = self.consensus.read().get_block(&block_hash)? else {
                     return self.resolve_block_number(BlockNumberOrTag::Earliest);
                 };
                 Ok(Some(safe_block))
@@ -563,7 +568,7 @@ impl Node {
                 require_canonical,
             }) => {
                 // See https://eips.ethereum.org/EIPS/eip-1898
-                let Some(block) = self.consensus.get_block(&block_hash.into())? else {
+                let Some(block) = self.consensus.read().get_block(&block_hash.into())? else {
                     return Ok(None);
                 };
                 // Get latest finalized block number
@@ -585,37 +590,32 @@ impl Node {
 
     pub fn get_state(&self, block: &Block) -> Result<State> {
         Ok(self
-            .consensus
+            .consensus.read()
             .state()
             .at_root(block.state_root_hash().into()))
     }
 
     pub fn trace_evm_transaction(
-        node: &Arc<RwLock<Node>>,
+        node: &Arc<Node>,
         txn_hash: Hash,
         trace_types: &revm::primitives::HashSet<TraceType>,
     ) -> Result<TraceResults> {
         let txn = node
-            .read()
             .get_transaction_by_hash(txn_hash)?
             .ok_or_else(|| anyhow!("transaction not found: {txn_hash}"))?;
         let receipt = node
-            .read()
             .get_transaction_receipt(txn_hash)?
             .ok_or_else(|| anyhow!("transaction not mined: {txn_hash}"))?;
 
         let block = node
-            .read()
             .get_block(receipt.block_hash)?
             .ok_or_else(|| anyhow!("missing block: {}", receipt.block_hash))?;
         let parent = node
-            .read()
             .get_block(block.parent_hash())?
             .ok_or_else(|| anyhow!("missing block: {}", block.parent_hash()))?;
 
         let mut state = node
-            .read()
-            .consensus
+            .consensus.read()
             .state()
             .at_root(parent.state_root_hash().into());
         if state.is_empty() {
@@ -627,7 +627,6 @@ impl Node {
         for other_txn_hash in block.transactions {
             if txn_hash != other_txn_hash {
                 let other_txn = node
-                    .read()
                     .get_transaction_by_hash(other_txn_hash)?
                     .ok_or_else(|| anyhow!("transaction not found: {other_txn_hash}"))?;
                 state.apply_transaction(other_txn, block.header, inspector::noop(), false)?;
@@ -654,31 +653,26 @@ impl Node {
     }
 
     pub fn replay_transaction<I: Inspector<PendingState> + ScillaInspector>(
-        node: &Arc<RwLock<Node>>,
+        node: &Arc<Node>,
         txn_hash: Hash,
         inspector: I,
     ) -> Result<TransactionApplyResult> {
         let txn = node
-            .read()
             .get_transaction_by_hash(txn_hash)?
             .ok_or_else(|| anyhow!("transaction not found: {txn_hash}"))?;
         let receipt = node
-            .read()
             .get_transaction_receipt(txn_hash)?
             .ok_or_else(|| anyhow!("transaction not mined: {txn_hash}"))?;
 
         let block = node
-            .read()
             .get_block(receipt.block_hash)?
             .ok_or_else(|| anyhow!("missing block: {}", receipt.block_hash))?;
         let parent = node
-            .read()
             .get_block(block.parent_hash())?
             .ok_or_else(|| anyhow!("missing block: {}", block.parent_hash()))?;
 
         let mut state = node
-            .read()
-            .consensus
+            .consensus.read()
             .state()
             .at_root(parent.state_root_hash().into());
         if state.is_empty() {
@@ -688,7 +682,6 @@ impl Node {
         for other_txn_hash in block.transactions {
             if txn_hash != other_txn_hash {
                 let other_txn = node
-                    .read()
                     .get_transaction_by_hash(other_txn_hash)?
                     .ok_or_else(|| anyhow!("transaction not found: {other_txn_hash}"))?;
                 state.apply_transaction(other_txn, parent.header, inspector::noop(), false)?;
@@ -714,7 +707,7 @@ impl Node {
             .get_block(block.parent_hash())?
             .ok_or_else(|| anyhow!("missing block: {}", block.parent_hash()))?;
         let mut state = self
-            .consensus
+            .consensus.read()
             .state()
             .at_root(parent.state_root_hash().into());
         if state.is_empty() {
@@ -919,7 +912,7 @@ impl Node {
         trace!("call_contract: block={:?}", block);
 
         let state = self
-            .consensus
+            .consensus.read()
             .state()
             .at_root(block.state_root_hash().into());
         if state.is_empty() {
@@ -939,17 +932,17 @@ impl Node {
             .get_block(header.qc.block_hash)?
             .ok_or_else(|| anyhow!("missing parent: {}", header.qc.block_hash))?;
 
-        let Some(proposer) = self.consensus.leader_at_block(&parent, header.view) else {
+        let Some(proposer) = self.consensus.read().leader_at_block(&parent, header.view) else {
             return Ok(None);
         };
 
-        self.consensus
+        self.consensus.read()
             .state()
             .get_reward_address(proposer.public_key)
     }
 
     pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
-        self.consensus.get_touched_transactions(address)
+        self.consensus.read().get_touched_transactions(address)
     }
 
     pub fn get_gas_price(&self) -> u128 {
@@ -989,24 +982,24 @@ impl Node {
     }
 
     pub fn subscribe_to_new_blocks(&self) -> broadcast::Receiver<BlockHeader> {
-        self.consensus.new_blocks.subscribe()
+        self.consensus.read().new_blocks.subscribe()
     }
 
     /// Returns a stream of pairs of (receipt, index of transaction in block)
     pub fn subscribe_to_receipts(&self) -> broadcast::Receiver<(TransactionReceipt, usize)> {
-        self.consensus.new_receipts.subscribe()
+        self.consensus.read().new_receipts.subscribe()
     }
 
     pub fn subscribe_to_new_transactions(&self) -> broadcast::Receiver<VerifiedTransaction> {
-        self.consensus.new_transactions.subscribe()
+        self.consensus.read().new_transactions.subscribe()
     }
 
     pub fn subscribe_to_new_transaction_hashes(&self) -> broadcast::Receiver<Hash> {
-        self.consensus.new_transaction_hashes.subscribe()
+        self.consensus.read().new_transaction_hashes.subscribe()
     }
 
     pub fn get_chain_tip(&self) -> u64 {
-        self.consensus.head_block().header.number
+        self.consensus.read().head_block().header.number
     }
 
     pub fn get_transaction_receipts_in_block(
@@ -1017,57 +1010,59 @@ impl Node {
     }
 
     pub fn get_finalized_height(&self) -> Result<u64> {
-        self.consensus.get_finalized_view()
+        self.consensus.read().get_finalized_view()
     }
 
     pub fn get_current_view(&self) -> Result<u64> {
-        self.consensus.get_view()
+        self.consensus.read().get_view()
     }
 
     pub fn get_transaction_receipt(&self, tx_hash: Hash) -> Result<Option<TransactionReceipt>> {
-        self.consensus.get_transaction_receipt(&tx_hash)
+        self.consensus.read().get_transaction_receipt(&tx_hash)
     }
 
     pub fn get_transaction_by_hash(&self, hash: Hash) -> Result<Option<VerifiedTransaction>> {
-        self.consensus.get_transaction_by_hash(hash)
+        self.consensus.read().get_transaction_by_hash(hash)
     }
 
     pub fn txpool_content(&self) -> crate::pool::TxPoolContent {
-        self.consensus.txpool_content()
+        self.consensus.read().txpool_content()
     }
 
     pub fn txpool_content_from(&self, address: &Address) -> crate::pool::TxPoolContentFrom {
-        self.consensus.txpool_content_from(address)
+        self.consensus.read().txpool_content_from(address)
     }
 
     pub fn txpool_status(&self) -> crate::pool::TxPoolStatus {
-        self.consensus.txpool_status()
+        self.consensus.read().txpool_status()
     }
 
     pub fn get_peer_num(&self) -> usize {
         self.peer_num.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    fn handle_proposal(&mut self, from: PeerId, proposal: Proposal) -> Result<()> {
-        if let Some(network_message) = self.consensus.proposal(from, proposal.clone(), false)? {
+    fn handle_proposal(&self, from: PeerId, proposal: Proposal) -> Result<()> {
+        let network_message = self.consensus.write().proposal(from, proposal.clone(), false)?;
+        if let Some(network_message) =  network_message {
             self.reset_timeout
                 .send(self.config.consensus.consensus_timeout)?;
             self.handle_network_message_response(network_message)?;
         }
-        self.consensus.sync.sync_from_proposal(proposal)?;
+        self.consensus.write().sync.sync_from_proposal(proposal)?;
         Ok(())
     }
 
-    fn handle_injected_proposal(&mut self, from: PeerId, req: InjectedProposal) -> Result<()> {
-        if from != self.consensus.peer_id() {
+    fn handle_injected_proposal(&self, from: PeerId, req: InjectedProposal) -> Result<()> {
+        if from != self.consensus.read().peer_id() {
             warn!("Someone ({from}) sent me a InjectedProposal; illegal- ignoring");
             return Ok(());
         }
+        let mut consensus = self.consensus.write();
         trace!("Handling proposal for view {0}", req.block.header.view);
         let block_number = req.block.number();
-        let proposal = self.consensus.receive_block(from, req.block)?;
+        let proposal = consensus.receive_block(from, req.block)?;
         // decrement after - if there are issues in receive_block() it will stop syncing;
-        self.consensus.sync.mark_received_proposal(block_number)?;
+        consensus.sync.mark_received_proposal(block_number)?;
         if let Some(proposal) = proposal {
             trace!(
                 " ... broadcasting proposal for view {0}",
@@ -1080,7 +1075,7 @@ impl Node {
     }
 
     pub fn get_peer_ids(&self) -> Result<(Vec<PeerId>, Vec<PeerId>)> {
-        let sync_peers = self.consensus.sync.peer_ids();
+        let sync_peers = self.consensus.read().sync.peer_ids();
         let swarm_peers: Vec<PeerId>;
         unsafe {
             let swarm_ptr = self.swarm_peers.load(std::sync::atomic::Ordering::Relaxed);

@@ -3,15 +3,14 @@ use std::{collections::HashMap, sync::Arc};
 use alloy::primitives::Address;
 use anyhow::Result;
 use jsonrpsee::{RpcModule, types::Params};
-use parking_lot::RwLock;
 
 use super::types;
 use crate::{api::types::eth::Transaction, cfg::EnabledApi, node::Node};
 
 pub fn rpc_module(
-    node: Arc<RwLock<Node>>,
+    node: Arc<Node>,
     enabled_apis: &[EnabledApi],
-) -> RpcModule<Arc<RwLock<Node>>> {
+) -> RpcModule<Arc<Node>> {
     super::declare_module!(
         node,
         enabled_apis,
@@ -27,9 +26,8 @@ pub fn rpc_module(
 /// txpool_content
 fn txpool_content(
     _params: Params,
-    node: &Arc<RwLock<Node>>,
+    node: &Arc<Node>,
 ) -> Result<Option<types::txpool::TxPoolContent>> {
-    let node = node.read();
     let content = node.txpool_content();
 
     let pending: HashMap<Address, HashMap<u64, Transaction>> = content
@@ -70,11 +68,10 @@ fn txpool_content(
 /// txpool_contentFrom
 fn txpool_content_from(
     params: Params,
-    node: &Arc<RwLock<Node>>,
+    node: &Arc<Node>,
 ) -> Result<types::txpool::TxPoolContent> {
     let address: super::zilliqa::ZilAddress = params.one()?;
     let address: Address = address.into();
-    let node = node.read();
     let content = node.txpool_content_from(&address);
 
     let mut result = types::txpool::TxPoolContent {
@@ -108,9 +105,8 @@ fn txpool_content_from(
 /// txpool_inspect
 fn txpool_inspect(
     _params: Params,
-    node: &Arc<RwLock<Node>>,
+    node: &Arc<Node>,
 ) -> Result<types::txpool::TxPoolInspect> {
-    let node = node.read();
     let content = node.txpool_content();
 
     let mut result = types::txpool::TxPoolInspect {
@@ -148,8 +144,7 @@ fn txpool_inspect(
 }
 
 /// txpool_status
-fn txpool_status(_params: Params, node: &Arc<RwLock<Node>>) -> Result<types::txpool::TxPoolStatus> {
-    let node = node.read();
+fn txpool_status(_params: Params, node: &Arc<Node>) -> Result<types::txpool::TxPoolStatus> {
     let content = node.txpool_status();
 
     Ok(types::txpool::TxPoolStatus {
