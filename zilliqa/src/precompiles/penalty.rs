@@ -6,9 +6,7 @@ use std::{
 
 use ethabi::{ParamType, Token, decode, encode, short_signature};
 use revm::{
-    //ContextStatefulPrecompile,
-    FrameOrResult,
-    InnerEvmContext,
+    FrameOrResult, InnerEvmContext,
     handler::register::EvmHandler,
     interpreter::{CallInputs, Gas, InstructionResult, InterpreterResult},
     precompile::PrecompileError,
@@ -162,69 +160,6 @@ impl Display for ViewHistory {
     }
 }
 
-/*
-pub struct Penalty;
-
-impl Penalty {
-    fn jailed(
-        input: &[u8],
-        gas_limit: u64,
-        _context: &mut InnerEvmContext<PendingState>,
-    ) -> PrecompileResult {
-        if gas_limit < 10_000u64 {
-            return Err(PrecompileErrors::Error(PrecompileError::OutOfGas));
-        }
-        let Ok(decoded) = decode(
-            &[ParamType::Bytes, ParamType::Uint(256)],
-            input,
-        ) else {
-            return Err(PrecompileError::Other("ABI input decoding error!".into()).into());
-        };
-        let output = encode(&[Token::Bool(false)]);
-        Ok(PrecompileOutput::new(
-            10_000u64,
-            output.into(),
-        ))
-    }
-}
-
-impl ContextStatefulPrecompile<PendingState> for Penalty {
-    fn call(
-        &self,
-        input: &Bytes,
-        gas_limit: u64,
-        context: &mut InnerEvmContext<PendingState>,
-    ) -> PrecompileResult {
-        if input.length() < 4 {
-            return Err(PrecompileError::Other(
-                "Provided input must be at least 4-byte long".into(),
-            )
-            .into());
-        }
-
-        let dispatch_table: [([u8; 4], _); 1] = [(
-            short_signature(
-                "jailed",
-                &[ParamType::Bytes, ParamType::Uint(256)],
-            ),
-            Self::jailed,
-        )];
-
-        let Some(handler) = dispatch_table
-            .iter()
-            .find(|&predicate| predicate.0 == input[..4])
-        else {
-            return Err(PrecompileError::Other(
-                "Unable to find handler with given selector".to_string(),
-            )
-            .into());
-        };
-
-        handler.1(&input[4..], gas_limit, context)
-    }
-}
-*/
-
 pub fn dispatch<I: ScillaInspector>(
     input: &CallInputs,
     _gas_limit: u64,
@@ -320,19 +255,6 @@ pub fn dispatch<I: ScillaInspector>(
             .filter_map(filter)
             .count()
     };
-    /*let missed = deque
-    .iter()
-    .filter_map(|(key, value)| {
-        if *key < view.as_u64().saturating_sub(LAG_BEHIND_CURRENT_VIEW)
-            && key + MISSED_VIEW_WINDOW >= view.as_u64().saturating_sub(LAG_BEHIND_CURRENT_VIEW)
-            && value == &NodePublicKey::from_bytes(leader.as_slice()).unwrap()
-        {
-            Some(key)
-        } else {
-            None
-        }
-    })
-    .count();*/
     let jailed = missed >= MISSED_VIEW_THRESHOLD;
     info!(
         jailed,

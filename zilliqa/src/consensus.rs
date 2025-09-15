@@ -425,8 +425,8 @@ impl Consensus {
             aux::check_and_build_ots_indices(db, latest_block_view)?;
         }
 
-        // Merge the missed view history imported from the database with the missed view
-        // history loaded from the checkpoint, which is now stored in the consensus state.
+        // merge the missed view history imported from the database with the missed view
+        // history loaded from the checkpoint, which is now stored in the consensus state
         let finalized_view = consensus.get_finalized_view()?;
         consensus.state.finalized_view = finalized_view;
 
@@ -457,8 +457,6 @@ impl Consensus {
             )?
             .iter()
             .map(|(view, bytes)| (*view, NodePublicKey::from_bytes(bytes).unwrap()))
-            //TODO(#3080): remove rev() here and below where the imported_missed_views are appended to the consensus state history
-            .rev()
             .collect();
         let imported_min_view = consensus.db.get_min_view_of_view_history()?;
         info!(
@@ -477,7 +475,7 @@ impl Consensus {
                 // store the imported missed views in the consensus state
                 let mut missed_views = consensus.state.view_history.missed_views.lock().unwrap();
                 missed_views.clear();
-                missed_views.extend(imported_missed_views.iter().rev());
+                missed_views.extend(imported_missed_views.iter());
                 // update the imported min_view in the consensus state
                 let mut min_view = consensus.state.view_history.min_view.lock().unwrap();
                 *min_view = imported_min_view;
@@ -503,55 +501,7 @@ impl Consensus {
             consensus.db.set_min_view_of_view_history(
                 *consensus.state.view_history.min_view.lock().unwrap(),
             )?;
-            /*
-            // collect missed views from the gap between the last missed view loaded from the checkpoint and
-            // the first missed view imported from the db, append them to the history in the consensus state
-            // and store them in the db
-            let last_loaded_view = {
-                let missed_views = consensus.state.view_history.missed_views.lock().unwrap();
-                *missed_views
-                    .back()
-                    .and_then(|(view, _)| Some(view))
-                    .or(Some(&0))
-                    .unwrap()
-            };
-            if last_loaded_view > 0 {
-                // imported_missed_views are stored in reverse order
-                if let Some((first_imported_view, _)) = imported_missed_views.last() {
-                    let (_, gap_missed_views) = consensus.collect_missed_views(
-                        finalized_view,
-                        *first_imported_view, //TODO(#3080): why not the imported min_view
-                        last_loaded_view //TODO(#3080): why not the consensus state min_view
-                    )?;
-                    consensus.state.view_history.append_history(&gap_missed_views)?;
-                    info!(
-                        view = start_view,
-                        finalized = finalized_view,
-                        history = display(&consensus.state.view_history),
-                        "~~~~~~~~~~> appended missed views to fill the gap to db in"
-                    );
-                    for (view, leader) in gap_missed_views.iter() {
-                        consensus
-                        .db
-                        .extend_view_history(*view, leader.as_bytes())?;
-                    }
-                }
-            }
-            */
         }
-        /*
-        // append the missed views imported from the db to the history stored in the consensus state
-        consensus
-            .state
-            .view_history
-            .append_history(&imported_missed_views)?;
-        info!(
-            view = start_view,
-            finalized = finalized_view,
-            history = display(&consensus.state.view_history),
-            "~~~~~~~~~~> appended missed views imported from db in"
-        );
-        */
 
         // If we started from a checkpoint
         if let (Some(block), Some(transactions), Some(parent)) =
@@ -617,90 +567,6 @@ impl Consensus {
         }
 
         Ok(consensus)
-    }
-
-    pub fn collect_missed_views(
-        &self,
-        finalized_view: u64,
-        highest_view: u64,
-        lowest_view: u64,
-    ) -> Result<(u64, Vec<(u64, NodePublicKey)>)> {
-        let max_missed_view_age = self.config.max_missed_view_age;
-        let mut new_missed_views: Vec<(u64, NodePublicKey)> = Vec::new();
-        let mut first_block_view = highest_view;
-        // find the first view with a block
-        while first_block_view > 0 && self.db.get_block_hash_by_view(first_block_view)?.is_none() {
-            first_block_view -= 1;
-        }
-        if first_block_view == 0 {
-            return Ok((0, new_missed_views));
-        }
-        let mut block = self
-            .db
-            .get_block(BlockFilter::View(first_block_view))?
-            .ok_or_else(|| anyhow!("missing block!"))?;
-        // add all views since the first one with a block to the missed views
-        for view in first_block_view + 1..highest_view {
-            let state_at = self.state.at_root(block.state_root_hash().into());
-            let block_header = BlockHeader {
-                number: block.header.number,
-                ..Default::default()
-            };
-            //TODO(#3080): this is wrong since if the range is long enough we can't retrieve the leader
-            //             of the views at the end of the range without having added the missing views
-            //             at the beginning to the history in the consensus state, so we have to collect
-            //             the missing view numbers first going backwards along the parent blocks, and
-            //             then iterate through the view numbers going forwards, retrieve their leader
-            //             based on the history that is already present in the consensus state and add
-            //             (view, leader) to the consensus state before we continue with the next view
-            //
-            //             furthermore, we can't retrieve the leader even going forwards as described
-            //             above as long as the blocks have not been executed and their state root is
-            //             unavailable as we might miss changes in the stake distribution that determine
-            //             the leader selection, so we have to do the same as what we do when we finalize
-            //             blocks also when we replay passive synced blocks during state sync
-            if let Ok(leader) = state_at.leader(view, block_header) {
-                new_missed_views.push((view, leader));
-            }
-        }
-        // traverse the parent blocks and collect missed views until reaching earliest_view or max_missed_view_age
-        while let Some(parent) = self.get_block(&block.parent_hash())? {
-            let state_at = self.state.at_root(parent.state_root_hash().into());
-            let block_header = BlockHeader {
-                number: parent.header.number,
-                ..Default::default()
-            };
-            let mut start = parent.view();
-            if start + max_missed_view_age + LAG_BEHIND_CURRENT_VIEW < finalized_view {
-                start = finalized_view - max_missed_view_age - LAG_BEHIND_CURRENT_VIEW - 1;
-            }
-            start = start.max(lowest_view);
-            for view in (start + 1..block.view()).rev() {
-                if let Ok(leader) = state_at.leader(view, block_header) {
-                    if view == start + 1 {
-                        info!(
-                            view,
-                            id = &leader.as_bytes()[..3],
-                            "~~~~~~~~~~> skipping reorged"
-                        );
-                    } else {
-                        new_missed_views.push((view, leader));
-                    }
-                }
-            }
-            block = parent;
-            if start < lowest_view {
-                return Ok((lowest_view, new_missed_views));
-            }
-            if block.view() + max_missed_view_age + LAG_BEHIND_CURRENT_VIEW < finalized_view {
-                return Ok((
-                    finalized_view.saturating_sub(max_missed_view_age + LAG_BEHIND_CURRENT_VIEW),
-                    new_missed_views,
-                ));
-            }
-        }
-        // no more parent blocks available
-        Ok((block.view(), new_missed_views))
     }
 
     fn build_new_view(&mut self) -> Result<NetworkMessage> {
@@ -2584,7 +2450,7 @@ impl Consensus {
                 }
             }
             let min_view = self.state.view_history.min_view.lock().unwrap();
-            //TODO(#3080): the next line can be skipped if min_view did not increase in prune_history()
+            //TODO(#3080): skip next line if min_view did not increase in prune_history()
             self.db.set_min_view_of_view_history(*min_view)?;
             if pruned {
                 self.db.prune_view_history(*min_view)?;
@@ -2691,7 +2557,7 @@ impl Consensus {
         let file_name = db::get_checkpoint_filename(checkpoint_dir.clone(), &block)?;
         let hash = block.hash();
         //TODO(#3080): export more than MISSED_VIEW_WINDOW in case we increase it in the future,
-        //             but not the entire stored history as defined by max_missed_view_age
+        //             but not the entire missed view history as defined by max_missed_view_age
         let missed_view_age = self.config.max_missed_view_age; //constants::MISSED_VIEW_WINDOW;
         // after loading the checkpoint we will need the leader of the parent block too
         let view_history = self.state.view_history.new_at(
