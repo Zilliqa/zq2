@@ -9,6 +9,7 @@ use jsonrpsee::{RpcModule, types::Params};
 use libp2p::PeerId;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use tracing::info;
 
 use super::types::{admin::VotesReceivedReturnee, eth::QuorumCertificate, hex};
 use crate::{
@@ -108,17 +109,34 @@ fn import_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<()> {
     let param: &str = params.next::<&str>()?;
     let path = std::path::Path::new(param);
     let mut imported_history = load_ckpt_history(path)?;
+    {
+        info!(
+            history = display(&imported_history),
+            "~~~~~~~~~~> whole imported from checkpoint"
+        );
+    }
     let node = node.read();
     let history = &node.consensus.state().view_history;
-    let min_view = history.min_view.lock().unwrap();
-    // make sure there is no gap between the existing and the imported history
+    {
+        info!(
+            history = display(&history),
+            "~~~~~~~~~~> initial consensus state"
+        );
+    }
+    let first = {
+        match history.missed_views.lock().unwrap().front() {
+            None => 0,
+            Some((view, _)) => *view,
+        }
+    };
     let mut last_imported = {
         match imported_history.missed_views.lock().unwrap().back() {
             None => 0,
             Some((view, _)) => *view,
         }
     };
-    if *min_view > last_imported {
+    // make sure there is no gap between the existing and the imported history
+    if first > last_imported {
         return Err(anyhow!(
             "Gap between imported and existing history detected"
         ));
@@ -128,17 +146,28 @@ fn import_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<()> {
         node.consensus.get_finalized_view()?,
         node.config.max_missed_view_age,
     )?;
-    let first = {
-        match history.missed_views.lock().unwrap().front() {
-            None => 0,
-            Some((view, _)) => *view,
-        }
-    };
+    {
+        info!(
+            history = display(&imported_history),
+            "~~~~~~~~~~> trimmed imported from checkpoint"
+        );
+    }
     let mut imported_missed_views = imported_history.missed_views.lock().unwrap();
-    // skip overlapping missed views present in both histories
+    // skip the overlapping missed views present in both histories
     while last_imported >= first {
         imported_missed_views.pop_back();
-        last_imported = imported_missed_views.back().unwrap().0;
+        if let Some((view, _)) = imported_missed_views.back() {
+            last_imported = *view
+        } else {
+            // the node's missed view history starts before the imported one
+            return Ok(());
+        }
+    }
+    {
+        info!(
+            history = display(&imported_history),
+            "~~~~~~~~~~> non-overlapping imported from checkpoint"
+        );
     }
     let mut missed_views = history.missed_views.lock().unwrap();
     // merge the two missed view histories and store the delta in the db
@@ -156,6 +185,12 @@ fn import_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<()> {
     let mut min_view = history.min_view.lock().unwrap();
     *min_view = *imported_history.min_view.lock().unwrap();
     node.consensus.db.set_min_view_of_view_history(*min_view)?;
+    {
+        info!(
+            history = display(&history),
+            "~~~~~~~~~~> merged consensus state"
+        );
+    }
     Ok(())
 }
 

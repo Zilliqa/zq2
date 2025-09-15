@@ -32,7 +32,7 @@ use crate::{
     aux, blockhooks,
     cfg::{ConsensusConfig, ForkName, NodeConfig},
     constants::{
-        EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, LAG_BEHIND_CURRENT_VIEW, MISSED_VIEW_WINDOW,
+        EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, LAG_BEHIND_CURRENT_VIEW,
         TIME_TO_ALLOW_PROPOSAL_BROADCAST,
     },
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey, verify_messages},
@@ -2690,10 +2690,9 @@ impl Consensus {
             .ok_or(anyhow!("No checkpoint directory configured"))?;
         let file_name = db::get_checkpoint_filename(checkpoint_dir.clone(), &block)?;
         let hash = block.hash();
-        //let missed_view_age = self.config.max_missed_view_age;
-        //TODO(#3080): export more than MISSED_VIEW_WINDOW in case we increase MISSED_VIEW_WINDOW
-        //             in the future, but not the whole history that max_missed_view_age mandates
-        let missed_view_age = MISSED_VIEW_WINDOW;
+        //TODO(#3080): export more than MISSED_VIEW_WINDOW in case we increase it in the future,
+        //             but not the entire stored history as defined by max_missed_view_age
+        let missed_view_age = self.config.max_missed_view_age; //constants::MISSED_VIEW_WINDOW;
         // after loading the checkpoint we will need the leader of the parent block too
         let view_history = self.state.view_history.new_at(
             parent.view(), //block.view(),

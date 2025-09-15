@@ -1,6 +1,6 @@
 # Title
 
-admin_importHistory
+admin_importViewHistory
 
 # Keywords
 
@@ -18,7 +18,7 @@ This RPC method is used to avoid the need for re-syncing archive nodes before th
 curl -d '{
     "id": "1",
     "jsonrpc": "2.0",
-    "method": "admin_importHistory",
+    "method": "admin_importViewHistory",
     "params": ["001641600.ckpt"]
 }' -H "Content-Type: application/json" -X POST "{{ _api_url }}"
 ```
@@ -39,5 +39,5 @@ curl -d '{
 |-----------|--------|----------|------------------------------------------------|
 | `id`      | string | Required | `"1"`                                          |
 | `jsonrpc` | string | Required | `"2.0"`                                        |
-| `method`  | string | Required | `"admin_importHistory"`                        |
+| `method`  | string | Required | `"admin_importViewHistory"`                    |
 | `params`  | array  | Required | `[path]` The path to the checkpoint file to import the history from|
