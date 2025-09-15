@@ -152,9 +152,9 @@ fn import_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<()> {
             "~~~~~~~~~~> trimmed imported from checkpoint"
         );
     }
-    let mut imported_missed_views = imported_history.missed_views.lock().unwrap();
     // skip the overlapping missed views present in both histories
     while last_imported >= first {
+        let mut imported_missed_views = imported_history.missed_views.lock().unwrap();
         imported_missed_views.pop_back();
         if let Some((view, _)) = imported_missed_views.back() {
             last_imported = *view
@@ -169,7 +169,7 @@ fn import_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<()> {
             "~~~~~~~~~~> non-overlapping imported from checkpoint"
         );
     }
-    let mut missed_views = history.missed_views.lock().unwrap();
+    let imported_missed_views = imported_history.missed_views.lock().unwrap();
     // merge the two missed view histories and store the delta in the db
     imported_missed_views
         .iter()
@@ -179,6 +179,7 @@ fn import_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<()> {
                 .db
                 .extend_view_history(*view, leader.as_bytes())
                 .unwrap();
+            let mut missed_views = history.missed_views.lock().unwrap();
             missed_views.push_front((*view, *leader));
         });
     // update min_view in consensus state and in the db
@@ -186,6 +187,7 @@ fn import_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<()> {
     *min_view = *imported_history.min_view.lock().unwrap();
     node.consensus.db.set_min_view_of_view_history(*min_view)?;
     {
+        std::mem::drop(min_view);
         info!(
             history = display(&history),
             "~~~~~~~~~~> merged consensus state"
