@@ -201,6 +201,12 @@ impl From<&Hash> for BlockFilter {
     }
 }
 
+impl From<u64> for BlockFilter {
+    fn from(height: u64) -> Self {
+        BlockFilter::Height(height)
+    }
+}
+
 impl From<alloy::eips::BlockNumberOrTag> for BlockFilter {
     fn from(x: alloy::eips::BlockNumberOrTag) -> Self {
         match x {

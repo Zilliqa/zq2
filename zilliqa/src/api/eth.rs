@@ -585,6 +585,18 @@ fn get_block_by_number(params: Params, node: &Arc<Node>) -> Result<Option<eth::B
     let full: bool = params.next()?;
     expect_end_of_params(&mut params, 2, 2)?;
 
+    // Pending blocks are not queried from db
+    // TODO: add transactions
+    if matches!(block_number, BlockNumberOrTag::Pending) {
+        let block = node
+            .get_block(block_number)?
+            .ok_or_else(|| anyhow!("Block not found"))?;
+        let miner = node.get_proposer_reward_address(block.header)?;
+        let block_gas_limit = block.gas_limit();
+        let result = eth::Block::from_block(&block, miner.unwrap_or_default(), block_gas_limit);
+        return Ok(Some(result));
+    }
+
     get_eth_block(node, block_number.into(), full)
 }
 
