@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     fmt::Debug,
     fs::{self, File, OpenOptions},
     io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
@@ -931,6 +931,48 @@ impl Db {
         Ok(rows)
     }
 
+    pub fn get_blocks_by_height_range(&self, range: RangeInclusive<u64>) -> Result<Vec<Block>> {
+        let (from, to) = (*range.start(), *range.end());
+        if from > to {
+            return Ok(Vec::new());
+        }
+
+        let conn = self.pool.get()?;
+        let mut stmt = conn.prepare_cached(
+            "SELECT
+                block_hash, view, height, qc, signature,
+                state_root_hash, transactions_root_hash, receipts_root_hash,
+                timestamp, gas_used, gas_limit, agg
+             FROM blocks
+             WHERE height BETWEEN ?1 AND ?2
+             ORDER BY height ASC",
+        )?;
+
+        let rows = stmt
+            .query_map([from, to], |row| {
+                Ok(Block {
+                    header: BlockHeader {
+                        hash: row.get(0)?,
+                        view: row.get(1)?,
+                        number: row.get(2)?,
+                        qc: row.get(3)?,
+                        signature: row.get(4)?,
+                        state_root_hash: row.get(5)?,
+                        transactions_root_hash: row.get(6)?,
+                        receipts_root_hash: row.get(7)?,
+                        timestamp: row.get::<_, SystemTimeSqlable>(8)?.into(),
+                        gas_used: row.get(9)?,
+                        gas_limit: row.get(10)?,
+                    },
+                    agg: row.get(11)?,
+                    transactions: vec![],
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(rows)
+    }
+
     pub fn get_transactionless_block(&self, filter: BlockFilter) -> Result<Option<Block>> {
         fn make_block(row: &Row) -> rusqlite::Result<Block> {
             Ok(Block {
@@ -1164,6 +1206,55 @@ impl Db {
         block_hash: &Hash,
     ) -> Result<Vec<TransactionReceipt>> {
         Ok(self.pool.get()?.prepare_cached("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1 ORDER BY tx_index")?.query_map([block_hash], Self::make_receipt)?.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    pub fn get_transaction_receipts_in_blocks(
+        &self,
+        mut blocks: Vec<Block>,
+    ) -> Result<Vec<(Block, Vec<TransactionReceipt>)>> {
+        if blocks.is_empty() {
+            return Ok(Vec::new());
+        }
+        let hashes = blocks.iter().map(|b| b.header.hash).collect::<Vec<Hash>>();
+
+        let placeholders = std::iter::repeat_n("?", hashes.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            r#"
+            SELECT
+                tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used,
+                contract_address, logs, transitions, accepted, errors, exceptions
+            FROM receipts
+            WHERE block_hash IN ({placeholders})
+            ORDER BY block_hash ASC, tx_index ASC
+            "#
+        );
+
+        let conn = self.pool.get()?;
+        let mut stmt = conn.prepare(&sql)?;
+
+        // Group receipts by block_hash; rows are already ordered by tx_index
+        let mut by_hash: HashMap<Hash, Vec<TransactionReceipt>> = HashMap::new();
+        let rows = stmt.query_map(rusqlite::params_from_iter(hashes.iter()), |row| {
+            Self::make_receipt(row)
+        })?;
+
+        for row in rows {
+            let r = row?;
+            by_hash.entry(r.block_hash).or_default().push(r);
+        }
+
+        // Sort the input blocks by height
+        blocks.sort_by_key(|b| b.header.number);
+
+        // Assemble output in height order
+        let mut blocks_with_hashes = Vec::with_capacity(blocks.len());
+        for block in blocks {
+            let receipts = by_hash.remove(&block.header.hash).unwrap_or_default();
+            blocks_with_hashes.push((block, receipts));
+        }
+        Ok(blocks_with_hashes)
     }
 
     pub fn get_total_transaction_count(&self) -> Result<usize> {

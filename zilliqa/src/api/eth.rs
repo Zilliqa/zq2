@@ -712,13 +712,12 @@ fn get_logs_inner(params: &alloy::rpc::types::Filter, node: &Arc<Node>) -> Resul
 
     let db = node.db.clone();
 
-    for block in blocks {
-        let block = block?;
+    let blocks: Vec<Block> = blocks.collect::<Result<Vec<_>, _>>()?;
 
-        let transaction_receipts =
-            data_access::get_transaction_receipts_in_block(db.clone(), block.hash())?;
+    let blocks_and_receipts = db.get_transaction_receipts_in_blocks(blocks)?;
 
-        for (index, receipt) in transaction_receipts.into_iter().enumerate() {
+    for (block, receipts) in blocks_and_receipts {
+        for (index, receipt) in receipts.into_iter().enumerate() {
             for (log_index, log) in receipt.logs.into_iter().enumerate() {
                 let log = match log {
                     Log::Evm(l) => l,
