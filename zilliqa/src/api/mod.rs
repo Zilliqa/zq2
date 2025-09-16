@@ -146,7 +146,7 @@ macro_rules! declare_module {
                     }));
 
                     #[allow(clippy::redundant_closure_call)]
-                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| $method(params, context)));
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| $method(params.clone(), context)));
 
                     // Restore the original panic hook
                     std::panic::set_hook(original_hook);
@@ -191,10 +191,15 @@ macro_rules! declare_module {
                     if let Err(err) = &result {
                         attributes.push(opentelemetry::KeyValue::new(opentelemetry_semantic_conventions::attribute::RPC_JSONRPC_ERROR_CODE, err.code() as i64));
                     }
+                    let duration = start.elapsed().map_or(0.0, |d| d.as_secs_f64());
+
                     rpc_server_duration.record(
-                        start.elapsed().map_or(0.0, |d| d.as_secs_f64()),
+                        duration,
                         &attributes,
                     );
+                    if duration > 1.0 {
+                        tracing::error!("API Call long: {}{:?}, took {}s", $name, params, duration);
+                    }
                     tracing::debug!("API Call end {}", $name);
                     result
                 })
