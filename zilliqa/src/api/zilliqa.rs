@@ -53,10 +53,7 @@ use crate::{
     },
 };
 
-pub fn rpc_module(
-    node: Arc<Node>,
-    enabled_apis: &[EnabledApi],
-) -> RpcModule<Arc<Node>> {
+pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc<Node>> {
     super::declare_module!(
         node,
         enabled_apis,
@@ -223,10 +220,7 @@ fn extract_signer_address(key: &schnorr::PublicKey) -> Address {
 }
 
 // CreateTransaction
-fn create_transaction(
-    params: Params,
-    node: &Arc<Node>,
-) -> Result<CreateTransactionResponse> {
+fn create_transaction(params: Params, node: &Arc<Node>) -> Result<CreateTransactionResponse> {
     let transaction: TransactionParams = params.one()?;
 
     let version = transaction.version & 0xffff;
@@ -373,10 +367,7 @@ fn create_transaction(
 }
 
 // GetContractAddressFromTransactionID
-fn get_contract_address_from_transaction_id(
-    params: Params,
-    node: &Arc<Node>,
-) -> Result<String> {
+fn get_contract_address_from_transaction_id(params: Params, node: &Arc<Node>) -> Result<String> {
     let hash: B256 = params.one()?;
     let hash: Hash = Hash(hash.0);
     let (receipt, signed_transaction) = {
@@ -713,15 +704,10 @@ fn get_smart_contract_init(params: Params, node: &Arc<Node>) -> Result<Vec<Param
 }
 
 // GetTransactionsForTxBlock
-fn get_transactions_for_tx_block(
-    params: Params,
-    node: &Arc<Node>,
-) -> Result<Vec<Vec<String>>> {
+fn get_transactions_for_tx_block(params: Params, node: &Arc<Node>) -> Result<Vec<Vec<String>>> {
     let block_number: String = params.one()?;
     let block_number: u64 = block_number.parse()?;
-    let Some(block) = ({
-        node.get_block(block_number)?
-    }) else {
+    let Some(block) = ({ node.get_block(block_number)? }) else {
         return Err(anyhow!("Tx Block does not exist"));
     };
 
@@ -771,10 +757,7 @@ fn get_txn_fees_for_block(db: Arc<Db>, hash: Hash) -> Result<EvmGas> {
 }
 
 // GetTxBlockVerbose
-fn get_tx_block_verbose(
-    params: Params,
-    node: &Arc<Node>,
-) -> Result<Option<zil::TxBlockVerbose>> {
+fn get_tx_block_verbose(params: Params, node: &Arc<Node>) -> Result<Option<zil::TxBlockVerbose>> {
     let block_number: String = params.one()?;
     let block_number: u64 = block_number.parse()?;
 
@@ -933,10 +916,7 @@ pub fn get_latest_ds_block(_params: Params, node: &Arc<Node>) -> Result<DSBlock>
 }
 
 // GetCurrentDSComm
-pub fn get_current_ds_comm(
-    _params: Params,
-    node: &Arc<Node>,
-) -> Result<GetCurrentDSCommResult> {
+pub fn get_current_ds_comm(_params: Params, node: &Arc<Node>) -> Result<GetCurrentDSCommResult> {
     // Dummy implementation
     let num_tx_blocks = node.get_finalized_block_number()?;
     let num_ds_blocks = (num_tx_blocks / TX_BLOCKS_PER_DS_BLOCK) + 1;
@@ -1230,10 +1210,7 @@ fn extract_transaction_bodies(block: &Block, db: Arc<Db>) -> Result<Vec<Transact
 }
 
 // GetTxnBodiesForTxBlock
-fn get_txn_bodies_for_tx_block(
-    params: Params,
-    node: &Arc<Node>,
-) -> Result<Vec<TransactionBody>> {
+fn get_txn_bodies_for_tx_block(params: Params, node: &Arc<Node>) -> Result<Vec<TransactionBody>> {
     let params: Vec<String> = params.parse()?;
     let block_number: u64 = params[0].parse()?;
 
@@ -1370,10 +1347,7 @@ fn get_num_txns_ds_epoch(_params: Params, node: &Arc<Node>) -> Result<String> {
 }
 
 // GetTotalCoinSupplyAsZil
-fn get_total_coin_supply_as_zil_amount(
-    _params: Params,
-    node: &Arc<Node>,
-) -> Result<ZilAmount> {
+fn get_total_coin_supply_as_zil_amount(_params: Params, node: &Arc<Node>) -> Result<ZilAmount> {
     let (state, native_supply) = {
         let native_supply = node.config.consensus.total_native_token_supply.0;
         let finalized_block_number = node
@@ -1549,10 +1523,7 @@ fn get_smart_contract_sub_state(params: Params, node: &Arc<Node>) -> Result<Valu
 }
 
 // GetSoftConfirmedTransaction
-fn get_soft_confirmed_transaction(
-    params: Params,
-    node: &Arc<Node>,
-) -> Result<GetTxResponse> {
+fn get_soft_confirmed_transaction(params: Params, node: &Arc<Node>) -> Result<GetTxResponse> {
     get_transaction(params, node)
 }
 
@@ -1566,10 +1537,7 @@ fn get_state_proof(_params: Params, _node: &Arc<Node>) -> Result<StateProofRespo
 }
 
 // GetTransactionStatus
-fn get_transaction_status(
-    params: Params,
-    node: &Arc<Node>,
-) -> Result<TransactionStatusResponse> {
+fn get_transaction_status(params: Params, node: &Arc<Node>) -> Result<TransactionStatusResponse> {
     let jsonrpc_error_data: Option<String> = None;
     let hash: B256 = params.one()?;
     let hash: Hash = Hash(hash.0);

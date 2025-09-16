@@ -16,7 +16,7 @@ use ethers::{
     },
     utils::keccak256,
 };
-use futures::{StreamExt, future::join_all};
+use futures::future::join_all;
 use primitive_types::{H160, H256};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

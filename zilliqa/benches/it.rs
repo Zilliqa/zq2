@@ -9,11 +9,11 @@ use alloy::{
 };
 use bitvec::{bitarr, order::Msb0};
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
-use parking_lot::RwLock;
 use eth_trie::{MemoryDB, Trie};
 use itertools::Itertools;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use libp2p::PeerId;
+use parking_lot::RwLock;
 use pprof::criterion::{Output, PProfProfiler};
 use prost::Message;
 use revm::primitives::{Bytes, TxKind};
@@ -632,13 +632,9 @@ fn full_transaction_benchmark(
                 let mut tiny = consensus(&genesis_accounts, &genesis_deposits, 1, &tiny_scilla);
 
                 for txn in &setup_txns {
-                    let result = big
-                        .new_transaction(txn.clone(), false)
-                        .unwrap();
+                    let result = big.new_transaction(txn.clone(), false).unwrap();
                     assert!(result.was_added(), "transaction not added: {result:?}");
-                    let result = tiny
-                        .new_transaction(txn.clone(), false)
-                        .unwrap();
+                    let result = tiny.new_transaction(txn.clone(), false).unwrap();
                     assert!(result.was_added(), "transaction not added: {result:?}");
                 }
 
@@ -661,13 +657,9 @@ fn full_transaction_benchmark(
                 });
 
                 for txn in &txns {
-                    let result = big
-                        .new_transaction(txn.clone(), false)
-                        .unwrap();
+                    let result = big.new_transaction(txn.clone(), false).unwrap();
                     assert!(result.was_added(), "transaction not added: {result:?}");
-                    let result = tiny
-                        .new_transaction(txn.clone(), false)
-                        .unwrap();
+                    let result = tiny.new_transaction(txn.clone(), false).unwrap();
                     assert!(result.was_added(), "transaction not added: {result:?}");
                 }
 

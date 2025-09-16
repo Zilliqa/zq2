@@ -33,7 +33,6 @@ use revm_inspectors::tracing::{
     FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig, TransactionContext,
     js::JsInspector,
 };
-
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::*;
 
@@ -265,24 +264,37 @@ impl Node {
             // RFC-161 sync algorithm, phase 2.
             ExternalMessage::MultiBlockRequest(request) => {
                 let message = self
-                    .consensus.write()
+                    .consensus
+                    .write()
                     .sync
                     .handle_multiblock_request(from, request)?;
                 self.request_responses.send((response_channel, message))?;
             }
             ExternalMessage::PassiveSyncRequest(request) => {
-                let message = self.consensus.write().sync.handle_passive_request(from, request)?;
+                let message = self
+                    .consensus
+                    .write()
+                    .sync
+                    .handle_passive_request(from, request)?;
                 self.request_responses.send((response_channel, message))?;
             }
             // RFC-161 sync algorithm, phase 1.
             ExternalMessage::MetaDataRequest(request) => {
-                let message = self.consensus.write().sync.handle_active_request(from, request)?;
+                let message = self
+                    .consensus
+                    .write()
+                    .sync
+                    .handle_active_request(from, request)?;
                 self.request_responses.send((response_channel, message))?;
             }
             // Respond to block probe requests.
             ExternalMessage::BlockRequest(request) => {
                 // respond with an invalid response
-                let message = self.consensus.write().sync.handle_block_request(from, request)?;
+                let message = self
+                    .consensus
+                    .write()
+                    .sync
+                    .handle_block_request(from, request)?;
                 self.request_responses.send((response_channel, message))?;
             }
             // `Proposals` are re-routed to `handle_request()`
@@ -298,7 +310,8 @@ impl Node {
         transactions: Vec<VerifiedTransaction>,
     ) -> Result<()> {
         let from_broadcast = true;
-        self.consensus.write()
+        self.consensus
+            .write()
             .handle_new_transactions(transactions, from_broadcast)?;
         Ok(())
     }
@@ -322,7 +335,7 @@ impl Node {
                     .send((response_channel, ExternalMessage::Acknowledgement))?;
 
                 let network_message = self.consensus.write().vote(from, *m)?;
-                if let Some(network_message) =  network_message{
+                if let Some(network_message) = network_message {
                     self.handle_network_message_response(network_message)?;
                 }
             }
@@ -369,7 +382,10 @@ impl Node {
         failure: OutgoingMessageFailure,
     ) -> Result<()> {
         debug!(from = %self.peer_id, %to, ?failure, "handling message failure");
-        self.consensus.write().sync.handle_request_failure(to, failure)?;
+        self.consensus
+            .write()
+            .sync
+            .handle_request_failure(to, failure)?;
         Ok(())
     }
 
@@ -378,21 +394,26 @@ impl Node {
         match message {
             // 0.6.0
             ExternalMessage::MultiBlockResponse(response) => self
-                .consensus.write()
+                .consensus
+                .write()
                 .sync
                 .handle_multiblock_response(from, Some(response))?,
             // 0.7.0
             ExternalMessage::SyncBlockHeaders(response) => self
-                .consensus.write()
+                .consensus
+                .write()
                 .sync
                 .handle_active_response(from, Some(response))?,
             // 0.8.0 probe response
-            ExternalMessage::BlockResponse(response) => {
-                self.consensus.write().sync.handle_block_response(from, response)?
-            }
+            ExternalMessage::BlockResponse(response) => self
+                .consensus
+                .write()
+                .sync
+                .handle_block_response(from, response)?,
             // 0.8.0 passive sync
             ExternalMessage::PassiveSyncResponse(response) => self
-                .consensus.write()
+                .consensus
+                .write()
                 .sync
                 .handle_passive_response(from, Some(response))?,
             ExternalMessage::PassiveSyncResponseLZ(response) => {
@@ -402,7 +423,8 @@ impl Node {
                 std::io::Read::read_to_end(&mut decoder, &mut buf).unwrap();
                 let response =
                     cbor4ii::serde::from_slice::<BlockTransactionsReceipts>(&buf).unwrap();
-                self.consensus.write()
+                self.consensus
+                    .write()
                     .sync
                     .handle_passive_response(from, Some(vec![response]))?;
             }
@@ -451,10 +473,7 @@ impl Node {
         let verified_tx = tx.verify()?;
         trace!("Injecting intershard transaction {}", verified_tx.hash);
 
-        self.consensus.write().new_transaction(
-            verified_tx,
-            true,
-        )?;
+        self.consensus.write().new_transaction(verified_tx, true)?;
         Ok(())
     }
 
@@ -482,7 +501,7 @@ impl Node {
     // handle timeout - true if something happened
     pub fn handle_timeout(&self) -> Result<bool> {
         let network_message = self.consensus.write().timeout()?;
-        if let Some(network_message) =  network_message{
+        if let Some(network_message) = network_message {
             self.handle_network_message_response(network_message)?;
             return Ok(true);
         }
@@ -495,7 +514,8 @@ impl Node {
 
         let from_broadcast = false;
         let result = self
-            .consensus.read()
+            .consensus
+            .read()
             .handle_new_transactions(vec![txn], from_broadcast)?;
         if !result[0].was_added() {
             debug!(?result, "Transaction cannot be added to mempool");
@@ -506,7 +526,8 @@ impl Node {
 
     pub fn process_transactions_to_broadcast(&self) -> Result<()> {
         let txns_to_broadcast = self
-            .consensus.read()
+            .consensus
+            .read()
             .transaction_pool
             .write()
             .pull_txns_to_broadcast()?;
@@ -590,7 +611,8 @@ impl Node {
 
     pub fn get_state(&self, block: &Block) -> Result<State> {
         Ok(self
-            .consensus.read()
+            .consensus
+            .read()
             .state()
             .at_root(block.state_root_hash().into()))
     }
@@ -615,7 +637,8 @@ impl Node {
             .ok_or_else(|| anyhow!("missing block: {}", block.parent_hash()))?;
 
         let mut state = node
-            .consensus.read()
+            .consensus
+            .read()
             .state()
             .at_root(parent.state_root_hash().into());
         if state.is_empty() {
@@ -672,7 +695,8 @@ impl Node {
             .ok_or_else(|| anyhow!("missing block: {}", block.parent_hash()))?;
 
         let mut state = node
-            .consensus.read()
+            .consensus
+            .read()
             .state()
             .at_root(parent.state_root_hash().into());
         if state.is_empty() {
@@ -707,7 +731,8 @@ impl Node {
             .get_block(block.parent_hash())?
             .ok_or_else(|| anyhow!("missing block: {}", block.parent_hash()))?;
         let mut state = self
-            .consensus.read()
+            .consensus
+            .read()
             .state()
             .at_root(parent.state_root_hash().into());
         if state.is_empty() {
@@ -912,7 +937,8 @@ impl Node {
         trace!("call_contract: block={:?}", block);
 
         let state = self
-            .consensus.read()
+            .consensus
+            .read()
             .state()
             .at_root(block.state_root_hash().into());
         if state.is_empty() {
@@ -936,7 +962,8 @@ impl Node {
             return Ok(None);
         };
 
-        self.consensus.read()
+        self.consensus
+            .read()
             .state()
             .get_reward_address(proposer.public_key)
     }
@@ -1042,8 +1069,11 @@ impl Node {
     }
 
     fn handle_proposal(&self, from: PeerId, proposal: Proposal) -> Result<()> {
-        let network_message = self.consensus.write().proposal(from, proposal.clone(), false)?;
-        if let Some(network_message) =  network_message {
+        let network_message = self
+            .consensus
+            .write()
+            .proposal(from, proposal.clone(), false)?;
+        if let Some(network_message) = network_message {
             self.reset_timeout
                 .send(self.config.consensus.consensus_timeout)?;
             self.handle_network_message_response(network_message)?;

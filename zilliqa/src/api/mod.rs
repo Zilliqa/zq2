@@ -12,10 +12,7 @@ pub mod types;
 mod web3;
 pub mod zilliqa;
 
-pub fn rpc_module(
-    node: Arc<Node>,
-    enabled_apis: &[EnabledApi],
-) -> RpcModule<Arc<Node>> {
+pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc<Node>> {
     let mut module = RpcModule::new(node.clone());
 
     module

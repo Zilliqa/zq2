@@ -7,10 +7,7 @@ use jsonrpsee::{RpcModule, types::Params};
 use super::types;
 use crate::{api::types::eth::Transaction, cfg::EnabledApi, node::Node};
 
-pub fn rpc_module(
-    node: Arc<Node>,
-    enabled_apis: &[EnabledApi],
-) -> RpcModule<Arc<Node>> {
+pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc<Node>> {
     super::declare_module!(
         node,
         enabled_apis,
@@ -66,10 +63,7 @@ fn txpool_content(
 }
 
 /// txpool_contentFrom
-fn txpool_content_from(
-    params: Params,
-    node: &Arc<Node>,
-) -> Result<types::txpool::TxPoolContent> {
+fn txpool_content_from(params: Params, node: &Arc<Node>) -> Result<types::txpool::TxPoolContent> {
     let address: super::zilliqa::ZilAddress = params.one()?;
     let address: Address = address.into();
     let content = node.txpool_content_from(&address);
@@ -103,10 +97,7 @@ fn txpool_content_from(
 }
 
 /// txpool_inspect
-fn txpool_inspect(
-    _params: Params,
-    node: &Arc<Node>,
-) -> Result<types::txpool::TxPoolInspect> {
+fn txpool_inspect(_params: Params, node: &Arc<Node>) -> Result<types::txpool::TxPoolInspect> {
     let content = node.txpool_content();
 
     let mut result = types::txpool::TxPoolInspect {

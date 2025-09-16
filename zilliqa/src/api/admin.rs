@@ -19,10 +19,7 @@ use crate::{
     node::Node,
 };
 
-pub fn rpc_module(
-    node: Arc<Node>,
-    enabled_apis: &[EnabledApi],
-) -> RpcModule<Arc<Node>> {
+pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc<Node>> {
     super::declare_module!(
         node,
         enabled_apis,
@@ -53,7 +50,6 @@ fn admin_block_range(_params: Params, node: &Arc<Node>) -> Result<RangeInclusive
 }
 
 fn consensus_info(_: Params, node: &Arc<Node>) -> Result<ConsensusInfo> {
-
     let view = node.consensus.read().get_view()?;
     let high_qc = QuorumCertificate::from_qc(&node.consensus.read().high_qc);
     let (milliseconds_since_last_view_change, _, exponential_backoff_timeout) =
@@ -98,7 +94,9 @@ fn force_view(params: Params, node: &Arc<Node>) -> Result<bool> {
     let mut params = params.sequence();
     let view: U64 = params.next()?;
     let timeout_at: String = params.next()?;
-    node.consensus.write().force_view(view.to::<u64>(), timeout_at)?;
+    node.consensus
+        .write()
+        .force_view(view.to::<u64>(), timeout_at)?;
     Ok(true)
 }
 
@@ -118,21 +116,23 @@ fn get_peers(_params: Params, node: &Arc<Node>) -> Result<PeerInfo> {
 
 /// Returns information about votes and voters
 fn votes_received(_params: Params, node: &Arc<Node>) -> Result<VotesReceivedReturnee> {
-
     let new_views = node
-        .consensus.read()
+        .consensus
+        .read()
         .new_views
         .iter()
         .map(|kv| (*kv.key(), kv.value().clone()))
         .collect_vec();
     let votes = node
-        .consensus.read()
+        .consensus
+        .read()
         .votes
         .iter()
         .map(|kv| (*kv.key(), kv.value().clone()))
         .collect_vec();
     let buffered_votes = node
-        .consensus.read()
+        .consensus
+        .read()
         .buffered_votes
         .clone()
         .into_iter()
@@ -144,7 +144,8 @@ fn votes_received(_params: Params, node: &Arc<Node>) -> Result<VotesReceivedRetu
         ..Default::default()
     };
     let committee = node
-        .consensus.read()
+        .consensus
+        .read()
         .state()
         .at_root(head_block.state_root_hash().into())
         .get_stakers(executed_block)?;
@@ -210,7 +211,10 @@ fn get_leaders(params: Params, node: &Arc<Node>) -> Result<Vec<(u64, Validator)>
     while leaders.len() <= count {
         leaders.push((
             view,
-            node.consensus.read().leader_at_block(&head_block, view).unwrap(),
+            node.consensus
+                .read()
+                .leader_at_block(&head_block, view)
+                .unwrap(),
         ));
         view += 1;
     }

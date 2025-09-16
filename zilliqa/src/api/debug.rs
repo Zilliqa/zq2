@@ -10,10 +10,7 @@ use jsonrpsee::{RpcModule, types::Params};
 
 use crate::{cfg::EnabledApi, crypto::Hash, inspector, node::Node};
 
-pub fn rpc_module(
-    node: Arc<Node>,
-    enabled_apis: &[EnabledApi],
-) -> RpcModule<Arc<Node>> {
+pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc<Node>> {
     super::declare_module!(
         node,
         enabled_apis,
@@ -66,10 +63,7 @@ fn debug_trace_block_by_hash(_params: Params, _node: &Arc<Node>) -> Result<()> {
 }
 
 /// debug_traceBlockByNumber
-fn debug_trace_block_by_number(
-    params: Params,
-    node: &Arc<Node>,
-) -> Result<Vec<TraceResult>> {
+fn debug_trace_block_by_number(params: Params, node: &Arc<Node>) -> Result<Vec<TraceResult>> {
     let mut params = params.sequence();
     let block_number: BlockNumberOrTag = params.next()?;
     let trace_type: Option<GethDebugTracingOptions> = params.optional_next()?;
@@ -103,7 +97,8 @@ fn debug_trace_transaction(params: Params, node: &Arc<Node>) -> Result<TraceResu
         .ok_or_else(|| anyhow!("missing parent block: {}", block.parent_hash()))?;
 
     let mut state = node
-        .consensus.read()
+        .consensus
+        .read()
         .state()
         .at_root(parent.state_root_hash().into());
 

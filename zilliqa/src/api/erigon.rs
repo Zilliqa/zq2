@@ -6,10 +6,7 @@ use jsonrpsee::{RpcModule, types::Params};
 use super::types::eth;
 use crate::{cfg::EnabledApi, node::Node};
 
-pub fn rpc_module(
-    node: Arc<Node>,
-    enabled_apis: &[EnabledApi],
-) -> RpcModule<Arc<Node>> {
+pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc<Node>> {
     super::declare_module!(
         node,
         enabled_apis,

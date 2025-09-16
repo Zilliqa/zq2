@@ -23,7 +23,7 @@ use jsonrpsee::{
         params::ParamsSequence,
     },
 };
-use parking_lot::{RwLock};
+use parking_lot::RwLock;
 use revm::primitives::keccak256;
 use serde_json::json;
 use tracing::*;
@@ -52,11 +52,8 @@ use crate::{
     transaction::{EvmGas, Log, SignedTransaction, VerifiedTransaction},
 };
 
-pub fn rpc_module(
-    node: Arc<Node>,
-    enabled_apis: &[EnabledApi],
-) -> RpcModule<Arc<Node>> {
-    let mut module = super::declare_module!(
+pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc<Node>> {
+    super::declare_module!(
         node,
         enabled_apis,
         [
@@ -568,7 +565,11 @@ fn get_transaction_count(params: Params, node: &Arc<Node>) -> Result<String> {
     let nonce = node.get_state(&block)?.get_account(address)?.nonce;
 
     if matches!(block_id, BlockId::Number(BlockNumberOrTag::Pending)) {
-        Ok(node.consensus.read().pending_transaction_count(address).to_hex())
+        Ok(node
+            .consensus
+            .read()
+            .pending_transaction_count(address)
+            .to_hex())
     } else {
         Ok(nonce.to_hex())
     }
@@ -603,7 +604,8 @@ pub fn get_eth_block(
     full: bool,
 ) -> Result<Option<eth::Block>> {
     let brt = match node
-        .consensus.read()
+        .consensus
+        .read()
         .db
         .get_block_and_receipts_and_transactions(block_id)?
     {
@@ -625,10 +627,7 @@ pub fn get_eth_block(
     Ok(Some(result))
 }
 
-fn get_block_transaction_count_by_hash(
-    params: Params,
-    node: &Arc<Node>,
-) -> Result<Option<String>> {
+fn get_block_transaction_count_by_hash(params: Params, node: &Arc<Node>) -> Result<Option<String>> {
     let mut params = params.sequence();
     let hash: B256 = params.next()?;
     expect_end_of_params(&mut params, 1, 1)?;
@@ -661,10 +660,7 @@ fn get_logs(params: Params, node: &Arc<Node>) -> Result<Vec<eth::Log>> {
     get_logs_inner(&params, node)
 }
 
-fn get_logs_inner(
-    params: &alloy::rpc::types::Filter,
-    node: &Arc<Node>,
-) -> Result<Vec<eth::Log>> {
+fn get_logs_inner(params: &alloy::rpc::types::Filter, node: &Arc<Node>) -> Result<Vec<eth::Log>> {
     let filter_params = FilteredParams::new(Some(params.clone()));
 
     // Find the range of blocks we care about. This is an iterator of blocks.
@@ -702,8 +698,7 @@ fn get_logs_inner(
             }
 
             Either::Right((from..=to).map(|number| {
-                node
-                    .get_block(number)?
+                node.get_block(number)?
                     .ok_or_else(|| anyhow!("missing block: {number}"))
             }))
         }
@@ -801,14 +796,14 @@ fn get_transaction_by_block_number_and_index(
     get_transaction_inner(txn_hash, pool, db)
 }
 
-fn get_transaction_by_hash(
-    params: Params,
-    node: &Arc<Node>,
-) -> Result<Option<eth::Transaction>> {
+fn get_transaction_by_hash(params: Params, node: &Arc<Node>) -> Result<Option<eth::Transaction>> {
     let hash: B256 = params.one()?;
     let hash: Hash = Hash(hash.0);
     let (pool, db) = {
-        (node.consensus.read().transaction_pool.clone(), node.db.clone())
+        (
+            node.consensus.read().transaction_pool.clone(),
+            node.db.clone(),
+        )
     };
 
     get_transaction_inner(hash, pool, db)
@@ -961,7 +956,8 @@ async fn _subscribe(
 
             while let Ok(header) = new_blocks.recv().await {
                 let block = node
-                    .consensus.read()
+                    .consensus
+                    .read()
                     .db
                     .get_transactionless_block(header.hash.into())?
                     .ok_or("Block not found")?;
@@ -985,7 +981,7 @@ async fn _subscribe(
 
             let mut receipts = node.subscribe_to_receipts();
 
-              'outer: while let Ok((receipt, transaction_index)) = receipts.recv().await {
+            'outer: while let Ok((receipt, transaction_index)) = receipts.recv().await {
                 if !filter.filter_block_hash(receipt.block_hash.into()) {
                     continue;
                 }
@@ -1229,9 +1225,7 @@ fn get_account(params: Params, node: &Arc<Node>) -> Result<GetAccountResult> {
 fn get_filter_changes(params: Params, node: &Arc<Node>) -> Result<serde_json::Value> {
     let filter_id: u128 = params.one()?;
 
-    let filters = {
-        node.filters.clone()
-    };
+    let filters = { node.filters.clone() };
     let mut filter = filters.get(filter_id).ok_or(anyhow!("filter not found"))?;
 
     match &mut filter.kind {

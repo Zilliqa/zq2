@@ -665,9 +665,7 @@ impl Network {
         // this could of course spin forever, but the test itself should time out.
         loop {
             for node in &self.nodes {
-                node.inner
-                    .process_transactions_to_broadcast()
-                    .unwrap();
+                node.inner.process_transactions_to_broadcast().unwrap();
                 // Trigger a tick so that block fetching can operate.
                 if node.inner.handle_timeout().unwrap() {
                     return;
@@ -843,9 +841,7 @@ impl Network {
                 let span = tracing::span!(tracing::Level::INFO, "handle_timeout", index);
 
                 span.in_scope(|| {
-                    node.inner
-                        .process_transactions_to_broadcast()
-                        .unwrap();
+                    node.inner.process_transactions_to_broadcast().unwrap();
                     node.inner.handle_timeout().unwrap();
                 });
             }
@@ -972,7 +968,6 @@ impl Network {
                                     internal_message, source_shard, idx, self.shard_id
                                 );
                                 node.inner
-
                                     .handle_internal_message(
                                         *source_shard,
                                         internal_message.clone(),
@@ -1182,7 +1177,13 @@ impl Network {
         };
         self.run_until(
             |net| {
-                let syncing = net.get_node(index).consensus.read().sync.am_syncing().unwrap();
+                let syncing = net
+                    .get_node(index)
+                    .consensus
+                    .read()
+                    .sync
+                    .am_syncing()
+                    .unwrap();
                 let height_i = net.get_node(index).get_finalized_height().unwrap();
                 let height_c = net.get_node(check).get_finalized_height().unwrap();
                 height_c == height_i && height_i > 0 && !syncing

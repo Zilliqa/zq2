@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+
 use alloy::eips::BlockId;
 use ethers::{
     providers::Middleware,
@@ -565,8 +566,18 @@ async fn test_transaction_replacement_during_consensus(mut network: Network) {
         }
 
         // Verify pool state consistency
-        let pool_status = node.consensus.read().transaction_pool.read().preview_status();
-        let content = node.consensus.read().transaction_pool.read().preview_content();
+        let pool_status = node
+            .consensus
+            .read()
+            .transaction_pool
+            .read()
+            .preview_status();
+        let content = node
+            .consensus
+            .read()
+            .transaction_pool
+            .read()
+            .preview_content();
 
         // Check that the pending count matches the actual content
         let actual_pending: usize = content.pending.values().map(|v| v.len()).sum();

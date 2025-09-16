@@ -7,10 +7,7 @@ use sha3::{Digest, Keccak256};
 use super::to_hex::ToHex;
 use crate::{cfg::EnabledApi, node::Node};
 
-pub fn rpc_module(
-    node: Arc<Node>,
-    enabled_apis: &[EnabledApi],
-) -> RpcModule<Arc<Node>> {
+pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc<Node>> {
     super::declare_module!(
         node,
         enabled_apis,

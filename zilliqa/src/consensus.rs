@@ -2122,7 +2122,11 @@ impl Consensus {
 
         let txn_hash = txn.hash;
 
-        let insert_result = self.transaction_pool.write().insert_transaction(txn.clone(), &early_account, from_broadcast);
+        let insert_result = self.transaction_pool.write().insert_transaction(
+            txn.clone(),
+            &early_account,
+            from_broadcast,
+        );
         if insert_result.was_added() {
             let _ = self.new_transaction_hashes.send(txn_hash);
 
@@ -3195,7 +3199,9 @@ impl Consensus {
                                     self.config.consensus.gas_price.0,
                                     self.config.eth_chain_id,
                                 ) else {
-                                    warn!("Transaction recovered from given block failed to validate!");
+                                    warn!(
+                                        "Transaction recovered from given block failed to validate!"
+                                    );
                                     return Ok(());
                                 };
                             }

@@ -17,10 +17,7 @@ use crate::{
     node::Node,
 };
 
-pub fn rpc_module(
-    node: Arc<Node>,
-    enabled_apis: &[EnabledApi],
-) -> RpcModule<Arc<Node>> {
+pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc<Node>> {
     super::declare_module!(
         node,
         enabled_apis,
@@ -62,7 +59,8 @@ fn trace_block(params: Params, node: &Arc<Node>) -> Result<Vec<TraceResults>> {
 
     // Start from parent block's state
     let mut state = node
-        .consensus.read()
+        .consensus
+        .read()
         .state()
         .at_root(parent.state_root_hash().into());
 
@@ -166,7 +164,8 @@ fn trace_filter(params: Params, node: &Arc<Node>) -> Result<Vec<TraceResults>> {
             .ok_or_else(|| anyhow!("missing parent block: {}", block.parent_hash()))?;
 
         let mut state = node
-            .consensus.read()
+            .consensus
+            .read()
             .state()
             .at_root(parent.state_root_hash().into());
 

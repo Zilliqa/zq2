@@ -338,12 +338,7 @@ async fn deposit_storage_initially_set(mut network: Network) {
     );
     assert_eq!(
         get_blocks_per_epoch(&wallet).await,
-        network.nodes[0]
-            .inner
-
-            .config
-            .consensus
-            .blocks_per_epoch
+        network.nodes[0].inner.config.consensus.blocks_per_epoch
     );
 
     let stakers = get_stakers(&wallet).await;
@@ -351,7 +346,7 @@ async fn deposit_storage_initially_set(mut network: Network) {
         stakers.len(),
         network.nodes[0]
             .inner
-                        .config
+            .config
             .consensus
             .genesis_deposits
             .len()

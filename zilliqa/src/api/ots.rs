@@ -25,10 +25,7 @@ use crate::{
     time::SystemTime,
 };
 
-pub fn rpc_module(
-    node: Arc<Node>,
-    enabled_apis: &[EnabledApi],
-) -> RpcModule<Arc<Node>> {
+pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc<Node>> {
     super::declare_module!(
         node,
         enabled_apis,
@@ -57,10 +54,7 @@ pub fn get_otterscan_api_level(_: Params, _: &Arc<Node>) -> Result<u64> {
     Ok(8)
 }
 
-fn get_block_details(
-    params: Params,
-    node: &Arc<Node>,
-) -> Result<Option<ots::BlockDetails>> {
+fn get_block_details(params: Params, node: &Arc<Node>) -> Result<Option<ots::BlockDetails>> {
     let block_number: u64 = params.one()?;
 
     let Some(ref block) = node.get_block(block_number)? else {
@@ -104,7 +98,6 @@ fn get_block_transactions(
     let page_size: usize = params.next()?;
 
     let (pool, db, miner, block, block_gas_limit) = {
-
         let Some(block) = node.get_block(block_number)? else {
             return Ok(None);
         };
@@ -176,23 +169,18 @@ fn get_internal_operations(params: Params, node: &Arc<Node>) -> Result<Vec<Opera
     Ok(inspector.entries())
 }
 
-fn get_transaction_by_sender_and_nonce(
-    params: Params,
-    node: &Arc<Node>,
-) -> Result<Option<String>> {
+fn get_transaction_by_sender_and_nonce(params: Params, node: &Arc<Node>) -> Result<Option<String>> {
     let mut params = params.sequence();
     let sender: Address = params.next()?;
     let nonce: u64 = params.next()?;
 
-    let touched = {
-        node.get_touched_transactions(sender)?
-    };
+    let touched = { node.get_touched_transactions(sender)? };
 
     // Iterate over each transaction which touched the sender. This will include transactions which weren't sent by the
     // sender which we need to filter out.
     for txn_hash in touched {
         let txn = node
-                        .get_transaction_by_hash(txn_hash)?
+            .get_transaction_by_hash(txn_hash)?
             .ok_or_else(|| anyhow!("missing transaction: {txn_hash}"))?;
         if txn.signer == sender && txn.tx.nonce().map(|n| n == nonce).unwrap_or(false) {
             return Ok(Some(B256::from(txn_hash).to_hex()));
@@ -268,7 +256,10 @@ fn search_transactions_inner(
     let mut finished = true;
 
     let (pool, db) = {
-        (node.consensus.read().transaction_pool.clone(), node.db.clone())
+        (
+            node.consensus.read().transaction_pool.clone(),
+            node.db.clone(),
+        )
     };
 
     for hash in touched {
@@ -340,10 +331,7 @@ fn search_transactions_inner(
     })
 }
 
-fn search_transactions_after(
-    params: Params,
-    node: &Arc<Node>,
-) -> Result<ots::Transactions> {
+fn search_transactions_after(params: Params, node: &Arc<Node>) -> Result<ots::Transactions> {
     let mut params = params.sequence();
     let address: Address = params.next()?;
     let block_number: u64 = params.next()?;
@@ -352,10 +340,7 @@ fn search_transactions_after(
     search_transactions_inner(node, address, block_number, page_size, false)
 }
 
-fn search_transactions_before(
-    params: Params,
-    node: &Arc<Node>,
-) -> Result<ots::Transactions> {
+fn search_transactions_before(params: Params, node: &Arc<Node>) -> Result<ots::Transactions> {
     let mut params = params.sequence();
     let address: Address = params.next()?;
     let mut block_number: u64 = params.next()?;
