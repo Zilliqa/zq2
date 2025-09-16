@@ -2914,16 +2914,19 @@ impl Consensus {
 
     pub fn leader_at_block(&self, block: &Block, view: u64) -> Option<Validator> {
         let state_at = self.state.at_root(block.state_root_hash().into());
+        Self::leader_at_state(&state_at, block, view)
+    }
 
+    pub fn leader_at_state(state: &State, block: &Block, view: u64) -> Option<Validator> {
         let executed_block = BlockHeader {
             number: block.header.number + 1,
             ..Default::default()
         };
-        let Ok(public_key) = state_at.leader(view, executed_block) else {
+        let Ok(public_key) = state.leader(view, executed_block) else {
             return None;
         };
 
-        let Ok(Some(peer_id)) = state_at.get_peer_id(public_key) else {
+        let Ok(Some(peer_id)) = state.get_peer_id(public_key) else {
             return None;
         };
 

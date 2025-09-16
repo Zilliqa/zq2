@@ -13,7 +13,7 @@ use super::types::{admin::VotesReceivedReturnee, eth::QuorumCertificate, hex};
 use crate::{
     api::{to_hex::ToHex, types::admin::VoteCount},
     cfg::EnabledApi,
-    consensus::{BlockVotes, NewViewVote, Validator},
+    consensus::{BlockVotes, Consensus, NewViewVote, Validator},
     crypto::NodePublicKey,
     message::{BitArray, BlockHeader},
     node::Node,
@@ -205,16 +205,23 @@ fn get_leaders(params: Params, node: &Arc<Node>) -> Result<Vec<(u64, Validator)>
     let mut view = params.next::<U64>()?.to::<u64>();
     let count = params.next::<U64>()?.to::<usize>().min(100);
 
-    let head_block = node.consensus.read().head_block();
     let mut leaders = vec![];
+
+    let (state, head_block) = {
+        let consensus = node.consensus.read();
+        let head_block = consensus.head_block();
+        (
+            consensus
+                .state()
+                .at_root(head_block.state_root_hash().into()),
+            head_block,
+        )
+    };
 
     while leaders.len() <= count {
         leaders.push((
             view,
-            node.consensus
-                .read()
-                .leader_at_block(&head_block, view)
-                .unwrap(),
+            Consensus::leader_at_state(&state, &head_block, view).unwrap(),
         ));
         view += 1;
     }
