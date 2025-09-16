@@ -1,6 +1,9 @@
 use std::{ops::Deref, str::FromStr, time::Duration};
 
-use alloy::{primitives::Address, rlp::Encodable};
+use alloy::{
+    primitives::{Address, address},
+    rlp::Encodable,
+};
 use anyhow::{Result, anyhow};
 use libp2p::{Multiaddr, PeerId};
 use rand::{Rng, distributions::Alphanumeric};
@@ -221,6 +224,9 @@ pub struct NodeConfig {
     /// Database configuration
     #[serde(default)]
     pub db: DbConfig,
+    #[serde(default = "disable_get_full_state_for_contracts_default")]
+    /// Disabled state queries for the following contracts
+    pub disable_get_full_state_for_contracts: Vec<Address>,
 }
 
 impl Default for NodeConfig {
@@ -241,6 +247,7 @@ impl Default for NodeConfig {
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: false,
             max_rpc_response_size: max_rpc_response_size_default(),
+            disable_get_full_state_for_contracts: disable_get_full_state_for_contracts_default(),
         }
     }
 }
@@ -356,6 +363,13 @@ pub fn state_rpc_limit_default() -> usize {
 
 pub fn failed_request_sleep_duration_default() -> Duration {
     Duration::from_secs(10)
+}
+
+pub fn disable_get_full_state_for_contracts_default() -> Vec<Address> {
+    vec![
+        address!("54d10Ee86cd2C3258b23FDb78782F70e84966683"),
+        address!("a7c67d49c82c7dc1b73d231640b2e4d0661d37c1"),
+    ]
 }
 
 /// Wrapper for [u128] that (de)serializes with a string. `serde_toml` does not support `u128`s.

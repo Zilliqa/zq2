@@ -81,10 +81,10 @@ use zilliqa::{
         Amount, ApiServer, Checkpoint, ConsensusConfig, ContractUpgradeConfig, ContractUpgrades,
         Fork, GenesisDeposit, NodeConfig, SyncConfig, allowed_timestamp_skew_default,
         block_request_batch_size_default, block_request_limit_default, consensus_timeout_default,
-        eth_chain_id_default, failed_request_sleep_duration_default, genesis_fork_default,
-        max_blocks_in_flight_default, max_rpc_response_size_default, scilla_ext_libs_path_default,
-        state_cache_size_default, state_rpc_limit_default, total_native_token_supply_default,
-        u64_max,
+        disable_get_full_state_for_contracts_default, eth_chain_id_default,
+        failed_request_sleep_duration_default, genesis_fork_default, max_blocks_in_flight_default,
+        max_rpc_response_size_default, scilla_ext_libs_path_default, state_cache_size_default,
+        state_rpc_limit_default, total_native_token_supply_default, u64_max,
     },
     crypto::{SecretKey, TransactionPublicKey},
     db,
@@ -412,6 +412,7 @@ impl Network {
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: true,
             max_rpc_response_size: max_rpc_response_size_default(),
+            disable_get_full_state_for_contracts: disable_get_full_state_for_contracts_default(),
         };
 
         let (nodes, external_receivers, local_receivers, request_response_receivers): (
@@ -566,6 +567,7 @@ impl Network {
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: true,
             max_rpc_response_size: max_rpc_response_size_default(),
+            disable_get_full_state_for_contracts: disable_get_full_state_for_contracts_default(),
         };
 
         let secret_key = options.secret_key_or_random(self.rng.clone());
