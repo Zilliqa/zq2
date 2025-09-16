@@ -690,26 +690,27 @@ fn get_logs_inner(
             from_block,
             to_block,
         } => {
-            let Some(from) = node
-                .read()
-                .resolve_block_number(from_block.unwrap_or(BlockNumberOrTag::Latest))?
-                .as_ref()
-                .map(Block::number)
-            else {
-                return Ok(vec![]);
-            };
+            let (from, to) = {
+                let node = node.read();
+                let Some(from) = node
+                    .resolve_block_number(from_block.unwrap_or(BlockNumberOrTag::Latest))?
+                    .as_ref()
+                    .map(Block::number)
+                else {
+                    return Ok(vec![]);
+                };
 
-            let to = match node
-                .read()
-                .resolve_block_number(to_block.unwrap_or(BlockNumberOrTag::Latest))?
-                .as_ref()
-            {
-                Some(block) => block.number(),
-                None => node
-                    .read()
-                    .resolve_block_number(BlockNumberOrTag::Latest)?
-                    .unwrap()
-                    .number(),
+                let to = match node
+                    .resolve_block_number(to_block.unwrap_or(BlockNumberOrTag::Latest))?
+                    .as_ref()
+                {
+                    Some(block) => block.number(),
+                    None => node
+                        .resolve_block_number(BlockNumberOrTag::Latest)?
+                        .unwrap()
+                        .number(),
+                };
+                (from, to)
             };
 
             if from > to {
