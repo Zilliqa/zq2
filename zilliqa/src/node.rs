@@ -563,7 +563,7 @@ impl Node {
             BlockNumberOrTag::Safe => {
                 let block_hash = self.consensus.read().high_qc.block_hash;
 
-                let Some(safe_block) = self.consensus.read().get_block(&block_hash)? else {
+                let Some(safe_block) = self.db.get_block(block_hash.into())? else {
                     return self.resolve_block_number(BlockNumberOrTag::Earliest);
                 };
                 Ok(Some(safe_block))

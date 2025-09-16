@@ -682,10 +682,9 @@ fn get_logs_inner(params: &alloy::rpc::types::Filter, node: &Arc<Node>) -> Resul
                 return Ok(vec![]);
             };
 
-            let to = match node
-                .resolve_block_number(to_block.unwrap_or(BlockNumberOrTag::Latest))?
-                .as_ref()
-            {
+            let to = node.resolve_block_number(to_block.unwrap_or(BlockNumberOrTag::Latest))?;
+
+            let to = match to {
                 Some(block) => block.number(),
                 None => node
                     .resolve_block_number(BlockNumberOrTag::Latest)?
@@ -697,9 +696,14 @@ fn get_logs_inner(params: &alloy::rpc::types::Filter, node: &Arc<Node>) -> Resul
                 return Err(anyhow!("`from` is greater than `to` ({from} > {to})"));
             }
 
-            Either::Right((from..=to).map(|number| {
-                node.get_block(number)?
-                    .ok_or_else(|| anyhow!("missing block: {number}"))
+            let db = node.db.clone();
+
+            Either::Right((from..=to).map({
+                let db = db.clone();
+                move |number| {
+                    data_access::get_block_by_number(db.clone(), number)?
+                        .ok_or_else(|| anyhow::anyhow!("missing block: {number}"))
+                }
             }))
         }
     };
