@@ -13,7 +13,6 @@ use alloy::{
 };
 use anyhow::{Result, anyhow};
 use http::Extensions;
-use itertools::Either;
 use jsonrpsee::{
     PendingSubscriptionSink, RpcModule,
     core::SubscriptionError,
@@ -666,9 +665,10 @@ fn get_logs_inner(params: &alloy::rpc::types::Filter, node: &Arc<Node>) -> Resul
     // Find the range of blocks we care about. This is an iterator of blocks.
     let blocks = match params.block_option {
         alloy::rpc::types::FilterBlockOption::AtBlockHash(block_hash) => {
-            Either::Left(std::iter::once(Ok(node
-                .get_block(block_hash)?
-                .ok_or_else(|| anyhow!("block not found"))?)))
+            vec![
+                node.get_block(block_hash)?
+                    .ok_or_else(|| anyhow!("block not found"))?,
+            ]
         }
         alloy::rpc::types::FilterBlockOption::Range {
             from_block,
@@ -697,22 +697,13 @@ fn get_logs_inner(params: &alloy::rpc::types::Filter, node: &Arc<Node>) -> Resul
             }
 
             let db = node.db.clone();
-
-            Either::Right((from..=to).map({
-                let db = db.clone();
-                move |number| {
-                    data_access::get_block_by_number(db.clone(), number)?
-                        .ok_or_else(|| anyhow::anyhow!("missing block: {number}"))
-                }
-            }))
+            db.get_blocks_by_height_range(from..=to)?
         }
     };
 
     let mut logs = vec![];
 
     let db = node.db.clone();
-
-    let blocks: Vec<Block> = blocks.collect::<Result<Vec<_>, _>>()?;
 
     let blocks_and_receipts = db.get_transaction_receipts_in_blocks(blocks)?;
 
