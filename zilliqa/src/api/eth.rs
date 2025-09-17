@@ -614,24 +614,19 @@ pub fn get_eth_block(
     block_id: crate::db::BlockFilter,
     full: bool,
 ) -> Result<Option<eth::Block>> {
-    let brt = match node
-        .consensus
-        .read()
-        .db
-        .get_block_and_receipts_and_transactions(block_id)?
-    {
-        Some(btr) => btr,
+    let block = match node.db.get_block(block_id)? {
+        Some(block) => block,
         None => return Ok(None),
     };
 
-    let miner = node.get_proposer_reward_address(brt.block.header)?;
-    let block_gas_limit = brt.block.gas_limit();
-    let mut result = eth::Block::from_block(&brt.block, miner.unwrap_or_default(), block_gas_limit);
+    let miner = node.get_proposer_reward_address(block.header)?;
+    let block_gas_limit = block.gas_limit();
+    let mut result = eth::Block::from_block(&block, miner.unwrap_or_default(), block_gas_limit);
     if full {
-        result.transactions = brt
-            .transactions
+        let transactions = node.db.get_transactions(&block.transactions)?;
+        result.transactions = transactions
             .iter()
-            .map(|x| eth::Transaction::new(x.clone(), Some(brt.block.clone())))
+            .map(|x| eth::Transaction::new(x.clone(), Some(block.clone())))
             .map(HashOrTransaction::Transaction)
             .collect();
     }

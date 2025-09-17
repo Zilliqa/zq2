@@ -777,6 +777,34 @@ impl Db {
         )
     }
 
+    pub fn get_transactions(&self, txn_hashes: &[Hash]) -> Result<Vec<VerifiedTransaction>> {
+        let mut transactions = Vec::with_capacity(txn_hashes.len());
+        let placeholders = std::iter::repeat_n("?", txn_hashes.len())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let sql = format!(
+            r#"SELECT data, tx_hash
+                 FROM transactions
+                 WHERE tx_hash IN ({placeholders})"#,
+        );
+
+        let conn = self.pool.get()?;
+        let mut stmt = conn.prepare(&sql)?;
+        let signed_txns = stmt
+            .query_map(rusqlite::params_from_iter(txn_hashes.iter()), |row| {
+                let txn: SignedTransaction = row.get(0)?;
+                let h: Hash = row.get(1)?;
+                Ok((h, txn))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        for (hash, signed_tx) in signed_txns {
+            transactions.push(signed_tx.verify_bypass(hash)?);
+        }
+        Ok(transactions)
+    }
+
     pub fn contains_transaction(&self, hash: &Hash) -> Result<bool> {
         Ok(self
             .pool
