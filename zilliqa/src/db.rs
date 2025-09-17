@@ -1110,25 +1110,46 @@ impl Db {
             block.header.state_root_hash = Hash::ZERO;
         }
 
-        let receipts = self.pool.get()?.prepare_cached("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1 ORDER BY tx_index ASC")?.query_map([block.header.hash], Self::make_receipt)?.collect::<Result<Vec<_>, _>>()?;
+        let receipts = self.get_transaction_receipts_in_block(&block.header.hash)?;
 
-        let transactions: Vec<VerifiedTransaction> = self.pool.get()?
-            .prepare_cached(
-                "SELECT data, transactions.tx_hash FROM transactions INNER JOIN receipts ON transactions.tx_hash = receipts.tx_hash WHERE receipts.block_hash = ?1 ORDER BY receipts.tx_index ASC",
-            )?
-            .query_map([block.header.hash], |row| {
+        let receipt_hashes = receipts.iter().map(|r| r.tx_hash).collect::<Vec<Hash>>();
+
+        let mut tx_by_hash: HashMap<Hash, SignedTransaction> =
+            HashMap::with_capacity(receipt_hashes.len());
+
+        let placeholders = std::iter::repeat_n("?", receipt_hashes.len())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let hashes = self
+            .pool
+            .get()?
+            .prepare(&format!(
+                r#"SELECT data, tx_hash FROM transactions WHERE tx_hash IN ({placeholders})"#
+            ))?
+            .query_map(rusqlite::params_from_iter(receipt_hashes.iter()), |row| {
                 let txn: SignedTransaction = row.get(0)?;
                 let hash: Hash = row.get(1)?;
                 Ok((txn, hash))
             })?
             .map(|x| {
                 let (txn, hash) = x.unwrap();
-                txn.verify_bypass(hash)
+                tx_by_hash.insert(hash, txn.clone());
+                hash
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Vec<_>>();
 
-        let transaction_hashes = receipts.iter().map(|x| x.tx_hash).collect();
-        block.transactions = transaction_hashes;
+        let transactions: Vec<VerifiedTransaction> = receipts
+            .iter()
+            .map(|r| {
+                let txn = tx_by_hash.remove(&r.tx_hash).ok_or_else(|| {
+                    anyhow::anyhow!("missing transaction for receipt hash {:?}", r.tx_hash)
+                })?;
+                txn.verify_bypass(r.tx_hash)
+            })
+            .collect::<Result<_, _>>()?;
+
+        block.transactions = hashes;
 
         assert_eq!(receipts.len(), transactions.len());
 
@@ -1233,7 +1254,6 @@ impl Db {
                 contract_address, logs, transitions, accepted, errors, exceptions
             FROM receipts
             WHERE block_hash IN ({placeholders})
-            ORDER BY block_hash ASC, tx_index ASC
             "#
         );
 
@@ -1257,7 +1277,8 @@ impl Db {
         // Assemble output in height order
         let mut blocks_with_hashes = Vec::with_capacity(blocks.len());
         for block in blocks {
-            let receipts = by_hash.remove(&block.header.hash).unwrap_or_default();
+            let mut receipts = by_hash.remove(&block.header.hash).unwrap_or_default();
+            receipts.sort_unstable_by_key(|r| r.index);
             blocks_with_hashes.push((block, receipts));
         }
         Ok(blocks_with_hashes)

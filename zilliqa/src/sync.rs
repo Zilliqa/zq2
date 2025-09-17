@@ -685,6 +685,8 @@ impl Sync {
             let block = brt.block;
             let number = block.number();
             let receipts = brt.receipts;
+
+            // TODO: transactions are receipts are already sorted, just zip them together
             let transactions: HashMap<Hash, crate::transaction::SignedTransaction> = brt
                 .transactions
                 .into_iter()
