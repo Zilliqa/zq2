@@ -564,6 +564,17 @@ fn get_smart_contract_state(params: Params, node: &Arc<Node>) -> Result<Value> {
     let address: ZilAddress = seq.next()?;
     let address: Address = address.into();
 
+    if node
+        .config
+        .disable_get_full_state_for_contracts
+        .contains(&address)
+    {
+        return Err(anyhow!(
+            "GetSmartContractState is disabled for contract address: {}",
+            hex::encode(address.0)
+        ));
+    }
+
     let (state, state_rpc_limit) = {
         // First get the account and check that it's a scilla account
         let block = node
