@@ -15,6 +15,7 @@ use sha3::{Digest, Keccak256};
 
 use crate::{
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey},
+    precompiles::ViewHistory,
     time::SystemTime,
     transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
     trie_storage::TrieStorage,
@@ -385,6 +386,7 @@ pub enum InternalMessage {
         Vec<SignedTransaction>,
         Box<Block>,
         TrieStorage,
+        ViewHistory,
         Box<Path>,
     ),
     /// Notify p2p cordinator to subscribe to a particular gossipsub topic

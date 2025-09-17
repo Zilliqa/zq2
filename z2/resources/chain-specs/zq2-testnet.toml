@@ -70,7 +70,7 @@ consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
 # Gas parameters
 consensus.eth_block_gas_limit = 84000000
 consensus.gas_price = "4_761_904_800_000"
-consensus.contract_upgrades = { deposit_v5 = { height = 0, reinitialise_params = { withdrawal_period = 1209600 } } }
+consensus.contract_upgrades = { deposit_v5 = { height = 0, reinitialise_params = { withdrawal_period = 1209600 } }, deposit_v6 = { height = 14997600 } }
 consensus.new_view_broadcast_interval = { secs = 30, nanos = 0 }
 sync.ignore_passive = true
 
@@ -88,4 +88,5 @@ consensus.forks = [
     { at_height = 10854709, scilla_failed_txn_correct_gas_fee_charged = true, check_minimum_gas_price = true },
     { at_height = 11300000, inject_access_list = true, use_max_gas_priority_fee = true },
     { at_height = 12998790, failed_zil_transfers_to_eoa_proper_fee_deduction = true },
+    { at_height = 14997600, validator_jailing = true },
 ]

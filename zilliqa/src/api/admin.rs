@@ -1,6 +1,6 @@
 //! An administrative API
 
-use std::{ops::RangeInclusive, sync::Arc};
+use std::{collections::HashMap, ops::RangeInclusive, sync::Arc};
 
 use alloy::{eips::BlockId, primitives::U64};
 use anyhow::{Result, anyhow};
@@ -9,12 +9,15 @@ use jsonrpsee::{RpcModule, types::Params};
 use libp2p::PeerId;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use tracing::info;
 
 use super::types::{admin::VotesReceivedReturnee, eth::QuorumCertificate, hex};
 use crate::{
     api::{to_hex::ToHex, types::admin::VoteCount},
     cfg::EnabledApi,
+    checkpoint::load_ckpt_history,
     consensus::{BlockVotes, NewViewVote, Validator},
+    constants::{LAG_BEHIND_CURRENT_VIEW, MISSED_VIEW_WINDOW},
     crypto::NodePublicKey,
     message::{BitArray, BlockHeader},
     node::Node,
@@ -37,6 +40,8 @@ pub fn rpc_module(
             ("admin_clearMempool", clear_mempool),
             ("admin_getLeaders", get_leaders),
             ("admin_syncing", syncing),
+            ("admin_missedViews", missed_views),
+            ("admin_importViewHistory", import_history),
         ]
     )
 }
@@ -60,6 +65,135 @@ fn syncing(_params: Params, node: &Arc<RwLock<Node>>) -> Result<SyncInfo> {
         migrate_at,
         block_range,
     })
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct NodeMissedViews {
+    pub min_view: u64,
+    pub node_missed_views: HashMap<NodePublicKey, Vec<u64>>,
+}
+
+fn missed_views(params: Params, node: &Arc<RwLock<Node>>) -> Result<NodeMissedViews> {
+    let mut params = params.sequence();
+    let current_view: u64 = params.next::<U64>()?.to::<u64>();
+    let node = node.read();
+    let history = &node.consensus.state().view_history;
+    let min_view = history.min_view.lock().unwrap();
+    if *min_view > 1
+        && current_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW) < *min_view + MISSED_VIEW_WINDOW
+        || current_view > node.consensus.get_finalized_view()? + LAG_BEHIND_CURRENT_VIEW + 1
+    {
+        return Err(anyhow!("Missed view history not available"));
+    }
+    let missed_views = history.missed_views.lock().unwrap();
+    let missed_map = missed_views
+        .iter()
+        .filter(|&(view, _)| {
+            *view >= current_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW + MISSED_VIEW_WINDOW)
+                && *view < current_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW)
+        })
+        .fold(HashMap::new(), |mut acc, (view, leader)| {
+            acc.entry(*leader)
+                .and_modify(|views: &mut Vec<u64>| views.push(*view))
+                .or_insert_with(|| vec![*view]);
+            acc
+        });
+    Ok(NodeMissedViews {
+        min_view: *min_view,
+        node_missed_views: missed_map,
+    })
+}
+
+fn import_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<()> {
+    let mut params = params.sequence();
+    let param: &str = params.next::<&str>()?;
+    let path = std::path::Path::new(param);
+    let mut imported_history = load_ckpt_history(path)?;
+    {
+        info!(
+            history = display(&imported_history),
+            "~~~~~~~~~~> whole imported from checkpoint"
+        );
+    }
+    let node = node.read();
+    let history = &node.consensus.state().view_history;
+    {
+        info!(
+            history = display(&history),
+            "~~~~~~~~~~> initial consensus state"
+        );
+    }
+    let first = {
+        match history.missed_views.lock().unwrap().front() {
+            None => 0,
+            Some((view, _)) => *view,
+        }
+    };
+    let mut last_imported = {
+        match imported_history.missed_views.lock().unwrap().back() {
+            None => 0,
+            Some((view, _)) => *view,
+        }
+    };
+    // make sure there is no gap between the existing and the imported history
+    if first > last_imported {
+        return Err(anyhow!(
+            "Gap between imported and existing history detected"
+        ));
+    }
+    // trim the imported missed view history
+    imported_history.prune_history(
+        node.consensus.get_finalized_view()?,
+        node.config.max_missed_view_age,
+    )?;
+    {
+        info!(
+            history = display(&imported_history),
+            "~~~~~~~~~~> trimmed imported from checkpoint"
+        );
+    }
+    // skip the overlapping missed views present in both histories
+    while last_imported >= first {
+        let mut imported_missed_views = imported_history.missed_views.lock().unwrap();
+        imported_missed_views.pop_back();
+        if let Some((view, _)) = imported_missed_views.back() {
+            last_imported = *view
+        } else {
+            // the node's missed view history starts before the imported one
+            return Ok(());
+        }
+    }
+    {
+        info!(
+            history = display(&imported_history),
+            "~~~~~~~~~~> non-overlapping imported from checkpoint"
+        );
+    }
+    let imported_missed_views = imported_history.missed_views.lock().unwrap();
+    // merge the two missed view histories and store the delta in the db
+    imported_missed_views
+        .iter()
+        .rev()
+        .for_each(|(view, leader)| {
+            node.consensus
+                .db
+                .extend_view_history(*view, leader.as_bytes())
+                .unwrap();
+            let mut missed_views = history.missed_views.lock().unwrap();
+            missed_views.push_front((*view, *leader));
+        });
+    // update min_view in consensus state and in the db
+    let mut min_view = history.min_view.lock().unwrap();
+    *min_view = *imported_history.min_view.lock().unwrap();
+    node.consensus.db.set_min_view_of_view_history(*min_view)?;
+    {
+        std::mem::drop(min_view);
+        info!(
+            history = display(&history),
+            "~~~~~~~~~~> merged consensus state"
+        );
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -237,10 +371,11 @@ fn get_leaders(params: Params, node: &Arc<RwLock<Node>>) -> Result<Vec<(u64, Val
     let mut leaders = vec![];
 
     while leaders.len() <= count {
-        leaders.push((
-            view,
-            node.consensus.leader_at_block(&head_block, view).unwrap(),
-        ));
+        if let Some(leader) = node.consensus.leader_at_block(&head_block, view) {
+            leaders.push((view, leader));
+        } else {
+            break; // missed view history not available
+        }
         view += 1;
     }
     Ok(leaders)
