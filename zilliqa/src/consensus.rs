@@ -3735,12 +3735,14 @@ impl Consensus {
         let state_trie = self.db.state_trie()?;
         let mut migrate_at = state_trie.get_migrate_at()?;
         if migrate_at == u64::MAX {
-            // TODO: Nothing to do
             return Ok(true); // done
         }
 
         // replay one block - writing new state to RocksDB.
-        let parent_hash = state_trie.get_root_hash(migrate_at.saturating_sub(1))?;
+        let Some(parent_hash) = state_trie.get_root_hash(migrate_at.saturating_sub(1))? else {
+            unimplemented!("parent state must exist!");
+        };
+
         let brt = self
             .db
             .get_block_and_receipts_and_transactions(BlockFilter::Height(migrate_at))?
@@ -3757,7 +3759,11 @@ impl Consensus {
         let cutover_at = state_trie.get_cutover_at()?;
         while migrate_at < cutover_at {
             migrate_at = migrate_at.saturating_add(1); // check next block
-            if state_trie.get_root_hash(migrate_at)? != block_hash {
+            let Some(hash) = state_trie.get_root_hash(migrate_at)? else {
+                tracing::warn!(number=%migrate_at,"State-sync retrying");
+                return Ok(true); // retry later
+            };
+            if hash != block_hash {
                 state_trie.set_migrate_at(migrate_at)?;
                 return Ok(false);
             }
@@ -3765,7 +3771,6 @@ impl Consensus {
         // done
         tracing::info!("State-sync complete!");
         state_trie.finish_migration()?;
-
-        Ok(false)
+        Ok(true)
     }
 }
