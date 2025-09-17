@@ -467,8 +467,8 @@ impl Consensus {
             "~~~~~~~~~~> found in db"
         );
 
-        // as long as we don't fill the gap between the history loaded from the checkpoint and
-        // the history in the db during the state sync running in the background we keep the
+        // since we don't fill the gap between the history loaded from the checkpoint and
+        // the history in the db during state sync running in the background we keep the
         // history imported from the db and ignore the history loaded from the checkpoint
         if !imported_missed_views.is_empty() {
             {
@@ -2395,7 +2395,7 @@ impl Consensus {
 
     /// Saves the finalized tip view, and runs all hooks for the newly finalized block
     fn finalize_block(&mut self, block: Block) -> Result<()> {
-        info!(
+        trace!(
             "Finalizing block {} at view {} num {}",
             block.hash(),
             block.view(),
