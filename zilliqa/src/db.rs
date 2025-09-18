@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     fmt::Debug,
     fs::{self, File, OpenOptions},
     io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
@@ -753,12 +753,90 @@ impl Db {
     }
 
     pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
-        // TODO: this is only ever used in one API, so keep an eye on performance - in case e.g.
-        // the index table might need to be denormalised to simplify this lookup
-        Ok(self.pool.get()?
-            .prepare_cached("SELECT tx_hash FROM touched_address_index JOIN receipts USING (tx_hash) JOIN blocks USING (block_hash) WHERE address = ?1 ORDER BY blocks.height, receipts.tx_index")?
+        let conn = self.pool.get()?;
+
+        // 1) tx hashes that touched the address
+        let tx_hashes: Vec<Hash> = conn
+            .prepare_cached("SELECT tx_hash FROM touched_address_index WHERE address = ?1")?
             .query_map([AddressSqlable(address)], |row| row.get(0))?
-            .collect::<Result<Vec<_>, _>>()?)
+            .collect::<Result<Vec<_>, _>>()?;
+
+        if tx_hashes.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // 2) receipts for those tx hashes (tx_hash -> (block_hash, tx_index))
+        let mut tx_meta: HashMap<Hash, (Hash, u64)> = HashMap::with_capacity(tx_hashes.len());
+        let mut block_hashes: HashSet<Hash> = HashSet::new();
+
+        {
+            let placeholders = std::iter::repeat_n("?", tx_hashes.len())
+                .collect::<Vec<_>>()
+                .join(",");
+
+            let sql = format!(
+                r#"
+                SELECT tx_hash, block_hash, tx_index
+                 FROM receipts
+                 WHERE tx_hash IN ({placeholders})"#,
+            );
+
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(rusqlite::params_from_iter(tx_hashes.iter()), |row| {
+                let tx_hash: Hash = row.get(0)?;
+                let block_hash: Hash = row.get(1)?;
+                let idx: u64 = row.get(2)?;
+                Ok((tx_hash, block_hash, idx))
+            })?;
+
+            for row in rows {
+                let (tx_hash, block_hash, idx) = row?;
+                tx_meta.insert(tx_hash, (block_hash, idx));
+                block_hashes.insert(block_hash);
+            }
+        }
+
+        let mut block_height: HashMap<Hash, u64> = HashMap::with_capacity(block_hashes.len());
+        {
+            let placeholders = std::iter::repeat_n("?", block_hashes.len())
+                .collect::<Vec<_>>()
+                .join(",");
+
+            let sql = format!(
+                r#"
+                SELECT block_hash, height
+                 FROM blocks
+                 WHERE block_hash IN ({placeholders})"#,
+            );
+
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(rusqlite::params_from_iter(block_hashes.iter()), |row| {
+                let block_hash: Hash = row.get(0)?;
+                let height: u64 = row.get(1)?;
+                Ok((block_hash, height))
+            })?;
+
+            for row in rows {
+                let (block_hash, height) = row?;
+                block_height.insert(block_hash, height);
+            }
+        }
+
+        // 4) sort tx hashes by (block_height, tx_index)
+        let mut out: Vec<Hash> = tx_hashes
+            .into_iter()
+            .filter(|tx| tx_meta.contains_key(tx))
+            .collect();
+
+        out.sort_unstable_by(|a, b| {
+            let (bha, ia) = tx_meta.get(a).expect("Missing transaction hash!");
+            let (bhb, ib) = tx_meta.get(b).expect("Missing transaction hash!");
+            let ha = *block_height.get(bha).unwrap_or(&u64::MAX);
+            let hb = *block_height.get(bhb).unwrap_or(&u64::MAX);
+            (ha, ia).cmp(&(hb, ib))
+        });
+
+        Ok(out)
     }
 
     pub fn get_transaction(&self, txn_hash: &Hash) -> Result<Option<VerifiedTransaction>> {

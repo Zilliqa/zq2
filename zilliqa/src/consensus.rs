@@ -1104,14 +1104,6 @@ impl Consensus {
         current_nonce + pool.account_pending_transaction_count(&account_address)
     }
 
-    pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
-        if !self.config.enable_ots_indices {
-            return Err(anyhow!("Otterscan indices are disabled"));
-        }
-
-        self.db.get_touched_transactions(address)
-    }
-
     /// Clear up anything in memory that is no longer required. This is to avoid memory leaks.
     pub fn cleanup_votes(&self) -> Result<()> {
         // Wrt votes, we only care about votes on hashes for the current view or higher

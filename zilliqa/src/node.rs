@@ -969,7 +969,7 @@ impl Node {
     }
 
     pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
-        self.consensus.read().get_touched_transactions(address)
+        self.db.get_touched_transactions(address)
     }
 
     pub fn get_gas_price(&self) -> u128 {
