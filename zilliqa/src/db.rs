@@ -474,8 +474,8 @@ impl Db {
                 if let rusqlite::trace::TraceEvent::Profile(statement, duration) = profile_event {
                     let statement_txt = statement.expanded_sql();
                     let duration_secs = duration.as_secs();
-                    if duration_secs > 5 {
-                        tracing::warn!(duration_secs, statement_txt, "sql execution took > 5s");
+                    if duration_secs > 1 {
+                        tracing::warn!(duration_secs, statement_txt, "sql execution took > 1s");
                     }
                 }
             }),
