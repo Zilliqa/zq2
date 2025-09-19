@@ -134,7 +134,7 @@ rocksdb = { version = "0.24.0", default-features = false, features = [
     "bindgen-runtime",
     "snappy",
 ] }
-zip = { version = "5.0.1", default-features = false, features = ["zstd"] }
+zip = { version = "5.1.1", default-features = false, features = ["zstd"] }
 eth_trie = { git = "https://github.com/Zilliqa/eth-trie.rs.git", branch = "zilliqa" }
 arc-swap = "1.7.1"
 
