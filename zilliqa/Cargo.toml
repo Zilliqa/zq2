@@ -89,7 +89,7 @@ revm = { version = "19.6.0", features = [
 ] }
 revm-inspectors = { version = "0.16.0", features = ["js-tracer"] }
 rusqlite = { version = "0.37.0", features = ["bundled", "trace"] }
-serde = { version = "1.0.219", features = ["derive", "rc"] }
+serde = { version = "1.0.226", features = ["derive", "rc"] }
 serde_bytes = "0.11.17"
 serde_json = { version = "1.0.143", features = [
     "raw_value",
