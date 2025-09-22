@@ -22,7 +22,7 @@ fake_response_channel = []
 fake_time = []
 
 [build-dependencies]
-anyhow = { version = "1.0.99", features = ["backtrace"] }
+anyhow = { version = "1.0.100", features = ["backtrace"] }
 vergen-git2 = { version = "1.0.2", features = [] }
 
 [dependencies]
@@ -38,7 +38,7 @@ alloy = { version = "0.12.4", default-features = false, features = [
     "serde",
     "sol-types",
 ] }
-anyhow = { version = "1.0.99", features = ["backtrace"] }
+anyhow = { version = "1.0.100", features = ["backtrace"] }
 async-trait = "0.1.89"
 base64 = "0.22.1"
 bincode = { version = "2.0.1", features = ["serde"] }
