@@ -63,9 +63,9 @@ fn invoke_checker(state: &State, code: &str, init_data: &[ParamValue]) -> Result
             &ext_libs_dir_in_scilla,
         )
         .and_then(|inner_result| {
-            inner_result.map_err(|err| anyhow!("Contract check error: {:?}", err))
+            inner_result.map_err(|err| anyhow!("Contract check error: {err:?}"))
         })
-        .map_err(|e| anyhow!("Failed to check contract code: {:?}", e))
+        .map_err(|e| anyhow!("Failed to check contract code: {e:?}"))
 }
 
 #[allow(clippy::type_complexity)]

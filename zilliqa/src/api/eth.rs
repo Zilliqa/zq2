@@ -1112,7 +1112,7 @@ fn fee_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<FeeHistory> {
                     .map(|tx_hash| {
                         let tx = node
                             .get_transaction_by_hash(*tx_hash)?
-                            .ok_or_else(|| anyhow!("transaction not found: {}", tx_hash))?;
+                            .ok_or_else(|| anyhow!("transaction not found: {tx_hash}"))?;
                         Ok(tx.tx.effective_gas_price(BASE_FEE_PER_GAS))
                     })
                     .collect::<Result<Vec<_>>>()?;

@@ -41,8 +41,7 @@ impl BlockFilter {
                 Err(tokio::sync::broadcast::error::TryRecvError::Lagged(skipped)) => {
                     // We've lagged behind, some messages were missed
                     return Err(anyhow!(
-                        "Filter was not polled in time, {} blocks missed",
-                        skipped
+                        "Filter was not polled in time, {skipped} blocks missed",
                     ));
                 }
                 Err(tokio::sync::broadcast::error::TryRecvError::Closed) => {
@@ -79,8 +78,7 @@ impl PendingTxFilter {
                 Err(tokio::sync::broadcast::error::TryRecvError::Lagged(skipped)) => {
                     // We've lagged behind, some messages were missed
                     return Err(anyhow!(
-                        "Filter was not polled in time, {} transactions missed",
-                        skipped
+                        "Filter was not polled in time, {skipped} transactions missed",
                     ));
                 }
                 Err(tokio::sync::broadcast::error::TryRecvError::Closed) => {
