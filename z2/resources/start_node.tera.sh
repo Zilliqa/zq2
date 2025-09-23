@@ -23,8 +23,8 @@ help() {
             -h, --help                  Display this help message
 
         Examples:
-            ${0} -k <NODE_KEY> -c config.toml -p checkpoint.dat
-            ${0} -k <NODE_KEY> -p checkpoint.dat
+            ${0} -k <NODE_KEY> -c config.toml -p checkpoint.ckpt (Use .dat for versions prior to v0.19.0)
+            ${0} -k <NODE_KEY> -p checkpoint.ckpt (Use .dat for versions prior to v0.19.0)
             ${0} -k <NODE_KEY>
 
 EOF
