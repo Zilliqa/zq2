@@ -26,7 +26,8 @@ In short, the state migration process exploits the state-sync feature to migrate
 
 **It is important that you choose the same checkpoint that was previously used to start your node.**
 
-If you used the *switchover* checkpoint to start your node, then you should use that to perform the state migration. Otherwise, use whichever checkpoint that you used previously.
+If you used the *switchover* checkpoint to start your node, then you should use that to perform the state migration.
+Otherwise, use whichever checkpoint that you used previously.
 
 If you have forgotten which checkpoint you used, call the `admin_blockRange` RPC method on your admin port (default: 4202) to retrieve the range of blocks available. The `start` field of the response will give you a hint of which checkpoint to use.
 
@@ -57,10 +58,12 @@ If state migration was interrupted before completion, you can resume it by remov
 db.state_sync = true
 ```
 
+*If you forget to do this, the state migration will simply be restarted from the checkpoint.*
+
 ### Finishing Up
 
 Once the state migration is complete, you can remove the `load_checkpoint` and `state_sync` configurations from your `zilliqa.toml` file.
-Otherwise, it will restart the entire process again, upon a restart.
+Otherwise, it will restart the entire process from the checkpoint, upon a restart.
 
 ```toml
 [[nodes]]
@@ -76,6 +79,31 @@ This will cause any *lazy* migration to fail - allowing you to catch any errors.
 ALTER TABLE state_trie RENAME TO state_trie_backup;
 ```
 
+### Migration Status
+
+You can periodically check the status of the migration process by querying the `admin_syncing` RPC endpoint.
+The `migrate_at` field shows you the progress of the migration process.
+Any value other than `0xFFFFFFFFFFFFFFFF` indicates a state migration in progress.
+The block number should gradually progress over time, as blocks are replayed.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "1",
+  "result": {
+    "cutover_at": "0xe37f87",
+    "migrate_at": "0xada5d6",
+    "block_range": {
+      "start": 0,
+      "end": 15282747
+    }
+  }
+}
+```
+
+You may also periodically inspect the disk space used by the `state.rocksdb` sub-directory.
+It should grow significantly over time, due to state migration.
+
 ### Cleanup
 
 The `state_trie_backup` table is kept around as a backup, in case you need to revert it if any prior states are found to be missing.
@@ -85,3 +113,7 @@ Once you're satisfied with it, you can delete the table and free up the disk spa
 DROP TABLE state_trie_backup;
 VACUUM;
 ```
+
+*Note: Vacuuming is a time-consuming operation.
+If you drop the table without vacuuming, the disk space will not be recovered; but the deleted pages will be reused for future inserts/updates.
+If you vacuum the database, the entire database will be compacted.*
