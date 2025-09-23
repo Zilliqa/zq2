@@ -52,7 +52,7 @@ use crate::{
 };
 
 pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc<Node>> {
-    super::declare_module!(
+    let mut module = super::declare_module!(
         node,
         enabled_apis,
         [
@@ -116,18 +116,18 @@ pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc
             ("eth_syncing", syncing),
             ("eth_uninstallFilter", uninstall_filter),
         ],
-    )
+    );
 
-    // module
-    //     .register_subscription(
-    //         "eth_subscribe",
-    //         "eth_subscription",
-    //         "eth_unsubscribe",
-    //         subscribe,
-    //     )
-    //     .unwrap();
+    module
+        .register_subscription(
+            "eth_subscribe",
+            "eth_subscription",
+            "eth_unsubscribe",
+            subscribe,
+        )
+        .unwrap();
 
-    //module
+    module
 }
 
 // See https://eips.ethereum.org/EIPS/eip-1898
@@ -952,7 +952,7 @@ fn syncing(params: Params, node: &Arc<Node>) -> Result<SyncingResult> {
 }
 
 #[allow(clippy::redundant_allocation, clippy::await_holding_lock)]
-async fn _subscribe(
+async fn subscribe(
     params: Params<'_>,
     pending: PendingSubscriptionSink,
     node: Arc<Arc<Node>>,

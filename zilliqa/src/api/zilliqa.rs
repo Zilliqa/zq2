@@ -1346,10 +1346,11 @@ fn get_num_txns_tx_epoch(_params: Params, node: &Arc<Node>) -> Result<String> {
 fn get_num_txns_ds_epoch(_params: Params, node: &Arc<Node>) -> Result<String> {
     let db = node.db.clone();
     let ds_epoch_size = TX_BLOCKS_PER_DS_BLOCK;
-    let current_epoch = data_access::get_finalized_block_number(db.clone())? / ds_epoch_size;
+    let finalized_number = data_access::get_finalized_block_number(db.clone())?;
+    let current_epoch = finalized_number / ds_epoch_size;
     let current_epoch_first = current_epoch * ds_epoch_size;
     let mut num_txns_epoch = 0;
-    for i in current_epoch_first..current_epoch {
+    for i in current_epoch_first..finalized_number {
         let block = data_access::get_block_by_number(db.clone(), i)?
             .ok_or_else(|| anyhow!("Block not found"))?;
         num_txns_epoch += block.transactions.len();

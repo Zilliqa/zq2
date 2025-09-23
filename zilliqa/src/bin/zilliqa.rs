@@ -2,15 +2,12 @@ use std::{
     backtrace::{Backtrace, BacktraceStatus},
     fs,
     path::PathBuf,
-    thread,
-    time::Duration,
 };
 
 use anyhow::{Result, anyhow};
 use clap::Parser;
 use opentelemetry_otlp::{ExportConfig, WithExportConfig};
 use opentelemetry_sdk::metrics::PeriodicReader;
-use parking_lot::deadlock;
 use tracing_subscriber::EnvFilter;
 use zilliqa::{cfg::Config, crypto::SecretKey, p2p_node::P2pNode};
 
@@ -119,23 +116,7 @@ async fn main() -> Result<()> {
         opentelemetry::global::set_meter_provider(provider);
     };
 
-    thread::spawn(move || {
-        loop {
-            thread::sleep(Duration::from_secs(1800));
-            let deadlocks = deadlock::check_deadlock();
-            if deadlocks.is_empty() {
-                continue;
-            }
-
-            for threads in deadlocks {
-                for t in threads {
-                    tracing::error!("Deadlock: {:#?}", t.backtrace());
-                }
-            }
-        }
-    });
-
-    let mut node = P2pNode::new(args.secret_key, config.clone())?;
+   let mut node = P2pNode::new(args.secret_key, config.clone())?;
 
     node.add_shard_node(config.nodes.first().unwrap().clone())
         .await?;
