@@ -504,8 +504,7 @@ impl ChainNode {
             // Check if we've exceeded the maximum wait time
             if tokio::time::Instant::now().duration_since(start_time) > max_wait_duration {
                 return Err(anyhow!(
-                    "Timeout: Block number did not progress within {} minutes.",
-                    max_wait_in_mins
+                    "Timeout: Block number did not progress within {max_wait_in_mins} minutes.",
                 ));
             }
 

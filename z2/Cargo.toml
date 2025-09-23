@@ -28,7 +28,7 @@ alloy = { version = "0.12.4", default-features = false, features = [
     "serde",
     "signer-local",
 ] }
-anyhow = "1.0.99"
+anyhow = "1.0.100"
 arc-swap = "1.7.1"
 base64 = "0.22.1"
 bitvec = "1.0.1"

@@ -964,8 +964,7 @@ pub fn ds_block_listing(params: Params, node: &Arc<Node>) -> Result<DSBlockListi
 
     if page_requested == 0 || page_requested > max_pages {
         return Err(anyhow!(format!(
-            "Page out of range. Valid range is 1 to {}",
-            max_pages
+            "Page out of range. Valid range is 1 to {max_pages}",
         )));
     }
 
@@ -1031,8 +1030,7 @@ fn tx_block_listing(params: Params, node: &Arc<Node>) -> Result<TxBlockListingRe
 
     if page_number == 0 || page_number > max_pages {
         return Err(anyhow!(format!(
-            "Page out of range. Valid range is 1 to {}",
-            max_pages
+            "Page out of range. Valid range is 1 to {max_pages}",
         )));
     }
 
@@ -1475,8 +1473,7 @@ fn get_smart_contract_sub_state(params: Params, node: &Arc<Node>) -> Result<Valu
             n += 1;
             if n > node_rpc_limit {
                 return Err(anyhow!(
-                    "Requested indices exceed the limit of {}",
-                    node_rpc_limit
+                    "Requested indices exceed the limit of {node_rpc_limit}",
                 ));
             }
 

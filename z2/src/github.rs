@@ -68,8 +68,5 @@ pub async fn get_release_or_commit(repository: &str, pre_release: bool) -> Resul
         return Ok(r);
     }
 
-    Err(anyhow!(
-        "No release or version found {}",
-        repository.to_string()
-    ))
+    Err(anyhow!("No release or version found {repository}",))
 }
