@@ -509,7 +509,7 @@ impl Node {
             let now = Instant::now();
             let period = self.config.consensus.block_time / 4; // steal 250ms typical
             while now.elapsed() < period {
-                match self.consensus.read().migrate_state_trie() {
+                match self.consensus.write().migrate_state_trie() {
                     Ok(done) if done => break,
                     Err(e) => tracing::error!(err=%e, "State-sync failed"), // log and ignore errors
                     _ => {}

@@ -473,12 +473,14 @@ impl Consensus {
         if !imported_missed_views.is_empty() {
             {
                 // store the imported missed views in the consensus state
-                let mut missed_views = consensus.state.view_history.missed_views.lock().unwrap();
-                missed_views.clear();
-                missed_views.extend(imported_missed_views.iter());
+                consensus.state.view_history.missed_views.clear();
+                consensus
+                    .state
+                    .view_history
+                    .missed_views
+                    .extend(imported_missed_views.iter());
                 // update the imported min_view in the consensus state
-                let mut min_view = consensus.state.view_history.min_view.lock().unwrap();
-                *min_view = imported_min_view;
+                consensus.state.view_history.min_view = imported_min_view;
             }
             info!(
                 view = start_view,
@@ -488,8 +490,7 @@ impl Consensus {
             );
         } else {
             // store the missed views loaded from the checkpoint in the db
-            let missed_views = consensus.state.view_history.missed_views.lock().unwrap();
-            for (view, leader) in missed_views.iter() {
+            for (view, leader) in consensus.state.view_history.missed_views.iter() {
                 if *view < imported_min_view {
                     // if the history loaded from the checkpoint overlaps with the history in the db
                     consensus.db.extend_view_history(*view, leader.as_bytes())?;
@@ -498,9 +499,9 @@ impl Consensus {
                 }
             }
             // update the min_view loaded from the checkpoint in the db
-            consensus.db.set_min_view_of_view_history(
-                *consensus.state.view_history.min_view.lock().unwrap(),
-            )?;
+            consensus
+                .db
+                .set_min_view_of_view_history(consensus.state.view_history.min_view)?;
         }
 
         // If we started from a checkpoint
@@ -2443,11 +2444,11 @@ impl Consensus {
                     self.db.extend_view_history(*view, leader.as_bytes())?;
                 }
             }
-            let min_view = self.state.view_history.min_view.lock().unwrap();
+            let min_view = self.state.view_history.min_view;
             //TODO(#3080): skip next line if min_view did not increase in prune_history()
-            self.db.set_min_view_of_view_history(*min_view)?;
+            self.db.set_min_view_of_view_history(min_view)?;
             if pruned {
-                self.db.prune_view_history(*min_view)?;
+                self.db.prune_view_history(min_view)?;
             }
         }
         self.state.finalized_view = block.view();

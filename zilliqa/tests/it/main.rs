@@ -9,7 +9,10 @@ use ethers::{
 use primitive_types::{H160, U256};
 use serde_json::{Value, value::RawValue};
 use zilliqa::{
-    cfg::{DbConfig, max_missed_view_age_default, new_view_broadcast_interval_default},
+    cfg::{
+        DbConfig, disable_get_full_state_for_contracts_default, max_missed_view_age_default,
+        new_view_broadcast_interval_default,
+    },
     contracts,
     crypto::NodePublicKey,
     db::BlockFilter,

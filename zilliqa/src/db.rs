@@ -1728,10 +1728,10 @@ mod tests {
         assert_eq!(checkpoint_block, block);
         assert_eq!(checkpoint_transactions, transactions);
         assert_eq!(checkpoint_parent, parent);
-        if let Some((view, _)) = view_history.missed_views.lock().unwrap().front() {
-            assert!(*view >= *view_history.min_view.lock().unwrap());
+        if let Some((view, _)) = view_history.missed_views.front() {
+            assert!(*view >= view_history.min_view);
         } else {
-            assert_eq!(0, *view_history.min_view.lock().unwrap());
+            assert_eq!(0, view_history.min_view);
         }
 
         // load the checkpoint again, to ensure idempotency
@@ -1746,10 +1746,10 @@ mod tests {
         assert_eq!(checkpoint_block, block);
         assert_eq!(checkpoint_transactions, transactions);
         assert_eq!(checkpoint_parent, parent);
-        if let Some((view, _)) = view_history.missed_views.lock().unwrap().front() {
-            assert!(*view >= *view_history.min_view.lock().unwrap());
+        if let Some((view, _)) = view_history.missed_views.front() {
+            assert!(*view >= view_history.min_view);
         } else {
-            assert_eq!(0, *view_history.min_view.lock().unwrap());
+            assert_eq!(0, view_history.min_view);
         }
 
         // Always return Some, even if checkpointed block already executed
