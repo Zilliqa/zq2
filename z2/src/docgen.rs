@@ -6,13 +6,11 @@ use std::{
     convert::TryFrom,
     fmt,
     path::{Path, PathBuf},
-    sync::{
-        Arc,
-        atomic::{AtomicPtr, AtomicUsize},
-    },
+    sync::{Arc, atomic::AtomicUsize},
 };
 
 use anyhow::{Context as _, Result, anyhow};
+use arc_swap::ArcSwap;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tera::Tera;
@@ -359,7 +357,7 @@ pub fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, PageStatus
 
     let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
     let sync_peers = Arc::new(SyncPeers::new(peer_id));
-    let swarm_peers = Arc::new(AtomicPtr::new(Box::into_raw(Box::new(Vec::new()))));
+    let swarm_peers = Arc::new(ArcSwap::from_pointee(Vec::new()));
 
     let my_node = Arc::new(zilliqa::node::Node::new(
         config,

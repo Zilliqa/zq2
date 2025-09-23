@@ -999,7 +999,7 @@ impl ChainNode {
             // export the backup files
             progress_bar.start("Exporting the backup files");
             let command = format!(
-                "sudo gsutil -m cp -r /data gs://{}-persistence/{}/",
+                "sudo gsutil -o \"GSUtil:parallel_process_count=64\" -o \"GSUtil:parallel_thread_count=8\" -m cp -r /data gs://{}-persistence/{}/",
                 self.chain()?,
                 backup_name
             );
@@ -1076,7 +1076,7 @@ impl ChainNode {
             // import the backup files
             progress_bar.start(format!("{}: Importing the backup files", self.name()));
             let command = format!(
-                "sudo gsutil -m cp -r gs://{}-persistence/{}/* /",
+                "sudo gsutil -o \"GSUtil:parallel_process_count=64\" -o \"GSUtil:parallel_thread_count=8\" -m cp -r gs://{}-persistence/{}/* /",
                 self.chain()?,
                 backup_name
             );

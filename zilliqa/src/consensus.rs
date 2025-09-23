@@ -4,6 +4,7 @@ use std::{
     error::Error,
     fmt::Display,
     ops::RangeInclusive,
+    path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -15,7 +16,7 @@ use alloy::primitives::{Address, U256};
 use anyhow::{Context, Result, anyhow};
 use bitvec::{bitarr, order::Msb0};
 use dashmap::DashMap;
-use eth_trie::{DB, EthTrie, MemoryDB, Trie};
+use eth_trie::{EthTrie, MemoryDB, Trie};
 use itertools::Itertools;
 use k256::pkcs8::der::DateTime;
 use libp2p::PeerId;
@@ -30,7 +31,10 @@ use crate::{
     api::types::eth::SyncingStruct,
     aux, blockhooks,
     cfg::{ConsensusConfig, ForkName, NodeConfig},
-    constants::{EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, TIME_TO_ALLOW_PROPOSAL_BROADCAST},
+    constants::{
+        EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, LAG_BEHIND_CURRENT_VIEW,
+        TIME_TO_ALLOW_PROPOSAL_BROADCAST,
+    },
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey, verify_messages},
     db::{self, BlockFilter, Db},
     exec::{PendingState, TransactionApplyResult},
@@ -263,7 +267,8 @@ impl Consensus {
         // Start chain from checkpoint. Load data file and initialise data in tables
         let checkpoint_data = if let Some(checkpoint) = &config.load_checkpoint {
             trace!("Loading state from checkpoint: {:?}", checkpoint);
-            db.load_trusted_checkpoint(&checkpoint.file, &checkpoint.hash, config.eth_chain_id)?
+            let path = PathBuf::from(checkpoint.file.clone());
+            db.load_trusted_checkpoint(path, &checkpoint.hash, config.eth_chain_id)?
         } else {
             None
         };
@@ -291,6 +296,18 @@ impl Consensus {
             trace!("Constructing new state from genesis");
             State::new_with_genesis(db.state_trie()?, config.clone(), db.clone())
         }?;
+
+        let (ckpt_block, ckpt_transactions, ckpt_parent) =
+            if let Some((block, transactions, parent, view_history)) = checkpoint_data {
+                info!(
+                    history = display(&view_history),
+                    "~~~~~~~~~~> found in checkpoint"
+                );
+                state.view_history = view_history;
+                (Some(block), Some(transactions), Some(parent))
+            } else {
+                (None, None, None)
+            };
 
         let (latest_block, latest_block_view) = match latest_block {
             Some(l) => (Some(l.clone()), l.view()),
@@ -362,6 +379,8 @@ impl Consensus {
             peers.clone(),
         )?;
 
+        let state_sync = config.db.state_sync;
+        let forks = config.consensus.get_forks()?;
         let enable_ots_indices = config.enable_ots_indices;
 
         let mut consensus = Consensus {
@@ -406,8 +425,89 @@ impl Consensus {
             aux::check_and_build_ots_indices(db, latest_block_view)?;
         }
 
-        // If we started from a checkpoint, execute the checkpointed block now
-        if let Some((block, transactions, mut parent)) = checkpoint_data {
+        // merge the missed view history imported from the database with the missed view
+        // history loaded from the checkpoint, which is now stored in the consensus state
+        let finalized_view = consensus.get_finalized_view()?;
+        consensus.state.finalized_view = finalized_view;
+
+        info!(
+            view = start_view,
+            finalized = finalized_view,
+            history = display(&consensus.state.view_history),
+            "~~~~~~~~~~> loaded from checkpoint in"
+        );
+
+        let earliest = consensus
+            .config
+            .consensus
+            .get_forks()?
+            .find_height_fork_first_activated(ForkName::ExecutableBlocks)
+            .unwrap_or_default();
+        info!(earliest, "~~~~~~~~~~>");
+
+        let max_missed_view_age = consensus.config.max_missed_view_age;
+
+        let (first, last) = consensus.db.get_first_last_from_view_history()?;
+
+        // import missed views and min_view from the db
+        let imported_missed_views: Vec<(u64, NodePublicKey)> = consensus
+            .db
+            .read_recent_view_history(
+                finalized_view.saturating_sub(max_missed_view_age + LAG_BEHIND_CURRENT_VIEW + 1),
+            )?
+            .iter()
+            .map(|(view, bytes)| (*view, NodePublicKey::from_bytes(bytes).unwrap()))
+            .collect();
+        let imported_min_view = consensus.db.get_min_view_of_view_history()?;
+        info!(
+            min = imported_min_view,
+            missed = imported_missed_views.len(),
+            first,
+            last,
+            "~~~~~~~~~~> found in db"
+        );
+
+        // since we don't fill the gap between the history loaded from the checkpoint and
+        // the history in the db during state sync running in the background we keep the
+        // history imported from the db and ignore the history loaded from the checkpoint
+        if !imported_missed_views.is_empty() {
+            {
+                // store the imported missed views in the consensus state
+                let mut missed_views = consensus.state.view_history.missed_views.lock().unwrap();
+                missed_views.clear();
+                missed_views.extend(imported_missed_views.iter());
+                // update the imported min_view in the consensus state
+                let mut min_view = consensus.state.view_history.min_view.lock().unwrap();
+                *min_view = imported_min_view;
+            }
+            info!(
+                view = start_view,
+                finalized = finalized_view,
+                history = display(&consensus.state.view_history),
+                "~~~~~~~~~~> imported from db in"
+            );
+        } else {
+            // store the missed views loaded from the checkpoint in the db
+            let missed_views = consensus.state.view_history.missed_views.lock().unwrap();
+            for (view, leader) in missed_views.iter() {
+                if *view < imported_min_view {
+                    // if the history loaded from the checkpoint overlaps with the history in the db
+                    consensus.db.extend_view_history(*view, leader.as_bytes())?;
+                } else {
+                    break;
+                }
+            }
+            // update the min_view loaded from the checkpoint in the db
+            consensus.db.set_min_view_of_view_history(
+                *consensus.state.view_history.min_view.lock().unwrap(),
+            )?;
+        }
+
+        // If we started from a checkpoint
+        if let (Some(block), Some(transactions), Some(parent)) =
+            (ckpt_block, ckpt_transactions, ckpt_parent)
+        {
+            // if the checkpoint block does not exist, execute the block
             if consensus
                 .db
                 .get_transactionless_block(BlockFilter::Hash(block.hash()))?
@@ -425,50 +525,15 @@ impl Consensus {
                         .get_stakers(block.header)?,
                     true,
                 )?;
-            } else if let Some(latest_block) = latest_block {
-                // if block is present, perform state-sync
-                let mut last_hash = parent.state_root_hash();
-                let range = block.number()..=latest_block.number();
-                tracing::info!(?range, "Syncing state from checkpoint");
-                for number in range {
-                    let Some(block) = consensus
-                        .db
-                        .get_transactionless_block(BlockFilter::Height(number))?
-                    else {
-                        tracing::error!("Block not found {number}");
-                        break;
-                    };
-
-                    // check that the block mutates state; and
-                    if last_hash != block.state_root_hash() {
-                        last_hash = block.state_root_hash();
-                        // the state is not already present in the db.
-                        if consensus
-                            .db
-                            .state_trie()?
-                            .get(block.state_root_hash().as_bytes())?
-                            .is_none()
-                        {
-                            tracing::info!(number = %block.number(), state=%block.state_root_hash(), "Syncing state from block");
-                            let brt = consensus
-                                .db
-                                .get_block_and_receipts_and_transactions(BlockFilter::Hash(
-                                    block.hash(),
-                                ))?
-                                .expect("block must exist due to check above");
-                            let transactions =
-                                brt.transactions.into_iter().map(|tx| tx.tx).collect();
-                            consensus.replay_proposal(
-                                brt.block,
-                                transactions,
-                                parent.state_root_hash(),
-                            )?;
-                            parent = block;
-                        }
-                    }
-                }
+            }
+            // set starting point for state-sync/state-migration
+            if state_sync {
+                consensus.db.state_trie()?.set_migrate_at(block.number())?;
             }
         }
+
+        // Initialize state trie storage
+        consensus.db.state_trie()?.init_state_trie(forks)?;
 
         // If timestamp of when current high_qc was written exists then use it to estimate the minimum number of blocks the network has moved on since shut down
         // This is useful in scenarios in which consensus has failed since this node went down
@@ -1418,7 +1483,7 @@ impl Consensus {
         );
 
         // Ensure sane state
-        let mut state = self.state.clone();
+        let state = self.state.clone();
         if state.root_hash()? != parent.state_root_hash() {
             warn!(
                 "state root hash mismatch, expected: {:?}, actual: {:?}",
@@ -2330,6 +2395,63 @@ impl Consensus {
             block.view(),
             block.number()
         );
+
+        let mut current = block.clone();
+        let finalized_view = self.get_finalized_view()?;
+        let mut new_missed_views: Vec<(u64, NodePublicKey)> = Vec::new();
+        while current.view() > finalized_view {
+            let parent = self.get_block(&current.parent_hash())?.ok_or_else(|| {
+                anyhow!(format!("missing block parent {}", &current.parent_hash()))
+            })?;
+            let state_at = self.state.at_root(parent.state_root_hash().into());
+            let block_header = BlockHeader {
+                number: parent.header.number,
+                ..Default::default()
+            };
+            for view in (parent.view() + 1..current.view()).rev() {
+                if let Ok(leader) = state_at.leader(view, block_header) {
+                    if view == parent.view() + 1 {
+                        info!(
+                            view,
+                            id = &leader.as_bytes()[..3],
+                            "~~~~~~~~~~> skipping reorged"
+                        );
+                    } else {
+                        new_missed_views.push((view, leader));
+                    }
+                }
+            }
+            current = parent;
+        }
+        let max_missed_view_age = self.config.max_missed_view_age;
+        let extended = self.state.view_history.append_history(&new_missed_views)?;
+        let pruned = self
+            .state
+            .view_history
+            .prune_history(block.view(), max_missed_view_age)?;
+        // the following code is only for logging and can be commented out
+        if extended || pruned {
+            info!(
+                view = self.get_view()?,
+                finalized = block.view(),
+                history = display(&self.state.view_history),
+                "~~~~~~~~~~> current"
+            );
+            //TODO(#3080): do not update the db on every finalization to avoid impact on block times
+            if extended {
+                for (view, leader) in new_missed_views.iter().rev() {
+                    self.db.extend_view_history(*view, leader.as_bytes())?;
+                }
+            }
+            let min_view = self.state.view_history.min_view.lock().unwrap();
+            //TODO(#3080): skip next line if min_view did not increase in prune_history()
+            self.db.set_min_view_of_view_history(*min_view)?;
+            if pruned {
+                self.db.prune_view_history(*min_view)?;
+            }
+        }
+        self.state.finalized_view = block.view();
+
         self.set_finalized_view(block.view())?;
 
         let receipts = self.db.get_transaction_receipts_in_block(&block.hash())?;
@@ -2388,6 +2510,7 @@ impl Consensus {
                         transactions,
                         Box::new(parent),
                         self.db.state_trie()?.clone(),
+                        self.state.view_history.clone(),
                         checkpoint_path,
                     ),
                 )?;
@@ -2427,12 +2550,27 @@ impl Consensus {
             .ok_or(anyhow!("No checkpoint directory configured"))?;
         let file_name = db::get_checkpoint_filename(checkpoint_dir.clone(), &block)?;
         let hash = block.hash();
+        //TODO(#3080): export more than MISSED_VIEW_WINDOW in case we increase it in the future,
+        //             but not the entire missed view history as defined by max_missed_view_age
+        let missed_view_age = self.config.max_missed_view_age; //constants::MISSED_VIEW_WINDOW;
+        // after loading the checkpoint we will need the leader of the parent block too
+        let view_history = self.state.view_history.new_at(
+            parent.view(), //block.view(),
+            missed_view_age,
+        );
+        info!(
+            view = self.get_view()?,
+            checkpoint = parent.view(), //block.view(),
+            view_history = display(&view_history),
+            "~~~~~~~~~~> saving in current"
+        );
         self.message_sender
             .send_message_to_coordinator(InternalMessage::ExportBlockCheckpoint(
                 Box::new(block),
                 transactions,
                 Box::new(parent),
                 self.db.state_trie()?.clone(),
+                view_history,
                 checkpoint_dir,
             ))?;
         Ok((file_name.display().to_string(), hash.to_string()))
@@ -3591,5 +3729,49 @@ impl Consensus {
 
     pub fn clear_mempool(&self) {
         self.transaction_pool.write().clear();
+    }
+
+    /// Migrate the state of one block - writing new state to RocksDB; returns true if done.
+    pub fn migrate_state_trie(&mut self) -> Result<bool> {
+        let state_trie = self.db.state_trie()?;
+        let mut migrate_at = state_trie.get_migrate_at()?;
+        if migrate_at == u64::MAX {
+            return Ok(true); // done
+        }
+
+        // replay one block - writing new state to RocksDB.
+        let Some(parent_hash) = state_trie.get_root_hash(migrate_at.saturating_sub(1))? else {
+            unimplemented!("parent state must exist!");
+        };
+
+        let brt = self
+            .db
+            .get_block_and_receipts_and_transactions(BlockFilter::Height(migrate_at))?
+            .expect("block must exist");
+        let block_hash = brt.block.state_root_hash();
+        tracing::info!(number=%migrate_at,state=%block_hash, "State-sync");
+        self.replay_proposal(
+            brt.block,
+            brt.transactions.into_iter().map(|t| t.tx).collect_vec(),
+            parent_hash,
+        )?;
+
+        // fast-forward to next block, skipping empty blocks, up to cutover threshold
+        let cutover_at = state_trie.get_cutover_at()?;
+        while migrate_at < cutover_at {
+            migrate_at = migrate_at.saturating_add(1); // check next block
+            let Some(hash) = state_trie.get_root_hash(migrate_at)? else {
+                tracing::warn!(number=%migrate_at,"State-sync retrying");
+                return Ok(true); // retry later
+            };
+            if hash != block_hash {
+                state_trie.set_migrate_at(migrate_at)?;
+                return Ok(false);
+            }
+        }
+        // done
+        tracing::info!("State-sync complete!");
+        state_trie.finish_migration()?;
+        Ok(true)
     }
 }

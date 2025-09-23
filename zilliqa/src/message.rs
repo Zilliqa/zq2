@@ -15,9 +15,10 @@ use sha3::{Digest, Keccak256};
 
 use crate::{
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey},
-    db::TrieStorage,
+    precompiles::ViewHistory,
     time::SystemTime,
     transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
+    trie_storage::TrieStorage,
 };
 
 /// The maximum number of validators in the consensus committee. This is passed to the deposit contract and we expect
@@ -385,6 +386,7 @@ pub enum InternalMessage {
         Vec<SignedTransaction>,
         Box<Block>,
         TrieStorage,
+        ViewHistory,
         Box<Path>,
     ),
     /// Notify p2p cordinator to subscribe to a particular gossipsub topic

@@ -1,8 +1,8 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fmt::Debug,
-    fs::{self, File, OpenOptions},
-    io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
+    fs::{self, OpenOptions},
+    io::{Read, Seek, SeekFrom, Write},
     ops::RangeInclusive,
     path::{Path, PathBuf},
     sync::Arc,
@@ -13,12 +13,11 @@ use alloy::primitives::Address;
 use anyhow::{Context, Result, anyhow};
 #[allow(unused_imports)]
 use eth_trie::{DB, EthTrie, MemoryDB, Trie};
-use itertools::Itertools;
 use lru_mem::LruCache;
-use lz4::{Decoder, EncoderBuilder};
 use parking_lot::RwLock;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
+use rocksdb::{BlockBasedOptions, Cache, DBWithThreadMode, Options, SingleThreaded};
 use rusqlite::{
     Connection, OptionalExtension, Row, ToSql, named_params,
     types::{FromSql, FromSqlError, ToSqlOutput},
@@ -31,9 +30,10 @@ use crate::{
     crypto::{BlsSignature, Hash},
     exec::{ScillaError, ScillaException, ScillaTransition},
     message::{AggregateQc, Block, BlockHeader, QuorumCertificate},
-    state::Account,
+    precompiles::ViewHistory,
     time::SystemTime,
     transaction::{EvmGas, Log, SignedTransaction, TransactionReceipt, VerifiedTransaction},
+    trie_storage::TrieStorage,
 };
 
 macro_rules! sqlify_with_bincode {
@@ -235,6 +235,8 @@ pub struct BlockAndReceiptsAndTransactions {
     pub transactions: Vec<VerifiedTransaction>,
 }
 
+const LARGE_OFFSET: u64 = 1_000_000_000_000;
+
 /// Version string that is written to disk along with the persisted database. This should be bumped whenever we make a
 /// backwards incompatible change to our database format. This should be done rarely, since it forces all node
 /// operators to re-sync.
@@ -244,10 +246,13 @@ const CURRENT_DB_VERSION: &str = "1";
 pub struct Db {
     pool: Arc<Pool<SqliteConnectionManager>>,
     state_cache: Arc<RwLock<LruCache<Vec<u8>, Vec<u8>>>>,
+    kvdb: Arc<rocksdb::DB>,
     path: Option<Box<Path>>,
     /// The block height at which ZQ2 blocks begin.
     /// This value should be required only for proto networks to distinguise between ZQ1 and ZQ2 blocks.
     executable_blocks_height: Option<u64>,
+    /// Clone of DbConfig
+    pub config: DbConfig,
 }
 
 impl Db {
@@ -285,10 +290,10 @@ impl Db {
                 version_file.write_all(CURRENT_DB_VERSION.as_bytes())?;
 
                 let db_path = path.join("db.sqlite3");
-
+                let cfg = config.clone();
                 (
                     SqliteConnectionManager::file(db_path)
-                        .with_init(move |conn| Self::init_connection(conn, config.clone())),
+                        .with_init(move |conn| Self::init_connection(conn, cfg.clone())),
                     Some(path.into_boxed_path()),
                 )
             }
@@ -309,11 +314,38 @@ impl Db {
         let connection = pool.get()?;
         Self::ensure_schema(&connection)?;
 
+        // RocksDB
+        let rdb_path = if let Some(s) = path.clone() {
+            s.join("state.rocksdb")
+        } else {
+            tempfile::tempdir().unwrap().path().join("state.rocksdb")
+        };
+
+        let cache = Cache::new_lru_cache(state_cache_size); // same as SQLite in-memory page cache
+        let mut block_opts = BlockBasedOptions::default();
+        block_opts.set_block_cache(&cache);
+
+        let mut rdb_opts = Options::default();
+        rdb_opts.create_if_missing(true);
+        rdb_opts.set_block_based_table_factory(&block_opts);
+
+        // Should be safe in single-threaded mode
+        // https://docs.rs/rocksdb/latest/rocksdb/type.DB.html#limited-performance-implication-for-single-threaded-mode
+        let rdb = DBWithThreadMode::<SingleThreaded>::open(&rdb_opts, rdb_path)?;
+
+        tracing::info!(
+            "State database: {} ({})",
+            rdb.path().display(),
+            rdb.latest_sequence_number()
+        );
+
         Ok(Db {
             pool: Arc::new(pool),
             state_cache: Arc::new(RwLock::new(LruCache::new(state_cache_size))),
             path,
             executable_blocks_height,
+            kvdb: Arc::new(rdb),
+            config,
         })
     }
 
@@ -436,6 +468,86 @@ impl Db {
             )?;
         }
 
+        if version < 5 {
+            connection.execute_batch(
+                ("
+                BEGIN;
+
+                INSERT INTO schema_version VALUES (5);
+
+                CREATE TABLE IF NOT EXISTS view_history (view INTEGER NOT NULL PRIMARY KEY, leader BLOB) WITHOUT ROWID;
+
+                INSERT INTO view_history (view, leader) VALUES (".to_string() + LARGE_OFFSET.to_string().as_str() + ", NULL);
+
+                COMMIT;
+            ").as_str(),
+            )?;
+        }
+
+        Ok(())
+    }
+
+    pub fn read_recent_view_history(&self, view: u64) -> Result<Vec<(u64, Vec<u8>)>> {
+        Ok(self
+            .pool
+            .get()?
+            .prepare_cached(
+                "SELECT view, leader FROM view_history WHERE view > ?1 AND leader NOT NULL ORDER BY view",
+            )?
+            .query_map([view], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?)
+    }
+
+    pub fn prune_view_history(&self, view: u64) -> Result<()> {
+        self.pool
+            .get()?
+            .prepare_cached("DELETE FROM view_history WHERE view < ?1 AND leader NOT NULL")?
+            .execute([view])?;
+        Ok(())
+    }
+
+    pub fn get_first_last_from_view_history(&self) -> Result<(u64, u64)> {
+        let min = self
+            .pool
+            .get()?
+            .prepare_cached("SELECT MIN(view) FROM view_history WHERE leader NOT NULL")?
+            .query_row([], |row| row.get(0))
+            .unwrap_or_default();
+        let max = self
+            .pool
+            .get()?
+            .prepare_cached("SELECT MAX(view) FROM view_history WHERE leader NOT NULL")?
+            .query_row([], |row| row.get(0))
+            .unwrap_or_default();
+        Ok((min, max))
+    }
+
+    pub fn get_min_view_of_view_history(&self) -> Result<u64> {
+        let min_view: u64 = self
+            .pool
+            .get()?
+            .prepare_cached("SELECT view FROM view_history WHERE leader IS NULL LIMIT 1")?
+            .query_row([], |row| row.get(0))
+            .unwrap_or_default();
+        // to prevent primary key collision with missed views stored in the table
+        Ok(min_view - LARGE_OFFSET)
+    }
+
+    pub fn set_min_view_of_view_history(&self, min_view: u64) -> Result<()> {
+        self.pool
+            .get()?
+            .prepare_cached("UPDATE view_history SET view = ?1 WHERE leader IS NULL")?
+            // to prevent primary key collision with missed views stored in the table
+            .execute([min_view + LARGE_OFFSET])?;
+        Ok(())
+    }
+
+    pub fn extend_view_history(&self, view: u64, leader: Vec<u8>) -> Result<()> {
+        self.pool
+            .get()?
+            .prepare_cached("INSERT INTO view_history (view, leader) VALUES (?1, ?2)")?
+            //.execute(rusqlite::params![view, leader])?;
+            .execute((view, leader))?;
         Ok(())
     }
 
@@ -533,34 +645,29 @@ impl Db {
     /// Fetch checkpoint data from file and initialise db state
     /// Return checkpointed block and transactions which must be executed after this function
     /// Return None if checkpoint already loaded
-    pub fn load_trusted_checkpoint<P: AsRef<Path>>(
+    #[allow(clippy::type_complexity)]
+    pub fn load_trusted_checkpoint(
         &self,
-        path: P,
+        path: PathBuf,
         hash: &Hash,
         our_shard_id: u64,
-    ) -> Result<Option<(Block, Vec<SignedTransaction>, Block)>> {
-        tracing::info!(%hash, "Checkpoint");
-        // Decompress the file for processing
-        let input_file = File::open(path.as_ref())?;
-        let buf_reader: BufReader<File> = BufReader::with_capacity(128 * 1024 * 1024, input_file);
-        let mut reader = Decoder::new(buf_reader)?;
-        let Some((block, transactions, parent)) =
-            crate::checkpoint::get_checkpoint_block(&mut reader, hash, our_shard_id)?
-        else {
-            return Err(anyhow!("Invalid checkpoint file"));
-        };
-
+    ) -> Result<Option<(Block, Vec<SignedTransaction>, Block, ViewHistory)>> {
         let trie_storage = Arc::new(self.state_trie()?);
         let state_trie = EthTrie::new(trie_storage.clone());
 
-        // INITIAL CHECKPOINT LOAD
         // If no state trie exists and no blocks are known, then we are in a fresh database.
         // We can safely load the checkpoint.
         if state_trie.iter().next().is_none()
             && self.get_highest_canonical_block_number()?.is_none()
         {
-            tracing::info!(state = %parent.state_root_hash(), "Restoring checkpoint");
-            crate::checkpoint::load_state_trie(&mut reader, trie_storage, &parent)?;
+            tracing::info!(%hash, "Restoring checkpoint");
+            let (block, transactions, parent, view_history) = crate::checkpoint::load_ckpt(
+                path.as_path(),
+                trie_storage.clone(),
+                our_shard_id,
+                hash,
+            )?
+            .expect("does not return None");
 
             let parent_ref: &Block = &parent; // for moving into the closure
             self.with_sqlite_tx(move |tx| {
@@ -571,33 +678,40 @@ impl Db {
                 Ok(())
             })?;
 
-            return Ok(Some((block, transactions, parent)));
+            return Ok(Some((block, transactions, parent, view_history)));
         }
 
-        // OTHER SANITY CHECKS
-        // Check if the parent block is sane
-        let Some(ckpt_parent) = self.get_block(parent.hash().into())? else {
+        let (block, transactions, parent) = crate::checkpoint::load_ckpt_blocks(path.as_path())?;
+
+        // Populated database; check if the parent block exists in the DB.
+        let Some(ckpt_parent) = self.get_transactionless_block(parent.hash().into())? else {
             return Err(anyhow!("Invalid checkpoint attempt"));
         };
-        if ckpt_parent.parent_hash() != parent.parent_hash() {
-            return Err(anyhow!("Critical checkpoint error"));
-        };
-        if trie_storage
-            .get(ckpt_parent.state_root_hash().as_bytes())?
-            .is_none()
-        {
-            // If the corresponding state is missing, load it from the checkpoint
-            tracing::info!(state = %ckpt_parent.state_root_hash(), "Syncing checkpoint");
-            crate::checkpoint::load_state_trie(&mut reader, trie_storage, &ckpt_parent)?;
-        }
-        Ok(Some((block, transactions, ckpt_parent)))
+        anyhow::ensure!(
+            ckpt_parent.parent_hash() == parent.parent_hash(),
+            "Critical checkpoint error"
+        );
+
+        let view_history = crate::checkpoint::load_ckpt_history(path.as_path())?;
+
+        // Since it exists, this must either be a state-sync/state-migration
+        // If this is not desired, remove the config setting.
+        tracing::info!(%hash, "Syncing checkpoint");
+        crate::checkpoint::load_ckpt_state(
+            path.as_path(),
+            trie_storage.clone(),
+            &ckpt_parent.state_root_hash(),
+        )?;
+
+        Ok(Some((block, transactions, parent, view_history)))
     }
 
     pub fn state_trie(&self) -> Result<TrieStorage> {
-        Ok(TrieStorage {
-            pool: self.pool.clone(),
-            cache: self.state_cache.clone(),
-        })
+        Ok(TrieStorage::new(
+            self.pool.clone(),
+            self.state_cache.clone(),
+            self.kvdb.clone(),
+        ))
     }
 
     pub fn with_sqlite_tx(&self, operations: impl FnOnce(&Connection) -> Result<()>) -> Result<()> {
@@ -1410,211 +1524,27 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
     parent: &Block,
     state_trie_storage: TrieStorage,
     shard_id: u64,
+    view_history: ViewHistory,
     output_dir: P,
 ) -> Result<()> {
-    const VERSION: u32 = 3;
-
     fs::create_dir_all(&output_dir)?;
+    let trie_storage = Arc::new(state_trie_storage);
+    let path = get_checkpoint_filename(output_dir, block)?;
+    crate::checkpoint::save_ckpt(
+        path.with_extension("part").as_path(),
+        trie_storage,
+        block,
+        transactions,
+        parent,
+        shard_id,
+        view_history,
+    )?;
 
-    let state_trie_storage = Arc::new(state_trie_storage);
-    // quick sanity check
-    if block.parent_hash() != parent.hash() {
-        return Err(anyhow!(
-            "Parent block parameter must match the checkpoint block's parent hash"
-        ));
-    }
-
-    // Note: we ignore any existing file
-    let output_filename = get_checkpoint_filename(output_dir, block)?;
-    let temp_filename = output_filename.with_extension("part");
-    let outfile_temp = File::create_new(&temp_filename)?;
-    let mut writer = BufWriter::with_capacity(128 * 1024 * 1024, outfile_temp); // 128 MiB chunks
-
-    // write the header:
-    writer.write_all(&crate::checkpoint::CHECKPOINT_HEADER_BYTES)?; // file identifier
-    writer.write_all(&VERSION.to_be_bytes())?; // 4 BE bytes for version
-    writer.write_all(&shard_id.to_be_bytes())?; // 8 BE bytes for shard ID
-    writer.write_all(b"\n")?;
-
-    // write the block...
-    let block_ser = &bincode::serde::encode_to_vec(block, bincode::config::legacy())?;
-    writer.write_all(&u64::try_from(block_ser.len())?.to_be_bytes())?;
-    writer.write_all(block_ser)?;
-
-    // write transactions
-    let transactions_ser = &bincode::serde::encode_to_vec(transactions, bincode::config::legacy())?;
-    writer.write_all(&u64::try_from(transactions_ser.len())?.to_be_bytes())?;
-    writer.write_all(transactions_ser)?;
-
-    // and its parent, to keep the qc tracked
-    let parent_ser = &bincode::serde::encode_to_vec(parent, bincode::config::legacy())?;
-    writer.write_all(&u64::try_from(parent_ser.len())?.to_be_bytes())?;
-    writer.write_all(parent_ser)?;
-
-    // then write state for each account
-    let accounts =
-        EthTrie::new(state_trie_storage.clone()).at_root(parent.state_root_hash().into());
-    let account_storage = EthTrie::new(state_trie_storage);
-    let mut account_key_buf = [0u8; 32]; // save a few allocations, since account keys are fixed length
-
-    for (key, serialised_account) in accounts.iter() {
-        // export the account itself
-        account_key_buf.copy_from_slice(&key);
-        writer.write_all(&account_key_buf)?;
-
-        writer.write_all(&u64::try_from(serialised_account.len())?.to_be_bytes())?;
-        writer.write_all(&serialised_account)?;
-
-        // now write the entire account storage map
-        let account_storage = account_storage.at_root(
-            bincode::serde::decode_from_slice::<Account, _>(
-                &serialised_account,
-                bincode::config::legacy(),
-            )?
-            .0
-            .storage_root,
-        );
-        let mut account_storage_buf = vec![];
-        for (storage_key, storage_val) in account_storage.iter() {
-            account_storage_buf.extend_from_slice(&u64::try_from(storage_key.len())?.to_be_bytes());
-            account_storage_buf.extend_from_slice(&storage_key);
-
-            account_storage_buf.extend_from_slice(&u64::try_from(storage_val.len())?.to_be_bytes());
-            account_storage_buf.extend_from_slice(&storage_val);
-        }
-        writer.write_all(&u64::try_from(account_storage_buf.len())?.to_be_bytes())?;
-        writer.write_all(&account_storage_buf)?;
-    }
-    writer.flush()?;
-
-    // lz4 compress and write to output
-    compress_file(&temp_filename, &output_filename)?;
-
-    fs::remove_file(temp_filename)?;
-
-    Ok(())
-}
-
-/// Read temp file, compress usign lz4, write into output file
-fn compress_file<P: AsRef<Path> + Debug>(input_file_path: P, output_file_path: P) -> Result<()> {
-    let mut reader = BufReader::new(File::open(input_file_path)?);
-
-    let mut encoder = EncoderBuilder::new().build(File::create(output_file_path)?)?;
-    let mut buffer = [0u8; 1024 * 64]; // read 64KB chunks at a time
-    loop {
-        let bytes_read = reader.read(&mut buffer)?; // Read a chunk of decompressed data
-        if bytes_read == 0 {
-            break; // End of file
-        }
-        encoder.write_all(&buffer[..bytes_read])?;
-    }
-    encoder.finish().1?;
-
-    Ok(())
-}
-
-/// An implementor of [eth_trie::DB] which uses a [Connection] to persist data.
-#[derive(Debug, Clone)]
-pub struct TrieStorage {
-    pool: Arc<Pool<SqliteConnectionManager>>,
-    cache: Arc<RwLock<LruCache<Vec<u8>, Vec<u8>>>>,
-}
-
-impl TrieStorage {
-    pub fn write_batch(
-        &self,
-        keys: Vec<Vec<u8>>,
-        values: Vec<Vec<u8>>,
-    ) -> Result<(), rusqlite::Error> {
-        if keys.is_empty() {
-            return Ok(());
-        }
-
-        assert_eq!(keys.len(), values.len());
-
-        // https://www.sqlite.org/limits.html#max_variable_number
-        let maximum_sql_parameters = 32766;
-        // Each key-value pair needs two parameters.
-        let chunk_size = maximum_sql_parameters / 2;
-
-        let keys = keys.chunks(chunk_size);
-        let values = values.chunks(chunk_size);
-
-        for (keys, values) in keys.zip(values) {
-            // Generate the SQL substring of the form "(?1, ?2), (?3, ?4), (?5, ?6), ...". There will be one pair of
-            // parameters for each key. Note that parameters are one-indexed.
-            #[allow(unstable_name_collisions)]
-            let params_stmt: String = (0..keys.len())
-                .map(|i| format!("(?{}, ?{})", i * 2 + 1, i * 2 + 2))
-                .intersperse(",".to_owned())
-                .collect();
-            let query =
-                format!("INSERT OR REPLACE INTO state_trie (key, value) VALUES {params_stmt}");
-
-            let params = keys.iter().zip(values).flat_map(|(k, v)| [k, v]);
-            self.pool
-                .get()
-                .unwrap()
-                .prepare(&query)? // do not cache, since it's unique
-                .execute(rusqlite::params_from_iter(params))?;
-            // take lock once
-            let mut cache = self.cache.write();
-            for (key, value) in keys.iter().zip(values) {
-                let _ = cache.insert(key.to_vec(), value.to_vec());
-            }
-        }
-        Ok(())
-    }
-}
-
-impl eth_trie::DB for TrieStorage {
-    type Error = rusqlite::Error;
-
-    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, Self::Error> {
-        // does not mark the entry as MRU, but allows concurrent cache reads;
-        if let Some(cached) = self.cache.read().peek(key) {
-            return Ok(Some(cached.to_vec()));
-        }
-
-        let value: Option<Vec<u8>> = self
-            .pool
-            .get()
-            .unwrap()
-            .prepare_cached("SELECT value FROM state_trie WHERE key = ?1")?
-            .query_row([key], |row| row.get(0))
-            .optional()?;
-
-        if let Some(value) = value {
-            let _ = self.cache.write().insert(key.to_vec(), value.clone());
-            return Ok(Some(value));
-        }
-
-        Ok(None)
-    }
-
-    fn insert(&self, key: &[u8], value: Vec<u8>) -> Result<(), Self::Error> {
-        self.pool
-            .get()
-            .unwrap()
-            .prepare_cached("INSERT OR REPLACE INTO state_trie (key, value) VALUES (?1, ?2)")?
-            .execute((key, &value))?;
-        let _ = self.cache.write().insert(key.to_vec(), value);
-        Ok(())
-    }
-
-    fn insert_batch(&self, keys: Vec<Vec<u8>>, values: Vec<Vec<u8>>) -> Result<(), Self::Error> {
-        self.write_batch(keys, values)
-    }
-
-    fn remove(&self, _key: &[u8]) -> Result<(), Self::Error> {
-        // we keep old state to function as an archive node, therefore no-op
-        Ok(())
-    }
-
-    fn remove_batch(&self, _: &[Vec<u8>]) -> Result<(), Self::Error> {
-        // we keep old state to function as an archive node, therefore no-op
-        Ok(())
-    }
+    // rename file when done
+    Ok(fs::rename(
+        path.with_extension("part").as_path(),
+        path.as_path(),
+    )?)
 }
 
 #[cfg(test)]
@@ -1628,7 +1558,10 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::{crypto::SecretKey, state::State};
+    use crate::{
+        crypto::SecretKey,
+        state::{Account, State},
+    };
 
     #[test]
     fn query_planner_stability_guarantee() {
@@ -1677,6 +1610,7 @@ mod tests {
             "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE is_canonical = true AND height = (SELECT MAX(height) FROM blocks WHERE is_canonical = TRUE)",
             "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE height = (SELECT MAX(height) FROM blocks) LIMIT 1",
             "SELECT data, transactions.tx_hash FROM transactions INNER JOIN receipts ON transactions.tx_hash = receipts.tx_hash WHERE receipts.block_hash = ?1 ORDER BY receipts.tx_index ASC",
+            "SELECT state_root_hash FROM blocks WHERE is_canonical = TRUE AND height = ?1",
             // TODO: Add more queries
         ];
 
@@ -1764,6 +1698,8 @@ mod tests {
             EvmGas(0),
         );
 
+        let view_history: ViewHistory = ViewHistory::default();
+
         let checkpoint_path = db.get_checkpoint_dir().unwrap().unwrap();
 
         const SHARD_ID: u64 = 5000;
@@ -1775,12 +1711,13 @@ mod tests {
             &checkpoint_parent,
             db.state_trie().unwrap(),
             SHARD_ID,
+            view_history,
             &checkpoint_path,
         )
         .unwrap();
 
         // now load the checkpoint
-        let (block, transactions, parent) = db
+        let (block, transactions, parent, view_history) = db
             .load_trusted_checkpoint(
                 checkpoint_path.join(checkpoint_block.number().to_string()),
                 &checkpoint_block.hash(),
@@ -1791,9 +1728,14 @@ mod tests {
         assert_eq!(checkpoint_block, block);
         assert_eq!(checkpoint_transactions, transactions);
         assert_eq!(checkpoint_parent, parent);
+        if let Some((view, _)) = view_history.missed_views.lock().unwrap().front() {
+            assert!(*view >= *view_history.min_view.lock().unwrap());
+        } else {
+            assert_eq!(0, *view_history.min_view.lock().unwrap());
+        }
 
         // load the checkpoint again, to ensure idempotency
-        let (block, transactions, parent) = db
+        let (block, transactions, parent, view_history) = db
             .load_trusted_checkpoint(
                 checkpoint_path.join(checkpoint_block.number().to_string()),
                 &checkpoint_block.hash(),
@@ -1804,6 +1746,11 @@ mod tests {
         assert_eq!(checkpoint_block, block);
         assert_eq!(checkpoint_transactions, transactions);
         assert_eq!(checkpoint_parent, parent);
+        if let Some((view, _)) = view_history.missed_views.lock().unwrap().front() {
+            assert!(*view >= *view_history.min_view.lock().unwrap());
+        } else {
+            assert_eq!(0, *view_history.min_view.lock().unwrap());
+        }
 
         // Always return Some, even if checkpointed block already executed
         db.insert_block(&checkpoint_block).unwrap();

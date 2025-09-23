@@ -1,13 +1,11 @@
 use std::{
     net::Ipv4Addr,
-    sync::{
-        Arc,
-        atomic::{AtomicPtr, AtomicUsize},
-    },
+    sync::{Arc, atomic::AtomicUsize},
     time::{Duration, SystemTime},
 };
 
 use anyhow::{Result, anyhow};
+use arc_swap::ArcSwap;
 use http::{Method, header};
 use jsonrpsee::server::ServerConfig;
 use libp2p::{PeerId, futures::StreamExt};
@@ -101,7 +99,7 @@ impl NodeLauncher {
         local_outbound_message_sender: UnboundedSender<LocalMessageTuple>,
         request_responses_sender: UnboundedSender<(ResponseChannel, ExternalMessage)>,
         peer_num: Arc<AtomicUsize>,
-        swarm_peers: Arc<AtomicPtr<Vec<PeerId>>>,
+        swarm_peers: Arc<ArcSwap<Vec<PeerId>>>,
     ) -> Result<(Self, NodeInputChannels, Arc<SyncPeers>)> {
         /// Helper to create a (sender, receiver) pair for a channel.
         fn sender_receiver<T>() -> (UnboundedSender<T>, UnboundedReceiverStream<T>) {
@@ -314,7 +312,7 @@ impl NodeLauncher {
                     if let Err(e) = self.node.handle_timeout() {
                         error!("Failed to handle timeout {e}");
                     }
-                    consensus_sleep.as_mut().reset(Instant::now() + Duration::from_millis(500));
+                    consensus_sleep.as_mut().reset(Instant::now() + Duration::from_millis(300));
                     messaging_process_duration.record(
                         start.elapsed().map_or(0.0, |d| d.as_secs_f64()),
                         &attributes,

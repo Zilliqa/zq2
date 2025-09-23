@@ -1,3 +1,5 @@
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Zilliqa/zq2)
+
 # Zilliqa 2.0 - The next evolution of Zilliqa
 
 Further documentation can be found in the `docs/` directory, for Zilliqa 2 itself, and in `z2/docs` for the `z2` tool used in conjunction with it.

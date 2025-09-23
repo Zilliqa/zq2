@@ -95,3 +95,14 @@ pub const SYNC_THRESHOLD: usize = MAX_RESPONSE_SIZE - MAX_GOSSIP_SIZE;
 /// Empty state trie hash
 pub const EMPTY_ROOT_HASH: B256 =
     b256!("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421");
+
+// Jailing considers a window of past views and checks if the selected leader
+// missed a number of views configured as threshold.
+pub const MISSED_VIEW_WINDOW: u64 = 600;
+pub const MISSED_VIEW_THRESHOLD: usize = 3;
+
+// The window of past views taken into account for jailing is defined by
+// the lag behind the current view. It must be large enough to make sure
+// the views are already finalized. It also determines the lookahead for
+// leader selection.
+pub const LAG_BEHIND_CURRENT_VIEW: u64 = 50;

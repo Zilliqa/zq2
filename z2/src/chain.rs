@@ -36,7 +36,7 @@ pub enum Chain {
             genesis_deposits_amount = "20_000_000_000_000_000_000_000_000",
             subdomain = "zq2-devnet.zilliqa.com",
             project_id = "prj-d-zq2-devnet-c83bkpsd",
-            log_level = "zilliqa=trace",
+            log_level = "zilliqa=info",
             enable_kms = "false"
         )
     )]
@@ -49,7 +49,7 @@ pub enum Chain {
             genesis_deposits_amount = "20_000_000_000_000_000_000_000_000",
             subdomain = "zq2-testnet.zilliqa.com",
             project_id = "prj-d-zq2-testnet-g13pnaa8",
-            log_level = "zilliqa=trace",
+            log_level = "zilliqa=info",
             enable_kms = "true"
         )
     )]
@@ -63,7 +63,7 @@ pub enum Chain {
             validator_control_address = "0xf865745c75E585718c8f115A9317E7Fc8e1195f3",
             subdomain = "zq2-mainnet.zilliqa.com",
             project_id = "prj-p-zq2-mainnet-sn5n8wfl",
-            log_level = "zilliqa=trace",
+            log_level = "zilliqa=info",
             enable_kms = "true"
         )
     )]
@@ -92,6 +92,34 @@ impl Chain {
                     reinitialise_params: Some(ReinitialiseParams {
                         withdrawal_period: 5 * 60, // 5 minutes
                     }),
+                }),
+                deposit_v6: Some(ContractUpgradeConfig {
+                    height: 0,
+                    reinitialise_params: None,
+                }),
+            },
+            Self::Zq2Testnet => ContractUpgrades {
+                deposit_v3: None,
+                deposit_v4: None,
+                deposit_v5: Some(ContractUpgradeConfig {
+                    height: 0,
+                    reinitialise_params: Some(ReinitialiseParams::default()),
+                }),
+                deposit_v6: Some(ContractUpgradeConfig {
+                    height: 14997600,
+                    reinitialise_params: None,
+                }),
+            },
+            Self::Zq2Mainnet => ContractUpgrades {
+                deposit_v3: None,
+                deposit_v4: None,
+                deposit_v5: Some(ContractUpgradeConfig {
+                    height: 0,
+                    reinitialise_params: Some(ReinitialiseParams::default()),
+                }),
+                deposit_v6: Some(ContractUpgradeConfig {
+                    height: 11998800,
+                    reinitialise_params: None,
                 }),
             },
             _ => ContractUpgrades::default(),
@@ -135,6 +163,7 @@ impl Chain {
                 "inject_access_list": false,
                 "use_max_gas_priority_fee": false,
                 "failed_zil_transfers_to_eoa_proper_fee_deduction": false,
+                "validator_jailing": false,
             })),
             Chain::Zq2Mainnet => Some(json!({
                 "at_height": 0,
@@ -170,6 +199,7 @@ impl Chain {
                 "inject_access_list": false,
                 "use_max_gas_priority_fee": false,
                 "failed_zil_transfers_to_eoa_proper_fee_deduction": false,
+                "validator_jailing": false,
             })),
             _ => None,
         }
@@ -211,8 +241,10 @@ impl Chain {
                 json!({ "at_height": 10854709, "scilla_failed_txn_correct_gas_fee_charged": true, "check_minimum_gas_price": true}),
                 // estimated: 2025-08-02T12.00.00Z
                 json!({ "at_height": 11300000, "inject_access_list": true, "use_max_gas_priority_fee": true}),
-                // esimated: 2025-08-22T12.00.00Z
+                // estimated: 2025-08-22T12.00.00Z
                 json!({ "at_height": 12998790, "failed_zil_transfers_to_eoa_proper_fee_deduction": true}),
+                // estimated: 2025-09-19T12.00.00Z
+                json!({ "at_height": 14997600, "validator_jailing": true}),
             ]),
             Chain::Zq2Mainnet => Some(vec![
                 json!({ "at_height": 4770088, "executable_blocks": true }),
@@ -253,8 +285,10 @@ impl Chain {
                 json!({ "at_height": 6771996, "scilla_failed_txn_correct_gas_fee_charged": true, "check_minimum_gas_price": true}),
                 // estimated: 2025-08-04T12.00.00Z
                 json!({ "at_height": 7000000, "inject_access_list": true, "use_max_gas_priority_fee": true}),
-                // esimated: 2025-09-15T12.00.00Z
+                // estimated: 2025-09-15T12.00.00Z
                 json!({ "at_height": 10153271, "failed_zil_transfers_to_eoa_proper_fee_deduction": true}),
+                // estimated: 2025-10-22T19.00.00Z
+                json!({ "at_height": 11998800, "validator_jailing": true}),
             ]),
             _ => None,
         }

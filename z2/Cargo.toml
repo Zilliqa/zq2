@@ -29,14 +29,15 @@ alloy = { version = "0.12.4", default-features = false, features = [
     "signer-local",
 ] }
 anyhow = "1.0.99"
+arc-swap = "1.7.1"
 base64 = "0.22.1"
 bitvec = "1.0.1"
-clap = { version = "4.5.45", features = ["derive"] }
+clap = { version = "4.5.47", features = ["derive"] }
 clap-verbosity-flag = "3.0.4"
 cliclack = "0.3.6"
 colored = "3.0.0"
 env_logger = "0.11.8"
-eth_trie = { version = "0.1.0", path = "../eth-trie.rs" }
+eth_trie = { git = "https://github.com/Zilliqa/eth-trie.rs.git", branch = "zilliqa" }
 ethabi = "18.0.0"
 ethers = { version = "2.0.14", features = ["ws"] }
 futures = "0.3.31"
@@ -45,12 +46,12 @@ indicatif = "0.18.0"
 itertools = "0.14.0"
 k256 = "0.13.4"
 libp2p = { version = "0.56.0", features = ["identify"] }
-log = "0.4.27"
+log = "0.4.28"
 parking_lot = "0.12.4"
 primitive-types = "0.12.2"
 prost = "0.14.1"
 rand = "0.8.5"
-regex = "1.11.1"
+regex = "1.11.2"
 reqwest = { version = "0.12.15", features = [
     "json",
     "rustls-tls",
@@ -58,17 +59,17 @@ reqwest = { version = "0.12.15", features = [
     "charset",
 ], default-features = false }
 revm = { version = "19.6.0", features = ["optional_balance_check"] }
-rs-leveldb = "0.1.5"
+rs-leveldb = { version = "0.1.5", default-features = false }
 rustls = "0.23.31"
 scopeguard = "1.2.0"
 serde = { version = "1.0.219", features = ["derive"] }
-serde_json = { version = "1.0.142", features = ["preserve_order"] }
+serde_json = { version = "1.0.143", features = ["preserve_order"] }
 serde_yaml = "0.9.34"
 sha2 = "0.10.8"
 sha3 = "0.10.8"
 strum = { version = "0.27.2", features = ["derive"] }
 strum_macros = "0.27.2"
-tempfile = "3.21.0"
+tempfile = "3.22.0"
 tera = "1.20.0"
 thiserror = "2.0.16"
 tokio = { version = "1.47.1", features = [
