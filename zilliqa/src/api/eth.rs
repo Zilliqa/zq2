@@ -1157,7 +1157,7 @@ fn fee_history(params: Params, node: &Arc<Node>) -> Result<FeeHistory> {
                     .iter()
                     .map(|tx_hash| {
                         let tx = data_access::get_transaction_by_hash(db.clone(), None, *tx_hash)?
-                            .ok_or_else(|| anyhow!("transaction not found: {}", tx_hash))?;
+                            .ok_or_else(|| anyhow!("transaction not found: {tx_hash}"))?;
                         Ok(tx.tx.effective_gas_price(BASE_FEE_PER_GAS))
                     })
                     .collect::<Result<Vec<_>>>()?;
