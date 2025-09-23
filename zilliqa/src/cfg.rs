@@ -295,8 +295,7 @@ impl NodeConfig {
         // the minimum required for the next leader selection
         if self.max_missed_view_age < MISSED_VIEW_WINDOW {
             return Err(anyhow!(
-                "max_missed_view_age must be at least {}",
-                MISSED_VIEW_WINDOW
+                "max_missed_view_age must be at least {MISSED_VIEW_WINDOW}",
             ));
         }
         Ok(())

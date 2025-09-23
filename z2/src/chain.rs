@@ -77,7 +77,7 @@ impl Chain {
             "zq2-devnet" => Ok(include_str!("../resources/chain-specs/zq2-devnet.toml")),
             "zq2-testnet" => Ok(include_str!("../resources/chain-specs/zq2-testnet.toml")),
             "zq2-mainnet" => Ok(include_str!("../resources/chain-specs/zq2-mainnet.toml")),
-            _ => Err(anyhow!("Configuration file for {} not found", chain_name)),
+            _ => Err(anyhow!("Configuration file for {chain_name} not found")),
         }
     }
 

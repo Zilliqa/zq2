@@ -291,8 +291,7 @@ pub fn load_ckpt_blocks(path: &Path) -> Result<(Block, Vec<SignedTransaction>, B
         let transactions_root_hash = Hash(transactions_trie.root_hash()?.into());
         ensure!(
             block.header.transactions_root_hash == transactions_root_hash,
-            "Transactions root hash {} mismatch",
-            transactions_root_hash
+            "Transactions root hash {transactions_root_hash} mismatch",
         );
         transactions
     };
@@ -340,8 +339,7 @@ pub fn load_ckpt_state(
             let account_root = Account::try_from(account_val.as_slice())?.storage_root;
             ensure!(
                 root_hash == account_root,
-                "Account storage root {} mismatch",
-                root_hash
+                "Account storage root {root_hash} mismatch",
             );
 
             // commit the in-memory trie to disk
@@ -354,8 +352,7 @@ pub fn load_ckpt_state(
         let root_hash = Hash(account_storage.root_hash()?.into());
         ensure!(
             root_hash == *state_root_hash,
-            "State root hash {} mismatch",
-            root_hash
+            "State root hash {root_hash} mismatch",
         );
 
         (account_count, record_count)
@@ -389,13 +386,11 @@ pub fn load_ckpt(
 
     ensure!(
         meta.record_count == record_count,
-        "Record count {} mismatch",
-        record_count
+        "Record count {record_count} mismatch",
     );
     ensure!(
         meta.account_count == account_count,
-        "Account count {} mismatch",
-        account_count
+        "Account count {account_count} mismatch",
     );
 
     let view_history = load_ckpt_history(path)?;
@@ -427,8 +422,7 @@ pub fn save_ckpt(
     let transactions_root_hash = Hash(transactions_trie.root_hash()?.into());
     ensure!(
         transactions_root_hash == block.header.transactions_root_hash,
-        "Transactions root hash {} mismatch",
-        transactions_root_hash
+        "Transactions root hash {transactions_root_hash} mismatch",
     );
 
     // Start writing the checkpoint file
