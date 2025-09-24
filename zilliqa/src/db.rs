@@ -590,10 +590,7 @@ impl Db {
                     let query_duration = duration.as_millis();
                     const DURATION_TIME_THRESHOLD_MS: u128 = 1000;
                     if query_duration > DURATION_TIME_THRESHOLD_MS {
-                        warn!(
-                            DURATION_TIME_THRESHOLD_MS,
-                            statement_txt, "sql execution took > {DURATION_TIME_THRESHOLD_MS}"
-                        );
+                        warn!(statement_txt, "sql execution took > {}", query_duration);
                     }
                 }
             }),
