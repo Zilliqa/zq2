@@ -13,7 +13,6 @@ use eth_trie::{MemoryDB, Trie};
 use itertools::Itertools;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use libp2p::PeerId;
-use parking_lot::RwLock;
 use pprof::criterion::{Output, PProfProfiler};
 use prost::Message;
 use revm::primitives::{Bytes, TxKind};
@@ -27,7 +26,7 @@ use zilliqa::{
     db::Db,
     exec::zil_contract_address,
     message::{Block, ExternalMessage, MAX_COMMITTEE_SIZE, Proposal, QuorumCertificate, Vote},
-    node::{MessageSender, RequestId},
+    node::MessageSender,
     schnorr,
     sync::SyncPeers,
     test_util::{ScillaServer, compile_contract},
@@ -57,7 +56,6 @@ fn process_empty(c: &mut Criterion) {
         our_peer_id: peer_id,
         outbound_channel: outbound_message_sender,
         local_channel: local_message_sender,
-        request_id: Arc::new(RwLock::new(RequestId::default())),
     };
     let db = Db::new::<PathBuf>(None, 0, 1024, None, zilliqa::cfg::DbConfig::default()).unwrap();
     let mut consensus = Consensus::new(
@@ -179,7 +177,6 @@ fn consensus(
         our_peer_id: PeerId::random(),
         outbound_channel: outbound_message_sender,
         local_channel: local_message_sender,
-        request_id: Arc::new(RwLock::new(RequestId::default())),
     };
     let data_dir = tempdir().unwrap();
     let db = Db::new(

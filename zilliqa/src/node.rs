@@ -79,7 +79,6 @@ pub struct MessageSender {
     pub our_peer_id: PeerId,
     pub outbound_channel: UnboundedSender<OutboundMessageTuple>,
     pub local_channel: UnboundedSender<LocalMessageTuple>,
-    pub request_id: Arc<RwLock<RequestId>>,
 }
 
 impl MessageSender {
@@ -102,10 +101,7 @@ impl MessageSender {
     }
 
     pub fn next_request_id(&self) -> RequestId {
-        let request_id = self.request_id.read().0;
-        let next_id = request_id.wrapping_add(1);
-        self.request_id.write().0 = next_id;
-        RequestId(request_id)
+        RequestId::random()
     }
 
     /// Send a message to a remote node of the same shard.
@@ -210,7 +206,6 @@ impl Node {
             our_peer_id: peer_id,
             outbound_channel: message_sender_channel,
             local_channel: local_sender_channel,
-            request_id: Arc::new(RwLock::new(RequestId::default())),
         };
         let executable_blocks_height = config
             .consensus

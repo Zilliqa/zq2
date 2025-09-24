@@ -36,6 +36,8 @@ use crate::{
     trie_storage::TrieStorage,
 };
 
+const MAX_KEYS_IN_SINGLE_QUERY: usize = 32765;
+
 macro_rules! sqlify_with_bincode {
     ($type: ty) => {
         impl ToSql for $type {
@@ -157,7 +159,7 @@ impl FromSql for AddressSqlable {
 }
 
 impl ToSql for Hash {
-    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
         Ok(ToSqlOutput::from(self.0.to_vec()))
     }
 }
@@ -308,7 +310,7 @@ impl Db {
         let builder = Pool::builder()
             .min_idle(Some(1))
             .max_size(2 * num_workers as u32); // more than enough connections
-        tracing::debug!("SQLite {builder:?}");
+        debug!("SQLite {builder:?}");
 
         let pool = builder.build(manager)?;
         let connection = pool.get()?;
@@ -318,7 +320,7 @@ impl Db {
         let rdb_path = if let Some(s) = path.clone() {
             s.join("state.rocksdb")
         } else {
-            tempfile::tempdir().unwrap().path().join("state.rocksdb")
+            tempfile::tempdir()?.path().join("state.rocksdb")
         };
 
         let cache = Cache::new_lru_cache(state_cache_size); // same as SQLite in-memory page cache
@@ -577,7 +579,7 @@ impl Db {
             rusqlite::config::DbConfig::SQLITE_DBCONFIG_ENABLE_QPSG,
             true,
         )? {
-            tracing::warn!("*** QPSG disabled - queries may be slow ***");
+            warn!("*** QPSG disabled - queries may be slow ***");
         }
         // Add tracing - logs SQL statements
         connection.trace_v2(
@@ -585,9 +587,13 @@ impl Db {
             Some(|profile_event| {
                 if let rusqlite::trace::TraceEvent::Profile(statement, duration) = profile_event {
                     let statement_txt = statement.expanded_sql();
-                    let duration_secs = duration.as_secs();
-                    if duration_secs > 1 {
-                        tracing::warn!(duration_secs, statement_txt, "sql execution took > 1s");
+                    let query_duration = duration.as_millis();
+                    const DURATION_TIME_THRESHOLD_MS: u128 = 1000;
+                    if query_duration > DURATION_TIME_THRESHOLD_MS {
+                        warn!(
+                            DURATION_TIME_THRESHOLD_MS,
+                            statement_txt, "sql execution took > {DURATION_TIME_THRESHOLD_MS}"
+                        );
                     }
                 }
             }),
@@ -884,55 +890,63 @@ impl Db {
         let mut block_hashes: HashSet<Hash> = HashSet::new();
 
         {
-            let placeholders = std::iter::repeat_n("?", tx_hashes.len())
-                .collect::<Vec<_>>()
-                .join(",");
+            for chunk in tx_hashes.chunks(MAX_KEYS_IN_SINGLE_QUERY) {
+                let placeholders = std::iter::repeat_n("?", chunk.len())
+                    .collect::<Vec<_>>()
+                    .join(",");
 
-            let sql = format!(
-                r#"
-                SELECT tx_hash, block_hash, tx_index
-                 FROM receipts
-                 WHERE tx_hash IN ({placeholders})"#,
-            );
+                let sql = format!(
+                    r#"
+                    SELECT tx_hash, block_hash, tx_index
+                        FROM receipts
+                        WHERE tx_hash IN ({placeholders})
+                    "#
+                );
 
-            let mut stmt = conn.prepare(&sql)?;
-            let rows = stmt.query_map(rusqlite::params_from_iter(tx_hashes.iter()), |row| {
-                let tx_hash: Hash = row.get(0)?;
-                let block_hash: Hash = row.get(1)?;
-                let idx: u64 = row.get(2)?;
-                Ok((tx_hash, block_hash, idx))
-            })?;
+                // dynamic SQL -> use prepare (not prepare_cached)
+                let mut stmt = conn.prepare(&sql)?;
+                let rows = stmt.query_map(rusqlite::params_from_iter(chunk.iter()), |row| {
+                    let tx_hash: Hash = row.get(0)?;
+                    let block_hash: Hash = row.get(1)?;
+                    let idx: u64 = row.get(2)?;
+                    Ok((tx_hash, block_hash, idx))
+                })?;
 
-            for row in rows {
-                let (tx_hash, block_hash, idx) = row?;
-                tx_meta.insert(tx_hash, (block_hash, idx));
-                block_hashes.insert(block_hash);
+                for row in rows {
+                    let (tx_hash, block_hash, idx) = row?;
+                    tx_meta.insert(tx_hash, (block_hash, idx));
+                    block_hashes.insert(block_hash);
+                }
             }
         }
 
         let mut block_height: HashMap<Hash, u64> = HashMap::with_capacity(block_hashes.len());
         {
-            let placeholders = std::iter::repeat_n("?", block_hashes.len())
-                .collect::<Vec<_>>()
-                .join(",");
+            let block_hashes_vec = block_hashes.into_iter().collect::<Vec<_>>();
+            for chunk in block_hashes_vec.chunks(MAX_KEYS_IN_SINGLE_QUERY) {
+                let placeholders = std::iter::repeat_n("?", chunk.len())
+                    .collect::<Vec<_>>()
+                    .join(",");
 
-            let sql = format!(
-                r#"
-                SELECT block_hash, height
-                 FROM blocks
-                 WHERE block_hash IN ({placeholders})"#,
-            );
+                let sql = format!(
+                    r#"
+                    SELECT block_hash, height
+                        FROM blocks
+                        WHERE block_hash IN ({placeholders})
+                    "#
+                );
 
-            let mut stmt = conn.prepare(&sql)?;
-            let rows = stmt.query_map(rusqlite::params_from_iter(block_hashes.iter()), |row| {
-                let block_hash: Hash = row.get(0)?;
-                let height: u64 = row.get(1)?;
-                Ok((block_hash, height))
-            })?;
+                let mut stmt = conn.prepare(&sql)?;
+                let rows = stmt.query_map(rusqlite::params_from_iter(chunk.iter()), |row| {
+                    let block_hash: Hash = row.get(0)?;
+                    let height: u64 = row.get(1)?;
+                    Ok((block_hash, height))
+                })?;
 
-            for row in rows {
-                let (block_hash, height) = row?;
-                block_height.insert(block_hash, height);
+                for row in rows {
+                    let (block_hash, height) = row?;
+                    block_height.insert(block_hash, height);
+                }
             }
         }
 
@@ -971,28 +985,32 @@ impl Db {
 
     pub fn get_transactions(&self, txn_hashes: &[Hash]) -> Result<Vec<VerifiedTransaction>> {
         let mut transactions = Vec::with_capacity(txn_hashes.len());
-        let placeholders = std::iter::repeat_n("?", txn_hashes.len())
-            .collect::<Vec<_>>()
-            .join(",");
-
-        let sql = format!(
-            r#"SELECT data, tx_hash
-                 FROM transactions
-                 WHERE tx_hash IN ({placeholders})"#,
-        );
-
         let conn = self.pool.get()?;
-        let mut stmt = conn.prepare(&sql)?;
-        let signed_txns = stmt
-            .query_map(rusqlite::params_from_iter(txn_hashes.iter()), |row| {
+
+        for chunk in txn_hashes.chunks(MAX_KEYS_IN_SINGLE_QUERY) {
+            let placeholders = std::iter::repeat_n("?", chunk.len())
+                .collect::<Vec<_>>()
+                .join(",");
+
+            let sql = format!(
+                r#"
+                SELECT data, tx_hash
+                    FROM transactions
+                    WHERE tx_hash IN ({placeholders})
+                "#
+            );
+
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(rusqlite::params_from_iter(chunk.iter()), |row| {
                 let txn: SignedTransaction = row.get(0)?;
                 let h: Hash = row.get(1)?;
                 Ok((h, txn))
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
+            })?;
 
-        for (hash, signed_tx) in signed_txns {
-            transactions.push(signed_tx.verify_bypass(hash)?);
+            for row in rows {
+                let (hash, signed_tx) = row?;
+                transactions.push(signed_tx.verify_bypass(hash)?);
+            }
         }
         Ok(transactions)
     }
@@ -1464,31 +1482,35 @@ impl Db {
         }
         let hashes = blocks.iter().map(|b| b.header.hash).collect::<Vec<Hash>>();
 
-        let placeholders = std::iter::repeat_n("?", hashes.len())
-            .collect::<Vec<_>>()
-            .join(",");
-        let sql = format!(
-            r#"
-            SELECT
-                tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used,
-                contract_address, logs, transitions, accepted, errors, exceptions
-            FROM receipts
-            WHERE block_hash IN ({placeholders})
-            "#
-        );
+        let mut by_hash: HashMap<Hash, Vec<TransactionReceipt>> =
+            HashMap::with_capacity(hashes.len());
 
         let conn = self.pool.get()?;
-        let mut stmt = conn.prepare(&sql)?;
+        for chunk in hashes.chunks(MAX_KEYS_IN_SINGLE_QUERY) {
+            let placeholders = std::iter::repeat_n("?", chunk.len())
+                .collect::<Vec<_>>()
+                .join(",");
 
-        // Group receipts by block_hash; rows are already ordered by tx_index
-        let mut by_hash: HashMap<Hash, Vec<TransactionReceipt>> = HashMap::new();
-        let rows = stmt.query_map(rusqlite::params_from_iter(hashes.iter()), |row| {
-            Self::make_receipt(row)
-        })?;
+            let sql = format!(
+                r#"
+                SELECT
+                tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used,
+                contract_address, logs, transitions, accepted, errors, exceptions
+                FROM receipts
+                WHERE block_hash IN ({placeholders})
+            "#
+            );
 
-        for row in rows {
-            let r = row?;
-            by_hash.entry(r.block_hash).or_default().push(r);
+            // dynamic placeholders -> prepare(), not prepare_cached()
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(rusqlite::params_from_iter(chunk.iter()), |row| {
+                Self::make_receipt(row)
+            })?;
+
+            for row in rows {
+                let r = row?;
+                by_hash.entry(r.block_hash).or_default().push(r);
+            }
         }
 
         // Sort the input blocks by height
@@ -1567,14 +1589,7 @@ mod tests {
     fn query_planner_stability_guarantee() {
         let base_path = tempdir().unwrap();
         let base_path = base_path.path();
-        let db = Db::new(
-            Some(base_path),
-            0,
-            1024,
-            None,
-            crate::cfg::DbConfig::default(),
-        )
-        .unwrap();
+        let db = Db::new(Some(base_path), 0, 1024, None, DbConfig::default()).unwrap();
 
         let sql = db.pool.get().unwrap();
 
@@ -1638,14 +1653,7 @@ mod tests {
     fn checkpoint_export_import() {
         let base_path = tempdir().unwrap();
         let base_path = base_path.path();
-        let db = Db::new(
-            Some(base_path),
-            0,
-            1024,
-            None,
-            crate::cfg::DbConfig::default(),
-        )
-        .unwrap();
+        let db = Db::new(Some(base_path), 0, 1024, None, DbConfig::default()).unwrap();
 
         // Seed db with data
         let mut rng = ChaCha8Rng::seed_from_u64(0);
