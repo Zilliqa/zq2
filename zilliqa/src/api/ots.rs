@@ -7,7 +7,6 @@ use alloy::{
 use anyhow::{Result, anyhow};
 use ethabi::Token;
 use jsonrpsee::{RpcModule, types::Params};
-use parking_lot::RwLock;
 use serde_json::{Value, json};
 
 use super::{
@@ -26,10 +25,7 @@ use crate::{
     time::SystemTime,
 };
 
-pub fn rpc_module(
-    node: Arc<RwLock<Node>>,
-    enabled_apis: &[EnabledApi],
-) -> RpcModule<Arc<RwLock<Node>>> {
+pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc<Node>> {
     super::declare_module!(
         node,
         enabled_apis,
@@ -53,23 +49,20 @@ pub fn rpc_module(
     )
 }
 
-pub fn get_otterscan_api_level(_: Params, _: &Arc<RwLock<Node>>) -> Result<u64> {
+pub fn get_otterscan_api_level(_: Params, _: &Arc<Node>) -> Result<u64> {
     // https://github.com/otterscan/otterscan/blob/0a819f3557fe19c0f47327858261881ec5f56d6c/src/params.ts#L1
     Ok(8)
 }
 
-fn get_block_details(
-    params: Params,
-    node: &Arc<RwLock<Node>>,
-) -> Result<Option<ots::BlockDetails>> {
+fn get_block_details(params: Params, node: &Arc<Node>) -> Result<Option<ots::BlockDetails>> {
     let block_number: u64 = params.one()?;
 
-    let Some(ref block) = node.read().get_block(block_number)? else {
+    let Some(ref block) = node.get_block(block_number)? else {
         return Ok(None);
     };
-    let miner = node.read().get_proposer_reward_address(block.header)?;
+    let miner = node.get_proposer_reward_address(block.header)?;
 
-    let block_gas_limit = node.read().config.consensus.eth_block_gas_limit;
+    let block_gas_limit = node.config.consensus.eth_block_gas_limit;
     Ok(Some(ots::BlockDetails::from_block(
         block,
         miner.unwrap_or_default(),
@@ -79,15 +72,15 @@ fn get_block_details(
 
 fn get_block_details_by_hash(
     params: Params,
-    node: &Arc<RwLock<Node>>,
+    node: &Arc<Node>,
 ) -> Result<Option<ots::BlockDetails>> {
     let block_hash: B256 = params.one()?;
 
-    let Some(ref block) = node.read().get_block(block_hash)? else {
+    let Some(ref block) = node.get_block(block_hash)? else {
         return Ok(None);
     };
-    let miner = node.read().get_proposer_reward_address(block.header)?;
-    let block_gas_limit = node.read().config.consensus.eth_block_gas_limit;
+    let miner = node.get_proposer_reward_address(block.header)?;
+    let block_gas_limit = node.config.consensus.eth_block_gas_limit;
     Ok(Some(ots::BlockDetails::from_block(
         block,
         miner.unwrap_or_default(),
@@ -97,33 +90,39 @@ fn get_block_details_by_hash(
 
 fn get_block_transactions(
     params: Params,
-    node: &Arc<RwLock<Node>>,
+    node: &Arc<Node>,
 ) -> Result<Option<ots::BlockTransactions>> {
     let mut params = params.sequence();
     let block_number: u64 = params.next()?;
     let page_number: usize = params.next()?;
     let page_size: usize = params.next()?;
 
-    let node = node.read();
-
-    let Some(block) = node.get_block(block_number)? else {
-        return Ok(None);
+    let (pool, db, miner, block, block_gas_limit) = {
+        let Some(block) = node.get_block(block_number)? else {
+            return Ok(None);
+        };
+        let miner = node.get_proposer_reward_address(block.header)?;
+        (
+            node.consensus.read().transaction_pool.clone(),
+            node.db.clone(),
+            miner,
+            block,
+            node.config.consensus.eth_block_gas_limit,
+        )
     };
-    let miner = node.get_proposer_reward_address(block.header)?;
 
     let start = usize::min(page_number * page_size, block.transactions.len());
     let end = usize::min((page_number + 1) * page_size, block.transactions.len());
 
-    let receipts = old_get_block_transaction_receipts_inner(&node, block_number)?;
+    let receipts = old_get_block_transaction_receipts_inner(db.clone(), &block)?;
     let transactions = block.transactions[start..end]
         .iter()
-        .map(|hash| get_transaction_inner(*hash, &node))
+        .map(|hash| get_transaction_inner(*hash, pool.clone(), db.clone()))
         .collect::<Result<Vec<_>>>()?
         .into_iter()
         .flatten()
         .collect::<Vec<_>>();
 
-    let block_gas_limit = node.config.consensus.eth_block_gas_limit;
     let full_block = ots::BlockWithTransactions {
         transactions,
         block: ots::Block::from_block(&block, miner.unwrap_or_default(), block_gas_limit),
@@ -135,10 +134,10 @@ fn get_block_transactions(
     }))
 }
 
-fn get_contract_creator(params: Params, node: &Arc<RwLock<Node>>) -> Result<Option<Value>> {
+fn get_contract_creator(params: Params, node: &Arc<Node>) -> Result<Option<Value>> {
     let address: Address = params.one()?;
 
-    let touched = node.read().get_touched_transactions(address)?;
+    let touched = node.get_touched_transactions(address)?;
 
     // Perform a linear search over each transaction which touched this address. Replay each one to try and find the
     // transaction which created it.
@@ -146,7 +145,8 @@ fn get_contract_creator(params: Params, node: &Arc<RwLock<Node>>) -> Result<Opti
         // Replay the creation transaction to work out the creator. This is important for contracts which are created
         // by other contracts, for which the creator is not the same as `txn.from_addr`.
         let mut inspector = CreatorInspector::new(address);
-        node.read().replay_transaction(txn_hash, &mut inspector)?;
+
+        Node::replay_transaction(node, txn_hash, &mut inspector)?;
 
         if let Some(creator) = inspector.creator() {
             return Ok(Some(json!({
@@ -159,26 +159,22 @@ fn get_contract_creator(params: Params, node: &Arc<RwLock<Node>>) -> Result<Opti
     Ok(None)
 }
 
-fn get_internal_operations(params: Params, node: &Arc<RwLock<Node>>) -> Result<Vec<Operation>> {
+fn get_internal_operations(params: Params, node: &Arc<Node>) -> Result<Vec<Operation>> {
     let txn_hash: B256 = params.one()?;
     let txn_hash = Hash(txn_hash.0);
 
     let mut inspector = OtterscanOperationInspector::default();
-    node.read().replay_transaction(txn_hash, &mut inspector)?;
+    Node::replay_transaction(node, txn_hash, &mut inspector)?;
 
     Ok(inspector.entries())
 }
 
-fn get_transaction_by_sender_and_nonce(
-    params: Params,
-    node: &Arc<RwLock<Node>>,
-) -> Result<Option<String>> {
+fn get_transaction_by_sender_and_nonce(params: Params, node: &Arc<Node>) -> Result<Option<String>> {
     let mut params = params.sequence();
     let sender: Address = params.next()?;
     let nonce: u64 = params.next()?;
 
-    let node = node.read();
-    let touched = node.get_touched_transactions(sender)?;
+    let touched = { node.get_touched_transactions(sender)? };
 
     // Iterate over each transaction which touched the sender. This will include transactions which weren't sent by the
     // sender which we need to filter out.
@@ -194,13 +190,11 @@ fn get_transaction_by_sender_and_nonce(
     Ok(None)
 }
 
-fn get_transaction_error(params: Params, node: &Arc<RwLock<Node>>) -> Result<Cow<'static, str>> {
+fn get_transaction_error(params: Params, node: &Arc<Node>) -> Result<Cow<'static, str>> {
     let txn_hash: B256 = params.one()?;
     let txn_hash = Hash(txn_hash.0);
 
-    let result = node
-        .read()
-        .replay_transaction(txn_hash, inspector::noop())?;
+    let result = Node::replay_transaction(node, txn_hash, inspector::noop())?;
 
     if !result.exceptions().is_empty() {
         // If the transaction resulted in Scilla exceptions, concatenate them into a single string and ABI encode it.
@@ -222,28 +216,30 @@ fn get_transaction_error(params: Params, node: &Arc<RwLock<Node>>) -> Result<Cow
     }
 }
 
-fn has_code(params: Params, node: &Arc<RwLock<Node>>) -> Result<bool> {
+fn has_code(params: Params, node: &Arc<Node>) -> Result<bool> {
     let mut params = params.sequence();
     let address: Address = params.next()?;
     let block_id: BlockId = params.optional_next()?.unwrap_or_default();
 
-    let node = node.read();
-    let block = node
-        .get_block(block_id)?
-        .ok_or_else(|| anyhow!("Unable to get the latest block!"))?;
-    let empty = node.get_state(&block)?.get_account(address)?.code.is_eoa();
+    let state = {
+        let block = node
+            .get_block(block_id)?
+            .ok_or_else(|| anyhow!("Unable to get the latest block!"))?;
+        node.get_state(&block)?
+    };
+    let empty = state.get_account(address)?.code.is_eoa();
 
     Ok(!empty)
 }
 
 fn search_transactions_inner(
-    node: &Arc<RwLock<Node>>,
+    node: &Arc<Node>,
     address: Address,
     block_number: u64,
     page_size: usize,
     reverse: bool,
 ) -> Result<ots::Transactions> {
-    let mut touched = node.read().get_touched_transactions(address)?;
+    let mut touched = node.get_touched_transactions(address)?;
 
     // If searching in reverse, we should start with the most recent transaction and work backwards.
     if reverse {
@@ -259,8 +255,17 @@ fn search_transactions_inner(
     // This will be set to false if we break out of the loop, indicating to the caller there are further pages.
     let mut finished = true;
 
+    let (pool, db) = {
+        (
+            node.consensus.read().transaction_pool.clone(),
+            node.db.clone(),
+        )
+    };
+
     for hash in touched {
-        let txn = get_transaction_inner(hash, &node.read()).unwrap().unwrap();
+        let txn = get_transaction_inner(hash, pool.clone(), db.clone())
+            .unwrap()
+            .unwrap();
 
         let txn_block_number = match txn.block_number {
             Some(txn_block_number) => txn_block_number,
@@ -283,16 +288,14 @@ fn search_transactions_inner(
         }
 
         let timestamp = node
-            .read()
             .get_block(txn.block_hash.unwrap_or_default())?
             .unwrap()
             .timestamp();
 
         transactions.push(txn);
 
-        let node = node.read();
         let receipt = ots::TransactionReceiptWithTimestamp {
-            receipt: get_transaction_receipt_inner_slow(&node, txn_block_number, hash)
+            receipt: get_transaction_receipt_inner_slow(node, txn_block_number, hash)
                 .unwrap()
                 .unwrap(),
             timestamp: timestamp
@@ -328,10 +331,7 @@ fn search_transactions_inner(
     })
 }
 
-fn search_transactions_after(
-    params: Params,
-    node: &Arc<RwLock<Node>>,
-) -> Result<ots::Transactions> {
+fn search_transactions_after(params: Params, node: &Arc<Node>) -> Result<ots::Transactions> {
     let mut params = params.sequence();
     let address: Address = params.next()?;
     let block_number: u64 = params.next()?;
@@ -340,10 +340,7 @@ fn search_transactions_after(
     search_transactions_inner(node, address, block_number, page_size, false)
 }
 
-fn search_transactions_before(
-    params: Params,
-    node: &Arc<RwLock<Node>>,
-) -> Result<ots::Transactions> {
+fn search_transactions_before(params: Params, node: &Arc<Node>) -> Result<ots::Transactions> {
     let mut params = params.sequence();
     let address: Address = params.next()?;
     let mut block_number: u64 = params.next()?;
@@ -357,12 +354,12 @@ fn search_transactions_before(
     search_transactions_inner(node, address, block_number, page_size, true)
 }
 
-fn trace_transaction(params: Params, node: &Arc<RwLock<Node>>) -> Result<Vec<TraceEntry>> {
+fn trace_transaction(params: Params, node: &Arc<Node>) -> Result<Vec<TraceEntry>> {
     let txn_hash: B256 = params.one()?;
     let txn_hash = Hash(txn_hash.0);
 
     let mut inspector = OtterscanTraceInspector::default();
-    node.read().replay_transaction(txn_hash, &mut inspector)?;
+    Node::replay_transaction(node, txn_hash, &mut inspector)?;
 
     Ok(inspector.entries())
 }

@@ -29,10 +29,10 @@ use zilliqa::{
     cfg::{
         self, Amount, ConsensusConfig, ContractUpgrades, GenesisDeposit,
         allowed_timestamp_skew_default, block_request_limit_default, block_time_default,
-        consensus_timeout_default, eth_chain_id_default, failed_request_sleep_duration_default,
-        scilla_address_default, scilla_ext_libs_path_default,
-        scilla_server_socket_directory_default, scilla_stdlib_dir_default, state_rpc_limit_default,
-        total_native_token_supply_default,
+        consensus_timeout_default, disable_get_full_state_for_contracts_default,
+        eth_chain_id_default, failed_request_sleep_duration_default, scilla_address_default,
+        scilla_ext_libs_path_default, scilla_server_socket_directory_default,
+        scilla_stdlib_dir_default, state_rpc_limit_default, total_native_token_supply_default,
     },
     transaction::EvmGas,
 };
@@ -557,6 +557,8 @@ impl Setup {
                 enable_ots_indices: false,
                 max_rpc_response_size: max_rpc_response_size_default(),
                 max_missed_view_age: max_missed_view_age_default(),
+                disable_get_full_state_for_contracts: disable_get_full_state_for_contracts_default(
+                ),
             };
             println!("🧩  Node {node_index} has RPC port {port}");
 

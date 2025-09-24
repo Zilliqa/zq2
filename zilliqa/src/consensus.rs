@@ -228,7 +228,7 @@ pub struct Consensus {
     pub db: Arc<Db>,
     receipts_cache: Mutex<ReceiptsCache>,
     /// Actions that act on newly created blocks
-    pub transaction_pool: RwLock<TransactionPool>,
+    pub transaction_pool: Arc<RwLock<TransactionPool>>,
     /// Pending proposal. Gets created as soon as we become aware that we are leader for this view.
     early_proposal: RwLock<Option<EarlyProposal>>,
     /// Flag indicating that block broadcasting should be postponed at least until block_time is reached
@@ -473,12 +473,14 @@ impl Consensus {
         if !imported_missed_views.is_empty() {
             {
                 // store the imported missed views in the consensus state
-                let mut missed_views = consensus.state.view_history.missed_views.lock().unwrap();
-                missed_views.clear();
-                missed_views.extend(imported_missed_views.iter());
+                consensus.state.view_history.missed_views.clear();
+                consensus
+                    .state
+                    .view_history
+                    .missed_views
+                    .extend(imported_missed_views.iter());
                 // update the imported min_view in the consensus state
-                let mut min_view = consensus.state.view_history.min_view.lock().unwrap();
-                *min_view = imported_min_view;
+                consensus.state.view_history.min_view = imported_min_view;
             }
             info!(
                 view = start_view,
@@ -488,8 +490,7 @@ impl Consensus {
             );
         } else {
             // store the missed views loaded from the checkpoint in the db
-            let missed_views = consensus.state.view_history.missed_views.lock().unwrap();
-            for (view, leader) in missed_views.iter() {
+            for (view, leader) in consensus.state.view_history.missed_views.iter() {
                 if *view < imported_min_view {
                     // if the history loaded from the checkpoint overlaps with the history in the db
                     consensus.db.extend_view_history(*view, leader.as_bytes())?;
@@ -498,9 +499,9 @@ impl Consensus {
                 }
             }
             // update the min_view loaded from the checkpoint in the db
-            consensus.db.set_min_view_of_view_history(
-                *consensus.state.view_history.min_view.lock().unwrap(),
-            )?;
+            consensus
+                .db
+                .set_min_view_of_view_history(consensus.state.view_history.min_view)?;
         }
 
         // If we started from a checkpoint
@@ -1167,14 +1168,6 @@ impl Consensus {
         let current_nonce = account_data.nonce;
         let pool = self.transaction_pool.read();
         current_nonce + pool.account_pending_transaction_count(&account_address)
-    }
-
-    pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
-        if !self.config.enable_ots_indices {
-            return Err(anyhow!("Otterscan indices are disabled"));
-        }
-
-        self.db.get_touched_transactions(address)
     }
 
     /// Clear up anything in memory that is no longer required. This is to avoid memory leaks.
@@ -1911,10 +1904,9 @@ impl Consensus {
         from_broadcast: bool,
     ) -> Result<Vec<TxAddResult>> {
         let mut inserted = Vec::with_capacity(verified_transactions.len());
-        let mut pool = self.transaction_pool.write();
         for txn in verified_transactions {
             info!(?txn, "seen new txn");
-            inserted.push(self.new_transaction(txn, from_broadcast, &mut pool)?);
+            inserted.push(self.new_transaction(txn, from_broadcast)?);
         }
         Ok(inserted)
     }
@@ -2152,7 +2144,6 @@ impl Consensus {
         &self,
         txn: VerifiedTransaction,
         from_broadcast: bool,
-        pool: &mut RwLockWriteGuard<TransactionPool>,
     ) -> Result<TxAddResult> {
         if self.db.contains_transaction(&txn.hash)? {
             debug!("Transaction {:?} already in mempool", txn.hash);
@@ -2189,7 +2180,11 @@ impl Consensus {
 
         let txn_hash = txn.hash;
 
-        let insert_result = pool.insert_transaction(txn.clone(), &early_account, from_broadcast);
+        let insert_result = self.transaction_pool.write().insert_transaction(
+            txn.clone(),
+            &early_account,
+            from_broadcast,
+        );
         if insert_result.was_added() {
             let _ = self.new_transaction_hashes.send(txn_hash);
 
@@ -2463,11 +2458,11 @@ impl Consensus {
                     self.db.extend_view_history(*view, leader.as_bytes())?;
                 }
             }
-            let min_view = self.state.view_history.min_view.lock().unwrap();
+            let min_view = self.state.view_history.min_view;
             //TODO(#3080): skip next line if min_view did not increase in prune_history()
-            self.db.set_min_view_of_view_history(*min_view)?;
+            self.db.set_min_view_of_view_history(min_view)?;
             if pruned {
-                self.db.prune_view_history(*min_view)?;
+                self.db.prune_view_history(min_view)?;
             }
         }
         self.state.finalized_view = block.view();
@@ -3064,16 +3059,19 @@ impl Consensus {
 
     pub fn leader_at_block(&self, block: &Block, view: u64) -> Option<Validator> {
         let state_at = self.state.at_root(block.state_root_hash().into());
+        Self::leader_at_state(&state_at, block, view)
+    }
 
+    pub fn leader_at_state(state: &State, block: &Block, view: u64) -> Option<Validator> {
         let executed_block = BlockHeader {
             number: block.header.number + 1,
             ..Default::default()
         };
-        let Ok(public_key) = state_at.leader(view, executed_block) else {
+        let Ok(public_key) = state.leader(view, executed_block) else {
             return None;
         };
 
-        let Ok(Some(peer_id)) = state_at.get_peer_id(public_key) else {
+        let Ok(Some(peer_id)) = state.get_peer_id(public_key) else {
             return None;
         };
 
@@ -3306,65 +3304,70 @@ impl Consensus {
             };
         }
 
-        let mut pool = self.transaction_pool.write();
-        pool.update_with_state(&self.state);
         let mut verified_txns = Vec::new();
+        {
+            // Pool is write-lock here and has to be dropped after this scope
+            let mut pool = self.transaction_pool.write();
+            pool.update_with_state(&self.state);
 
-        let fork = self.state.forks.get(block.header.number);
+            let fork = self.state.forks.get(block.header.number);
 
-        // We re-inject any missing Intershard transactions (or really, any missing
-        // transactions) from our mempool. If any txs are unavailable in both the
-        // message or locally, the proposal cannot be applied
-        for (idx, tx_hash) in block.transactions.iter().enumerate() {
-            // Prefer to insert verified txn from pool. This is faster.
-            let txn = match pool.get_transaction(tx_hash) {
-                Some(txn) => txn.clone(),
-                _ => match transactions.get(idx) {
-                    Some(sig_txn) => {
-                        let Ok(verified) = sig_txn.clone().verify() else {
-                            warn!("Unable to verify included transaction in given block!");
-                            return Ok(());
-                        };
-                        if verified.hash != *tx_hash {
+            // We re-inject any missing Intershard transactions (or really, any missing
+            // transactions) from our mempool. If any txs are unavailable in both the
+            // message or locally, the proposal cannot be applied
+            for (idx, tx_hash) in block.transactions.iter().enumerate() {
+                // Prefer to insert verified txn from pool. This is faster.
+                let txn = match pool.get_transaction(tx_hash) {
+                    Some(txn) => txn.clone(),
+                    _ => match transactions.get(idx) {
+                        Some(sig_txn) => {
+                            let Ok(verified) = sig_txn.clone().verify() else {
+                                warn!("Unable to verify included transaction in given block!");
+                                return Ok(());
+                            };
+                            if verified.hash != *tx_hash {
+                                warn!(
+                                    "Computed txn hash doesn't match the hash provided in the given block!"
+                                );
+                                return Ok(());
+                            }
+
+                            // bypass this check during sync - since the txn has already been executed
+                            if fork.check_minimum_gas_price && !during_sync {
+                                let Ok(acc) = self.state.get_account(verified.signer) else {
+                                    warn!(
+                                        "Sender doesn't exist in recovered transaction from given block!"
+                                    );
+                                    return Ok(());
+                                };
+
+                                let Ok(ValidationOutcome::Success) = sig_txn.validate(
+                                    &acc,
+                                    self.config.consensus.eth_block_gas_limit,
+                                    self.config.consensus.gas_price.0,
+                                    self.config.eth_chain_id,
+                                ) else {
+                                    warn!(
+                                        "Transaction recovered from given block failed to validate!"
+                                    );
+                                    return Ok(());
+                                };
+                            }
+                            verified
+                        }
+                        None => {
                             warn!(
-                                "Computed txn hash doesn't match the hash provided in the given block!"
+                                "Proposal {} at view {} referenced a transaction {} that was neither included in the broadcast nor found locally - cannot apply block",
+                                block.hash(),
+                                block.view(),
+                                tx_hash
                             );
                             return Ok(());
                         }
-
-                        // bypass this check during sync - since the txn has already been executed
-                        if fork.check_minimum_gas_price && !during_sync {
-                            let Ok(acc) = self.state.get_account(verified.signer) else {
-                                warn!(
-                                    "Sender doesn't exist in recovered transaction from given block!"
-                                );
-                                return Ok(());
-                            };
-
-                            let Ok(ValidationOutcome::Success) = sig_txn.validate(
-                                &acc,
-                                self.config.consensus.eth_block_gas_limit,
-                                self.config.consensus.gas_price.0,
-                                self.config.eth_chain_id,
-                            ) else {
-                                warn!("Transaction recovered from given block failed to validate!");
-                                return Ok(());
-                            };
-                        }
-                        verified
-                    }
-                    None => {
-                        warn!(
-                            "Proposal {} at view {} referenced a transaction {} that was neither included in the broadcast nor found locally - cannot apply block",
-                            block.hash(),
-                            block.view(),
-                            tx_hash
-                        );
-                        return Ok(());
-                    }
-                },
-            };
-            verified_txns.push(txn);
+                    },
+                };
+                verified_txns.push(txn);
+            }
         }
 
         let mut block_receipts = Vec::new();
@@ -3380,7 +3383,7 @@ impl Consensus {
 
         let mut touched_addresses = vec![];
         for (tx_index, txn) in verified_txns.iter().enumerate() {
-            self.new_transaction(txn.clone(), true, &mut pool)?;
+            self.new_transaction(txn.clone(), true)?;
             let tx_hash = txn.hash;
             let mut inspector = TouchedAddressInspector::default();
             let result = Self::apply_transaction_at(
@@ -3391,7 +3394,7 @@ impl Consensus {
                 self.config.enable_ots_indices,
             )?
             .ok_or_else(|| anyhow!("proposed transaction failed to execute"))?;
-            pool.mark_executed(txn);
+            self.transaction_pool.write().mark_executed(txn);
             for address in inspector.touched {
                 touched_addresses.push((address, tx_hash));
             }
@@ -3427,7 +3430,6 @@ impl Consensus {
             debug!(?receipt, "applied transaction {:?}", receipt);
             block_receipts.push((receipt, tx_index));
         }
-        std::mem::drop(pool);
 
         self.db.with_sqlite_tx(|sqlite_tx| {
             for txn in &verified_txns {
@@ -3689,8 +3691,8 @@ impl Consensus {
         Ok(range)
     }
 
-    pub fn get_sync_data(&self) -> Result<Option<SyncingStruct>> {
-        self.sync.get_sync_data()
+    pub fn get_sync_data(&self, db: Arc<Db>) -> Result<Option<SyncingStruct>> {
+        self.sync.get_sync_data(db)
     }
 
     /// This function is intended for use only by admin_forceView API. It is dangerous and should not be touched outside of testing or test network recovery.

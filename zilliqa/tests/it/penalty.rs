@@ -24,7 +24,7 @@ async fn jailed_node_must_not_propose_blocks(mut network: Network) {
 
     // temporarily disconnect the first node to prevent it from proposing blocks
     network.disconnect_node(0);
-    let jailed_leader = network.get_node(0).consensus.public_key();
+    let jailed_leader = network.get_node(0).consensus.read().public_key();
 
     // wait until the node is jailed
     // note that if there is only one node that is not proposing blocks, it will always be the first among the jailed nodes
@@ -33,13 +33,8 @@ async fn jailed_node_must_not_propose_blocks(mut network: Network) {
             |n| {
                 let node_1 = &n.get_node(1);
                 let current_view = node_1.get_current_view().unwrap();
-                let missed_views = node_1
-                    .consensus
-                    .state()
-                    .view_history
-                    .missed_views
-                    .lock()
-                    .unwrap();
+                let consensus = node_1.consensus.read();
+                let missed_views = &consensus.state().view_history.missed_views;
                 let missed_map = missed_views
                     .iter()
                     .filter(|&(view, _)| {
@@ -78,13 +73,8 @@ async fn jailed_node_must_not_propose_blocks(mut network: Network) {
             |n| {
                 let node_1 = &n.get_node(1);
                 if let Ok(Some(current_block)) = node_1.get_block(BlockId::latest()) {
-                    let missed_views = node_1
-                        .consensus
-                        .state()
-                        .view_history
-                        .missed_views
-                        .lock()
-                        .unwrap();
+                    let consensus = node_1.consensus.read();
+                    let missed_views = &consensus.state().view_history.missed_views;
                     let missed_map = missed_views
                         .iter()
                         .filter(|&(view, _)| {
@@ -150,13 +140,8 @@ async fn jailed_node_must_not_cause_timeouts(mut network: Network) {
             |n| {
                 let node_1 = &n.get_node(1);
                 let current_view = node_1.get_current_view().unwrap();
-                let missed_views = node_1
-                    .consensus
-                    .state()
-                    .view_history
-                    .missed_views
-                    .lock()
-                    .unwrap();
+                let consensus = node_1.consensus.read();
+                let missed_views = &consensus.state().view_history.missed_views;
                 let missed_map = missed_views
                     .iter()
                     .filter(|&(view, _)| {
@@ -220,13 +205,8 @@ async fn jailed_node_must_not_cause_timeouts(mut network: Network) {
             |n| {
                 let node_1 = &n.get_node(1);
                 if let Ok(Some(current_block)) = node_1.get_block(BlockId::latest()) {
-                    let missed_views = node_1
-                        .consensus
-                        .state()
-                        .view_history
-                        .missed_views
-                        .lock()
-                        .unwrap();
+                    let consensus = node_1.consensus.read();
+                    let missed_views = &consensus.state().view_history.missed_views;
                     let missed_map = missed_views
                         .iter()
                         .filter(|&(view, _)| {

@@ -103,6 +103,7 @@ start() {
     -p 3333:3333/udp \
     -p 4201:4201 \
     -p 4202:4202 \
+    --cap-add=SYS_PTRACE --cap-add=PERFMON --cap-add=BPF --cap-add=SYS_ADMIN \
     --net=host \
     --restart=unless-stopped \
     --name zilliqa-${ZQ_VERSION} \

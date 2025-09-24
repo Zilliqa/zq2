@@ -1,7 +1,7 @@
 use std::{
     collections::VecDeque,
     fmt::{self, Display, Formatter},
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
 use ethabi::{ParamType, Token, decode, encode, short_signature};
@@ -27,8 +27,8 @@ use crate::{
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ViewHistory {
-    pub missed_views: Arc<Mutex<VecDeque<(u64, NodePublicKey)>>>,
-    pub min_view: Arc<Mutex<u64>>,
+    pub missed_views: VecDeque<(u64, NodePublicKey)>,
+    pub min_view: u64,
 }
 
 impl Default for ViewHistory {
@@ -40,15 +40,15 @@ impl Default for ViewHistory {
 impl ViewHistory {
     pub fn new() -> Self {
         ViewHistory {
-            missed_views: Arc::new(Mutex::new(VecDeque::new())),
-            min_view: Arc::new(Mutex::new(0)),
+            missed_views: VecDeque::new(),
+            min_view: 0,
         }
     }
 
     pub fn new_at(&self, finalized_view: u64, max_missed_view_age: u64) -> ViewHistory {
         let min_view = finalized_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW + max_missed_view_age);
         let mut deque = VecDeque::new();
-        let source = self.missed_views.lock().unwrap();
+        let source = &self.missed_views;
         //TODO(#3080): use binary search to find the range to be copied
         for (view, leader) in source.iter() {
             if *view >= min_view && *view < finalized_view {
@@ -56,8 +56,8 @@ impl ViewHistory {
             }
         }
         ViewHistory {
-            missed_views: Arc::new(Mutex::new(deque)),
-            min_view: Arc::new(Mutex::new(min_view)),
+            missed_views: deque,
+            min_view,
         }
     }
 
@@ -65,7 +65,6 @@ impl ViewHistory {
         &mut self,
         new_missed_views: &[(u64, NodePublicKey)],
     ) -> anyhow::Result<bool> {
-        let mut deque = self.missed_views.lock().unwrap();
         // new_missed_views are in descending order
         for (view, leader) in new_missed_views.iter().rev() {
             info!(
@@ -73,7 +72,7 @@ impl ViewHistory {
                 id = &leader.as_bytes()[..3],
                 "++++++++++> adding missed"
             );
-            deque.push_back((*view, *leader));
+            self.missed_views.push_back((*view, *leader));
         }
         //TODO(#3080): replace the above loop with the line below once logging is not needed anymore
         //deque.extend(new_missed_views.iter().rev());
@@ -81,46 +80,31 @@ impl ViewHistory {
     }
 
     pub fn prune_history(&mut self, view: u64, max_missed_view_age: u64) -> anyhow::Result<bool> {
-        let mut deque = self.missed_views.lock().unwrap();
-        let len = deque.len();
-        let mut min_view = self.min_view.lock().unwrap();
-        // min_view must not be decreased
-        *min_view =
-            min_view.max(view.saturating_sub(LAG_BEHIND_CURRENT_VIEW + max_missed_view_age));
-        while let Some((view, leader)) = deque.front() {
-            if *view < *min_view {
+        // self.min_view must not be decreased
+        let len = self.missed_views.len();
+        self.min_view = self
+            .min_view
+            .max(view.saturating_sub(LAG_BEHIND_CURRENT_VIEW + max_missed_view_age));
+        while let Some((view, leader)) = self.missed_views.front() {
+            if *view < self.min_view {
                 info!(
                     view,
                     id = &leader.as_bytes()[..3],
                     "----------> deleting missed"
                 );
-                deque.pop_front();
+                self.missed_views.pop_front();
             } else {
                 break; // keys are monotonic
             }
         }
-        Ok(deque.len() < len)
+        Ok(self.missed_views.len() < len)
     }
 }
 
 impl Display for ViewHistory {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let deque = self.missed_views.lock().unwrap();
-        let front = deque.front();
-        let back = deque.back();
-        /*let history: Vec<(u64, String)> = deque
-        .iter()
-        .map(|(view, leader)| {
-            let mut id = [0u8; 3];
-            id.copy_from_slice(&leader.as_bytes()[..3]);
-            let hex_id = id
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect::<Vec<_>>()
-                .join(" ");
-            (*view, format!("[{}]", hex_id))
-        })
-        .collect();*/
+        let front = self.missed_views.front();
+        let back = self.missed_views.back();
         let first = match front {
             Some((view, leader)) => {
                 let mut id = [0u8; 3];
@@ -147,13 +131,11 @@ impl Display for ViewHistory {
             }
             None => None,
         };
-        let min_view = *self.min_view.lock().unwrap();
-        //write!(f, "min: {} missed: {} {:?}", min_view, history.len(), history)
         write!(
             f,
             "min: {} missed: {} {:?}..{:?}",
-            min_view,
-            deque.len(),
+            self.min_view,
+            self.missed_views.len(),
             first.unwrap_or((0, "n/a".to_string())),
             last.unwrap_or((0, "n/a".to_string()))
         )
@@ -205,7 +187,7 @@ pub fn dispatch<I: ScillaInspector>(
             PrecompileError::Other("Required missed view history not finalized".into()).into(),
         );
     }
-    let min_view = *external_context.view_history.min_view.lock().unwrap();
+    let min_view = external_context.view_history.min_view;
     // fail if the missed view history does not reach back far enough in the past or
     // the queried view is too far in the future based on the currently finalized view
     if min_view > 1
@@ -220,7 +202,7 @@ pub fn dispatch<I: ScillaInspector>(
         );
         return Err(PrecompileError::Other("Missed view history not available".into()).into());
     }
-    let deque = external_context.view_history.missed_views.lock().unwrap();
+    let deque = &external_context.view_history.missed_views;
     // binary search to find the relevant missed views in O(log(n))
     let (first_slice, second_slice) = deque.as_slices();
     let search_slice = |slice: &[(u64, NodePublicKey)], target: u64| {
