@@ -26,9 +26,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "24"
       - run: npm install --save-dev prettier prettier-plugin-solidity solhint@5.0.4
@@ -50,7 +50,7 @@ jobs:
       - run: rustup show active-toolchain
       - name: Install dependencies
         run: sudo add-apt-repository ppa:ethereum/ethereum && sudo apt update && sudo apt install -y solc build-essential pkg-config libssl-dev cmake protobuf-compiler libclang-dev
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
           fetch-depth: 0
@@ -82,7 +82,7 @@ jobs:
           - /tmp/scilla-state-server:/tmp/scilla-state-server
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
       - name: Fix mounted directory permissions

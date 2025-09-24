@@ -62,9 +62,15 @@ On the Ubuntu 20.04LTS run:
 ```bash
 chmod +x /path/to/zq2/start_node.sh
 
-/path/to/zq2/start_node.sh  -k $PRIVATE_KEY -p <checkpoint_file.dat>
+/path/to/zq2/start_node.sh  -k $PRIVATE_KEY -p <checkpoint_file.ckpt> # Use .dat for versions prior to v0.19.0
 ```
-> **Note:** `-p <checkpoint_file.dat>` is optional and should only be used when the node is syncing from a checkpoint.
+> **Note:** `-p <checkpoint_file.ckpt>` is optional and should only be used when the node is syncing from a checkpoint.
+
+> **Checkpoint compatibility**: Starting from version `v0.19.0`, checkpoint files use the `.ckpt` extension and a new ZIP64-based format.
+> -	**Prior to v0.19.0**: `.dat` format (not compatible with .ckpt).
+> -	**v0.19.0 and later**: `.ckpt` format (not compatible with .dat).
+> 
+> For more details, see the [checkpoint documentation](../../docs/checkpoints.md).
 
 # How-to use a custom docker image
 
