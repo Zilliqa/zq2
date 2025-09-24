@@ -32,7 +32,7 @@ anyhow = "1.0.100"
 arc-swap = "1.7.1"
 base64 = "0.22.1"
 bitvec = "1.0.1"
-clap = { version = "4.5.47", features = ["derive"] }
+clap = { version = "4.5.48", features = ["derive"] }
 clap-verbosity-flag = "3.0.4"
 cliclack = "0.3.6"
 colored = "3.0.0"
