@@ -32,6 +32,19 @@ use crate::{
     trie_storage::TrieStorage,
 };
 
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct StorageProof {
+    pub key: B256,
+    pub value: Vec<u8>,
+    pub proof: Vec<Vec<u8>>,
+}
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct Proof {
+    pub account: Account,
+    pub account_proof: Vec<Vec<u8>>,
+    pub storage_proofs: Vec<StorageProof>,
+}
+
 #[derive(Clone, Debug)]
 /// The state of the blockchain, consisting of:
 /// -  state - a database of Map<Address, Map<key,value>>
@@ -449,6 +462,43 @@ impl State {
             &Self::account_key(address).0,
             &bincode::serde::encode_to_vec(&account, bincode::config::legacy())?,
         )?)
+    }
+
+    pub fn get_proof(&mut self, address: Address, storage_keys: &[B256]) -> Result<Proof> {
+        if !self.has_account(address)? {
+            return Ok(Proof::default());
+        };
+
+        // get_proof() requires &mut so clone state and don't mutate the origin
+        let account = self.get_account(address)?;
+
+        let account_proof = self
+            .accounts
+            .lock()
+            .unwrap()
+            .get_proof(Self::account_key(address).as_slice())?;
+
+        let mut storage_trie = self.get_account_trie(address)?;
+        storage_trie.root_hash()?;
+
+        let storage_proofs = {
+            let mut storage_proofs = Vec::new();
+            for key in storage_keys {
+                let key = Self::account_storage_key(address, *key);
+                let Some(value) = storage_trie.get(key.as_slice())? else {
+                    continue;
+                };
+                let proof = storage_trie.get_proof(key.as_slice())?;
+                storage_proofs.push(StorageProof { proof, key, value });
+            }
+            storage_proofs
+        };
+
+        Ok(Proof {
+            account,
+            account_proof,
+            storage_proofs,
+        })
     }
 
     pub fn get_canonical_block_by_number(&self, number: u64) -> Result<Option<Block>> {
