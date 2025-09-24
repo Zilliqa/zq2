@@ -830,8 +830,9 @@ impl ChainNode {
                 let checkpoint_file = checkpoint_url.rsplit('/').next().unwrap_or("");
                 ctx.insert("checkpoint_file", &format!("/{checkpoint_file}"));
 
-                let checkpoint_hex_block =
-                    crate::utils::string_decimal_to_hex(&checkpoint_file.replace(".dat", ""))?;
+                let checkpoint_hex_block = crate::utils::string_decimal_to_hex(
+                    &checkpoint_file.replace(".dat", "").replace(".ckpt", ""),
+                )?;
 
                 let json_response = self.chain.run_rpc_call(
                     "eth_getBlockByNumber",
