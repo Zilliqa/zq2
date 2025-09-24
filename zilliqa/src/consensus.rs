@@ -2312,27 +2312,41 @@ impl Consensus {
     }
 
     fn check_safe_block(&mut self, proposal: &Block) -> Result<bool> {
-        let Some(qc_block) = self.get_block(&proposal.parent_hash())? else {
-            trace!("could not get qc for block: {}", proposal.parent_hash());
-            return Ok(false);
-        };
         match proposal.agg {
-            // we check elsewhere that qc is the highest among the qcs in the agg
-            Some(_) => match self.block_extends_from(proposal, &qc_block) {
-                Ok(true) => {
-                    self.check_and_commit(proposal)?;
-                    Ok(true)
+            Some(ref agg_qc) => {
+                let Some(highest_qc) = agg_qc.qcs.iter().max_by_key(|qc| qc.view) else {
+                    return Ok(false);
+                };
+                let Some(qc_block) = self.get_block(&highest_qc.block_hash)? else {
+                    trace!(
+                        "could not get block the qc points to: {}",
+                        highest_qc.block_hash
+                    );
+                    return Ok(false);
+                };
+                match self.block_extends_from(proposal, &qc_block) {
+                    Ok(true) => {
+                        self.check_and_commit(proposal)?;
+                        Ok(true)
+                    }
+                    Ok(false) => {
+                        trace!("block does not extend from parent");
+                        Ok(false)
+                    }
+                    Err(e) => {
+                        trace!(?e, "error checking block extension");
+                        Ok(false)
+                    }
                 }
-                Ok(false) => {
-                    trace!("block does not extend from parent");
-                    Ok(false)
-                }
-                Err(e) => {
-                    trace!(?e, "error checking block extension");
-                    Ok(false)
-                }
-            },
+            }
             None => {
+                let Some(qc_block) = self.get_block(&proposal.parent_hash())? else {
+                    trace!(
+                        "could not get block the qc points to: {}",
+                        proposal.parent_hash()
+                    );
+                    return Ok(false);
+                };
                 if proposal.view() == 0 || proposal.view() == qc_block.view() + 1 {
                     self.check_and_commit(proposal)?;
                     Ok(true)
