@@ -7,7 +7,6 @@ use alloy::{
 };
 use anyhow::{Result, anyhow};
 use jsonrpsee::{RpcModule, types::Params};
-use parking_lot::RwLock;
 use revm_inspectors::tracing::{TracingInspector, TracingInspectorConfig};
 use serde::Deserialize;
 
@@ -18,10 +17,7 @@ use crate::{
     node::Node,
 };
 
-pub fn rpc_module(
-    node: Arc<RwLock<Node>>,
-    enabled_apis: &[EnabledApi],
-) -> RpcModule<Arc<RwLock<Node>>> {
+pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc<Node>> {
     super::declare_module!(
         node,
         enabled_apis,
@@ -42,7 +38,7 @@ pub fn rpc_module(
 }
 
 /// trace_block
-fn trace_block(params: Params, node: &Arc<RwLock<Node>>) -> Result<Vec<TraceResults>> {
+fn trace_block(params: Params, node: &Arc<Node>) -> Result<Vec<TraceResults>> {
     let mut params = params.sequence();
     let block_number: BlockNumberOrTag = params.next()?;
 
@@ -50,8 +46,6 @@ fn trace_block(params: Params, node: &Arc<RwLock<Node>>) -> Result<Vec<TraceResu
     let trace_types = [TraceType::Trace, TraceType::StateDiff]
         .into_iter()
         .collect();
-
-    let node = node.read();
 
     // Get the block
     let block = node
@@ -66,6 +60,7 @@ fn trace_block(params: Params, node: &Arc<RwLock<Node>>) -> Result<Vec<TraceResu
     // Start from parent block's state
     let mut state = node
         .consensus
+        .read()
         .state()
         .at_root(parent.state_root_hash().into());
 
@@ -99,19 +94,19 @@ fn trace_block(params: Params, node: &Arc<RwLock<Node>>) -> Result<Vec<TraceResu
 }
 
 /// trace_call
-fn trace_call(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
+fn trace_call(_params: Params, _node: &Arc<Node>) -> Result<()> {
     // TODO: disable_eip3607 for this call.
     Err(anyhow!("API method trace_call is not implemented yet"))
 }
 
 /// trace_callMany
-fn trace_call_many(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
+fn trace_call_many(_params: Params, _node: &Arc<Node>) -> Result<()> {
     // TODO: disable_eip3607 for this call.
     Err(anyhow!("API method trace_callMany is not implemented yet"))
 }
 
 /// trace_filter
-fn trace_filter(params: Params, node: &Arc<RwLock<Node>>) -> Result<Vec<TraceResults>> {
+fn trace_filter(params: Params, node: &Arc<Node>) -> Result<Vec<TraceResults>> {
     #[derive(Debug, Deserialize)]
     struct TraceFilter {
         from_block: Option<BlockNumberOrTag>,
@@ -124,8 +119,6 @@ fn trace_filter(params: Params, node: &Arc<RwLock<Node>>) -> Result<Vec<TraceRes
 
     let mut params = params.sequence();
     let filter: TraceFilter = params.next()?;
-
-    let node = node.read();
 
     // Default to latest block if not specified
     let from_block = filter.from_block.unwrap_or(BlockNumberOrTag::Earliest);
@@ -172,6 +165,7 @@ fn trace_filter(params: Params, node: &Arc<RwLock<Node>>) -> Result<Vec<TraceRes
 
         let mut state = node
             .consensus
+            .read()
             .state()
             .at_root(parent.state_root_hash().into());
 
@@ -235,33 +229,33 @@ fn trace_filter(params: Params, node: &Arc<RwLock<Node>>) -> Result<Vec<TraceRes
 }
 
 /// trace_rawTransaction
-fn trace_raw_transaction(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
+fn trace_raw_transaction(_params: Params, _node: &Arc<Node>) -> Result<()> {
     Err(anyhow!(
         "API method trace_rawTransaction is not implemented yet"
     ))
 }
 
 /// trace_replayBlockTransactions
-fn trace_replay_block_transactions(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
+fn trace_replay_block_transactions(_params: Params, _node: &Arc<Node>) -> Result<()> {
     Err(anyhow!(
         "API method trace_replayBlockTransactions is not implemented yet"
     ))
 }
 
 /// trace_replayTransaction
-fn trace_replay_transaction(params: Params, node: &Arc<RwLock<Node>>) -> Result<TraceResults> {
+fn trace_replay_transaction(params: Params, node: &Arc<Node>) -> Result<TraceResults> {
     let mut params = params.sequence();
     let txn_hash: B256 = params.next()?;
     let txn_hash: Hash = txn_hash.into();
     let trace_types = params.next()?;
 
-    let trace = node.read().trace_evm_transaction(txn_hash, &trace_types)?;
+    let trace = Node::trace_evm_transaction(node, txn_hash, &trace_types)?;
 
     Ok(trace)
 }
 
 /// trace_transaction
-fn trace_transaction(params: Params, node: &Arc<RwLock<Node>>) -> Result<TraceResults> {
+fn trace_transaction(params: Params, node: &Arc<Node>) -> Result<TraceResults> {
     let mut params = params.sequence();
     let txn_hash: B256 = params.next()?;
     let txn_hash: Hash = txn_hash.into();
@@ -271,7 +265,7 @@ fn trace_transaction(params: Params, node: &Arc<RwLock<Node>>) -> Result<TraceRe
         .into_iter()
         .collect();
 
-    let trace = node.read().trace_evm_transaction(txn_hash, &trace_types)?;
+    let trace = Node::trace_evm_transaction(node, txn_hash, &trace_types)?;
 
     Ok(trace)
 }

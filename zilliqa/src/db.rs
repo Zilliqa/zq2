@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap, HashSet},
     fmt::Debug,
     fs::{self, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
@@ -35,6 +35,8 @@ use crate::{
     transaction::{EvmGas, Log, SignedTransaction, TransactionReceipt, VerifiedTransaction},
     trie_storage::TrieStorage,
 };
+
+const MAX_KEYS_IN_SINGLE_QUERY: usize = 32765;
 
 macro_rules! sqlify_with_bincode {
     ($type: ty) => {
@@ -157,7 +159,7 @@ impl FromSql for AddressSqlable {
 }
 
 impl ToSql for Hash {
-    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
         Ok(ToSqlOutput::from(self.0.to_vec()))
     }
 }
@@ -198,6 +200,12 @@ impl From<Hash> for BlockFilter {
 impl From<&Hash> for BlockFilter {
     fn from(hash: &Hash) -> Self {
         BlockFilter::Hash(*hash)
+    }
+}
+
+impl From<u64> for BlockFilter {
+    fn from(height: u64) -> Self {
+        BlockFilter::Height(height)
     }
 }
 
@@ -302,7 +310,7 @@ impl Db {
         let builder = Pool::builder()
             .min_idle(Some(1))
             .max_size(2 * num_workers as u32); // more than enough connections
-        tracing::debug!("SQLite {builder:?}");
+        debug!("SQLite {builder:?}");
 
         let pool = builder.build(manager)?;
         let connection = pool.get()?;
@@ -312,7 +320,7 @@ impl Db {
         let rdb_path = if let Some(s) = path.clone() {
             s.join("state.rocksdb")
         } else {
-            tempfile::tempdir().unwrap().path().join("state.rocksdb")
+            tempfile::tempdir()?.path().join("state.rocksdb")
         };
 
         let cache = Cache::new_lru_cache(state_cache_size); // same as SQLite in-memory page cache
@@ -571,7 +579,7 @@ impl Db {
             rusqlite::config::DbConfig::SQLITE_DBCONFIG_ENABLE_QPSG,
             true,
         )? {
-            tracing::warn!("*** QPSG disabled - queries may be slow ***");
+            warn!("*** QPSG disabled - queries may be slow ***");
         }
         // Add tracing - logs SQL statements
         connection.trace_v2(
@@ -579,9 +587,10 @@ impl Db {
             Some(|profile_event| {
                 if let rusqlite::trace::TraceEvent::Profile(statement, duration) = profile_event {
                     let statement_txt = statement.expanded_sql();
-                    let duration_secs = duration.as_secs();
-                    if duration_secs > 5 {
-                        tracing::warn!(duration_secs, statement_txt, "sql execution took > 5s");
+                    let query_duration = duration.as_millis();
+                    const DURATION_TIME_THRESHOLD_MS: u128 = 1000;
+                    if query_duration > DURATION_TIME_THRESHOLD_MS {
+                        warn!(statement_txt, "sql execution took > {}", query_duration);
                     }
                 }
             }),
@@ -861,12 +870,98 @@ impl Db {
     }
 
     pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
-        // TODO: this is only ever used in one API, so keep an eye on performance - in case e.g.
-        // the index table might need to be denormalised to simplify this lookup
-        Ok(self.pool.get()?
-            .prepare_cached("SELECT tx_hash FROM touched_address_index JOIN receipts USING (tx_hash) JOIN blocks USING (block_hash) WHERE address = ?1 ORDER BY blocks.height, receipts.tx_index")?
+        let conn = self.pool.get()?;
+
+        // 1) tx hashes that touched the address
+        let tx_hashes: Vec<Hash> = conn
+            .prepare_cached("SELECT tx_hash FROM touched_address_index WHERE address = ?1")?
             .query_map([AddressSqlable(address)], |row| row.get(0))?
-            .collect::<Result<Vec<_>, _>>()?)
+            .collect::<Result<Vec<_>, _>>()?;
+
+        if tx_hashes.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // 2) receipts for those tx hashes (tx_hash -> (block_hash, tx_index))
+        let mut tx_meta: HashMap<Hash, (Hash, u64)> = HashMap::with_capacity(tx_hashes.len());
+        let mut block_hashes: HashSet<Hash> = HashSet::new();
+
+        {
+            for chunk in tx_hashes.chunks(MAX_KEYS_IN_SINGLE_QUERY) {
+                let placeholders = std::iter::repeat_n("?", chunk.len())
+                    .collect::<Vec<_>>()
+                    .join(",");
+
+                let sql = format!(
+                    r#"
+                    SELECT tx_hash, block_hash, tx_index
+                        FROM receipts
+                        WHERE tx_hash IN ({placeholders})
+                    "#
+                );
+
+                // dynamic SQL -> use prepare (not prepare_cached)
+                let mut stmt = conn.prepare(&sql)?;
+                let rows = stmt.query_map(rusqlite::params_from_iter(chunk.iter()), |row| {
+                    let tx_hash: Hash = row.get(0)?;
+                    let block_hash: Hash = row.get(1)?;
+                    let idx: u64 = row.get(2)?;
+                    Ok((tx_hash, block_hash, idx))
+                })?;
+
+                for row in rows {
+                    let (tx_hash, block_hash, idx) = row?;
+                    tx_meta.insert(tx_hash, (block_hash, idx));
+                    block_hashes.insert(block_hash);
+                }
+            }
+        }
+
+        let mut block_height: HashMap<Hash, u64> = HashMap::with_capacity(block_hashes.len());
+        {
+            let block_hashes_vec = block_hashes.into_iter().collect::<Vec<_>>();
+            for chunk in block_hashes_vec.chunks(MAX_KEYS_IN_SINGLE_QUERY) {
+                let placeholders = std::iter::repeat_n("?", chunk.len())
+                    .collect::<Vec<_>>()
+                    .join(",");
+
+                let sql = format!(
+                    r#"
+                    SELECT block_hash, height
+                        FROM blocks
+                        WHERE block_hash IN ({placeholders})
+                    "#
+                );
+
+                let mut stmt = conn.prepare(&sql)?;
+                let rows = stmt.query_map(rusqlite::params_from_iter(chunk.iter()), |row| {
+                    let block_hash: Hash = row.get(0)?;
+                    let height: u64 = row.get(1)?;
+                    Ok((block_hash, height))
+                })?;
+
+                for row in rows {
+                    let (block_hash, height) = row?;
+                    block_height.insert(block_hash, height);
+                }
+            }
+        }
+
+        // 4) sort tx hashes by (block_height, tx_index)
+        let mut out: Vec<Hash> = tx_hashes
+            .into_iter()
+            .filter(|tx| tx_meta.contains_key(tx))
+            .collect();
+
+        out.sort_unstable_by(|a, b| {
+            let (bha, ia) = tx_meta.get(a).expect("Missing transaction hash!");
+            let (bhb, ib) = tx_meta.get(b).expect("Missing transaction hash!");
+            let ha = *block_height.get(bha).unwrap_or(&u64::MAX);
+            let hb = *block_height.get(bhb).unwrap_or(&u64::MAX);
+            (ha, ia).cmp(&(hb, ib))
+        });
+
+        Ok(out)
     }
 
     pub fn get_transaction(&self, txn_hash: &Hash) -> Result<Option<VerifiedTransaction>> {
@@ -883,6 +978,38 @@ impl Db {
                 None => None,
             },
         )
+    }
+
+    pub fn get_transactions(&self, txn_hashes: &[Hash]) -> Result<Vec<VerifiedTransaction>> {
+        let mut transactions = Vec::with_capacity(txn_hashes.len());
+        let conn = self.pool.get()?;
+
+        for chunk in txn_hashes.chunks(MAX_KEYS_IN_SINGLE_QUERY) {
+            let placeholders = std::iter::repeat_n("?", chunk.len())
+                .collect::<Vec<_>>()
+                .join(",");
+
+            let sql = format!(
+                r#"
+                SELECT data, tx_hash
+                    FROM transactions
+                    WHERE tx_hash IN ({placeholders})
+                "#
+            );
+
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(rusqlite::params_from_iter(chunk.iter()), |row| {
+                let txn: SignedTransaction = row.get(0)?;
+                let h: Hash = row.get(1)?;
+                Ok((h, txn))
+            })?;
+
+            for row in rows {
+                let (hash, signed_tx) = row?;
+                transactions.push(signed_tx.verify_bypass(hash)?);
+            }
+        }
+        Ok(transactions)
     }
 
     pub fn contains_transaction(&self, hash: &Hash) -> Result<bool> {
@@ -1045,6 +1172,48 @@ impl Db {
         Ok(rows)
     }
 
+    pub fn get_blocks_by_height_range(&self, range: RangeInclusive<u64>) -> Result<Vec<Block>> {
+        let (from, to) = (*range.start(), *range.end());
+        if from > to {
+            return Ok(Vec::new());
+        }
+
+        let conn = self.pool.get()?;
+        let mut stmt = conn.prepare_cached(
+            "SELECT
+                block_hash, view, height, qc, signature,
+                state_root_hash, transactions_root_hash, receipts_root_hash,
+                timestamp, gas_used, gas_limit, agg
+             FROM blocks
+             WHERE height BETWEEN ?1 AND ?2
+             ORDER BY height ASC",
+        )?;
+
+        let rows = stmt
+            .query_map([from, to], |row| {
+                Ok(Block {
+                    header: BlockHeader {
+                        hash: row.get(0)?,
+                        view: row.get(1)?,
+                        number: row.get(2)?,
+                        qc: row.get(3)?,
+                        signature: row.get(4)?,
+                        state_root_hash: row.get(5)?,
+                        transactions_root_hash: row.get(6)?,
+                        receipts_root_hash: row.get(7)?,
+                        timestamp: row.get::<_, SystemTimeSqlable>(8)?.into(),
+                        gas_used: row.get(9)?,
+                        gas_limit: row.get(10)?,
+                    },
+                    agg: row.get(11)?,
+                    transactions: vec![],
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(rows)
+    }
+
     pub fn get_transactionless_block(&self, filter: BlockFilter) -> Result<Option<Block>> {
         fn make_block(row: &Row) -> rusqlite::Result<Block> {
             Ok(Block {
@@ -1176,25 +1345,46 @@ impl Db {
             block.header.state_root_hash = Hash::ZERO;
         }
 
-        let receipts = self.pool.get()?.prepare_cached("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1 ORDER BY tx_index ASC")?.query_map([block.header.hash], Self::make_receipt)?.collect::<Result<Vec<_>, _>>()?;
+        let receipts = self.get_transaction_receipts_in_block(&block.header.hash)?;
 
-        let transactions: Vec<VerifiedTransaction> = self.pool.get()?
-            .prepare_cached(
-                "SELECT data, transactions.tx_hash FROM transactions INNER JOIN receipts ON transactions.tx_hash = receipts.tx_hash WHERE receipts.block_hash = ?1 ORDER BY receipts.tx_index ASC",
-            )?
-            .query_map([block.header.hash], |row| {
+        let receipt_hashes = receipts.iter().map(|r| r.tx_hash).collect::<Vec<Hash>>();
+
+        let mut tx_by_hash: HashMap<Hash, SignedTransaction> =
+            HashMap::with_capacity(receipt_hashes.len());
+
+        let placeholders = std::iter::repeat_n("?", receipt_hashes.len())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let hashes = self
+            .pool
+            .get()?
+            .prepare(&format!(
+                r#"SELECT data, tx_hash FROM transactions WHERE tx_hash IN ({placeholders})"#
+            ))?
+            .query_map(rusqlite::params_from_iter(receipt_hashes.iter()), |row| {
                 let txn: SignedTransaction = row.get(0)?;
                 let hash: Hash = row.get(1)?;
                 Ok((txn, hash))
             })?
             .map(|x| {
                 let (txn, hash) = x.unwrap();
-                txn.verify_bypass(hash)
+                tx_by_hash.insert(hash, txn.clone());
+                hash
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Vec<_>>();
 
-        let transaction_hashes = receipts.iter().map(|x| x.tx_hash).collect();
-        block.transactions = transaction_hashes;
+        let transactions: Vec<VerifiedTransaction> = receipts
+            .iter()
+            .map(|r| {
+                let txn = tx_by_hash.remove(&r.tx_hash).ok_or_else(|| {
+                    anyhow::anyhow!("missing transaction for receipt hash {:?}", r.tx_hash)
+                })?;
+                txn.verify_bypass(r.tx_hash)
+            })
+            .collect::<Result<_, _>>()?;
+
+        block.transactions = hashes;
 
         assert_eq!(receipts.len(), transactions.len());
 
@@ -1280,6 +1470,59 @@ impl Db {
         Ok(self.pool.get()?.prepare_cached("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1 ORDER BY tx_index")?.query_map([block_hash], Self::make_receipt)?.collect::<Result<Vec<_>, _>>()?)
     }
 
+    pub fn get_transaction_receipts_in_blocks(
+        &self,
+        mut blocks: Vec<Block>,
+    ) -> Result<Vec<(Block, Vec<TransactionReceipt>)>> {
+        if blocks.is_empty() {
+            return Ok(Vec::new());
+        }
+        let hashes = blocks.iter().map(|b| b.header.hash).collect::<Vec<Hash>>();
+
+        let mut by_hash: HashMap<Hash, Vec<TransactionReceipt>> =
+            HashMap::with_capacity(hashes.len());
+
+        let conn = self.pool.get()?;
+        for chunk in hashes.chunks(MAX_KEYS_IN_SINGLE_QUERY) {
+            let placeholders = std::iter::repeat_n("?", chunk.len())
+                .collect::<Vec<_>>()
+                .join(",");
+
+            let sql = format!(
+                r#"
+                SELECT
+                tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used,
+                contract_address, logs, transitions, accepted, errors, exceptions
+                FROM receipts
+                WHERE block_hash IN ({placeholders})
+            "#
+            );
+
+            // dynamic placeholders -> prepare(), not prepare_cached()
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(rusqlite::params_from_iter(chunk.iter()), |row| {
+                Self::make_receipt(row)
+            })?;
+
+            for row in rows {
+                let r = row?;
+                by_hash.entry(r.block_hash).or_default().push(r);
+            }
+        }
+
+        // Sort the input blocks by height
+        blocks.sort_by_key(|b| b.header.number);
+
+        // Assemble output in height order
+        let mut blocks_with_hashes = Vec::with_capacity(blocks.len());
+        for block in blocks {
+            let mut receipts = by_hash.remove(&block.header.hash).unwrap_or_default();
+            receipts.sort_unstable_by_key(|r| r.index);
+            blocks_with_hashes.push((block, receipts));
+        }
+        Ok(blocks_with_hashes)
+    }
+
     pub fn get_total_transaction_count(&self) -> Result<usize> {
         Ok(0)
     }
@@ -1343,14 +1586,7 @@ mod tests {
     fn query_planner_stability_guarantee() {
         let base_path = tempdir().unwrap();
         let base_path = base_path.path();
-        let db = Db::new(
-            Some(base_path),
-            0,
-            1024,
-            None,
-            crate::cfg::DbConfig::default(),
-        )
-        .unwrap();
+        let db = Db::new(Some(base_path), 0, 1024, None, DbConfig::default()).unwrap();
 
         let sql = db.pool.get().unwrap();
 
@@ -1414,14 +1650,7 @@ mod tests {
     fn checkpoint_export_import() {
         let base_path = tempdir().unwrap();
         let base_path = base_path.path();
-        let db = Db::new(
-            Some(base_path),
-            0,
-            1024,
-            None,
-            crate::cfg::DbConfig::default(),
-        )
-        .unwrap();
+        let db = Db::new(Some(base_path), 0, 1024, None, DbConfig::default()).unwrap();
 
         // Seed db with data
         let mut rng = ChaCha8Rng::seed_from_u64(0);
@@ -1504,10 +1733,10 @@ mod tests {
         assert_eq!(checkpoint_block, block);
         assert_eq!(checkpoint_transactions, transactions);
         assert_eq!(checkpoint_parent, parent);
-        if let Some((view, _)) = view_history.missed_views.lock().unwrap().front() {
-            assert!(*view >= *view_history.min_view.lock().unwrap());
+        if let Some((view, _)) = view_history.missed_views.front() {
+            assert!(*view >= view_history.min_view);
         } else {
-            assert_eq!(0, *view_history.min_view.lock().unwrap());
+            assert_eq!(0, view_history.min_view);
         }
 
         // load the checkpoint again, to ensure idempotency
@@ -1522,10 +1751,10 @@ mod tests {
         assert_eq!(checkpoint_block, block);
         assert_eq!(checkpoint_transactions, transactions);
         assert_eq!(checkpoint_parent, parent);
-        if let Some((view, _)) = view_history.missed_views.lock().unwrap().front() {
-            assert!(*view >= *view_history.min_view.lock().unwrap());
+        if let Some((view, _)) = view_history.missed_views.front() {
+            assert!(*view >= view_history.min_view);
         } else {
-            assert_eq!(0, *view_history.min_view.lock().unwrap());
+            assert_eq!(0, view_history.min_view);
         }
 
         // Always return Some, even if checkpointed block already executed
