@@ -2319,7 +2319,9 @@ impl Consensus {
     fn check_safe_block(&mut self, proposal: &Block) -> Result<bool> {
         match proposal.agg {
             Some(ref agg_qc) => {
-                let highest_qc = agg_qc.qcs.iter().max_by_key(|qc| qc.view).unwrap();
+                let Some(highest_qc) = agg_qc.qcs.iter().max_by_key(|qc| qc.view) else {
+                    return Ok(false);
+                };
                 let Some(qc_block) = self.get_block(&highest_qc.block_hash)? else {
                     trace!(
                         "could not get block the qc points to: {}",
