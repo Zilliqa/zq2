@@ -425,11 +425,15 @@ impl Db {
     }
 
     pub fn accounts(&self) -> impl Iterator<Item = (Address, ProtoAccountBase)> + '_ {
-        self.state.iter().flatten().map(|(k, v)| {
-            (
+        self.state.iter().filter_map(|kv| match kv {
+            Ok((k, v)) => Some((
                 Address::from_slice(&hex::decode(String::from_utf8(k).unwrap()).unwrap()),
                 ProtoAccountBase::decode(v.as_slice()).unwrap(),
-            )
+            )),
+            Err(e) => {
+                tracing::warn!("Trie error {e:?}");
+                None
+            }
         })
     }
 
