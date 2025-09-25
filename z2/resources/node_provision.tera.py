@@ -160,6 +160,7 @@ def go(role):
             stop_zq2()
             install_zilliqa()
             download_persistence()
+            download_checkpoint()
             start_zq2()
         case "bootstrap" | "validator":
             log("Configuring a validator node")
@@ -226,7 +227,7 @@ def download_checkpoint():
         run_or_die(["rm", "-rf", f"{PERSISTENCE_DIR}"])
         os.makedirs(PERSISTENCE_DIR, exist_ok=True)
         CHECKPOINT_FILENAME = os.path.basename(urlparse(CHECKPOINT_URL).path)
-        run_or_die(["gsutil", "-m", "cp", f"{CHECKPOINT_URL}", f"/tmp/{CHECKPOINT_FILENAME}"])
+        run_or_die(["sudo", "gsutil", "-m", "cp", f"{CHECKPOINT_URL}", f"/tmp/{CHECKPOINT_FILENAME}"])
 
 def start_zq2():
     run_or_die(["sudo", "systemctl", "start", "zilliqa"])
