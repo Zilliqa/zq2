@@ -1,28 +1,27 @@
 use std::{
     collections::VecDeque,
     fmt::{self, Display, Formatter},
-    sync::Arc,
 };
 
-use ethabi::{ParamType, Token, decode, encode, short_signature};
-use revm::{
-    FrameOrResult, InnerEvmContext,
-    handler::register::EvmHandler,
-    interpreter::{CallInputs, Gas, InstructionResult, InterpreterResult},
-    precompile::PrecompileError,
-    primitives::{
-        Address, Bytes, EVMError, PrecompileErrors, PrecompileOutput, PrecompileResult,
-        alloy_primitives::private::alloy_rlp::Encodable,
-    },
-};
+//use ethabi::{ParamType, Token, decode, encode, short_signature};
+// use revm::{
+//     FrameOrResult, InnerEvmContext,
+//     handler::register::EvmHandler,
+//     interpreter::{CallInputs, Gas, InstructionResult, InterpreterResult},
+//     precompile::PrecompileError,
+//     primitives::{
+//         Address, Bytes, EVMError, PrecompileErrors, PrecompileOutput, PrecompileResult,
+//         alloy_primitives::private::alloy_rlp::Encodable,
+//     },
+// };
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use crate::{
-    constants::{LAG_BEHIND_CURRENT_VIEW, MISSED_VIEW_THRESHOLD, MISSED_VIEW_WINDOW},
+    constants::LAG_BEHIND_CURRENT_VIEW, //, MISSED_VIEW_THRESHOLD, MISSED_VIEW_WINDOW},
     crypto::NodePublicKey,
-    exec::{ExternalContext, PendingState},
-    inspector::ScillaInspector,
+    //exec::{ExternalContext, PendingState},
+    //    inspector::ScillaInspector,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -142,7 +141,7 @@ impl Display for ViewHistory {
     }
 }
 
-pub fn dispatch<I: ScillaInspector>(
+/*pub fn dispatch<I: ScillaInspector>(
     input: &CallInputs,
     _gas_limit: u64,
     _context: &mut InnerEvmContext<PendingState>,
@@ -294,3 +293,4 @@ pub fn penalty_handle_register<I: ScillaInspector>(
         ))
     });
 }
+*/

@@ -208,7 +208,7 @@ fn get_indices(
     }
 }
 
-pub(crate) struct ScillaRead;
+pub struct ScillaRead;
 
 #[track_caller]
 fn oog<T>() -> Result<T, String> {
@@ -393,7 +393,7 @@ impl ContextPrecompile for ScillaRead {
     }
 }
 
-pub(crate) struct ScillaCall;
+pub struct ScillaCall;
 
 impl ContextPrecompile for ScillaCall {
     fn call(

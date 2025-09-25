@@ -338,7 +338,7 @@ pub fn load_ckpt_state(
             let root_hash = account_trie.root_hash()?;
             let account_root = Account::try_from(account_val.as_slice())?.storage_root;
             ensure!(
-                root_hash == account_root,
+                *root_hash == *account_root,
                 "Account storage root {root_hash} mismatch",
             );
 

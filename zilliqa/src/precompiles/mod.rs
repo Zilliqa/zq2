@@ -6,7 +6,7 @@ mod scilla;
 use alloy::primitives::Address;
 use bls_verify::BlsVerify;
 //use penalty::Penalty;
-pub use penalty::{ViewHistory, penalty_handle_register};
+pub use penalty::ViewHistory;
 use pop_verify::PopVerify;
 use revm::{
     context_interface::{Cfg, ContextTr},
@@ -26,6 +26,12 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct ZQ2PrecompileProvider {
     inner: EthPrecompiles,
+}
+
+impl Default for ZQ2PrecompileProvider {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ZQ2PrecompileProvider {

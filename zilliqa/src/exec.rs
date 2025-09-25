@@ -7,7 +7,7 @@ use std::{
     fs, mem,
     num::NonZeroU128,
     path::Path,
-    sync::{Arc, MutexGuard},
+    sync::MutexGuard,
 };
 
 use alloy::primitives::{Address, Bytes, U256, address, hex};
@@ -41,6 +41,7 @@ use crate::{
     evm::{SPEC_ID, ZQ2Evm, ZQ2EvmContext, new_zq2_evm_ctx},
     inspector::{self, ScillaInspector, TouchedAddressInspector},
     message::{Block, BlockHeader},
+    precompiles::ViewHistory,
     scilla::{self, ParamValue, Scilla, split_storage_key, storage_key},
     state::{Account, Code, ContractInit, ExternalLibrary, State, contract_addr},
     time::SystemTime,
