@@ -38,7 +38,7 @@ use crate::{
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey, verify_messages},
     db::{self, BlockFilter, Db},
     exec::{PendingState, TransactionApplyResult},
-    inspector::{self, ScillaInspector, TouchedAddressInspector},
+    inspector::{ScillaInspector, TouchedAddressInspector},
     message::{
         AggregateQc, BitArray, BitSlice, Block, BlockHeader, BlockRef, BlockStrategy,
         ExternalMessage, GossipSubTopic, InternalMessage, MAX_COMMITTEE_SIZE, NewView, Proposal,
@@ -1335,7 +1335,8 @@ impl Consensus {
             }
         }
 
-        // Either way assemble early proposal now if it doesnt already exist
+        // The first time this is called, it assembles the early proposal.
+        // Subsequent calls should have no effect, within the same view.
         self.early_proposal_assemble_at(None)?;
 
         Ok(None)
@@ -1437,9 +1438,10 @@ impl Consensus {
     fn early_proposal_assemble_at(&self, agg: Option<AggregateQc>) -> Result<()> {
         let view = self.get_view()?;
         {
-            let early_proposal = self.early_proposal.read();
-            if early_proposal.is_some() && early_proposal.as_ref().unwrap().0.view() == view {
-                return Ok(());
+            if let Some(early_proposal) = self.early_proposal.read().as_ref() {
+                if early_proposal.0.view() == view {
+                    return Ok(());
+                }
             }
         }
 
@@ -1447,13 +1449,10 @@ impl Consensus {
             // Create dummy QC for now if aggQC not provided
             None => {
                 // Start with highest canonical block
-                let num = self
-                    .db
-                    .get_highest_canonical_block_number()?
-                    .context("no canonical blocks")?; // get highest canonical block number
                 let block = self
-                    .get_canonical_block_by_number(num)?
-                    .context("missing canonical block")?; // retrieve highest canonical block
+                    .db
+                    .get_transactionless_block(BlockFilter::MaxCanonicalByHeight)?
+                    .expect("missing canonical block");
                 (
                     QuorumCertificate::new_with_identity(block.hash(), block.view()),
                     block,
@@ -1560,20 +1559,19 @@ impl Consensus {
                 self.get_consensus_timeout_params().unwrap();
 
             if milliseconds_remaining_of_block_time == 0 {
-                debug!(
-                    "stopped adding txs to block number {} because block time is reached",
-                    proposal.header.number,
+                debug!(number=%proposal.header.number,
+                    "block out of time"
                 );
                 return false;
             }
 
             if gas_left < txn.tx.gas_limit() {
-                debug!(?gas_left, gas_limit = ?txn.tx.gas_limit(), "block out of space");
+                debug!(?gas_left, gas_limit = ?txn.tx.gas_limit(), number=%proposal.header.number, "block out of gas");
                 return false;
             }
 
             if txn.encoded_size() > threshold_size {
-                debug!("ran out of size");
+                debug!(number=%proposal.header.number, "block out of size");
                 return false;
             }
 
@@ -1723,129 +1721,6 @@ impl Consensus {
         Ok(None)
     }
 
-    /// Assembles a Pending block: the block which the node _would_ propose if they were leader.
-    fn assemble_pending_block_at(&self, state: &mut State) -> Result<Option<Block>> {
-        // Start with highest canonical block
-        let num = self
-            .db
-            .get_highest_canonical_block_number()?
-            .context("no canonical blocks")?; // get highest canonical block number
-        let block = self
-            .get_canonical_block_by_number(num)?
-            .context("missing canonical block")?; // retrieve highest canonical block
-
-        // Generate early QC
-        let early_qc = QuorumCertificate::new_with_identity(block.hash(), block.view());
-        let parent = self
-            .get_block(&early_qc.block_hash)?
-            .context("missing parent block")?;
-
-        // Set state to that of parent
-        state.set_to_root(block.state_root_hash().into());
-
-        // Internal states
-        let mut threshold_size = Self::PROP_SIZE_THRESHOLD;
-        let mut gas_left = self.config.consensus.eth_block_gas_limit;
-        let mut receipts_trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
-        let mut transactions_trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
-        let mut tx_index_in_block = 0;
-        let mut applied_transaction_hashes = Vec::<Hash>::new();
-
-        // This is a partial header of a block that will be proposed with some transactions executed below.
-        // It is needed so that each transaction is executed within proper block context (the block it belongs to)
-        let executed_block_header = BlockHeader {
-            view: self.get_view()?,
-            number: parent.header.number + 1,
-            timestamp: SystemTime::max(SystemTime::now(), parent.header.timestamp),
-            gas_limit: gas_left,
-            ..BlockHeader::default()
-        };
-
-        // Clone the pool
-        // This isn't perfect performance-wise, but it does mean that we aren't dealing with transactions that don't fit into the block
-        let mut cloned_pool = self.transaction_pool.read().clone();
-        cloned_pool.update_with_state(state);
-
-        while let Some(txn) = cloned_pool.pop_best_if(|txn| {
-            // First - check if we have time left to process txns and give enough time for block propagation
-            let (_, milliseconds_remaining_of_block_time, _) =
-                self.get_consensus_timeout_params().unwrap();
-
-            if milliseconds_remaining_of_block_time == 0 {
-                return false;
-            }
-
-            if gas_left < txn.tx.gas_limit() {
-                debug!(?gas_left, gas_limit = ?txn.tx.gas_limit(), "block out of space");
-                return false;
-            }
-
-            if txn.encoded_size() > threshold_size {
-                debug!("ran out of size");
-                return false;
-            }
-
-            true
-        }) {
-            // Apply specific txn
-            let result = Self::apply_transaction_at(
-                state,
-                txn.clone(),
-                executed_block_header,
-                inspector::noop(),
-                false,
-            )?;
-            self.db.insert_transaction(&txn.hash, &txn)?;
-
-            // Skip transactions whose execution resulted in an error
-            let Some(result) = result else {
-                continue;
-            };
-
-            // Reduce remaining gas in this block
-            gas_left = gas_left
-                .checked_sub(result.gas_used())
-                .ok_or_else(|| anyhow!("gas_used > gas_limit"))?;
-
-            // Reduce balance size threshold
-            threshold_size -= txn.encoded_size();
-
-            // Do necessary work to assemble the transaction
-            transactions_trie.insert(txn.hash.as_bytes(), txn.hash.as_bytes())?;
-
-            let receipt = Self::create_txn_receipt(
-                result,
-                txn.hash,
-                tx_index_in_block,
-                self.config.consensus.eth_block_gas_limit - gas_left,
-            );
-            let receipt_hash = receipt.compute_hash();
-            receipts_trie.insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())?;
-
-            tx_index_in_block += 1;
-            applied_transaction_hashes.push(txn.hash);
-        }
-
-        // Generate the pending proposal, with dummy data
-        let proposal = Block::from_qc(
-            self.secret_key,
-            executed_block_header.view,
-            executed_block_header.number,
-            early_qc, // dummy QC for early proposal
-            None,
-            state.root_hash()?, // late state before rewards are applied
-            Hash(transactions_trie.root_hash()?.into()),
-            Hash(receipts_trie.root_hash()?.into()),
-            applied_transaction_hashes,
-            executed_block_header.timestamp,
-            executed_block_header.gas_limit - gas_left,
-            executed_block_header.gas_limit,
-        );
-
-        // Return the pending block
-        Ok(Some(proposal))
-    }
-
     /// Produces the Proposal block by taking and finalising early_proposal.
     /// It must return a final Proposal with correct QC, regardless of whether it is empty or not.
     fn propose_new_block(&self, votes: Option<&BlockVotes>) -> Result<Option<NetworkMessage>> {
@@ -1929,15 +1804,15 @@ impl Consensus {
         Ok(())
     }
 
-    /// Provides a preview of the early proposal.
+    /// Provides a (cached) preview of the early proposal.
     pub fn get_pending_block(&self) -> Result<Option<Block>> {
-        let mut state = self.state.clone();
-
-        let Some(pending_block) = self.assemble_pending_block_at(&mut state)? else {
-            return Ok(None);
-        };
-
-        Ok(Some(pending_block))
+        if let Some(early_proposal) = self.early_proposal.read().as_ref() {
+            if early_proposal.0.view() == self.get_view()? {
+                return Ok(Some(early_proposal.0.clone()));
+            }
+        }
+        self.early_proposal_assemble_at(None)?;
+        Ok(Some(self.early_proposal.read().as_ref().unwrap().0.clone()))
     }
 
     fn are_we_leader_for_view(&self, parent_hash: Hash, view: u64) -> bool {
