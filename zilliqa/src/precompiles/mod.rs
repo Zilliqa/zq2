@@ -20,7 +20,7 @@ use scilla::ScillaRead;
 use crate::{
     evm::ZQ2EvmContext,
     exec::{ExternalContext, PendingState},
-    precompiles::scilla::ScillaCall,
+    precompiles::{penalty::Penalty, scilla::ScillaCall},
 };
 
 #[derive(Debug, Clone)]
@@ -116,6 +116,7 @@ impl CustomPrecompile {
             CustomPrecompile::BlsVerify(p) => p.call(ctx, target, input, is_static, gas_limit),
             CustomPrecompile::ScillaRead(p) => p.call(ctx, target, input, is_static, gas_limit),
             CustomPrecompile::ScillaCall(p) => p.call(ctx, target, input, is_static, gas_limit),
+            CustomPrecompile::Penalty(p) => p.call(ctx, target, input, is_static, gas_limit),
         }
     }
 }
@@ -125,9 +126,10 @@ pub enum CustomPrecompile {
     BlsVerify(BlsVerify),
     ScillaRead(ScillaRead),
     ScillaCall(ScillaCall),
+    Penalty(Penalty),
 }
 
-const CUSTOM_PRECOMPILES: [(Address, CustomPrecompile); 4] = [
+const CUSTOM_PRECOMPILES: [(Address, CustomPrecompile); 5] = [
     (
         //Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x80"),
         address!("0x000000000000000000000000000000005a494c80"),
@@ -147,5 +149,10 @@ const CUSTOM_PRECOMPILES: [(Address, CustomPrecompile); 4] = [
         //Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x53"),
         address!("0x000000000000000000000000000000005a494c53"),
         CustomPrecompile::ScillaCall(ScillaCall),
+    ),
+    (
+        //Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x82")
+        address!("0x000000000000000000000000000000005a494c82"),
+        CustomPrecompile::Penalty(Penalty),
     ),
 ];
