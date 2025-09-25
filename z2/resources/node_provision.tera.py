@@ -160,6 +160,7 @@ def go(role):
             stop_zq2()
             install_zilliqa()
             download_persistence()
+            download_checkpoint()
             start_zq2()
         case "bootstrap" | "validator":
             log("Configuring a validator node")

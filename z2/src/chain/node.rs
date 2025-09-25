@@ -826,46 +826,44 @@ impl ChainNode {
         }
 
         if let Some(checkpoint_url) = self.chain.checkpoint_url() {
-            if self.role == NodeRole::Validator || self.role == NodeRole::Bootstrap {
-                let checkpoint_file = checkpoint_url.rsplit('/').next().unwrap_or("");
-                ctx.insert("checkpoint_file", &format!("/{checkpoint_file}"));
+            let checkpoint_file = checkpoint_url.rsplit('/').next().unwrap_or("");
+            ctx.insert("checkpoint_file", &format!("/{checkpoint_file}"));
 
-                let checkpoint_hex_block = crate::utils::string_decimal_to_hex(
-                    &checkpoint_file.replace(".dat", "").replace(".ckpt", ""),
-                )?;
+            let checkpoint_hex_block = crate::utils::string_decimal_to_hex(
+                &checkpoint_file.replace(".dat", "").replace(".ckpt", ""),
+            )?;
 
-                let json_response = self.chain.run_rpc_call(
-                    "eth_getBlockByNumber",
-                    &Some(format!("[\"{checkpoint_hex_block}\", false]")),
-                    30,
-                )?;
+            let json_response = self.chain.run_rpc_call(
+                "eth_getBlockByNumber",
+                &Some(format!("[\"{checkpoint_hex_block}\", false]")),
+                30,
+            )?;
 
-                let parsed_json: Value = serde_json::from_str(&json_response)?;
+            let parsed_json: Value = serde_json::from_str(&json_response)?;
 
-                let checkpoint_hash = parsed_json["result"]["hash"]
-                    .as_str()
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "{}: Error retrieving the hash of the block {}",
-                            self.name(),
-                            checkpoint_hex_block
-                        )
-                    })?
-                    .strip_prefix("0x")
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "{}: Error stripping 0x from the hash of the block {}",
-                            self.name(),
-                            checkpoint_hex_block
-                        )
-                    })?;
+            let checkpoint_hash = parsed_json["result"]["hash"]
+                .as_str()
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "{}: Error retrieving the hash of the block {}",
+                        self.name(),
+                        checkpoint_hex_block
+                    )
+                })?
+                .strip_prefix("0x")
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "{}: Error stripping 0x from the hash of the block {}",
+                        self.name(),
+                        checkpoint_hex_block
+                    )
+                })?;
 
-                ctx.insert("checkpoint_hash", checkpoint_hash);
+            ctx.insert("checkpoint_hash", checkpoint_hash);
 
-                log::info!(
-                    "Importing the checkpoint from the block {checkpoint_file} ({checkpoint_hex_block} hex) whose hash is {checkpoint_hash}"
-                );
-            }
+            log::info!(
+                "Importing the checkpoint from the block {checkpoint_file} ({checkpoint_hex_block} hex) whose hash is {checkpoint_hash}"
+            );
         }
 
         if let Some(new_view_interval) = self.chain()?.get_new_view_broadcast_interval() {
