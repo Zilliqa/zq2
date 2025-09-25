@@ -10,7 +10,8 @@ use eth_trie::{DB, EthTrie, MemoryDB, Trie};
 use lz4::Decoder;
 
 use crate::{
-    crypto::Hash, db::TrieStorage, message::Block, state::Account, transaction::SignedTransaction,
+    crypto::Hash, db::Db, message::Block, precompiles::ViewHistory, state::Account,
+    transaction::SignedTransaction, trie_storage::TrieStorage,
 };
 
 pub const CHECKPOINT_HEADER_BYTES: [u8; 8] = *b"ZILCHKPT";
@@ -161,6 +162,49 @@ pub fn get_checkpoint_block(
     Ok(Some((block, transactions, parent)))
 }
 
+// old checkpoint format
+pub fn load_trusted_checkpoint_v1<P: AsRef<Path>>(
+    db: Arc<Db>,
+    path: P,
+    hash: &Hash,
+    our_shard_id: u64,
+) -> Result<Option<(Block, Vec<SignedTransaction>, Block)>> {
+    tracing::info!(%hash, "Checkpoint V1");
+    // Decompress the file for processing
+    let input_file = File::open(path.as_ref())?;
+    let buf_reader: BufReader<File> = BufReader::with_capacity(128 * 1024 * 1024, input_file);
+    let mut reader = Decoder::new(buf_reader)?;
+    let Some((block, transactions, parent)) =
+        crate::checkpoint::get_checkpoint_block(&mut reader, hash, our_shard_id)?
+    else {
+        return Err(anyhow!("Invalid checkpoint file"));
+    };
+
+    let trie_storage = Arc::new(db.state_trie()?);
+    let state_trie = EthTrie::new(trie_storage.clone());
+
+    // INITIAL CHECKPOINT LOAD
+    // If no state trie exists and no blocks are known, then we are in a fresh database.
+    // We can safely load the checkpoint.
+    if state_trie.iter().next().is_none() && db.get_highest_canonical_block_number()?.is_none() {
+        tracing::info!(state = %parent.state_root_hash(), "Restoring checkpoint");
+        crate::checkpoint::load_state_trie(&mut reader, trie_storage, &parent)?;
+
+        let parent_ref: &Block = &parent; // for moving into the closure
+        db.with_sqlite_tx(|tx| {
+            db.insert_block_with_db_tx(tx, parent_ref)?;
+            db.set_finalized_view_with_db_tx(tx, parent_ref.view())?;
+            db.set_high_qc_with_db_tx(tx, block.header.qc)?;
+            db.set_view_with_db_tx(tx, parent_ref.view() + 1, false)?;
+            Ok(())
+        })?;
+
+        return Ok(Some((block, transactions, parent)));
+    }
+
+    Ok(None)
+}
+
 const BIN_CONFIG: bincode::config::Configuration = bincode::config::standard();
 const CKPT_VERSION: &str = "ZILCHKPT/2.0";
 
@@ -247,8 +291,7 @@ pub fn load_ckpt_blocks(path: &Path) -> Result<(Block, Vec<SignedTransaction>, B
         let transactions_root_hash = Hash(transactions_trie.root_hash()?.into());
         ensure!(
             block.header.transactions_root_hash == transactions_root_hash,
-            "Transactions root hash {} mismatch",
-            transactions_root_hash
+            "Transactions root hash {transactions_root_hash} mismatch",
         );
         transactions
     };
@@ -296,8 +339,7 @@ pub fn load_ckpt_state(
             let account_root = Account::try_from(account_val.as_slice())?.storage_root;
             ensure!(
                 root_hash == account_root,
-                "Account storage root {} mismatch",
-                root_hash
+                "Account storage root {root_hash} mismatch",
             );
 
             // commit the in-memory trie to disk
@@ -310,8 +352,7 @@ pub fn load_ckpt_state(
         let root_hash = Hash(account_storage.root_hash()?.into());
         ensure!(
             root_hash == *state_root_hash,
-            "State root hash {} mismatch",
-            root_hash
+            "State root hash {root_hash} mismatch",
         );
 
         (account_count, record_count)
@@ -320,12 +361,24 @@ pub fn load_ckpt_state(
     Ok((account_count, record_count))
 }
 
+pub fn load_ckpt_history(path: &Path) -> Result<ViewHistory> {
+    let mut zipreader = zip::ZipArchive::new(std::fs::File::open(path)?)?;
+    ensure!(
+        zipreader.comment() == CKPT_VERSION.as_bytes(),
+        "Invalid checkpoint version",
+    );
+    let mut file = zipreader.by_name("history.bincode")?;
+    let view_history: ViewHistory = bincode::serde::decode_from_std_read(&mut file, BIN_CONFIG)?;
+    Ok(view_history)
+}
+
+#[allow(clippy::type_complexity)]
 pub fn load_ckpt(
     path: &Path,
     trie_storage: Arc<TrieStorage>,
     chain_id: u64,
     block_hash: &Hash,
-) -> Result<Option<(Block, Vec<SignedTransaction>, Block)>> {
+) -> Result<Option<(Block, Vec<SignedTransaction>, Block, ViewHistory)>> {
     let meta = load_ckpt_meta(path, chain_id, block_hash)?;
     let (block, transactions, parent) = load_ckpt_blocks(path)?;
     let (account_count, record_count) =
@@ -333,16 +386,16 @@ pub fn load_ckpt(
 
     ensure!(
         meta.record_count == record_count,
-        "Record count {} mismatch",
-        record_count
+        "Record count {record_count} mismatch",
     );
     ensure!(
         meta.account_count == account_count,
-        "Account count {} mismatch",
-        account_count
+        "Account count {account_count} mismatch",
     );
 
-    Ok(Some((block, transactions, parent)))
+    let view_history = load_ckpt_history(path)?;
+
+    Ok(Some((block, transactions, parent, view_history)))
 }
 
 pub fn save_ckpt(
@@ -352,6 +405,7 @@ pub fn save_ckpt(
     transactions: &Vec<SignedTransaction>,
     parent: &Block,
     chain_id: u64,
+    view_history: ViewHistory,
 ) -> Result<()> {
     // parent
     ensure!(
@@ -368,8 +422,7 @@ pub fn save_ckpt(
     let transactions_root_hash = Hash(transactions_trie.root_hash()?.into());
     ensure!(
         transactions_root_hash == block.header.transactions_root_hash,
-        "Transactions root hash {} mismatch",
-        transactions_root_hash
+        "Transactions root hash {transactions_root_hash} mismatch",
     );
 
     // Start writing the checkpoint file
@@ -379,6 +432,10 @@ pub fn save_ckpt(
         .compression_method(zip::CompressionMethod::Zstd);
 
     let mut zipwriter = zip::ZipWriter::new(zipfile);
+
+    // write history.json
+    zipwriter.start_file("history.bincode", options)?;
+    bincode::serde::encode_into_std_write(view_history, &mut zipwriter, BIN_CONFIG)?;
 
     // write block.json
     zipwriter.start_file("block.bincode", options)?;

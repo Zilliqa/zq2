@@ -4435,6 +4435,7 @@ async fn create_scilla_contract_send_evm_tx(mut network: Network) {
     let account_code_before = network
         .get_node(0)
         .consensus
+        .read()
         .state()
         .get_account(Address::from(contract_address.to_fixed_bytes()))
         .unwrap()
@@ -4454,6 +4455,7 @@ async fn create_scilla_contract_send_evm_tx(mut network: Network) {
     let account_code_after = network
         .get_node(0)
         .consensus
+        .read()
         .state()
         .get_account(Address::from(contract_address.to_fixed_bytes()))
         .unwrap()

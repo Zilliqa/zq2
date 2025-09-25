@@ -12,10 +12,7 @@ pub mod types;
 mod web3;
 pub mod zilliqa;
 
-pub fn rpc_module(
-    node: Arc<RwLock<Node>>,
-    enabled_apis: &[EnabledApi],
-) -> RpcModule<Arc<RwLock<Node>>> {
+pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc<Node>> {
     let mut module = RpcModule::new(node.clone());
 
     module
@@ -61,7 +58,7 @@ pub fn all_enabled() -> Vec<crate::cfg::EnabledApi> {
     .collect()
 }
 
-/// Returns an `RpcModule<Arc<RwLock<Node>>>`. Call with the following syntax:
+/// Returns an `RpcModule<Arc<Node>>`. Call with the following syntax:
 /// ```ignore
 /// declare_module!(
 ///     node,
@@ -72,8 +69,8 @@ pub fn all_enabled() -> Vec<crate::cfg::EnabledApi> {
 /// )
 /// ```
 ///
-/// where `node` is an `Arc<RwLock<Node>>` and each implementation method has the signature
-/// `Fn(jsonrpsee::types::Params, &Arc<RwLock<Node>>) -> Result<T>`.
+/// where `node` is an `Arc<Node>` and each implementation method has the signature
+/// `Fn(jsonrpsee::types::Params, &Arc<Node>) -> Result<T>`.
 ///
 /// Will panic if any of the method names collide.
 macro_rules! declare_module {
@@ -82,7 +79,7 @@ macro_rules! declare_module {
         $enabled_apis:expr,
         [ $(($name:expr, $method:expr)),* $(,)? ] $(,)?
     ) => {{
-        let mut module: jsonrpsee::RpcModule<std::sync::Arc<parking_lot::RwLock<crate::node::Node>>> = jsonrpsee::RpcModule::new($node.clone());
+        let mut module: jsonrpsee::RpcModule<std::sync::Arc<crate::node::Node>> = jsonrpsee::RpcModule::new($node.clone());
         let meter = opentelemetry::global::meter("zilliqa");
 
         $(
@@ -94,7 +91,7 @@ macro_rules! declare_module {
                 .build();
             module
                 .register_method($name, move |params, context, _| {
-                    tracing::debug!("{}: params: {:?}", $name, params);
+                    tracing::debug!("API Call start {}: params: {:?}", $name, params);
                     if !enabled {
                         return Err(jsonrpsee::types::ErrorObject::owned(
                             jsonrpsee::types::error::ErrorCode::InvalidRequest.code(),
@@ -146,7 +143,7 @@ macro_rules! declare_module {
                     }));
 
                     #[allow(clippy::redundant_closure_call)]
-                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| $method(params, context)));
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| $method(params.clone(), context)));
 
                     // Restore the original panic hook
                     std::panic::set_hook(original_hook);
@@ -191,10 +188,16 @@ macro_rules! declare_module {
                     if let Err(err) = &result {
                         attributes.push(opentelemetry::KeyValue::new(opentelemetry_semantic_conventions::attribute::RPC_JSONRPC_ERROR_CODE, err.code() as i64));
                     }
+                    let duration = start.elapsed().map_or(0.0, |d| d.as_secs_f64());
+
                     rpc_server_duration.record(
-                        start.elapsed().map_or(0.0, |d| d.as_secs_f64()),
+                        duration,
                         &attributes,
                     );
+                    if duration > 1.0 {
+                        tracing::error!("API Call long: {}{:?}, took {}s", $name, params, duration);
+                    }
+                    tracing::debug!("API Call end {}", $name);
                     result
                 })
                 .unwrap();
@@ -208,6 +211,5 @@ use std::sync::Arc;
 
 use declare_module;
 use jsonrpsee::RpcModule;
-use parking_lot::RwLock;
 
 use crate::{cfg::EnabledApi, node::Node};

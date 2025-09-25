@@ -41,10 +41,24 @@ def query_metadata_key(key: str) -> str:
 ZQ2_IMAGE="{{ docker_image }}"
 PERSISTENCE_URL="{{ persistence_url }}"
 CHECKPOINT_URL="{{ checkpoint_url }}"
-LOG_LEVEL='{{ log_level }}'
+NODE_NAME="{{ node_name }}"
 PROJECT_ID="{{ project_id }}"
 KMS_ENABLED="{{ enable_kms }}" == "true"
 KMS_PROJECT_ID = "prj-p-kms-2vduab0g" if PROJECT_ID.startswith("prj-p") else "prj-d-kms-tw1xyxbh"
+
+# Set zilliqa trace log level for specific nodes, if not use the default
+if NODE_NAME in [
+    "zq2-testnet-api-ase1-0",
+    "zq2-testnet-validator-ase1-0",
+    "zq2-mainnet-api-ase1-0",
+    "zq2-mainnet-bootstrap-ase1-0",
+    "zq2-mainnet-checkpoint-ase1-0",
+    "zq2-mainnet-persistence-ase1-0",
+    "zq2-mainnet-apps-ase1-0",
+]:
+    LOG_LEVEL = "zilliqa=trace"
+else:
+    LOG_LEVEL = '{{ log_level }}'
 
 def mount_checkpoint_file():
     if CHECKPOINT_URL is not None and CHECKPOINT_URL != "":
@@ -78,7 +92,8 @@ start() {
     docker rm zilliqa-""" + VERSIONS.get('zilliqa') + """ &> /dev/null || echo 0
     docker container prune -f
     PRIVATE_KEY=""" + PRIVATE_KEY_CMD + """
-    docker run -td -p 3333:3333/udp -p 4201:4201 -p 4202:4202 --net=host --name zilliqa-""" + VERSIONS.get('zilliqa') + """ \
+    docker run -td -p 3333:3333/udp -p 4201:4201 -p 4202:4202 --cap-add=SYS_PTRACE --cap-add=PERFMON --cap-add=BPF --cap-add=SYS_ADMIN \
+        --net=host --name zilliqa-""" + VERSIONS.get('zilliqa') + """ \
         -v /config.toml:/config.toml -v /zilliqa.log:/zilliqa.log -v /data:/data \
         --log-driver json-file --log-opt max-size=1g --log-opt max-file=1 --memory=6g \
         -e RUST_LOG='""" + LOG_LEVEL + """' -e OTEL_METRIC_EXPORT_INTERVAL=60000 -e RUST_BACKTRACE=1 \

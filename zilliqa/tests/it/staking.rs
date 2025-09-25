@@ -38,7 +38,7 @@ async fn check_miner_got_reward(
     assert!(balance_before < balance_after);
 }
 
-async fn deposit_stake(
+async fn deposit_v2_stake(
     network: &mut Network,
     control_wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
     staker_wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
@@ -64,7 +64,7 @@ async fn deposit_stake(
         // case our estimate will be incorrect.
         .gas(5_000_000)
         .data(
-            contracts::deposit::DEPOSIT
+            contracts::deposit_v2::DEPOSIT
                 .encode_input(&[
                     Token::Bytes(new_validator_key.node_public_key().as_bytes()),
                     Token::Bytes(
@@ -90,7 +90,7 @@ async fn deposit_stake(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn deposit_v3_stake(
+async fn deposit_stake(
     network: &mut Network,
     control_wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
     staker_wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
@@ -117,7 +117,7 @@ async fn deposit_v3_stake(
         // case our estimate will be incorrect.
         .gas(5_000_000)
         .data(
-            contracts::deposit_v3::DEPOSIT
+            contracts::deposit::DEPOSIT
                 .encode_input(&[
                     Token::Bytes(new_validator_key.node_public_key().as_bytes()),
                     Token::Bytes(
@@ -169,12 +169,17 @@ async fn current_epoch(
     epoch
 }
 
-async fn unstake_amount(network: &mut Network, control_wallet: &Wallet, amount: u128) -> H256 {
+async fn unstake_amount(
+    network: &mut Network,
+    blskey: &NodePublicKey,
+    control_wallet: &Wallet,
+    amount: u128,
+) -> H256 {
     let tx = TransactionRequest::new()
         .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
         .data(
             contracts::deposit::UNSTAKE
-                .encode_input(&[Token::Uint(amount.into())])
+                .encode_input(&[Token::Bytes(blskey.as_bytes()), Token::Uint(amount.into())])
                 .unwrap(),
         )
         .gas(10000000); // TODO: Why needed?
@@ -330,7 +335,7 @@ async fn deposit_storage_initially_set(mut network: Network) {
     let wallet = network.random_wallet().await;
     assert_eq!(
         get_minimum_deposit(&wallet).await,
-        *network.nodes[0].inner.read().config.consensus.minimum_stake
+        *network.nodes[0].inner.config.consensus.minimum_stake
     );
     assert_eq!(
         get_maximum_stakers(&wallet).await,
@@ -338,12 +343,7 @@ async fn deposit_storage_initially_set(mut network: Network) {
     );
     assert_eq!(
         get_blocks_per_epoch(&wallet).await,
-        network.nodes[0]
-            .inner
-            .read()
-            .config
-            .consensus
-            .blocks_per_epoch
+        network.nodes[0].inner.config.consensus.blocks_per_epoch
     );
 
     let stakers = get_stakers(&wallet).await;
@@ -351,7 +351,6 @@ async fn deposit_storage_initially_set(mut network: Network) {
         stakers.len(),
         network.nodes[0]
             .inner
-            .read()
             .config
             .consensus
             .genesis_deposits
@@ -402,17 +401,17 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
     assert!(!stakers.contains(&new_validator_key.node_public_key()));
 
     let staker_wallet = network.wallet_of_node(index).await;
-    let pop_sinature = new_validator_key.pop_prove();
+    let pop_signature = new_validator_key.pop_prove();
 
     // This has to be done before `contract_upgrade_block_heights` which is 24, by default in this test
-    let deposit_hash = deposit_stake(
+    let deposit_hash = deposit_v2_stake(
         &mut network,
         &wallet,
         &staker_wallet,
         new_validator_key,
         32 * 10u128.pow(18),
         reward_address,
-        pop_sinature,
+        pop_signature,
     )
     .await;
 
@@ -492,7 +491,7 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
         .run_until_block(&staker_wallet, 24.into(), 424)
         .await;
 
-    let deposit_hash = deposit_v3_stake(
+    let deposit_hash = deposit_stake(
         &mut network,
         &wallet,
         &staker_wallet,
@@ -560,9 +559,13 @@ async fn block_proposers_are_selected_proportionally_to_their_stake(mut network:
     let index = network.add_node();
     let new_validator_key = network.get_node_raw(index).secret_key;
     let reward_address = H160::random_using(&mut network.rng.lock().unwrap().deref_mut());
+    let signing_address = H160::random_using(&mut network.rng.lock().unwrap().deref_mut());
 
     let staker_wallet = network.wallet_of_node(index).await;
-    let pop_signature = new_validator_key.pop_prove();
+    let deposit_signature = new_validator_key.deposit_auth_signature(
+        network.shard_id,
+        Address::from(staker_wallet.address().to_fixed_bytes()),
+    );
 
     network.run_until_synced(index).await;
     deposit_stake(
@@ -572,7 +575,8 @@ async fn block_proposers_are_selected_proportionally_to_their_stake(mut network:
         new_validator_key,
         1024 * 10u128.pow(18),
         reward_address,
-        pop_signature,
+        signing_address,
+        deposit_signature,
     )
     .await;
 
@@ -652,7 +656,13 @@ async fn validators_can_unstake(mut network: Network) {
 
     // unstake validator's entire stake
     let stake = get_stake(&wallet, &validator_blskey).await;
-    let unstake_hash = unstake_amount(&mut network, &validator_control_wallet, stake).await;
+    let unstake_hash = unstake_amount(
+        &mut network,
+        &validator_blskey,
+        &validator_control_wallet,
+        stake,
+    )
+    .await;
     let unstake_block = network
         .run_until_receipt(&wallet, unstake_hash, 100)
         .await

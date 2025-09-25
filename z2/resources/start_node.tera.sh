@@ -23,8 +23,8 @@ help() {
             -h, --help                  Display this help message
 
         Examples:
-            ${0} -k <NODE_KEY> -c config.toml -p checkpoint.dat
-            ${0} -k <NODE_KEY> -p checkpoint.dat
+            ${0} -k <NODE_KEY> -c config.toml -p checkpoint.ckpt (Use .dat for versions prior to v0.19.0)
+            ${0} -k <NODE_KEY> -p checkpoint.ckpt (Use .dat for versions prior to v0.19.0)
             ${0} -k <NODE_KEY>
 
 EOF
@@ -103,6 +103,7 @@ start() {
     -p 3333:3333/udp \
     -p 4201:4201 \
     -p 4202:4202 \
+    --cap-add=SYS_PTRACE --cap-add=PERFMON --cap-add=BPF --cap-add=SYS_ADMIN \
     --net=host \
     --restart=unless-stopped \
     --name zilliqa-${ZQ_VERSION} \

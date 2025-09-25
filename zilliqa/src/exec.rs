@@ -7,7 +7,7 @@ use std::{
     fs, mem,
     num::NonZeroU128,
     path::Path,
-    sync::MutexGuard,
+    sync::{Arc, MutexGuard},
 };
 
 use alloy::primitives::{Address, Bytes, U256, address, hex};
@@ -37,7 +37,6 @@ use crate::{
     cfg::{Fork, ScillaExtLibsPath, ScillaExtLibsPathInScilla, ScillaExtLibsPathInZq2},
     constants, contracts,
     crypto::{Hash, NodePublicKey},
-    db::TrieStorage,
     error::ensure_success,
     evm::{SPEC_ID, ZQ2Evm, ZQ2EvmContext, new_zq2_evm_ctx},
     inspector::{self, ScillaInspector, TouchedAddressInspector},
@@ -49,6 +48,7 @@ use crate::{
         EvmGas, EvmLog, Log, ScillaGas, ScillaLog, Transaction, TxZilliqa, VerifiedTransaction,
         ZilAmount, total_scilla_gas_price,
     },
+    trie_storage::TrieStorage,
 };
 
 #[derive(Clone, Copy, PartialEq)]
@@ -442,6 +442,8 @@ pub struct ExternalContext {
     pub callers: Vec<Address>,
     pub has_evm_failed: bool,
     pub has_called_scilla_precompile: bool,
+    pub finalized_view: u64,
+    pub view_history: ViewHistory,
 }
 
 pub enum BaseFeeAndNonceCheck {
@@ -554,6 +556,8 @@ impl State {
             callers: vec![from_addr],
             has_evm_failed: false,
             has_called_scilla_precompile: false,
+            finalized_view: self.finalized_view,
+            view_history: self.view_history.clone(),
         };
         let access_list = if fork.inject_access_list {
             access_list.unwrap_or_default()

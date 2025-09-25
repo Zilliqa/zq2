@@ -1,29 +1,27 @@
 //! An administrative API
 
-use std::{ops::RangeInclusive, sync::Arc};
+use std::{collections::HashMap, ops::RangeInclusive, sync::Arc};
 
 use alloy::{eips::BlockId, primitives::U64};
 use anyhow::{Result, anyhow};
 use itertools::Itertools;
 use jsonrpsee::{RpcModule, types::Params};
 use libp2p::PeerId;
-use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
 use super::types::{admin::VotesReceivedReturnee, eth::QuorumCertificate, hex};
 use crate::{
     api::{to_hex::ToHex, types::admin::VoteCount},
     cfg::EnabledApi,
+    checkpoint::load_ckpt_history,
     consensus::{BlockVotes, NewViewVote, Validator},
+    constants::{LAG_BEHIND_CURRENT_VIEW, MISSED_VIEW_WINDOW},
     crypto::NodePublicKey,
     message::{BitArray, BlockHeader},
     node::Node,
 };
 
-pub fn rpc_module(
-    node: Arc<RwLock<Node>>,
-    enabled_apis: &[EnabledApi],
-) -> RpcModule<Arc<RwLock<Node>>> {
+pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc<Node>> {
     super::declare_module!(
         node,
         enabled_apis,
@@ -36,8 +34,152 @@ pub fn rpc_module(
             ("admin_votesReceived", votes_received),
             ("admin_clearMempool", clear_mempool),
             ("admin_getLeaders", get_leaders),
+            ("admin_syncing", syncing),
+            ("admin_missedViews", missed_views),
+            ("admin_importViewHistory", import_history),
         ]
     )
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct SyncInfo {
+    #[serde(serialize_with = "hex")]
+    cutover_at: u64,
+    #[serde(serialize_with = "hex")]
+    migrate_at: u64,
+    block_range: RangeInclusive<u64>,
+}
+
+fn syncing(_params: Params, node: &Arc<Node>) -> Result<SyncInfo> {
+    let block_range = node.consensus.read().get_block_range()?;
+    let trie = node.db.state_trie()?;
+    let cutover_at = trie.get_cutover_at()?;
+    let migrate_at = trie.get_migrate_at()?;
+    Ok(SyncInfo {
+        cutover_at,
+        migrate_at,
+        block_range,
+    })
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct NodeMissedViews {
+    pub min_view: u64,
+    pub node_missed_views: HashMap<NodePublicKey, Vec<u64>>,
+}
+
+fn missed_views(params: Params, node: &Arc<Node>) -> Result<NodeMissedViews> {
+    let mut params = params.sequence();
+    let current_view: u64 = params.next::<U64>()?.to::<u64>();
+    let consensus = node.consensus.read();
+    let history = &consensus.state().view_history;
+    let min_view = history.min_view;
+    if min_view > 1
+        && current_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW) < min_view + MISSED_VIEW_WINDOW
+        || current_view > node.consensus.read().get_finalized_view()? + LAG_BEHIND_CURRENT_VIEW + 1
+    {
+        return Err(anyhow!("Missed view history not available"));
+    }
+    let missed_views = &history.missed_views;
+    let missed_map = missed_views
+        .iter()
+        .filter(|&(view, _)| {
+            *view >= current_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW + MISSED_VIEW_WINDOW)
+                && *view < current_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW)
+        })
+        .fold(HashMap::new(), |mut acc, (view, leader)| {
+            acc.entry(*leader)
+                .and_modify(|views: &mut Vec<u64>| views.push(*view))
+                .or_insert_with(|| vec![*view]);
+            acc
+        });
+    Ok(NodeMissedViews {
+        min_view,
+        node_missed_views: missed_map,
+    })
+}
+
+fn import_history(params: Params, node: &Arc<Node>) -> Result<()> {
+    let mut params = params.sequence();
+    let param: &str = params.next::<&str>()?;
+    let path = std::path::Path::new(param);
+    let mut imported_history = load_ckpt_history(path)?;
+    {
+        tracing::info!(
+            history = display(&imported_history),
+            "~~~~~~~~~~> whole imported from checkpoint"
+        );
+    }
+    let mut consensus = node.consensus.write();
+    let history = &mut consensus.state_mut().view_history;
+    {
+        tracing::info!(
+            history = display(&history),
+            "~~~~~~~~~~> initial consensus state"
+        );
+    }
+    let first = {
+        match history.missed_views.front() {
+            None => 0,
+            Some((view, _)) => *view,
+        }
+    };
+    let mut last_imported = {
+        match imported_history.missed_views.back() {
+            None => 0,
+            Some((view, _)) => *view,
+        }
+    };
+    // make sure there is no gap between the existing and the imported history
+    if first > last_imported {
+        return Err(anyhow!(
+            "Gap between imported and existing history detected"
+        ));
+    }
+    let finalized_view = node.consensus.read().get_finalized_view()?;
+    // trim the imported missed view history
+    imported_history.prune_history(finalized_view, node.config.max_missed_view_age)?;
+    {
+        tracing::info!(
+            history = display(&imported_history),
+            "~~~~~~~~~~> trimmed imported from checkpoint"
+        );
+    }
+    // skip the overlapping missed views present in both histories
+    while last_imported >= first {
+        imported_history.missed_views.pop_back();
+        if let Some((view, _)) = imported_history.missed_views.back() {
+            last_imported = *view
+        } else {
+            // the node's missed view history starts before the imported one
+            return Ok(());
+        }
+    }
+    {
+        tracing::info!(
+            history = display(&imported_history),
+            "~~~~~~~~~~> non-overlapping imported from checkpoint"
+        );
+    }
+    let imported_missed_views = &imported_history.missed_views;
+    // merge the two missed view histories and store the delta in the db
+    imported_missed_views
+        .iter()
+        .rev()
+        .for_each(|(view, leader)| {
+            let _ = node.db.extend_view_history(*view, leader.as_bytes());
+            history.missed_views.push_front((*view, *leader));
+        });
+    // update min_view in consensus state and in the db
+    history.min_view = imported_history.min_view;
+    node.db.set_min_view_of_view_history(history.min_view)?;
+    {
+        tracing::info!(
+            history = display(&history),
+            "~~~~~~~~~~> merged consensus state"
+        );
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -49,17 +191,15 @@ struct ConsensusInfo {
     milliseconds_until_next_view_change: u64,
 }
 
-fn admin_block_range(_params: Params, node: &Arc<RwLock<Node>>) -> Result<RangeInclusive<u64>> {
-    node.read().consensus.get_block_range()
+fn admin_block_range(_params: Params, node: &Arc<Node>) -> Result<RangeInclusive<u64>> {
+    node.consensus.read().get_block_range()
 }
 
-fn consensus_info(_: Params, node: &Arc<RwLock<Node>>) -> Result<ConsensusInfo> {
-    let node = node.read();
-
-    let view = node.consensus.get_view()?;
-    let high_qc = QuorumCertificate::from_qc(&node.consensus.high_qc);
+fn consensus_info(_: Params, node: &Arc<Node>) -> Result<ConsensusInfo> {
+    let view = node.consensus.read().get_view()?;
+    let high_qc = QuorumCertificate::from_qc(&node.consensus.read().high_qc);
     let (milliseconds_since_last_view_change, _, exponential_backoff_timeout) =
-        node.consensus.get_consensus_timeout_params()?;
+        node.consensus.read().get_consensus_timeout_params()?;
     let milliseconds_until_next_view_change =
         exponential_backoff_timeout.saturating_sub(milliseconds_since_last_view_change);
 
@@ -81,15 +221,14 @@ pub struct CheckpointResponse {
     block: String,
 }
 
-fn checkpoint(params: Params, node: &Arc<RwLock<Node>>) -> Result<CheckpointResponse> {
+fn checkpoint(params: Params, node: &Arc<Node>) -> Result<CheckpointResponse> {
     let mut params = params.sequence();
     let block_id: BlockId = params.next()?;
-    let node = node.read();
     let block = node
         .get_block(block_id)?
         .ok_or(anyhow!("Block {block_id} does not exist"))?;
 
-    let (file_name, hash) = node.consensus.checkpoint_at(block.number())?;
+    let (file_name, hash) = node.consensus.read().checkpoint_at(block.number())?;
     Ok(CheckpointResponse {
         file_name,
         hash,
@@ -97,12 +236,13 @@ fn checkpoint(params: Params, node: &Arc<RwLock<Node>>) -> Result<CheckpointResp
     })
 }
 
-fn force_view(params: Params, node: &Arc<RwLock<Node>>) -> Result<bool> {
+fn force_view(params: Params, node: &Arc<Node>) -> Result<bool> {
     let mut params = params.sequence();
     let view: U64 = params.next()?;
     let timeout_at: String = params.next()?;
-    let mut node = node.write();
-    node.consensus.force_view(view.to::<u64>(), timeout_at)?;
+    node.consensus
+        .write()
+        .force_view(view.to::<u64>(), timeout_at)?;
     Ok(true)
 }
 
@@ -112,8 +252,7 @@ struct PeerInfo {
     pub sync_peers: Vec<PeerId>,
 }
 
-fn get_peers(_params: Params, node: &Arc<RwLock<Node>>) -> Result<PeerInfo> {
-    let node = node.read();
+fn get_peers(_params: Params, node: &Arc<Node>) -> Result<PeerInfo> {
     let (swarm_peers, sync_peers) = node.get_peer_ids()?;
     Ok(PeerInfo {
         swarm_peers,
@@ -122,35 +261,37 @@ fn get_peers(_params: Params, node: &Arc<RwLock<Node>>) -> Result<PeerInfo> {
 }
 
 /// Returns information about votes and voters
-fn votes_received(_params: Params, node: &Arc<RwLock<Node>>) -> Result<VotesReceivedReturnee> {
-    let node = node.read();
-
+fn votes_received(_params: Params, node: &Arc<Node>) -> Result<VotesReceivedReturnee> {
     let new_views = node
         .consensus
+        .read()
         .new_views
         .iter()
         .map(|kv| (*kv.key(), kv.value().clone()))
         .collect_vec();
     let votes = node
         .consensus
+        .read()
         .votes
         .iter()
         .map(|kv| (*kv.key(), kv.value().clone()))
         .collect_vec();
     let buffered_votes = node
         .consensus
+        .read()
         .buffered_votes
         .clone()
         .into_iter()
         .collect_vec();
 
-    let head_block = node.consensus.head_block();
+    let head_block = node.consensus.read().head_block();
     let executed_block = BlockHeader {
         number: head_block.header.number + 1,
         ..Default::default()
     };
     let committee = node
         .consensus
+        .read()
         .state()
         .at_root(head_block.state_root_hash().into())
         .get_stakers(executed_block)?;
@@ -200,25 +341,29 @@ fn votes_received(_params: Params, node: &Arc<RwLock<Node>>) -> Result<VotesRece
     Ok(returnee)
 }
 
-fn clear_mempool(_params: Params, node: &Arc<RwLock<Node>>) -> Result<()> {
-    node.read().consensus.clear_mempool();
+fn clear_mempool(_params: Params, node: &Arc<Node>) -> Result<()> {
+    node.consensus.read().clear_mempool();
     Ok(())
 }
 
-fn get_leaders(params: Params, node: &Arc<RwLock<Node>>) -> Result<Vec<(u64, Validator)>> {
+fn get_leaders(params: Params, node: &Arc<Node>) -> Result<Vec<(u64, Validator)>> {
     let mut params = params.sequence();
     let mut view = params.next::<U64>()?.to::<u64>();
     let count = params.next::<U64>()?.to::<usize>().min(100);
 
-    let node = node.read();
-    let head_block = node.consensus.head_block();
     let mut leaders = vec![];
 
+    let head_block = {
+        let consensus = node.consensus.read();
+        consensus.head_block()
+    };
+
     while leaders.len() <= count {
-        leaders.push((
-            view,
-            node.consensus.leader_at_block(&head_block, view).unwrap(),
-        ));
+        if let Some(leader) = node.consensus.read().leader_at_block(&head_block, view) {
+            leaders.push((view, leader));
+        } else {
+            break; // missed view history not available
+        }
         view += 1;
     }
     Ok(leaders)

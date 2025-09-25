@@ -18,6 +18,7 @@ use crate::{
     api::types::eth::{SyncingMeta, SyncingStruct},
     cfg::NodeConfig,
     crypto::Hash,
+    data_access,
     db::{BlockFilter, Db},
     message::{
         Block, BlockHeader, BlockRequest, BlockResponse, BlockTransactionsReceipts,
@@ -684,6 +685,8 @@ impl Sync {
             let block = brt.block;
             let number = block.number();
             let receipts = brt.receipts;
+
+            // TODO: transactions are receipts are already sorted, just zip them together
             let transactions: HashMap<Hash, crate::transaction::SignedTransaction> = brt
                 .transactions
                 .into_iter()
@@ -1484,10 +1487,10 @@ impl Sync {
                 "StoreProposals : applying",
             );
 
-            // Store/Ignore it; if it already exists.
+            // Store/Ignore - if it already exists.
             self.db.with_sqlite_tx(|sqlite_tx| {
                     // Insert block
-                    self.db.insert_block_with_db_tx(sqlite_tx, &block)?;
+                    self.db.insert_block_with_db_tx(sqlite_tx, &block).ok();
                     // Insert transactions/receipts
                     for (st, rt) in transaction_receipts {
                         // Verify transaction
@@ -1598,15 +1601,12 @@ impl Sync {
 
     // Returns (starting_block, current_block,  highest_block) if we're syncing,
     // None if we're not.
-    pub fn get_sync_data(&self) -> Result<Option<SyncingStruct>> {
+    pub fn get_sync_data(&self, db: Arc<Db>) -> Result<Option<SyncingStruct>> {
         if !self.am_syncing()? {
             return Ok(None);
         }
 
-        let current_block = self
-            .db
-            .get_highest_canonical_block_number()?
-            .expect("no highest block");
+        let current_block = data_access::get_highest_canonical_block_number(db);
 
         let peer_count = self.peers.count() + self.in_flight.len();
 

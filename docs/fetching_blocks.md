@@ -88,8 +88,11 @@ However, it requires that the node must already be in posession of the blocks st
 This implies that the node must have completed both *Active Sync* and *Passive Sync* prior to this; and has synced beyond the checkpoint height.
 
 To use this feature:
-1. Start the node with `node.load_checkpoint` configured to the first checkpoint e.g. `013737600.dat`. Allow the node to active-sync up to the latest block.
+1. Start the node with `node.load_checkpoint` configured to the first checkpoint e.g. `013737600.ckpt`. Allow the node to active-sync up to the latest block.
 2. Restart the node with the `node.sync.base_height` set below the height of the second checkpoint e.g. `13651100`. Allow the node to passive-sync down to the base height.
-3. Restart the node with the `node.load_checkpoint` configured to the second checkpoint e.g. `013651200.dat`. Allow state-sync replay the blocks between the two checkpoints.
+3. Restart the node with the `node.load_checkpoint` configured to the second checkpoint e.g. `013651200.ckpt` and with `node.db.state_sync` set to true. Allow state-sync to replay the blocks between the two checkpoints.
 
-Note: This feature may take a while to run and the node is unable to participate in consensus during this time.
+*The node is able to continue running on the network while the state-sync is happening in the background.*
+
+The same mechanism is also used for State Migration.
+For details, refer to the [State Migration](docs/state_migration.md) documentation.

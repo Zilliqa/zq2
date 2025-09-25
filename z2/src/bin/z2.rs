@@ -836,9 +836,7 @@ async fn main() -> Result<()> {
                     arg.checkpoint_url.clone(),
                 )
                 .await
-                .map_err(|err| {
-                    anyhow::anyhow!("Failed to run deployer install command: {}", err)
-                })?;
+                .map_err(|err| anyhow::anyhow!("Failed to run deployer install command: {err}",))?;
                 Ok(())
             }
             DeployerCommands::Upgrade(arg) => {
@@ -850,7 +848,7 @@ async fn main() -> Result<()> {
                 plumbing::run_deployer_upgrade(&config_file, arg.select, arg.max_parallel)
                     .await
                     .map_err(|err| {
-                        anyhow::anyhow!("Failed to run deployer upgrade command: {}", err)
+                        anyhow::anyhow!("Failed to run deployer upgrade command: {err}",)
                     })?;
                 Ok(())
             }
@@ -864,7 +862,7 @@ async fn main() -> Result<()> {
                 plumbing::run_deployer_get_config_file(&config_file, role, arg.out.as_deref())
                     .await
                     .map_err(|err| {
-                        anyhow::anyhow!("Failed to run deployer get-config-file command: {}", err)
+                        anyhow::anyhow!("Failed to run deployer get-config-file command: {err}",)
                     })?;
                 Ok(())
             }
@@ -878,8 +876,7 @@ async fn main() -> Result<()> {
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!(
-                            "Failed to run deployer get-deposit-commands command: {}",
-                            err
+                            "Failed to run deployer get-deposit-commands command: {err}",
                         )
                     })?;
                 Ok(())
@@ -893,7 +890,7 @@ async fn main() -> Result<()> {
                 plumbing::run_deployer_stakers(&config_file)
                     .await
                     .map_err(|err| {
-                        anyhow::anyhow!("Failed to run deployer stakers command: {}", err)
+                        anyhow::anyhow!("Failed to run deployer stakers command: {err}",)
                     })?;
                 Ok(())
             }
@@ -906,7 +903,7 @@ async fn main() -> Result<()> {
                 plumbing::run_deployer_deposit(&config_file, arg.select)
                     .await
                     .map_err(|err| {
-                        anyhow::anyhow!("Failed to run deployer deposit command: {}", err)
+                        anyhow::anyhow!("Failed to run deployer deposit command: {err}",)
                     })?;
                 Ok(())
             }
@@ -919,7 +916,7 @@ async fn main() -> Result<()> {
                 plumbing::run_deployer_deposit_top_up(&config_file, arg.select, arg.amount)
                     .await
                     .map_err(|err| {
-                        anyhow::anyhow!("Failed to run deployer deposit-top-up command: {}", err)
+                        anyhow::anyhow!("Failed to run deployer deposit-top-up command: {err}",)
                     })?;
                 Ok(())
             }
@@ -932,7 +929,7 @@ async fn main() -> Result<()> {
                 plumbing::run_deployer_unstake(&config_file, arg.select, arg.amount)
                     .await
                     .map_err(|err| {
-                        anyhow::anyhow!("Failed to run deployer unstake command: {}", err)
+                        anyhow::anyhow!("Failed to run deployer unstake command: {err}",)
                     })?;
                 Ok(())
             }
@@ -945,7 +942,7 @@ async fn main() -> Result<()> {
                 plumbing::run_deployer_withdraw(&config_file, arg.select)
                     .await
                     .map_err(|err| {
-                        anyhow::anyhow!("Failed to run deployer withdraw command: {}", err)
+                        anyhow::anyhow!("Failed to run deployer withdraw command: {err}",)
                     })?;
                 Ok(())
             }
@@ -959,15 +956,13 @@ async fn main() -> Result<()> {
                     args.port.clone().unwrap_or_default(),
                 )
                 .await
-                .map_err(|err| anyhow::anyhow!("Failed to run deployer rpc command: {}", err))?;
+                .map_err(|err| anyhow::anyhow!("Failed to run deployer rpc command: {err}",))?;
                 Ok(())
             }
             DeployerCommands::Ssh(args) => {
                 plumbing::run_deployer_ssh(args.command.clone(), &args.config_file, args.select)
                     .await
-                    .map_err(|err| {
-                        anyhow::anyhow!("Failed to run deployer ssh command: {}", err)
-                    })?;
+                    .map_err(|err| anyhow::anyhow!("Failed to run deployer ssh command: {err}",))?;
                 Ok(())
             }
             DeployerCommands::Backup(arg) => {
@@ -979,7 +974,7 @@ async fn main() -> Result<()> {
                 plumbing::run_deployer_backup(&config_file, arg.name.clone(), arg.zip)
                     .await
                     .map_err(|err| {
-                        anyhow::anyhow!("Failed to run deployer backup command: {}", err)
+                        anyhow::anyhow!("Failed to run deployer backup command: {err}",)
                     })?;
                 Ok(())
             }
@@ -997,9 +992,7 @@ async fn main() -> Result<()> {
                     arg.no_restart,
                 )
                 .await
-                .map_err(|err| {
-                    anyhow::anyhow!("Failed to run deployer restore command: {}", err)
-                })?;
+                .map_err(|err| anyhow::anyhow!("Failed to run deployer restore command: {err}",))?;
                 Ok(())
             }
             DeployerCommands::Reset(arg) => {
@@ -1011,7 +1004,7 @@ async fn main() -> Result<()> {
                 plumbing::run_deployer_reset(&config_file, arg.select)
                     .await
                     .map_err(|err| {
-                        anyhow::anyhow!("Failed to run deployer reset command: {}", err)
+                        anyhow::anyhow!("Failed to run deployer reset command: {err}",)
                     })?;
                 Ok(())
             }
@@ -1024,7 +1017,7 @@ async fn main() -> Result<()> {
                 plumbing::run_deployer_restart(&config_file, arg.select)
                     .await
                     .map_err(|err| {
-                        anyhow::anyhow!("Failed to run deployer restart command: {}", err)
+                        anyhow::anyhow!("Failed to run deployer restart command: {err}",)
                     })?;
                 Ok(())
             }
@@ -1041,9 +1034,7 @@ async fn main() -> Result<()> {
                     arg.follow,
                 )
                 .await
-                .map_err(|err| {
-                    anyhow::anyhow!("Failed to run deployer monitor command: {}", err)
-                })?;
+                .map_err(|err| anyhow::anyhow!("Failed to run deployer monitor command: {err}",))?;
                 Ok(())
             }
         },

@@ -1,15 +1,18 @@
 use alloy::primitives::Address;
+use arc_swap::ArcSwap;
 use ethabi::Token;
 use ethers::{
     abi::Tokenize,
     providers::{Middleware, PubsubClient},
     types::TransactionRequest,
 };
-use parking_lot::{RwLock, RwLockWriteGuard};
 use primitive_types::{H160, U256};
 use serde_json::{Value, value::RawValue};
 use zilliqa::{
-    cfg::{DbConfig, new_view_broadcast_interval_default},
+    cfg::{
+        DbConfig, disable_get_full_state_for_contracts_default, max_missed_view_age_default,
+        new_view_broadcast_interval_default,
+    },
     contracts,
     crypto::NodePublicKey,
     db::BlockFilter,
@@ -20,6 +23,7 @@ mod consensus;
 mod debug;
 mod eth;
 mod ots;
+mod penalty;
 mod persistence;
 mod staking;
 mod sync;
@@ -40,7 +44,7 @@ use std::{
     rc::Rc,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicPtr, AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -79,12 +83,12 @@ use zilliqa::{
     api,
     cfg::{
         Amount, ApiServer, Checkpoint, ConsensusConfig, ContractUpgradeConfig, ContractUpgrades,
-        Fork, GenesisDeposit, NodeConfig, SyncConfig, allowed_timestamp_skew_default,
-        block_request_batch_size_default, block_request_limit_default, consensus_timeout_default,
-        eth_chain_id_default, failed_request_sleep_duration_default, genesis_fork_default,
-        max_blocks_in_flight_default, max_rpc_response_size_default, scilla_ext_libs_path_default,
-        state_cache_size_default, state_rpc_limit_default, total_native_token_supply_default,
-        u64_max,
+        Fork, GenesisDeposit, NodeConfig, ReinitialiseParams, SyncConfig,
+        allowed_timestamp_skew_default, block_request_batch_size_default,
+        block_request_limit_default, consensus_timeout_default, eth_chain_id_default,
+        failed_request_sleep_duration_default, genesis_fork_default, max_blocks_in_flight_default,
+        max_rpc_response_size_default, scilla_ext_libs_path_default, state_cache_size_default,
+        state_rpc_limit_default, total_native_token_supply_default, u64_max,
     },
     crypto::{SecretKey, TransactionPublicKey},
     db,
@@ -184,7 +188,7 @@ fn node(
 
     let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
     let sync_peers = Arc::new(SyncPeers::new(peer_id));
-    let swarm_peers = Arc::new(AtomicPtr::new(Box::into_raw(Box::new(Vec::new()))));
+    let swarm_peers = Arc::new(ArcSwap::from_pointee(Vec::new()));
 
     let node = Node::new(
         NodeConfig {
@@ -202,7 +206,7 @@ fn node(
         sync_peers.clone(),
         swarm_peers,
     )?;
-    let node = Arc::new(RwLock::new(node));
+    let node = Arc::new(node);
     let rpc_module = api::rpc_module(node.clone(), &api::all_enabled());
 
     Ok((
@@ -228,8 +232,8 @@ struct TestNode {
     secret_key: SecretKey,
     onchain_key: SigningKey,
     peer_id: PeerId,
-    rpc_module: RpcModule<Arc<RwLock<Node>>>,
-    inner: Arc<RwLock<Node>>,
+    rpc_module: RpcModule<Arc<Node>>,
+    inner: Arc<Node>,
     dir: Option<TempDir>,
     peers: Arc<SyncPeers>,
 }
@@ -354,10 +358,24 @@ impl Network {
                         deposit_v3_upgrade_block_height_value,
                     )),
                     None,
-                    None,
+                    Some(ContractUpgradeConfig {
+                        height: deposit_v3_upgrade_block_height_value,
+                        reinitialise_params: Some(ReinitialiseParams::default()),
+                    }),
+                    Some(ContractUpgradeConfig::from_height(
+                        deposit_v3_upgrade_block_height_value,
+                    )),
                 )
             } else {
-                ContractUpgrades::new(None, None, None)
+                ContractUpgrades::new(
+                    None,
+                    None,
+                    Some(ContractUpgradeConfig {
+                        height: 0,
+                        reinitialise_params: Some(ReinitialiseParams::default()),
+                    }),
+                    Some(ContractUpgradeConfig::from_height(0)),
+                )
             }
         };
 
@@ -412,6 +430,8 @@ impl Network {
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: true,
             max_rpc_response_size: max_rpc_response_size_default(),
+            max_missed_view_age: max_missed_view_age_default(),
+            disable_get_full_state_for_contracts: disable_get_full_state_for_contracts_default(),
         };
 
         let (nodes, external_receivers, local_receivers, request_response_receivers): (
@@ -505,10 +525,24 @@ impl Network {
                     self.deposit_v3_upgrade_block_height.unwrap(),
                 )),
                 None,
-                None,
+                Some(ContractUpgradeConfig {
+                    height: self.deposit_v3_upgrade_block_height.unwrap(),
+                    reinitialise_params: Some(ReinitialiseParams::default()),
+                }),
+                Some(ContractUpgradeConfig::from_height(
+                    self.deposit_v3_upgrade_block_height.unwrap(),
+                )),
             )
         } else {
-            ContractUpgrades::new(None, None, None)
+            ContractUpgrades::new(
+                None,
+                None,
+                Some(ContractUpgradeConfig {
+                    height: 0,
+                    reinitialise_params: Some(ReinitialiseParams::default()),
+                }),
+                Some(ContractUpgradeConfig::from_height(0)),
+            )
         };
         let config = NodeConfig {
             eth_chain_id: self.shard_id,
@@ -566,6 +600,8 @@ impl Network {
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: true,
             max_rpc_response_size: max_rpc_response_size_default(),
+            max_missed_view_age: max_missed_view_age_default(),
+            disable_get_full_state_for_contracts: disable_get_full_state_for_contracts_default(),
         };
 
         let secret_key = options.secret_key_or_random(self.rng.clone());
@@ -627,7 +663,7 @@ impl Network {
                     warn!("Failed to copy data dir over");
                 }
 
-                let config = self.nodes[i].inner.read().config.clone();
+                let config = self.nodes[i].inner.config.clone();
 
                 node(config, key.0, key.1, i, Some(new_data_dir)).unwrap()
             })
@@ -664,12 +700,9 @@ impl Network {
         // this could of course spin forever, but the test itself should time out.
         loop {
             for node in &self.nodes {
-                node.inner
-                    .write()
-                    .process_transactions_to_broadcast()
-                    .unwrap();
+                node.inner.process_transactions_to_broadcast().unwrap();
                 // Trigger a tick so that block fetching can operate.
-                if node.inner.write().handle_timeout().unwrap() {
+                if node.inner.handle_timeout().unwrap() {
                     return;
                 }
                 zilliqa::time::advance(Duration::from_millis(500));
@@ -843,11 +876,8 @@ impl Network {
                 let span = tracing::span!(tracing::Level::INFO, "handle_timeout", index);
 
                 span.in_scope(|| {
-                    node.inner
-                        .write()
-                        .process_transactions_to_broadcast()
-                        .unwrap();
-                    node.inner.write().handle_timeout().unwrap();
+                    node.inner.process_transactions_to_broadcast().unwrap();
+                    node.inner.handle_timeout().unwrap();
                 });
             }
             return;
@@ -919,7 +949,7 @@ impl Network {
             .iter()
             .find(|&node| node.peer_id == source)
             .expect("Sender should be on the nodes list");
-        let sender_chain_id = sender_node.inner.read().config.eth_chain_id;
+        let sender_chain_id = sender_node.inner.config.eth_chain_id;
         match contents {
             AnyMessage::Internal(source_shard, destination_shard, internal_message) => {
                 trace!(
@@ -973,7 +1003,6 @@ impl Network {
                                     internal_message, source_shard, idx, self.shard_id
                                 );
                                 node.inner
-                                    .write()
                                     .handle_internal_message(
                                         *source_shard,
                                         internal_message.clone(),
@@ -1006,6 +1035,7 @@ impl Network {
                         transactions,
                         parent,
                         trie_storage,
+                        view_history,
                         output,
                     ) => {
                         assert!(
@@ -1020,6 +1050,7 @@ impl Network {
                             parent,
                             trie_storage.clone(),
                             *source_shard,
+                            view_history.clone(),
                             output,
                         )
                         .unwrap();
@@ -1058,7 +1089,7 @@ impl Network {
                             let span =
                                 tracing::span!(tracing::Level::INFO, "handle_message", index);
                             span.in_scope(|| {
-                                let mut inner = node.inner.write();
+                                let inner = node.inner.clone();
                                 // Send to nodes only in the same shard (having same chain_id)
                                 if inner.config.eth_chain_id == sender_chain_id {
                                     let response_channel =
@@ -1105,7 +1136,7 @@ impl Network {
                             let span =
                                 tracing::span!(tracing::Level::INFO, "handle_message", index);
                             span.in_scope(|| {
-                                let mut inner = node.inner.write();
+                                let inner = node.inner.clone();
                                 // Send to nodes only in the same shard (having same chain_id)
                                 if inner.config.eth_chain_id == sender_chain_id {
                                     // Re-route Proposals from Broadcast to Requests
@@ -1162,7 +1193,7 @@ impl Network {
                     if !self.disconnected.contains(&index) {
                         let span = tracing::span!(tracing::Level::INFO, "handle_message", index);
                         span.in_scope(|| {
-                            let mut inner = node.inner.write();
+                            let inner = node.inner.clone();
                             // Send to nodes only in the same shard (having same chain_id)
                             if inner.config.eth_chain_id == sender_chain_id {
                                 inner.handle_response(source, message.clone()).unwrap();
@@ -1183,7 +1214,13 @@ impl Network {
         };
         self.run_until(
             |net| {
-                let syncing = net.get_node(index).consensus.sync.am_syncing().unwrap();
+                let syncing = net
+                    .get_node(index)
+                    .consensus
+                    .read()
+                    .sync
+                    .am_syncing()
+                    .unwrap();
                 let height_i = net.get_node(index).get_finalized_height().unwrap();
                 let height_c = net.get_node(check).get_finalized_height().unwrap();
                 height_c == height_i && height_i > 0 && !syncing
@@ -1328,8 +1365,8 @@ impl Network {
             .find(|(_, n)| n.peer_id == peer_id)
     }
 
-    pub fn get_node(&self, index: usize) -> RwLockWriteGuard<Node> {
-        self.nodes[index].inner.write()
+    pub fn get_node(&self, index: usize) -> Arc<Node> {
+        self.nodes[index].inner.clone()
     }
 
     pub fn get_node_raw(&self, index: usize) -> &TestNode {
@@ -1341,8 +1378,8 @@ impl Network {
         self.nodes.remove(idx)
     }
 
-    pub fn node_at(&mut self, index: usize) -> RwLockWriteGuard<Node> {
-        self.nodes[index].inner.write()
+    pub fn node_at(&mut self, index: usize) -> Arc<Node> {
+        self.nodes[index].inner.clone()
     }
 
     pub async fn rpc_client(&mut self, index: usize) -> Result<LocalRpcClient> {
@@ -1572,7 +1609,7 @@ async fn get_stakers(
 #[derive(Debug, Clone)]
 pub struct LocalRpcClient {
     id: Arc<AtomicU64>,
-    rpc_module: RpcModule<Arc<RwLock<Node>>>,
+    rpc_module: RpcModule<Arc<Node>>,
     subscriptions: Arc<Mutex<HashMap<u64, mpsc::Receiver<Box<RawValue>>>>>,
 }
 

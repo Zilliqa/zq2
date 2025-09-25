@@ -1,13 +1,11 @@
 use std::{
     net::Ipv4Addr,
-    sync::{
-        Arc,
-        atomic::{AtomicPtr, AtomicUsize},
-    },
+    sync::{Arc, atomic::AtomicUsize},
     time::{Duration, SystemTime},
 };
 
 use anyhow::{Result, anyhow};
+use arc_swap::ArcSwap;
 use http::{Method, header};
 use jsonrpsee::server::ServerConfig;
 use libp2p::{PeerId, futures::StreamExt};
@@ -19,7 +17,6 @@ use opentelemetry_semantic_conventions::{
     },
     metric::MESSAGING_PROCESS_DURATION,
 };
-use parking_lot::RwLock;
 use tokio::{
     select,
     sync::mpsc::{self, UnboundedSender},
@@ -41,7 +38,7 @@ use crate::{
 };
 
 pub struct NodeLauncher {
-    pub node: Arc<RwLock<Node>>,
+    pub node: Arc<Node>,
     pub config: NodeConfig,
     pub broadcasts: UnboundedReceiverStream<(PeerId, ExternalMessage, ResponseChannel)>,
     pub requests: UnboundedReceiverStream<(PeerId, String, ExternalMessage, ResponseChannel)>,
@@ -102,7 +99,7 @@ impl NodeLauncher {
         local_outbound_message_sender: UnboundedSender<LocalMessageTuple>,
         request_responses_sender: UnboundedSender<(ResponseChannel, ExternalMessage)>,
         peer_num: Arc<AtomicUsize>,
-        swarm_peers: Arc<AtomicPtr<Vec<PeerId>>>,
+        swarm_peers: Arc<ArcSwap<Vec<PeerId>>>,
     ) -> Result<(Self, NodeInputChannels, Arc<SyncPeers>)> {
         /// Helper to create a (sender, receiver) pair for a channel.
         fn sender_receiver<T>() -> (UnboundedSender<T>, UnboundedReceiverStream<T>) {
@@ -132,7 +129,7 @@ impl NodeLauncher {
             swarm_peers.clone(),
         )?;
 
-        let node = Arc::new(RwLock::new(node));
+        let node = Arc::new(node);
 
         for api_server in &config.api_servers {
             let rpc_module = api::rpc_module(Arc::clone(&node), &api_server.enabled_apis);
@@ -222,7 +219,7 @@ impl NodeLauncher {
 
                     let start = SystemTime::now();
                     if let ExternalMessage::BatchedTransactions(transactions) = message {
-                        let my_peer_id = self.node.read().consensus.peer_id();
+                        let my_peer_id = self.node.consensus.read().peer_id();
 
                         if source != my_peer_id {
                             let mut verified = Vec::with_capacity(transactions.len());
@@ -232,12 +229,12 @@ impl NodeLauncher {
                                     Err(e) => error!("Skipping transaction {e}"),
                                 }
                             }
-                            if let Err(e)= self.node.read().handle_broadcast_transactions(verified) {
+                            if let Err(e)= self.node.handle_broadcast_transactions(verified) {
                                 error!("Failed to handle broadcast transactions {e}");
                             }
                         }
                     }
-                    else if let Err(e) = self.node.write().handle_broadcast(source, message, response_channel) {
+                    else if let Err(e) = self.node.handle_broadcast(source, message, response_channel) {
                         attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));
                         error!("Failed to process broadcast message: {e}");
                     }
@@ -255,7 +252,7 @@ impl NodeLauncher {
                     ];
 
                     let start = SystemTime::now();
-                    if let Err(e) = self.node.write().handle_request(source, &id, message, response_channel) {
+                    if let Err(e) = self.node.handle_request(source, &id, message, response_channel) {
                         attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));
                         error!("Failed to process request message: {e}");
                     }
@@ -273,7 +270,7 @@ impl NodeLauncher {
                     ];
 
                     let start = SystemTime::now();
-                    if let Err(e) = self.node.write().handle_request_failure(source, message) {
+                    if let Err(e) = self.node.handle_request_failure(source, message) {
                         attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));
                         error!("Failed to process request failure message: {e}");
                     }
@@ -291,7 +288,7 @@ impl NodeLauncher {
                     ];
 
                     let start = SystemTime::now();
-                    if let Err(e) = self.node.write().handle_response(source, message) {
+                    if let Err(e) = self.node.handle_response(source, message) {
                         attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));
                         error!("Failed to process response message: {e}");
                     }
@@ -312,10 +309,10 @@ impl NodeLauncher {
 
                     let start = SystemTime::now();
                     // No messages for a while, so check if consensus wants to timeout
-                    if let Err(e) = self.node.write().handle_timeout() {
+                    if let Err(e) = self.node.handle_timeout() {
                         error!("Failed to handle timeout {e}");
                     }
-                    consensus_sleep.as_mut().reset(Instant::now() + Duration::from_millis(500));
+                    consensus_sleep.as_mut().reset(Instant::now() + Duration::from_millis(300));
                     messaging_process_duration.record(
                         start.elapsed().map_or(0.0, |d| d.as_secs_f64()),
                         &attributes,
@@ -328,7 +325,7 @@ impl NodeLauncher {
                 },
 
                 () = &mut mempool_sleep => {
-                    self.node.write().process_transactions_to_broadcast()?;
+                    self.node.process_transactions_to_broadcast()?;
                     mempool_sleep.as_mut().reset(Instant::now() + Duration::from_millis(50));
                 },
             }

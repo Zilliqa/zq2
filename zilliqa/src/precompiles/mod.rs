@@ -1,9 +1,12 @@
 mod bls_verify;
+mod penalty;
 mod pop_verify;
 mod scilla;
 
 use alloy::primitives::Address;
 use bls_verify::BlsVerify;
+//use penalty::Penalty;
+pub use penalty::{ViewHistory, penalty_handle_register};
 use pop_verify::PopVerify;
 use revm::{
     context_interface::{Cfg, ContextTr},

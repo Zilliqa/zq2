@@ -16,7 +16,7 @@ use alloy::primitives::{Address, U256};
 use anyhow::{Context, Result, anyhow};
 use bitvec::{bitarr, order::Msb0};
 use dashmap::DashMap;
-use eth_trie::{DB, EthTrie, MemoryDB, Trie};
+use eth_trie::{EthTrie, MemoryDB, Trie};
 use itertools::Itertools;
 use k256::pkcs8::der::DateTime;
 use libp2p::PeerId;
@@ -31,7 +31,10 @@ use crate::{
     api::types::eth::SyncingStruct,
     aux, blockhooks,
     cfg::{ConsensusConfig, ForkName, NodeConfig},
-    constants::{EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, TIME_TO_ALLOW_PROPOSAL_BROADCAST},
+    constants::{
+        EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, LAG_BEHIND_CURRENT_VIEW,
+        TIME_TO_ALLOW_PROPOSAL_BROADCAST,
+    },
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey, verify_messages},
     db::{self, BlockFilter, Db},
     evm::ZQ2EvmContext,
@@ -226,7 +229,7 @@ pub struct Consensus {
     pub db: Arc<Db>,
     receipts_cache: Mutex<ReceiptsCache>,
     /// Actions that act on newly created blocks
-    pub transaction_pool: RwLock<TransactionPool>,
+    pub transaction_pool: Arc<RwLock<TransactionPool>>,
     /// Pending proposal. Gets created as soon as we become aware that we are leader for this view.
     early_proposal: RwLock<Option<EarlyProposal>>,
     /// Flag indicating that block broadcasting should be postponed at least until block_time is reached
@@ -294,6 +297,18 @@ impl Consensus {
             trace!("Constructing new state from genesis");
             State::new_with_genesis(db.state_trie()?, config.clone(), db.clone())
         }?;
+
+        let (ckpt_block, ckpt_transactions, ckpt_parent) =
+            if let Some((block, transactions, parent, view_history)) = checkpoint_data {
+                info!(
+                    history = display(&view_history),
+                    "~~~~~~~~~~> found in checkpoint"
+                );
+                state.view_history = view_history;
+                (Some(block), Some(transactions), Some(parent))
+            } else {
+                (None, None, None)
+            };
 
         let (latest_block, latest_block_view) = match latest_block {
             Some(l) => (Some(l.clone()), l.view()),
@@ -365,6 +380,8 @@ impl Consensus {
             peers.clone(),
         )?;
 
+        let state_sync = config.db.state_sync;
+        let forks = config.consensus.get_forks()?;
         let enable_ots_indices = config.enable_ots_indices;
 
         let mut consensus = Consensus {
@@ -409,8 +426,90 @@ impl Consensus {
             aux::check_and_build_ots_indices(db, latest_block_view)?;
         }
 
-        // If we started from a checkpoint, execute the checkpointed block now
-        if let Some((block, transactions, mut parent)) = checkpoint_data {
+        // merge the missed view history imported from the database with the missed view
+        // history loaded from the checkpoint, which is now stored in the consensus state
+        let finalized_view = consensus.get_finalized_view()?;
+        consensus.state.finalized_view = finalized_view;
+
+        info!(
+            view = start_view,
+            finalized = finalized_view,
+            history = display(&consensus.state.view_history),
+            "~~~~~~~~~~> loaded from checkpoint in"
+        );
+
+        let earliest = consensus
+            .config
+            .consensus
+            .get_forks()?
+            .find_height_fork_first_activated(ForkName::ExecutableBlocks)
+            .unwrap_or_default();
+        info!(earliest, "~~~~~~~~~~>");
+
+        let max_missed_view_age = consensus.config.max_missed_view_age;
+
+        let (first, last) = consensus.db.get_first_last_from_view_history()?;
+
+        // import missed views and min_view from the db
+        let imported_missed_views: Vec<(u64, NodePublicKey)> = consensus
+            .db
+            .read_recent_view_history(
+                finalized_view.saturating_sub(max_missed_view_age + LAG_BEHIND_CURRENT_VIEW + 1),
+            )?
+            .iter()
+            .map(|(view, bytes)| (*view, NodePublicKey::from_bytes(bytes).unwrap()))
+            .collect();
+        let imported_min_view = consensus.db.get_min_view_of_view_history()?;
+        info!(
+            min = imported_min_view,
+            missed = imported_missed_views.len(),
+            first,
+            last,
+            "~~~~~~~~~~> found in db"
+        );
+
+        // since we don't fill the gap between the history loaded from the checkpoint and
+        // the history in the db during state sync running in the background we keep the
+        // history imported from the db and ignore the history loaded from the checkpoint
+        if !imported_missed_views.is_empty() {
+            {
+                // store the imported missed views in the consensus state
+                consensus.state.view_history.missed_views.clear();
+                consensus
+                    .state
+                    .view_history
+                    .missed_views
+                    .extend(imported_missed_views.iter());
+                // update the imported min_view in the consensus state
+                consensus.state.view_history.min_view = imported_min_view;
+            }
+            info!(
+                view = start_view,
+                finalized = finalized_view,
+                history = display(&consensus.state.view_history),
+                "~~~~~~~~~~> imported from db in"
+            );
+        } else {
+            // store the missed views loaded from the checkpoint in the db
+            for (view, leader) in consensus.state.view_history.missed_views.iter() {
+                if *view < imported_min_view {
+                    // if the history loaded from the checkpoint overlaps with the history in the db
+                    consensus.db.extend_view_history(*view, leader.as_bytes())?;
+                } else {
+                    break;
+                }
+            }
+            // update the min_view loaded from the checkpoint in the db
+            consensus
+                .db
+                .set_min_view_of_view_history(consensus.state.view_history.min_view)?;
+        }
+
+        // If we started from a checkpoint
+        if let (Some(block), Some(transactions), Some(parent)) =
+            (ckpt_block, ckpt_transactions, ckpt_parent)
+        {
+            // if the checkpoint block does not exist, execute the block
             if consensus
                 .db
                 .get_transactionless_block(BlockFilter::Hash(block.hash()))?
@@ -428,52 +527,15 @@ impl Consensus {
                         .get_stakers(block.header)?,
                     true,
                 )?;
-            } else if let Some(latest_block) = latest_block {
-                // if block is present, perform state-sync
-                let mut last_hash = parent.state_root_hash();
-                let range = block.number()..=latest_block.number();
-                tracing::info!(?range, "Syncing state from checkpoint");
-                for number in range {
-                    let Some(block) = consensus
-                        .db
-                        .get_transactionless_block(BlockFilter::Height(number))?
-                    else {
-                        tracing::error!("Block not found {number}");
-                        break;
-                    };
-
-                    // check that the block mutates state; and
-                    if last_hash != block.state_root_hash() {
-                        last_hash = block.state_root_hash();
-                        // the state is not already present in the db.
-                        if consensus
-                            .db
-                            .state_trie()?
-                            .get(block.state_root_hash().as_bytes())?
-                            .is_none()
-                        {
-                            tracing::info!(number = %block.number(), state=%block.state_root_hash(), "Syncing state from block");
-                            let brt = consensus
-                                .db
-                                .get_block_and_receipts_and_transactions(BlockFilter::Hash(
-                                    block.hash(),
-                                ))?
-                                .expect("block must exist due to check above");
-                            let transactions =
-                                brt.transactions.into_iter().map(|tx| tx.tx).collect();
-                            consensus.replay_proposal(
-                                brt.block,
-                                transactions,
-                                parent.state_root_hash(),
-                            )?;
-                            parent = block;
-                        }
-                    }
-                }
+            }
+            // set starting point for state-sync/state-migration
+            if state_sync {
+                consensus.db.state_trie()?.set_migrate_at(block.number())?;
             }
         }
 
-        consensus.db.init_rocksdb()?;
+        // Initialize state trie storage
+        consensus.db.state_trie()?.init_state_trie(forks)?;
 
         // If timestamp of when current high_qc was written exists then use it to estimate the minimum number of blocks the network has moved on since shut down
         // This is useful in scenarios in which consensus has failed since this node went down
@@ -1107,14 +1169,6 @@ impl Consensus {
         let current_nonce = account_data.nonce;
         let pool = self.transaction_pool.read();
         current_nonce + pool.account_pending_transaction_count(&account_address)
-    }
-
-    pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
-        if !self.config.enable_ots_indices {
-            return Err(anyhow!("Otterscan indices are disabled"));
-        }
-
-        self.db.get_touched_transactions(address)
     }
 
     /// Clear up anything in memory that is no longer required. This is to avoid memory leaks.
@@ -1851,10 +1905,9 @@ impl Consensus {
         from_broadcast: bool,
     ) -> Result<Vec<TxAddResult>> {
         let mut inserted = Vec::with_capacity(verified_transactions.len());
-        let mut pool = self.transaction_pool.write();
         for txn in verified_transactions {
             info!(?txn, "seen new txn");
-            inserted.push(self.new_transaction(txn, from_broadcast, &mut pool)?);
+            inserted.push(self.new_transaction(txn, from_broadcast)?);
         }
         Ok(inserted)
     }
@@ -2092,7 +2145,6 @@ impl Consensus {
         &self,
         txn: VerifiedTransaction,
         from_broadcast: bool,
-        pool: &mut RwLockWriteGuard<TransactionPool>,
     ) -> Result<TxAddResult> {
         if self.db.contains_transaction(&txn.hash)? {
             debug!("Transaction {:?} already in mempool", txn.hash);
@@ -2129,7 +2181,11 @@ impl Consensus {
 
         let txn_hash = txn.hash;
 
-        let insert_result = pool.insert_transaction(txn.clone(), &early_account, from_broadcast);
+        let insert_result = self.transaction_pool.write().insert_transaction(
+            txn.clone(),
+            &early_account,
+            from_broadcast,
+        );
         if insert_result.was_added() {
             let _ = self.new_transaction_hashes.send(txn_hash);
 
@@ -2257,27 +2313,41 @@ impl Consensus {
     }
 
     fn check_safe_block(&mut self, proposal: &Block) -> Result<bool> {
-        let Some(qc_block) = self.get_block(&proposal.parent_hash())? else {
-            trace!("could not get qc for block: {}", proposal.parent_hash());
-            return Ok(false);
-        };
         match proposal.agg {
-            // we check elsewhere that qc is the highest among the qcs in the agg
-            Some(_) => match self.block_extends_from(proposal, &qc_block) {
-                Ok(true) => {
-                    self.check_and_commit(proposal)?;
-                    Ok(true)
+            Some(ref agg_qc) => {
+                let Some(highest_qc) = agg_qc.qcs.iter().max_by_key(|qc| qc.view) else {
+                    return Ok(false);
+                };
+                let Some(qc_block) = self.get_block(&highest_qc.block_hash)? else {
+                    trace!(
+                        "could not get block the qc points to: {}",
+                        highest_qc.block_hash
+                    );
+                    return Ok(false);
+                };
+                match self.block_extends_from(proposal, &qc_block) {
+                    Ok(true) => {
+                        self.check_and_commit(proposal)?;
+                        Ok(true)
+                    }
+                    Ok(false) => {
+                        trace!("block does not extend from parent");
+                        Ok(false)
+                    }
+                    Err(e) => {
+                        trace!(?e, "error checking block extension");
+                        Ok(false)
+                    }
                 }
-                Ok(false) => {
-                    trace!("block does not extend from parent");
-                    Ok(false)
-                }
-                Err(e) => {
-                    trace!(?e, "error checking block extension");
-                    Ok(false)
-                }
-            },
+            }
             None => {
+                let Some(qc_block) = self.get_block(&proposal.parent_hash())? else {
+                    trace!(
+                        "could not get block the qc points to: {}",
+                        proposal.parent_hash()
+                    );
+                    return Ok(false);
+                };
                 if proposal.view() == 0 || proposal.view() == qc_block.view() + 1 {
                     self.check_and_commit(proposal)?;
                     Ok(true)
@@ -2341,6 +2411,63 @@ impl Consensus {
             block.view(),
             block.number()
         );
+
+        let mut current = block.clone();
+        let finalized_view = self.get_finalized_view()?;
+        let mut new_missed_views: Vec<(u64, NodePublicKey)> = Vec::new();
+        while current.view() > finalized_view {
+            let parent = self.get_block(&current.parent_hash())?.ok_or_else(|| {
+                anyhow!(format!("missing block parent {}", &current.parent_hash()))
+            })?;
+            let state_at = self.state.at_root(parent.state_root_hash().into());
+            let block_header = BlockHeader {
+                number: parent.header.number,
+                ..Default::default()
+            };
+            for view in (parent.view() + 1..current.view()).rev() {
+                if let Ok(leader) = state_at.leader(view, block_header) {
+                    if view == parent.view() + 1 {
+                        info!(
+                            view,
+                            id = &leader.as_bytes()[..3],
+                            "~~~~~~~~~~> skipping reorged"
+                        );
+                    } else {
+                        new_missed_views.push((view, leader));
+                    }
+                }
+            }
+            current = parent;
+        }
+        let max_missed_view_age = self.config.max_missed_view_age;
+        let extended = self.state.view_history.append_history(&new_missed_views)?;
+        let pruned = self
+            .state
+            .view_history
+            .prune_history(block.view(), max_missed_view_age)?;
+        // the following code is only for logging and can be commented out
+        if extended || pruned {
+            info!(
+                view = self.get_view()?,
+                finalized = block.view(),
+                history = display(&self.state.view_history),
+                "~~~~~~~~~~> current"
+            );
+            //TODO(#3080): do not update the db on every finalization to avoid impact on block times
+            if extended {
+                for (view, leader) in new_missed_views.iter().rev() {
+                    self.db.extend_view_history(*view, leader.as_bytes())?;
+                }
+            }
+            let min_view = self.state.view_history.min_view;
+            //TODO(#3080): skip next line if min_view did not increase in prune_history()
+            self.db.set_min_view_of_view_history(min_view)?;
+            if pruned {
+                self.db.prune_view_history(min_view)?;
+            }
+        }
+        self.state.finalized_view = block.view();
+
         self.set_finalized_view(block.view())?;
 
         let receipts = self.db.get_transaction_receipts_in_block(&block.hash())?;
@@ -2399,6 +2526,7 @@ impl Consensus {
                         transactions,
                         Box::new(parent),
                         self.db.state_trie()?.clone(),
+                        self.state.view_history.clone(),
                         checkpoint_path,
                     ),
                 )?;
@@ -2438,12 +2566,27 @@ impl Consensus {
             .ok_or(anyhow!("No checkpoint directory configured"))?;
         let file_name = db::get_checkpoint_filename(checkpoint_dir.clone(), &block)?;
         let hash = block.hash();
+        //TODO(#3080): export more than MISSED_VIEW_WINDOW in case we increase it in the future,
+        //             but not the entire missed view history as defined by max_missed_view_age
+        let missed_view_age = self.config.max_missed_view_age; //constants::MISSED_VIEW_WINDOW;
+        // after loading the checkpoint we will need the leader of the parent block too
+        let view_history = self.state.view_history.new_at(
+            parent.view(), //block.view(),
+            missed_view_age,
+        );
+        info!(
+            view = self.get_view()?,
+            checkpoint = parent.view(), //block.view(),
+            view_history = display(&view_history),
+            "~~~~~~~~~~> saving in current"
+        );
         self.message_sender
             .send_message_to_coordinator(InternalMessage::ExportBlockCheckpoint(
                 Box::new(block),
                 transactions,
                 Box::new(parent),
                 self.db.state_trie()?.clone(),
+                view_history,
                 checkpoint_dir,
             ))?;
         Ok((file_name.display().to_string(), hash.to_string()))
@@ -2917,16 +3060,19 @@ impl Consensus {
 
     pub fn leader_at_block(&self, block: &Block, view: u64) -> Option<Validator> {
         let state_at = self.state.at_root(block.state_root_hash().into());
+        Self::leader_at_state(&state_at, block, view)
+    }
 
+    pub fn leader_at_state(state: &State, block: &Block, view: u64) -> Option<Validator> {
         let executed_block = BlockHeader {
             number: block.header.number + 1,
             ..Default::default()
         };
-        let Ok(public_key) = state_at.leader(view, executed_block) else {
+        let Ok(public_key) = state.leader(view, executed_block) else {
             return None;
         };
 
-        let Ok(Some(peer_id)) = state_at.get_peer_id(public_key) else {
+        let Ok(Some(peer_id)) = state.get_peer_id(public_key) else {
             return None;
         };
 
@@ -3159,65 +3305,70 @@ impl Consensus {
             };
         }
 
-        let mut pool = self.transaction_pool.write();
-        pool.update_with_state(&self.state);
         let mut verified_txns = Vec::new();
+        {
+            // Pool is write-lock here and has to be dropped after this scope
+            let mut pool = self.transaction_pool.write();
+            pool.update_with_state(&self.state);
 
-        let fork = self.state.forks.get(block.header.number);
+            let fork = self.state.forks.get(block.header.number);
 
-        // We re-inject any missing Intershard transactions (or really, any missing
-        // transactions) from our mempool. If any txs are unavailable in both the
-        // message or locally, the proposal cannot be applied
-        for (idx, tx_hash) in block.transactions.iter().enumerate() {
-            // Prefer to insert verified txn from pool. This is faster.
-            let txn = match pool.get_transaction(tx_hash) {
-                Some(txn) => txn.clone(),
-                _ => match transactions.get(idx) {
-                    Some(sig_txn) => {
-                        let Ok(verified) = sig_txn.clone().verify() else {
-                            warn!("Unable to verify included transaction in given block!");
-                            return Ok(());
-                        };
-                        if verified.hash != *tx_hash {
+            // We re-inject any missing Intershard transactions (or really, any missing
+            // transactions) from our mempool. If any txs are unavailable in both the
+            // message or locally, the proposal cannot be applied
+            for (idx, tx_hash) in block.transactions.iter().enumerate() {
+                // Prefer to insert verified txn from pool. This is faster.
+                let txn = match pool.get_transaction(tx_hash) {
+                    Some(txn) => txn.clone(),
+                    _ => match transactions.get(idx) {
+                        Some(sig_txn) => {
+                            let Ok(verified) = sig_txn.clone().verify() else {
+                                warn!("Unable to verify included transaction in given block!");
+                                return Ok(());
+                            };
+                            if verified.hash != *tx_hash {
+                                warn!(
+                                    "Computed txn hash doesn't match the hash provided in the given block!"
+                                );
+                                return Ok(());
+                            }
+
+                            // bypass this check during sync - since the txn has already been executed
+                            if fork.check_minimum_gas_price && !during_sync {
+                                let Ok(acc) = self.state.get_account(verified.signer) else {
+                                    warn!(
+                                        "Sender doesn't exist in recovered transaction from given block!"
+                                    );
+                                    return Ok(());
+                                };
+
+                                let Ok(ValidationOutcome::Success) = sig_txn.validate(
+                                    &acc,
+                                    self.config.consensus.eth_block_gas_limit,
+                                    self.config.consensus.gas_price.0,
+                                    self.config.eth_chain_id,
+                                ) else {
+                                    warn!(
+                                        "Transaction recovered from given block failed to validate!"
+                                    );
+                                    return Ok(());
+                                };
+                            }
+                            verified
+                        }
+                        None => {
                             warn!(
-                                "Computed txn hash doesn't match the hash provided in the given block!"
+                                "Proposal {} at view {} referenced a transaction {} that was neither included in the broadcast nor found locally - cannot apply block",
+                                block.hash(),
+                                block.view(),
+                                tx_hash
                             );
                             return Ok(());
                         }
-
-                        // bypass this check during sync - since the txn has already been executed
-                        if fork.check_minimum_gas_price && !during_sync {
-                            let Ok(acc) = self.state.get_account(verified.signer) else {
-                                warn!(
-                                    "Sender doesn't exist in recovered transaction from given block!"
-                                );
-                                return Ok(());
-                            };
-
-                            let Ok(ValidationOutcome::Success) = sig_txn.validate(
-                                &acc,
-                                self.config.consensus.eth_block_gas_limit,
-                                self.config.consensus.gas_price.0,
-                                self.config.eth_chain_id,
-                            ) else {
-                                warn!("Transaction recovered from given block failed to validate!");
-                                return Ok(());
-                            };
-                        }
-                        verified
-                    }
-                    None => {
-                        warn!(
-                            "Proposal {} at view {} referenced a transaction {} that was neither included in the broadcast nor found locally - cannot apply block",
-                            block.hash(),
-                            block.view(),
-                            tx_hash
-                        );
-                        return Ok(());
-                    }
-                },
-            };
-            verified_txns.push(txn);
+                    },
+                };
+                verified_txns.push(txn);
+            }
         }
 
         let mut block_receipts = Vec::new();
@@ -3233,7 +3384,7 @@ impl Consensus {
 
         let mut touched_addresses = vec![];
         for (tx_index, txn) in verified_txns.iter().enumerate() {
-            self.new_transaction(txn.clone(), true, &mut pool)?;
+            self.new_transaction(txn.clone(), true)?;
             let tx_hash = txn.hash;
             let mut inspector = TouchedAddressInspector::default();
             let result = Self::apply_transaction_at(
@@ -3244,7 +3395,7 @@ impl Consensus {
                 self.config.enable_ots_indices,
             )?
             .ok_or_else(|| anyhow!("proposed transaction failed to execute"))?;
-            pool.mark_executed(txn);
+            self.transaction_pool.write().mark_executed(txn);
             for address in inspector.touched {
                 touched_addresses.push((address, tx_hash));
             }
@@ -3280,7 +3431,6 @@ impl Consensus {
             debug!(?receipt, "applied transaction {:?}", receipt);
             block_receipts.push((receipt, tx_index));
         }
-        std::mem::drop(pool);
 
         self.db.with_sqlite_tx(|sqlite_tx| {
             for txn in &verified_txns {
@@ -3542,8 +3692,8 @@ impl Consensus {
         Ok(range)
     }
 
-    pub fn get_sync_data(&self) -> Result<Option<SyncingStruct>> {
-        self.sync.get_sync_data()
+    pub fn get_sync_data(&self, db: Arc<Db>) -> Result<Option<SyncingStruct>> {
+        self.sync.get_sync_data(db)
     }
 
     /// This function is intended for use only by admin_forceView API. It is dangerous and should not be touched outside of testing or test network recovery.
@@ -3595,5 +3745,49 @@ impl Consensus {
 
     pub fn clear_mempool(&self) {
         self.transaction_pool.write().clear();
+    }
+
+    /// Migrate the state of one block - writing new state to RocksDB; returns true if done.
+    pub fn migrate_state_trie(&mut self) -> Result<bool> {
+        let state_trie = self.db.state_trie()?;
+        let mut migrate_at = state_trie.get_migrate_at()?;
+        if migrate_at == u64::MAX {
+            return Ok(true); // done
+        }
+
+        // replay one block - writing new state to RocksDB.
+        let Some(parent_hash) = state_trie.get_root_hash(migrate_at.saturating_sub(1))? else {
+            unimplemented!("parent state must exist!");
+        };
+
+        let brt = self
+            .db
+            .get_block_and_receipts_and_transactions(BlockFilter::Height(migrate_at))?
+            .expect("block must exist");
+        let block_hash = brt.block.state_root_hash();
+        tracing::info!(number=%migrate_at,state=%block_hash, "State-sync");
+        self.replay_proposal(
+            brt.block,
+            brt.transactions.into_iter().map(|t| t.tx).collect_vec(),
+            parent_hash,
+        )?;
+
+        // fast-forward to next block, skipping empty blocks, up to cutover threshold
+        let cutover_at = state_trie.get_cutover_at()?;
+        while migrate_at < cutover_at {
+            migrate_at = migrate_at.saturating_add(1); // check next block
+            let Some(hash) = state_trie.get_root_hash(migrate_at)? else {
+                tracing::warn!(number=%migrate_at,"State-sync retrying");
+                return Ok(true); // retry later
+            };
+            if hash != block_hash {
+                state_trie.set_migrate_at(migrate_at)?;
+                return Ok(false);
+            }
+        }
+        // done
+        tracing::info!("State-sync complete!");
+        state_trie.finish_migration()?;
+        Ok(true)
     }
 }

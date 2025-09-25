@@ -713,10 +713,7 @@ pub async fn run_rpc_call(
                 drop(permit);
                 return (
                     machine,
-                    Err(anyhow::anyhow!(
-                        "Failed to open tunnel for {}",
-                        machine_name
-                    )),
+                    Err(anyhow::anyhow!("Failed to open tunnel for {machine_name}",)),
                 );
             }
             let mut tunnel = tunnel.unwrap();
@@ -726,8 +723,7 @@ pub async fn run_rpc_call(
                 return (
                     machine,
                     Err(anyhow::anyhow!(
-                        "Tunnel did not become ready for {}",
-                        machine_name
+                        "Tunnel did not become ready for {machine_name}",
                     )),
                 );
             }
@@ -1130,10 +1126,7 @@ pub async fn run_monitor(
                 drop(permit);
                 return (
                     machine,
-                    Err(anyhow::anyhow!(
-                        "Failed to open tunnel for {}",
-                        machine_name
-                    )),
+                    Err(anyhow::anyhow!("Failed to open tunnel for {machine_name}",)),
                 );
             }
             let mut tunnel = tunnel.unwrap();
@@ -1143,8 +1136,7 @@ pub async fn run_monitor(
                 return (
                     machine,
                     Err(anyhow::anyhow!(
-                        "Tunnel did not become ready for {}",
-                        machine_name
+                        "Tunnel did not become ready for {machine_name}",
                     )),
                 );
             }

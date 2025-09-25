@@ -30,6 +30,7 @@ It contains the following files:
 - **transactions.bincode**: bincode serialized data of the checkpoint block's transactions.
 - **parent.bincode**: bincode serialized data of the parent block.
 - **state.bincode**: bincode serialized data of the parent block's state.
+- **history.bincode**: bincode serialized data of the missed view history required to determine the leader of the views from the parent block onward.
 
 The state consists of a patricia-merkle-trie of accounts, and each account additionally stores the state root hash of a sub-trie for its storage. We loop through each account concatenating its key, its `Account` and its storage trie's keys and values. There may be zero or more accounts in the state (though in practice, even at genesis it is not usually possible to generate a state with zero accounts).
 
@@ -51,9 +52,10 @@ ZILCHKPT/2.0
       444  1980-01-01 00:00   parent.bincode
         1  1980-01-01 00:00   transactions.bincode
   7016454  1980-01-01 00:00   state.bincode
+    23789  1980-01-01 00:00   history.bincode
       191  1980-01-01 00:00   metadata.json
 ---------                     -------
-  7017534                     5 files
+  7017534                     6 files
 ```
 
 The files are ZSTD compressed, which may not be supported on all CLI tools.

@@ -504,8 +504,7 @@ impl ChainNode {
             // Check if we've exceeded the maximum wait time
             if tokio::time::Instant::now().duration_since(start_time) > max_wait_duration {
                 return Err(anyhow!(
-                    "Timeout: Block number did not progress within {} minutes.",
-                    max_wait_in_mins
+                    "Timeout: Block number did not progress within {max_wait_in_mins} minutes.",
                 ));
             }
 
@@ -831,8 +830,9 @@ impl ChainNode {
                 let checkpoint_file = checkpoint_url.rsplit('/').next().unwrap_or("");
                 ctx.insert("checkpoint_file", &format!("/{checkpoint_file}"));
 
-                let checkpoint_hex_block =
-                    crate::utils::string_decimal_to_hex(&checkpoint_file.replace(".dat", ""))?;
+                let checkpoint_hex_block = crate::utils::string_decimal_to_hex(
+                    &checkpoint_file.replace(".dat", "").replace(".ckpt", ""),
+                )?;
 
                 let json_response = self.chain.run_rpc_call(
                     "eth_getBlockByNumber",
@@ -999,7 +999,7 @@ impl ChainNode {
             // export the backup files
             progress_bar.start("Exporting the backup files");
             let command = format!(
-                "sudo gsutil -m cp -r /data gs://{}-persistence/{}/",
+                "sudo gsutil -o \"GSUtil:parallel_process_count=64\" -o \"GSUtil:parallel_thread_count=8\" -m cp -r /data gs://{}-persistence/{}/",
                 self.chain()?,
                 backup_name
             );
@@ -1076,7 +1076,7 @@ impl ChainNode {
             // import the backup files
             progress_bar.start(format!("{}: Importing the backup files", self.name()));
             let command = format!(
-                "sudo gsutil -m cp -r gs://{}-persistence/{}/* /",
+                "sudo gsutil -o \"GSUtil:parallel_process_count=64\" -o \"GSUtil:parallel_thread_count=8\" -m cp -r gs://{}-persistence/{}/* /",
                 self.chain()?,
                 backup_name
             );
