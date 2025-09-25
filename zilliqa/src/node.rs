@@ -24,10 +24,9 @@ use itertools::Itertools;
 use libp2p::{PeerId, request_response::OutboundFailure};
 use parking_lot::RwLock;
 use rand::RngCore;
-use revm::{
-    Inspector,
-    primitives::{AccessListItem, ExecutionResult},
-};
+use revm::context_interface::{result::ExecutionResult, transaction::AccessList};
+use revm_context::TxEnv;
+use revm_inspector::Inspector;
 use revm_inspectors::tracing::{
     FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig, TransactionContext,
     js::JsInspector,
@@ -41,6 +40,7 @@ use crate::{
     consensus::Consensus,
     crypto::{Hash, SecretKey},
     db::{BlockFilter, Db},
+    evm::ZQ2EvmContext,
     exec::{PendingState, TransactionApplyResult},
     inspector::{self, ScillaInspector},
     message::{
@@ -680,7 +680,7 @@ impl Node {
         Err(anyhow!("transaction not found in block: {txn_hash}"))
     }
 
-    pub fn replay_transaction<I: Inspector<PendingState> + ScillaInspector>(
+    pub fn replay_transaction<I: Inspector<ZQ2EvmContext> + ScillaInspector>(
         node: &Arc<Node>,
         txn_hash: Hash,
         inspector: I,
@@ -912,15 +912,20 @@ impl Node {
                     JsInspector::with_transaction_context(js_code, config, transaction_context)
                         .map_err(|e| anyhow!("Unable to create js inspector: {e}"))?;
 
-                let result = state.apply_transaction(txn, block.header, &mut inspector, true)?;
+                let result =
+                    state.apply_transaction(txn.clone(), block.header, &mut inspector, true)?;
 
-                let TransactionApplyResult::Evm(result, env) = result else {
+                let TransactionApplyResult::Evm(result, _) = result else {
                     return Ok(None);
                 };
+
+                let Ok(revm_txn) = TxEnv::try_from(txn) else {
+                    return Ok(None);
+                };
+
                 let pending_state = PendingState::new(state.try_clone()?, fork);
-                let state_ref = &pending_state;
                 let result = inspector
-                    .json_result(result, &env, &state_ref)
+                    .json_result(result, &revm_txn, &block, &pending_state)
                     .map_err(|e| anyhow!("Unable to create json result: {e}"))?;
 
                 Ok(Some(TraceResult::Success {
@@ -991,7 +996,7 @@ impl Node {
         gas: Option<EvmGas>,
         gas_price: Option<u128>,
         value: u128,
-        access_list: Option<Vec<AccessListItem>>,
+        access_list: Option<AccessList>,
     ) -> Result<u64> {
         let block = self
             .get_block(block_number)?
