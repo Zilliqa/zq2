@@ -41,7 +41,7 @@ use crate::{
     crypto::{Hash, SecretKey},
     db::{BlockFilter, Db},
     evm::ZQ2EvmContext,
-    exec::{PendingState, TransactionApplyResult},
+    exec::{ExtraOpts, PendingState, TransactionApplyResult},
     inspector::{self, ScillaInspector},
     message::{
         Block, BlockHeader, BlockTransactionsReceipts, ExternalMessage, InjectedProposal,
@@ -995,8 +995,10 @@ impl Node {
         data: Vec<u8>,
         gas: Option<EvmGas>,
         gas_price: Option<u128>,
+        max_priority_fee_per_gas: Option<u128>,
         value: u128,
         access_list: Option<AccessList>,
+        extra_opts: ExtraOpts,
     ) -> Result<u64> {
         let block = self
             .get_block(block_number)?
@@ -1013,8 +1015,10 @@ impl Node {
             block.header,
             gas,
             gas_price,
+            max_priority_fee_per_gas,
             value,
             access_list,
+            extra_opts,
         )
     }
 

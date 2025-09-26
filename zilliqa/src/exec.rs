@@ -1220,8 +1220,10 @@ impl State {
         current_block: BlockHeader,
         gas: Option<EvmGas>,
         gas_price: Option<u128>,
+        max_priority_fee_per_gas: Option<u128>,
         value: u128,
         access_list: Option<AccessList>,
+        extra_opts: ExtraOpts,
     ) -> Result<u64> {
         let gas_price = gas_price.unwrap_or(self.gas_price);
 
@@ -1238,8 +1240,10 @@ impl State {
             current_block,
             EvmGas(upper_bound),
             gas_price,
+            max_priority_fee_per_gas,
             value,
             access_list.clone(),
+            extra_opts,
         )?;
 
         // Execute the while loop iff (max - min)/max < MINIMUM_PERCENT_RATIO [%]
@@ -1257,7 +1261,7 @@ impl State {
                 from_addr,
                 to_addr,
                 gas_price,
-                None,
+                max_priority_fee_per_gas,
                 EvmGas(mid),
                 value,
                 data.clone(),
@@ -1267,11 +1271,7 @@ impl State {
                 inspector::noop(),
                 false,
                 BaseFeeAndNonceCheck::Ignore,
-                ExtraOpts {
-                    disable_eip3607: true,
-                    exec_type: ExecType::Estimate,
-                    tx_type: TransactionType::Legacy,
-                },
+                extra_opts,
             )?;
 
             match result {
@@ -1295,14 +1295,16 @@ impl State {
         current_block: BlockHeader,
         gas: EvmGas,
         gas_price: u128,
+        max_priority_fee_per_gas: Option<u128>,
         value: u128,
         access_list: Option<AccessList>,
+        extra_opts: ExtraOpts,
     ) -> Result<u64> {
         let (ResultAndState { result, .. }, ..) = self.apply_transaction_evm(
             from_addr,
             to_addr,
             gas_price,
-            None,
+            max_priority_fee_per_gas,
             gas,
             value,
             data.clone(),
@@ -1312,11 +1314,7 @@ impl State {
             inspector::noop(),
             false,
             BaseFeeAndNonceCheck::Ignore,
-            ExtraOpts {
-                disable_eip3607: true,
-                exec_type: ExecType::Estimate,
-                tx_type: TransactionType::Legacy,
-            },
+            extra_opts,
         )?;
 
         let gas_used = result.gas_used();

@@ -2,8 +2,7 @@ use std::collections::HashMap;
 
 use alloy::{
     consensus::TxEip1559,
-    primitives::{Address, B256, U64, U128, U256},
-    rpc::types::{AccessList, TransactionInput},
+    primitives::{Address, B256, U256},
 };
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
@@ -434,23 +433,6 @@ impl<T: PartialEq> OneOrMany<T> {
             OneOrMany::Many(items) => items.is_empty(),
         }
     }
-}
-
-/// Parameters passed to `eth_call` and `eth_estimateGas`.
-#[derive(Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CallParams {
-    #[serde(default)]
-    pub from: Address,
-    pub to: Option<Address>,
-    pub gas: Option<U64>,
-    pub gas_price: Option<U128>,
-    #[serde(default)]
-    pub value: U128,
-    #[serde(default, flatten)]
-    pub data: TransactionInput,
-    #[serde(default)]
-    pub access_list: Option<AccessList>,
 }
 
 #[derive(Clone, Serialize)]
