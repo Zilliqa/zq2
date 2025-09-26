@@ -49,7 +49,7 @@ impl ViewHistory {
         let min_view = finalized_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW + max_missed_view_age);
         let mut deque = VecDeque::new();
         let source = &self.missed_views;
-        //TODO(#3080): use binary search to find the range to be copied
+        //TODO(jailing): use binary search to find the range to be copied
         for (view, leader) in source.iter() {
             if *view >= min_view && *view < finalized_view {
                 deque.push_back((*view, *leader));
@@ -74,7 +74,7 @@ impl ViewHistory {
             );
             self.missed_views.push_back((*view, *leader));
         }
-        //TODO(#3080): replace the above loop with the line below once logging is not needed anymore
+        //TODO(jailing): replace the above loop with the line below once logging is not needed anymore
         //deque.extend(new_missed_views.iter().rev());
         Ok(!new_missed_views.is_empty())
     }
@@ -148,7 +148,7 @@ pub fn dispatch<I: ScillaInspector>(
     _context: &mut InnerEvmContext<PendingState>,
     external_context: &mut ExternalContext<I>,
 ) -> PrecompileResult {
-    //TODO(#3080): check the gas limit and adjust how much gas the precompile should use
+    //TODO(jailing): check the gas limit and adjust how much gas the precompile should use
     //info!(gas_limit, "~~~> precompile called with");
     //if gas_limit < 10_000u64 {
     //    return Err(PrecompileErrors::Error(PrecompileError::OutOfGas));
