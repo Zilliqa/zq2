@@ -16,7 +16,7 @@ use revm::{
     },
 };
 use serde::{Deserialize, Serialize};
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, trace};
 
 use crate::{
     constants::{LAG_BEHIND_CURRENT_VIEW, MISSED_VIEW_THRESHOLD, MISSED_VIEW_WINDOW},
