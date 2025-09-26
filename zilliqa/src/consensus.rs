@@ -2301,7 +2301,7 @@ impl Consensus {
             for view in (parent.view() + 1..current.view()).rev() {
                 if let Ok(leader) = state_at.leader(view, block_header) {
                     if view == parent.view() + 1 {
-                        info!(
+                        trace!(
                             view,
                             id = &leader.as_bytes()[..3],
                             "~~~~~~~~~~> skipping reorged"
@@ -2321,20 +2321,20 @@ impl Consensus {
             .prune_history(block.view(), max_missed_view_age)?;
         // the following code is only for logging and can be commented out
         if extended || pruned {
-            info!(
+            trace!(
                 view = self.get_view()?,
                 finalized = block.view(),
                 history = display(&self.state.view_history),
                 "~~~~~~~~~~> current"
             );
-            //TODO(#3080): do not update the db on every finalization to avoid impact on block times
+            //TODO(jailing): do not update the db on every finalization to avoid impact on block times
             if extended {
                 for (view, leader) in new_missed_views.iter().rev() {
                     self.db.extend_view_history(*view, leader.as_bytes())?;
                 }
             }
             let min_view = self.state.view_history.min_view;
-            //TODO(#3080): skip next line if min_view did not increase in prune_history()
+            //TODO(jailing): skip next line if min_view did not increase in prune_history()
             self.db.set_min_view_of_view_history(min_view)?;
             if pruned {
                 self.db.prune_view_history(min_view)?;
@@ -2440,7 +2440,7 @@ impl Consensus {
             .ok_or(anyhow!("No checkpoint directory configured"))?;
         let file_name = db::get_checkpoint_filename(checkpoint_dir.clone(), &block)?;
         let hash = block.hash();
-        //TODO(#3080): export more than MISSED_VIEW_WINDOW in case we increase it in the future,
+        //TODO(jailing): export more than MISSED_VIEW_WINDOW in case we increase it in the future,
         //             but not the entire missed view history as defined by max_missed_view_age
         let missed_view_age = self.config.max_missed_view_age; //constants::MISSED_VIEW_WINDOW;
         // after loading the checkpoint we will need the leader of the parent block too
