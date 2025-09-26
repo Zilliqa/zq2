@@ -2301,7 +2301,7 @@ impl Consensus {
             for view in (parent.view() + 1..current.view()).rev() {
                 if let Ok(leader) = state_at.leader(view, block_header) {
                     if view == parent.view() + 1 {
-                        info!(
+                        trace!(
                             view,
                             id = &leader.as_bytes()[..3],
                             "~~~~~~~~~~> skipping reorged"
@@ -2321,7 +2321,7 @@ impl Consensus {
             .prune_history(block.view(), max_missed_view_age)?;
         // the following code is only for logging and can be commented out
         if extended || pruned {
-            info!(
+            trace!(
                 view = self.get_view()?,
                 finalized = block.view(),
                 history = display(&self.state.view_history),

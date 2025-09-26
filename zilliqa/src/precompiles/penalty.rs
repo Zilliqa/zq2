@@ -16,7 +16,7 @@ use revm::{
     },
 };
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{debug, error, info, trace};
 
 use crate::{
     constants::{LAG_BEHIND_CURRENT_VIEW, MISSED_VIEW_THRESHOLD, MISSED_VIEW_WINDOW},
@@ -67,7 +67,7 @@ impl ViewHistory {
     ) -> anyhow::Result<bool> {
         // new_missed_views are in descending order
         for (view, leader) in new_missed_views.iter().rev() {
-            info!(
+            trace!(
                 view,
                 id = &leader.as_bytes()[..3],
                 "++++++++++> adding missed"
@@ -87,7 +87,7 @@ impl ViewHistory {
             .max(view.saturating_sub(LAG_BEHIND_CURRENT_VIEW + max_missed_view_age));
         while let Some((view, leader)) = self.missed_views.front() {
             if *view < self.min_view {
-                info!(
+                trace!(
                     view,
                     id = &leader.as_bytes()[..3],
                     "----------> deleting missed"
@@ -171,14 +171,14 @@ pub fn dispatch<I: ScillaInspector>(
     let leader = decoded.first().unwrap().to_owned().into_bytes().unwrap();
     let view = decoded.last().unwrap().to_owned().into_uint().unwrap();
     if !external_context.fork.validator_jailing {
-        info!(?view, "==========> jailing not activated yet");
+        //debug!(?view, "==========> jailing not activated yet");
         let output = encode(&[Token::Bool(false)]);
         return Ok(PrecompileOutput::new(10_000u64, output.into()));
     }
     if view.as_u64() > LAG_BEHIND_CURRENT_VIEW
         && view.as_u64() - LAG_BEHIND_CURRENT_VIEW >= external_context.finalized_view
     {
-        info!(
+        error!(
             ?view,
             finalized = external_context.finalized_view,
             "~~~~~~~~~~> required missed view history not finalized"
@@ -194,7 +194,7 @@ pub fn dispatch<I: ScillaInspector>(
         && view.as_u64().saturating_sub(LAG_BEHIND_CURRENT_VIEW) < min_view + MISSED_VIEW_WINDOW
         || view.as_u64() > external_context.finalized_view + LAG_BEHIND_CURRENT_VIEW + 1
     {
-        info!(
+        debug!(
             ?view,
             min = min_view,
             finalized = external_context.finalized_view,
@@ -238,14 +238,14 @@ pub fn dispatch<I: ScillaInspector>(
             .count()
     };
     let jailed = missed >= MISSED_VIEW_THRESHOLD;
-    info!(
+    /*trace!(
         jailed,
         missed,
         ?view,
         min_view,
         id = &leader[..3],
         "==========> leader"
-    );
+    );*/
     let output = encode(&[Token::Bool(jailed)]);
     Ok(PrecompileOutput::new(10_000u64, output.into()))
 }
