@@ -98,9 +98,7 @@ contract DepositTest is Test {
 
         // Upgrade to deposit_v6
         depositContractAddr = address(new DepositV6());
-        reinitializerCall = abi.encodeWithSignature(
-            "reinitialize()"
-        );
+        reinitializerCall = abi.encodeWithSignature("reinitialize()");
         depositInitContract.upgradeToAndCall(
             depositContractAddr,
             reinitializerCall
