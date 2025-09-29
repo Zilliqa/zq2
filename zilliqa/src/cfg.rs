@@ -1084,6 +1084,7 @@ pub struct ContractUpgrades {
     pub deposit_v4: Option<ContractUpgradeConfig>,
     pub deposit_v5: Option<ContractUpgradeConfig>,
     pub deposit_v6: Option<ContractUpgradeConfig>,
+    pub deposit_v7: Option<ContractUpgradeConfig>,
 }
 
 impl ContractUpgrades {
@@ -1092,12 +1093,14 @@ impl ContractUpgrades {
         deposit_v4: Option<ContractUpgradeConfig>,
         deposit_v5: Option<ContractUpgradeConfig>,
         deposit_v6: Option<ContractUpgradeConfig>,
+        deposit_v7: Option<ContractUpgradeConfig>,
     ) -> ContractUpgrades {
         Self {
             deposit_v3,
             deposit_v4,
             deposit_v5,
             deposit_v6,
+            deposit_v7,
         }
     }
     pub fn to_toml(&self) -> toml::Value {
@@ -1141,6 +1144,10 @@ impl Default for ContractUpgrades {
             deposit_v6: Some(ContractUpgradeConfig {
                 height: 0,
                 reinitialise_params: None,
+            }),
+            deposit_v7: Some(ContractUpgradeConfig {
+                height: 0,
+                reinitialise_params: Some(ReinitialiseParams::default()),
             }),
         }
     }
