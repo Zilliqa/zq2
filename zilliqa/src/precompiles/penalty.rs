@@ -7,7 +7,7 @@ use alloy::primitives::Address;
 use ethabi::{ParamType, Token, decode, encode, short_signature};
 use revm::interpreter::{Gas, InputsImpl, InstructionResult, InterpreterResult};
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{debug, error, trace};
 
 use crate::{
     constants::{LAG_BEHIND_CURRENT_VIEW, MISSED_VIEW_THRESHOLD, MISSED_VIEW_WINDOW},
@@ -40,7 +40,7 @@ impl ViewHistory {
         let min_view = finalized_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW + max_missed_view_age);
         let mut deque = VecDeque::new();
         let source = &self.missed_views;
-        //TODO(#3080): use binary search to find the range to be copied
+        //TODO(jailing): use binary search to find the range to be copied
         for (view, leader) in source.iter() {
             if *view >= min_view && *view < finalized_view {
                 deque.push_back((*view, *leader));
@@ -58,14 +58,14 @@ impl ViewHistory {
     ) -> anyhow::Result<bool> {
         // new_missed_views are in descending order
         for (view, leader) in new_missed_views.iter().rev() {
-            info!(
+            trace!(
                 view,
                 id = &leader.as_bytes()[..3],
                 "++++++++++> adding missed"
             );
             self.missed_views.push_back((*view, *leader));
         }
-        //TODO(#3080): replace the above loop with the line below once logging is not needed anymore
+        //TODO(jailing): replace the above loop with the line below once logging is not needed anymore
         //deque.extend(new_missed_views.iter().rev());
         Ok(!new_missed_views.is_empty())
     }
@@ -78,7 +78,7 @@ impl ViewHistory {
             .max(view.saturating_sub(LAG_BEHIND_CURRENT_VIEW + max_missed_view_age));
         while let Some((view, leader)) = self.missed_views.front() {
             if *view < self.min_view {
-                info!(
+                trace!(
                     view,
                     id = &leader.as_bytes()[..3],
                     "----------> deleting missed"
@@ -168,7 +168,6 @@ impl ContextPrecompile for Penalty {
         let leader = decoded.first().unwrap().to_owned().into_bytes().unwrap();
         let view = decoded.last().unwrap().to_owned().into_uint().unwrap();
         if !ctx.chain.fork.validator_jailing {
-            info!(?view, "==========> jailing not activated yet");
             let output = encode(&[Token::Bool(false)]);
 
             return Ok(Some(InterpreterResult::new(
@@ -180,7 +179,7 @@ impl ContextPrecompile for Penalty {
         if view.as_u64() > LAG_BEHIND_CURRENT_VIEW
             && view.as_u64() - LAG_BEHIND_CURRENT_VIEW >= ctx.chain.finalized_view
         {
-            info!(
+            error!(
                 ?view,
                 finalized = ctx.chain.finalized_view,
                 "~~~~~~~~~~> required missed view history not finalized"
@@ -194,7 +193,7 @@ impl ContextPrecompile for Penalty {
             && view.as_u64().saturating_sub(LAG_BEHIND_CURRENT_VIEW) < min_view + MISSED_VIEW_WINDOW
             || view.as_u64() > ctx.chain.finalized_view + LAG_BEHIND_CURRENT_VIEW + 1
         {
-            info!(
+            debug!(
                 ?view,
                 min = min_view,
                 finalized = ctx.chain.finalized_view,
@@ -238,14 +237,6 @@ impl ContextPrecompile for Penalty {
                 .count()
         };
         let jailed = missed >= MISSED_VIEW_THRESHOLD;
-        info!(
-            jailed,
-            missed,
-            ?view,
-            min_view,
-            id = &leader[..3],
-            "==========> leader"
-        );
         let output = encode(&[Token::Bool(jailed)]);
 
         Ok(Some(InterpreterResult::new(
