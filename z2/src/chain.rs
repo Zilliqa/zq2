@@ -97,6 +97,10 @@ impl Chain {
                     height: 0,
                     reinitialise_params: None,
                 }),
+                deposit_v7: Some(ContractUpgradeConfig {
+                    height: 0,
+                    reinitialise_params: None,
+                }),
             },
             Self::Zq2Testnet => ContractUpgrades {
                 deposit_v3: None,
@@ -109,6 +113,10 @@ impl Chain {
                     height: 14997600,
                     reinitialise_params: None,
                 }),
+                deposit_v7: Some(ContractUpgradeConfig {
+                    height: 15984000,
+                    reinitialise_params: Some(ReinitialiseParams::default()),
+                }),
             },
             Self::Zq2Mainnet => ContractUpgrades {
                 deposit_v3: None,
@@ -120,6 +128,10 @@ impl Chain {
                 deposit_v6: Some(ContractUpgradeConfig {
                     height: 11998800,
                     reinitialise_params: None,
+                }),
+                deposit_v7: Some(ContractUpgradeConfig {
+                    height: 11998800,
+                    reinitialise_params: Some(ReinitialiseParams::default()),
                 }),
             },
             _ => ContractUpgrades::default(),
