@@ -560,15 +560,30 @@ impl State {
             finalized_view: self.finalized_view,
             view_history: self.view_history.clone(),
         };
-        let access_list = if fork.inject_access_list {
-            access_list.unwrap_or_default()
-        } else {
-            AccessList::default()
-        };
-        let gas_priority_fee = if fork.use_max_gas_priority_fee {
-            max_priority_fee_per_gas
-        } else {
-            None
+
+        let (tx_type, access_list, gas_priority_fee) = {
+            let access_list = if fork.inject_access_list {
+                access_list.unwrap_or_default()
+            } else {
+                AccessList::default()
+            };
+
+            let gas_priority_fee = if fork.use_max_gas_priority_fee {
+                max_priority_fee_per_gas
+            } else {
+                None
+            };
+
+            // Decide tx_type:
+            // - If we injected access list or are using priority fee, use the one from extra_opts
+            //   (caller provided) so it can be EIP-2930/1559 accordingly.
+            // - Otherwise, default to Legacy.
+            let tx_type = if fork.inject_access_list || fork.use_max_gas_priority_fee {
+                extra_opts.tx_type
+            } else {
+                TransactionType::Legacy
+            };
+            (tx_type, access_list, gas_priority_fee)
         };
         let pending_state = PendingState::new(self.clone(), fork.clone());
 
@@ -607,7 +622,7 @@ impl State {
         let mut evm = ZQ2Evm::new(evm_ctx, inspector);
 
         let tx = TxEnv {
-            tx_type: extra_opts.tx_type.into(),
+            tx_type: tx_type.into(),
             caller: from_addr.0.into(),
             gas_limit: gas_limit.0,
             gas_price,
