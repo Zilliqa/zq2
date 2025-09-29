@@ -128,6 +128,13 @@ pub struct DbConfig {
     /// Whether to enable state-sync/state-migration
     #[serde(default)]
     pub state_sync: bool,
+    /// RocksDB block cache size, in bytes.
+    #[serde(default = "rocksdb_cache_size_default")]
+    pub rocksdb_cache_size: usize,
+}
+
+fn rocksdb_cache_size_default() -> usize {
+    256 * 1024 * 1024
 }
 
 fn sql_cache_size_default() -> usize {
@@ -144,6 +151,7 @@ impl Default for DbConfig {
             conn_cache_size: sql_cache_size_default(),
             auto_checkpoint: sql_auto_checkpoint_default(),
             state_sync: false,
+            rocksdb_cache_size: rocksdb_cache_size_default(),
         }
     }
 }
