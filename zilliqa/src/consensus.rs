@@ -39,7 +39,7 @@ use crate::{
     db::{self, BlockFilter, Db},
     evm::ZQ2EvmContext,
     exec::TransactionApplyResult,
-    inspector::{self, ScillaInspector, TouchedAddressInspector},
+    inspector::{ScillaInspector, TouchedAddressInspector},
     message::{
         AggregateQc, BitArray, BitSlice, Block, BlockHeader, BlockRef, BlockStrategy,
         ExternalMessage, GossipSubTopic, InternalMessage, MAX_COMMITTEE_SIZE, NewView, Proposal,
