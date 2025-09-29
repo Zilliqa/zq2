@@ -1109,8 +1109,9 @@ impl Db {
 
     /// Triggers a DB vacuum
     pub fn vacuum(&self) -> Result<()> {
-        let db = self.pool.get()?;
-        db.execute("VACUUM", [])?;
+        // TODO: Implement vacuuming logic, after state is pruned. Otherwise, the space recovered is not much.
+        // let db = self.pool.get()?;
+        // db.execute("VACUUM", [])?;
         Ok(())
     }
 
