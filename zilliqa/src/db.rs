@@ -323,7 +323,7 @@ impl Db {
             tempfile::tempdir()?.path().join("state.rocksdb")
         };
 
-        let cache = Cache::new_lru_cache(state_cache_size); // same as SQLite in-memory page cache
+        let cache = Cache::new_lru_cache(config.rocksdb_cache_size);
         let mut block_opts = BlockBasedOptions::default();
         block_opts.set_block_cache(&cache);
 
