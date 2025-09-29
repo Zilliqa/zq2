@@ -95,22 +95,20 @@ contract DepositTest is Test {
             depositContractAddr,
             reinitializerCall
         );
-        depositContract = DepositV5(proxy);
 
         // Upgrade to deposit_v6
-        address depositContractAddr = address(new DepositV6());
-        bytes memory reinitializerCall = abi.encodeWithSignature(
+        depositContractAddr = address(new DepositV6());
+        reinitializerCall = abi.encodeWithSignature(
             "reinitialize()"
         );
         depositInitContract.upgradeToAndCall(
             depositContractAddr,
             reinitializerCall
         );
-        depositContract = DepositV6(proxy);
 
         // Upgrade to deposit_v7
-        address depositContractAddr = address(new Deposit());
-        bytes memory reinitializerCall = abi.encodeWithSignature(
+        depositContractAddr = address(new Deposit());
+        reinitializerCall = abi.encodeWithSignature(
             "reinitialize(uint256)",
             withdrawalPeriod
         );
