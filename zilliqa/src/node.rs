@@ -836,7 +836,7 @@ impl Node {
                     let result =
                         state.apply_transaction(txn, block.header, &mut inspector, true)?;
 
-                    let TransactionApplyResult::Evm(_, _) = result else {
+                    let TransactionApplyResult::Evm(_) = result else {
                         return Ok(None);
                     };
 
@@ -915,7 +915,7 @@ impl Node {
                 let result =
                     state.apply_transaction(txn.clone(), block.header, &mut inspector, true)?;
 
-                let TransactionApplyResult::Evm(result, _) = result else {
+                let TransactionApplyResult::Evm(result) = result else {
                     return Ok(None);
                 };
 
