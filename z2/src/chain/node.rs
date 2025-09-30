@@ -705,7 +705,6 @@ impl ChainNode {
             json!({
                 "port": 4201,
                 "enabled_apis": [
-                    "debug",
                     "erigon",
                     "eth",
                     "net",
@@ -726,7 +725,6 @@ impl ChainNode {
                             "traceTransaction",
                         ],
                     },
-                    "trace",
                     "txpool",
                     "web3",
                     "zilliqa",
