@@ -71,7 +71,7 @@ type ScillaResultAndState = (ScillaResult, HashMap<Address, PendingAccount>);
 /// Data returned after applying a [Transaction] to [State].
 #[derive(Clone)]
 pub enum TransactionApplyResult {
-    Evm(ResultAndState, CfgEnv),
+    Evm(ResultAndState),
     Scilla(ScillaResultAndState),
 }
 
@@ -101,7 +101,7 @@ impl TransactionApplyResult {
                 },
                 ..,
             ) => output.address().copied(),
-            TransactionApplyResult::Evm(_, _) => None,
+            TransactionApplyResult::Evm(_) => None,
             TransactionApplyResult::Scilla((
                 ScillaResult {
                     contract_address, ..
@@ -122,14 +122,14 @@ impl TransactionApplyResult {
 
     pub fn accepted(&self) -> Option<bool> {
         match self {
-            TransactionApplyResult::Evm(_, _) => None,
+            TransactionApplyResult::Evm(_) => None,
             TransactionApplyResult::Scilla((ScillaResult { accepted, .. }, _)) => *accepted,
         }
     }
 
     pub fn exceptions(&self) -> &[ScillaException] {
         match self {
-            TransactionApplyResult::Evm(_, _) => &[],
+            TransactionApplyResult::Evm(_) => &[],
             TransactionApplyResult::Scilla((ScillaResult { exceptions, .. }, _)) => exceptions,
         }
     }
@@ -512,8 +512,7 @@ impl State {
 
     fn failed(
         mut result_and_state: ResultAndState,
-        env: CfgEnv,
-    ) -> Result<(ResultAndState, HashMap<Address, PendingAccount>, CfgEnv)> {
+    ) -> Result<(ResultAndState, HashMap<Address, PendingAccount>)> {
         result_and_state.state.clear();
         Ok((
             ResultAndState {
@@ -524,7 +523,6 @@ impl State {
                 state: result_and_state.state,
             },
             HashMap::new(),
-            env,
         ))
     }
 
@@ -545,7 +543,7 @@ impl State {
         enable_inspector: bool,
         base_fee_and_nonce_check: BaseFeeAndNonceCheck,
         extra_opts: ExtraOpts,
-    ) -> Result<(ResultAndState, HashMap<Address, PendingAccount>, CfgEnv)> {
+    ) -> Result<(ResultAndState, HashMap<Address, PendingAccount>)> {
         let mut padded_view_number = [0u8; 32];
         padded_view_number[24..].copy_from_slice(&current_block.view.to_be_bytes());
 
@@ -656,7 +654,7 @@ impl State {
 
         // If the scilla precompile failed for whitelisted zq1 contract we mark the entire transaction as failed
         if ctx_with_handler.chain.enforce_transaction_failure {
-            return Self::failed(result_and_state, ctx_with_handler.cfg.clone());
+            return Self::failed(result_and_state);
         }
 
         // If any of EVM (calls, creates, ...) failed and there was a call to whitelisted scilla address with interop precompile
@@ -672,17 +670,13 @@ impl State {
                 && ext_ctx.has_called_scilla_precompile
                 && extra_opts.exec_type == ExecType::Transact
             {
-                return Self::failed(result_and_state, ctx_with_handler.cfg.clone());
+                return Self::failed(result_and_state);
             }
         }
 
         let finalized_state = ctx_with_handler.db_mut().finalize();
 
-        Ok((
-            result_and_state,
-            finalized_state,
-            ctx_with_handler.cfg.clone(),
-        ))
+        Ok((result_and_state, finalized_state))
     }
 
     // The rules here are somewhat odd, and inherited from ZQ1
@@ -841,31 +835,30 @@ impl State {
 
             Ok(TransactionApplyResult::Scilla((result, state)))
         } else {
-            let (ResultAndState { result, state }, scilla_state, env) = self
-                .apply_transaction_evm(
-                    from_addr,
-                    txn.to_addr(),
-                    txn.max_fee_per_gas(),
-                    txn.max_priority_fee_per_gas(),
-                    txn.gas_limit(),
-                    txn.amount(),
-                    txn.payload().to_vec(),
-                    txn.nonce(),
-                    txn.access_list(),
-                    current_block,
-                    inspector,
-                    enable_inspector,
-                    if blessed {
-                        BaseFeeAndNonceCheck::Ignore
-                    } else {
-                        BaseFeeAndNonceCheck::Validate
-                    },
-                    ExtraOpts {
-                        disable_eip3607: false,
-                        exec_type: ExecType::Transact,
-                        tx_type: txn.revm_transaction_type(),
-                    },
-                )?;
+            let (ResultAndState { result, state }, scilla_state) = self.apply_transaction_evm(
+                from_addr,
+                txn.to_addr(),
+                txn.max_fee_per_gas(),
+                txn.max_priority_fee_per_gas(),
+                txn.gas_limit(),
+                txn.amount(),
+                txn.payload().to_vec(),
+                txn.nonce(),
+                txn.access_list(),
+                current_block,
+                inspector,
+                enable_inspector,
+                if blessed {
+                    BaseFeeAndNonceCheck::Ignore
+                } else {
+                    BaseFeeAndNonceCheck::Validate
+                },
+                ExtraOpts {
+                    disable_eip3607: false,
+                    exec_type: ExecType::Transact,
+                    tx_type: txn.revm_transaction_type(),
+                },
+            )?;
 
             self.apply_delta_evm(&state, current_block.number)?;
             let apply_scilla_delta_when_evm_succeeded = self
@@ -881,10 +874,10 @@ impl State {
                 self.apply_delta_scilla(&scilla_state, current_block.number)?;
             }
 
-            Ok(TransactionApplyResult::Evm(
-                ResultAndState { result, state },
-                env,
-            ))
+            Ok(TransactionApplyResult::Evm(ResultAndState {
+                result,
+                state,
+            }))
         }
     }
 
