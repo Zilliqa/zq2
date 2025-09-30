@@ -1871,7 +1871,11 @@ impl SyncSegments {
         let mut sync = SyncSegments {
             counter: 0,
             // use an in-memory database first, as it will be replaced with a persistent one later
-            db: sled::Config::new().temporary(true).open().unwrap(),
+            db: sled::Config::new()
+                .cache_capacity(1024 * 1024) // 1MB is enough
+                .temporary(true)
+                .open()
+                .unwrap(),
         };
         sync.empty_sync_metadata().unwrap();
         sync
@@ -1976,6 +1980,7 @@ impl SyncSegments {
         // drop existing db, reopen new one, to free up disk space
         let path = tempdir().unwrap();
         self.db = sled::Config::new()
+            .cache_capacity(1024 * 1024) // 1MB is enough
             .path(path.keep())
             .mode(sled::Mode::LowSpace)
             .temporary(true)
