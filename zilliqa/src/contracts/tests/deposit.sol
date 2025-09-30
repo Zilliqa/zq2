@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.26;
-import {Deposit} from "../deposit_v5.sol";
+import {Deposit as DepositV5} from "../deposit_v5.sol";
+import {Deposit as DepositV6} from "../deposit_v6.sol";
+import {Deposit} from "../deposit_v7.sol";
 import {DepositInit, InitialStaker} from "../deposit_v1.sol";
 import {
     Test,
@@ -31,7 +33,7 @@ contract DepositTest is Test {
     address payable internal proxy;
     DepositInit internal depositInitContract;
     Deposit internal depositContract;
-    uint8 internal contractVersion = 5;
+    uint8 internal contractVersion = 7;
     uint256 internal withdrawalPeriod = uint256(36);
 
     bool internal printGasUsage = false;
@@ -84,8 +86,27 @@ contract DepositTest is Test {
         depositInitContract = DepositInit(proxy);
 
         // Upgrade to deposit_v5
-        address depositContractAddr = address(new Deposit());
+        address depositContractAddr = address(new DepositV5());
         bytes memory reinitializerCall = abi.encodeWithSignature(
+            "reinitialize(uint256)",
+            withdrawalPeriod
+        );
+        depositInitContract.upgradeToAndCall(
+            depositContractAddr,
+            reinitializerCall
+        );
+
+        // Upgrade to deposit_v6
+        depositContractAddr = address(new DepositV6());
+        reinitializerCall = abi.encodeWithSignature("reinitialize()");
+        depositInitContract.upgradeToAndCall(
+            depositContractAddr,
+            reinitializerCall
+        );
+
+        // Upgrade to deposit_v7
+        depositContractAddr = address(new Deposit());
+        reinitializerCall = abi.encodeWithSignature(
             "reinitialize(uint256)",
             withdrawalPeriod
         );

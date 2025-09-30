@@ -128,6 +128,13 @@ pub struct DbConfig {
     /// Whether to enable state-sync/state-migration
     #[serde(default)]
     pub state_sync: bool,
+    /// RocksDB block cache size, in bytes.
+    #[serde(default = "rocksdb_cache_size_default")]
+    pub rocksdb_cache_size: usize,
+}
+
+fn rocksdb_cache_size_default() -> usize {
+    256 * 1024 * 1024
 }
 
 fn sql_cache_size_default() -> usize {
@@ -144,6 +151,7 @@ impl Default for DbConfig {
             conn_cache_size: sql_cache_size_default(),
             auto_checkpoint: sql_auto_checkpoint_default(),
             state_sync: false,
+            rocksdb_cache_size: rocksdb_cache_size_default(),
         }
     }
 }
@@ -1084,6 +1092,7 @@ pub struct ContractUpgrades {
     pub deposit_v4: Option<ContractUpgradeConfig>,
     pub deposit_v5: Option<ContractUpgradeConfig>,
     pub deposit_v6: Option<ContractUpgradeConfig>,
+    pub deposit_v7: Option<ContractUpgradeConfig>,
 }
 
 impl ContractUpgrades {
@@ -1092,12 +1101,14 @@ impl ContractUpgrades {
         deposit_v4: Option<ContractUpgradeConfig>,
         deposit_v5: Option<ContractUpgradeConfig>,
         deposit_v6: Option<ContractUpgradeConfig>,
+        deposit_v7: Option<ContractUpgradeConfig>,
     ) -> ContractUpgrades {
         Self {
             deposit_v3,
             deposit_v4,
             deposit_v5,
             deposit_v6,
+            deposit_v7,
         }
     }
     pub fn to_toml(&self) -> toml::Value {
@@ -1141,6 +1152,10 @@ impl Default for ContractUpgrades {
             deposit_v6: Some(ContractUpgradeConfig {
                 height: 0,
                 reinitialise_params: None,
+            }),
+            deposit_v7: Some(ContractUpgradeConfig {
+                height: 0,
+                reinitialise_params: Some(ReinitialiseParams::default()),
             }),
         }
     }

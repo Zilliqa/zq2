@@ -51,7 +51,7 @@ parking_lot = "0.12.4"
 primitive-types = "0.12.2"
 prost = "0.14.1"
 rand = "0.8.5"
-regex = "1.11.2"
+regex = "1.11.3"
 reqwest = { version = "0.12.15", features = [
     "json",
     "rustls-tls",
@@ -68,9 +68,9 @@ sha2 = "0.10.8"
 sha3 = "0.10.8"
 strum = { version = "0.27.2", features = ["derive"] }
 strum_macros = "0.27.2"
-tempfile = "3.22.0"
+tempfile = "3.23.0"
 tera = "1.20.0"
-thiserror = "2.0.16"
+thiserror = "2.0.17"
 tokio = { version = "1.47.1", features = [
     "macros",
     "rt-multi-thread",

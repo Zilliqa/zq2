@@ -97,6 +97,10 @@ impl Chain {
                     height: 0,
                     reinitialise_params: None,
                 }),
+                deposit_v7: Some(ContractUpgradeConfig {
+                    height: 0,
+                    reinitialise_params: None,
+                }),
             },
             Self::Zq2Testnet => ContractUpgrades {
                 deposit_v3: None,
@@ -109,6 +113,10 @@ impl Chain {
                     height: 14997600,
                     reinitialise_params: None,
                 }),
+                deposit_v7: Some(ContractUpgradeConfig {
+                    height: 15984000,
+                    reinitialise_params: Some(ReinitialiseParams::default()),
+                }),
             },
             Self::Zq2Mainnet => ContractUpgrades {
                 deposit_v3: None,
@@ -120,6 +128,10 @@ impl Chain {
                 deposit_v6: Some(ContractUpgradeConfig {
                     height: 11998800,
                     reinitialise_params: None,
+                }),
+                deposit_v7: Some(ContractUpgradeConfig {
+                    height: 11998800,
+                    reinitialise_params: Some(ReinitialiseParams::default()),
                 }),
             },
             _ => ContractUpgrades::default(),
@@ -232,6 +244,8 @@ impl Chain {
                 // estimated: 2025-07-09T07.00.00Z
                 json!({ "at_height": 9341630, "scilla_failed_txn_correct_balance_deduction": true, "scilla_transition_proper_order": true, "evm_to_scilla_value_transfer_zero": true, "restore_xsgd_contract": true }),
                 // estimated: 2025-07-11T07.00.00Z
+                json!({ "at_height": 9494740, "evm_exec_failure_causes_scilla_precompile_to_fail": true }),
+                json!({ "at_height": 9498974, "evm_exec_failure_causes_scilla_precompile_to_fail": false }),
                 json!({ "at_height": 9500000, "evm_exec_failure_causes_scilla_precompile_to_fail": true }),
                 // estimated: 2025-07-14T12.00.00Z
                 json!({ "at_height": 9780700, "revert_restore_xsgd_contract": true, "scilla_fix_contract_code_removal_on_evm_tx": true}),
