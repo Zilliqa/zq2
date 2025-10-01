@@ -350,13 +350,19 @@ fn get_leaders(params: Params, node: &Arc<Node>) -> Result<Vec<(u64, Validator)>
     let mut params = params.sequence();
     let mut view = params.next::<U64>()?.to::<u64>();
     let count = params.next::<U64>()?.to::<usize>().min(100);
+    let mut leaders = vec![];
 
     // find the parent block whose state must be used for the leader selection
     let parent_block = if view > node.consensus.read().get_view()? {
         node.consensus.read().head_block()
     } else {
+        let lowest = node.consensus.read().get_lowest_block_view_number();
         let mut parent_view = view - 1;
-        // there can't be too many missing views in a row due to the exponential backoff
+        // there won't be too many missing views before we find a parent block due to the
+        // exponential backoff unless we don't store any blocks older than the requested view
+        if parent_view < lowest {
+            return Ok(leaders);
+        }
         loop {
             match node.consensus.read().get_block_by_view(parent_view)? {
                 Some(parent_block) => break parent_block,
@@ -365,7 +371,6 @@ fn get_leaders(params: Params, node: &Arc<Node>) -> Result<Vec<(u64, Validator)>
         }
     };
 
-    let mut leaders = vec![];
     while leaders.len() <= count {
         if let Some(leader) = node.consensus.read().leader_at_block(&parent_block, view) {
             leaders.push((view, leader));

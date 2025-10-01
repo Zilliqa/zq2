@@ -625,6 +625,13 @@ impl Consensus {
             .unwrap()
     }
 
+    pub fn get_lowest_block_view_number(&self) -> u64 {
+        self.db
+            .get_lowest_block_view_number()
+            .unwrap()
+            .unwrap()
+    }
+
     /// Function is called when the node has no other work to do. Check if:
     ///     - Block should be proposed if we are leader
     ///     - View should be timed out because no proposal received in time

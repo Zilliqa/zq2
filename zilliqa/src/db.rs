@@ -810,6 +810,25 @@ impl Db {
             .optional()?)
     }
 
+    pub fn get_lowest_block_view_number(&self) -> Result<Option<u64>> {
+        Ok(self
+            .pool
+            .get()?
+            .prepare_cached("SELECT MIN(view) FROM blocks")?
+            .query_row((), |row| {
+                row.get(0).map_err(|e| {
+                    // workaround where MIN(view) returns NULL if there are no blocks, instead of a NoRows error
+                    if let rusqlite::Error::InvalidColumnType(_, _, typ) = e {
+                        if typ == rusqlite::types::Type::Null {
+                            return rusqlite::Error::QueryReturnedNoRows;
+                        }
+                    }
+                    e
+                })
+            })
+            .optional()?)
+    }
+
     pub fn set_high_qc_with_db_tx(
         &self,
         sqlite_tx: &Connection,
