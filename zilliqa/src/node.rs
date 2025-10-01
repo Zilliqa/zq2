@@ -499,10 +499,14 @@ impl Node {
             self.handle_network_message_response(network_message)?;
             return Ok(true);
         }
+        Ok(false)
+    }
+
+    pub fn handle_reset(&self, sleep_time: Duration) -> Result<()> {
         // migrate as many blocks as possible, otherwise
         if self.db.config.state_sync {
             let now = Instant::now();
-            let period = self.config.consensus.block_time / 4; // steal 250ms typical
+            let period = self.config.consensus.block_time.min(sleep_time) / 2; // steal < 500ms
             while now.elapsed() < period {
                 match self.consensus.write().migrate_state_trie() {
                     Ok(done) if done => break,
@@ -511,7 +515,7 @@ impl Node {
                 };
             }
         }
-        Ok(false)
+        Ok(())
     }
 
     pub fn create_transaction(&self, txn: VerifiedTransaction) -> Result<(Hash, TxAddResult)> {
