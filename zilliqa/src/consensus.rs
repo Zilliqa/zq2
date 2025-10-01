@@ -437,14 +437,6 @@ impl Consensus {
             "~~~~~~~~~~> loaded from checkpoint in"
         );
 
-        let earliest = consensus
-            .config
-            .consensus
-            .get_forks()?
-            .find_height_fork_first_activated(ForkName::ExecutableBlocks)
-            .unwrap_or_default();
-        info!(earliest, "~~~~~~~~~~>");
-
         let max_missed_view_age = consensus.config.max_missed_view_age;
 
         let (first, last) = consensus.db.get_first_last_from_view_history()?;
@@ -491,13 +483,27 @@ impl Consensus {
         } else {
             // store the missed views loaded from the checkpoint in the db
             for (view, leader) in consensus.state.view_history.missed_views.iter() {
+                // that were not found in the db
                 if *view < imported_min_view {
-                    // if the history loaded from the checkpoint overlaps with the history in the db
                     consensus.db.extend_view_history(*view, leader.as_bytes())?;
                 } else {
                     break;
                 }
             }
+            let earliest = consensus
+                .config
+                .consensus
+                .get_forks()?
+                .find_height_fork_first_activated(ForkName::ExecutableBlocks)
+                .unwrap_or_default();
+            info!(
+                min_view = consensus.state.view_history.min_view,
+                earliest, "~~~~~~~~~~> loaded from checkpoint"
+            );
+            consensus.state.view_history.min_view =
+                consensus.state.view_history.min_view.max(
+                    earliest.saturating_sub(max_missed_view_age + LAG_BEHIND_CURRENT_VIEW + 1),
+                );
             // update the min_view loaded from the checkpoint in the db
             consensus
                 .db

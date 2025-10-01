@@ -1272,7 +1272,7 @@ mod tests {
                     inject_access_list: None,
                     use_max_gas_priority_fee: None,
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
-                    validator_jailing: None,
+                    validator_jailing: Some(false),
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1337,6 +1337,9 @@ mod tests {
                 .get(20)
                 .scilla_contract_creation_increments_account_balance
         );
+        assert!(forks.get(1).validator_jailing);
+        assert!(!forks.get(11).validator_jailing);
+        assert!(!forks.get(21).validator_jailing);
     }
 
     #[test]

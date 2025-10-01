@@ -170,6 +170,8 @@ pub fn dispatch<I: ScillaInspector>(
     };
     let leader = decoded.first().unwrap().to_owned().into_bytes().unwrap();
     let view = decoded.last().unwrap().to_owned().into_uint().unwrap();
+    // if the current block is beyond the jailing fork activation height when calling the precompile
+    // jailing will be applied regardless of whether the view was before or after the fork activation
     if !external_context.fork.validator_jailing {
         //debug!(?view, "==========> jailing not activated yet");
         let output = encode(&[Token::Bool(false)]);
