@@ -495,18 +495,11 @@ impl Node {
     // handle timeout - true if something happened
     pub fn handle_timeout(&self) -> Result<bool> {
         let network_message = self.consensus.write().timeout()?;
-        if let Some(network_message) = network_message {
-            self.handle_network_message_response(network_message)?;
-            return Ok(true);
-        }
-        Ok(false)
-    }
 
-    pub fn handle_reset(&self, sleep_time: Duration) -> Result<()> {
-        // migrate as many blocks as possible, otherwise
         if self.db.config.state_sync {
+            let (_, remaining, _) = self.consensus.read().get_consensus_timeout_params()?;
+            let period = Duration::from_millis(remaining) / 4; // steal < 250ms
             let now = Instant::now();
-            let period = self.config.consensus.block_time.min(sleep_time) / 2; // steal < 500ms
             while now.elapsed() < period {
                 match self.consensus.write().migrate_state_trie() {
                     Ok(done) if done => break,
@@ -515,7 +508,12 @@ impl Node {
                 };
             }
         }
-        Ok(())
+
+        if let Some(network_message) = network_message {
+            self.handle_network_message_response(network_message)?;
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     pub fn create_transaction(&self, txn: VerifiedTransaction) -> Result<(Hash, TxAddResult)> {

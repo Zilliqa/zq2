@@ -322,11 +322,7 @@ impl NodeLauncher {
                     let sleep_time = r.expect("reset timeout stream should be infinite");
                     trace!(?sleep_time, "timeout reset");
                     consensus_sleep.as_mut().reset(Instant::now() + sleep_time);
-                    if let Err(e) = self.node.handle_reset(sleep_time) {
-                        error!("Failed to migrate {e}");
-                    }
                 },
-
                 () = &mut mempool_sleep => {
                     self.node.process_transactions_to_broadcast()?;
                     mempool_sleep.as_mut().reset(Instant::now() + Duration::from_millis(50));
