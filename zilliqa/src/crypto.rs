@@ -14,6 +14,7 @@ use blsful::{
 };
 use itertools::Itertools;
 use k256::ecdsa::{Signature as EcdsaSignature, VerifyingKey, signature::hazmat::PrehashVerifier};
+use revm::primitives::b256;
 use serde::{
     Deserialize, Serialize,
     de::{self, Unexpected},
@@ -326,6 +327,8 @@ pub struct Hash(pub [u8; 32]);
 impl Hash {
     pub const ZERO: Hash = Hash([0; Hash::LEN]);
     pub const LEN: usize = 32;
+    pub const EMPTY: Hash =
+        Hash(b256!("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421").0);
 
     pub fn builder() -> HashBuilder {
         HashBuilder(Keccak256::new())
