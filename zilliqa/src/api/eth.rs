@@ -680,14 +680,6 @@ pub fn get_eth_block(
     let block_gas_limit = block.gas_limit();
     let mut result = eth::Block::from_block(&block, miner.unwrap_or_default(), block_gas_limit);
 
-    const MAX_TXNS_IN_BLOCK_TO_FETCH: usize = 50;
-    if full && block.transactions.len() > MAX_TXNS_IN_BLOCK_TO_FETCH {
-        return Err(anyhow!(
-            "Block has too many transactions to fetch. Max: {MAX_TXNS_IN_BLOCK_TO_FETCH}, got: {}",
-            block.transactions.len()
-        ));
-    }
-
     if full {
         let transactions = node.db.get_transactions(&block.transactions)?;
         result.transactions = transactions
