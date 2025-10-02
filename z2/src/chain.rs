@@ -115,7 +115,9 @@ impl Chain {
                 }),
                 deposit_v7: Some(ContractUpgradeConfig {
                     height: 15984000,
-                    reinitialise_params: Some(ReinitialiseParams::default()),
+                    reinitialise_params: Some(ReinitialiseParams {
+                        withdrawal_period: 461680,
+                    }), // https://github.com/Zilliqa/zq2/pull/3221
                 }),
             },
             Self::Zq2Mainnet => ContractUpgrades {
@@ -131,7 +133,9 @@ impl Chain {
                 }),
                 deposit_v7: Some(ContractUpgradeConfig {
                     height: 11998800,
-                    reinitialise_params: Some(ReinitialiseParams::default()),
+                    reinitialise_params: Some(ReinitialiseParams {
+                        withdrawal_period: 461680,
+                    }), // https://github.com/Zilliqa/zq2/pull/3221
                 }),
             },
             _ => ContractUpgrades::default(),
