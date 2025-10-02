@@ -142,6 +142,8 @@ pub struct Sync {
     ignore_passive: bool,
     // periodic vacuum
     vacuum_at: u64,
+    // checkpoint period
+    checkpoint_period: u64,
 }
 
 impl Sync {
@@ -205,7 +207,11 @@ impl Sync {
         };
 
         // Idle duration
-        let max_idle_duration = config.consensus.block_time / 2;
+        let max_idle_duration = config.consensus.block_time / 3;
+
+        // checkpoint period
+        let checkpoint_period =
+            config.consensus.epochs_per_checkpoint * config.consensus.blocks_per_epoch;
 
         Ok(Self {
             db,
@@ -238,6 +244,7 @@ impl Sync {
             zq2_floor_height,
             ignore_passive,
             vacuum_at,
+            checkpoint_period,
         })
     }
 
@@ -427,13 +434,24 @@ impl Sync {
             Ordering::Greater => {
                 debug!(?range, "StartPassiveSync : syncing",);
 
-                // start syncing from the lowest block, as the checkpoint parent is missing transactions/receipts.
-                let last = *range.start();
-                let hash = self
+                // start syncing from either the lowest block, or the one below it.
+                let bnr = self
                     .db
-                    .get_transactionless_block(BlockFilter::Height(*range.start()))?
-                    .expect("must exist")
-                    .hash();
+                    .get_block_and_receipts(BlockFilter::Height(*range.start()))?
+                    .expect("must exist");
+
+                let (last, hash) =
+                    // if the block is supposed to have txns/receipts, but none are in the DB
+                    if bnr.receipts.is_empty() && bnr.block.receipts_root_hash() != Hash::EMPTY {
+                        // the block txn/receipts are missing; needs to be re-synced e.g. checkpoint parent
+                        (bnr.block.number(), bnr.block.hash())
+                    } else {
+                        // sync the block below the lowest known block
+                        (
+                            bnr.block.number().saturating_sub(1),
+                            bnr.block.parent_hash(),
+                        )
+                    };
 
                 self.state = SyncState::Phase4((last, hash));
                 let range = self.sync_base_height..=last;
@@ -451,30 +469,21 @@ impl Sync {
         Ok(())
     }
 
-    /// Recovers missing checkpoint parent block (if any)
-    /// It only impacts a handful of blocks.
+    /// Recovers missing checkpoint parent block (if any).
+    /// In the case of nodes that have already been passive-synced, past non-empty parent blocks.
     fn recover_checkpoints(&mut self, range: RangeInclusive<u64>) -> Result<()> {
-        let start = range.start().saturating_div(86400);
-        let end = range.end().saturating_div(86400);
+        let start = range.start().saturating_div(self.checkpoint_period);
+        let end = range.end().saturating_div(self.checkpoint_period);
 
         for n in start..=end {
-            let num = n.saturating_mul(86400).saturating_sub(1); // calculate checkpoint parent
-            let Some(block) = self
-                .db
-                .get_transactionless_block(BlockFilter::Height(num))?
-            else {
+            let num = n.saturating_mul(self.checkpoint_period).saturating_sub(1); // calculate checkpoint parent
+            let Some(bnr) = self.db.get_block_and_receipts(BlockFilter::Height(num))? else {
                 continue; // skip if block not found
             };
-            if block.transactions_root_hash().0 == crate::constants::EMPTY_ROOT_HASH.0 {
+            if !bnr.receipts.is_empty() || bnr.block.receipts_root_hash() == Hash::EMPTY {
                 continue; // skip if block has empty transactions root hash
             }
-            if !self
-                .db
-                .get_transaction_receipts_in_block(&block.hash())?
-                .is_empty()
-            {
-                continue; // skip if any transaction receipts are available
-            }
+            let block = bnr.block;
             tracing::info!(number=%block.number(), hash=%block.hash(), "Recovering checkpoint");
             self.state = SyncState::Phase4((block.number(), block.hash()));
             let range = block.number()..=block.number();
