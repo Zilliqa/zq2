@@ -28,12 +28,16 @@ use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::*;
 
 use crate::{
-    api::types::eth::SyncingStruct,
+    api::{
+        admin::merge_history,
+        types::eth::SyncingStruct
+    },
     aux, blockhooks,
     cfg::{ConsensusConfig, ForkName, NodeConfig},
+    checkpoint::load_ckpt_history,
     constants::{
         EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, LAG_BEHIND_CURRENT_VIEW,
-        TIME_TO_ALLOW_PROPOSAL_BROADCAST,
+        MISSED_VIEW_WINDOW, TIME_TO_ALLOW_PROPOSAL_BROADCAST,
     },
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey, verify_messages},
     db::{self, BlockFilter, Db},
@@ -49,6 +53,7 @@ use crate::{
         PendingOrQueued, TransactionPool, TxAddResult, TxPoolContent, TxPoolContentFrom,
         TxPoolStatus,
     },
+    precompiles::ViewHistory,
     state::{Code, State},
     static_hardfork_data::{
         XSGD_CODE, XSGD_MAINNET_ADDR, build_ignite_wallet_addr_scilla_code_map,
@@ -211,7 +216,7 @@ impl ReceiptsCache {
 #[derive(Debug)]
 pub struct Consensus {
     secret_key: SecretKey,
-    config: NodeConfig,
+    pub config: NodeConfig,
     message_sender: MessageSender,
     reset_timeout: UnboundedSender<Duration>,
     pub sync: Sync,
@@ -459,11 +464,29 @@ impl Consensus {
             "~~~~~~~~~~> found in db"
         );
 
-        // since we don't fill the gap between the history loaded from the checkpoint and
-        // the history in the db during state sync running in the background we keep the
-        // history imported from the db and ignore the history loaded from the checkpoint
         if !imported_missed_views.is_empty() {
+// TODO(zf): store the history imported from the checkpoint file in the consensus state to extend it
+// with the missed views as we replay blocks during state-sync
+            let mut ckpt_history = consensus.state.view_history.new_at(finalized_view, max_missed_view_age);
+info!(?ckpt_history, "~~~~~~~~~~> 1st");
+            let mut ckpt_history = if let Some(ref checkpoint) = consensus.config.load_checkpoint {
+                load_ckpt_history(std::path::Path::new(checkpoint.file.as_str()))?
+            } else {
+                ViewHistory::default()
+            };
+info!(?ckpt_history, "~~~~~~~~~~> 2nd");
             {
+// TODO(zf): remove this once closing the gap between and merging the histories is integrated into state-sync
+                // the history loaded from the checkpoint into the consensus state
+                // must not start before the history imported from the db, otherwise
+                // state sync will not be able to replay the passive synced blocks
+                // as we can't merge the two histories
+                if consensus.state.view_history.min_view < imported_min_view 
+                    && consensus.config.db.state_sync
+                {
+                    return Err(anyhow!("Missed view history not long enough"));
+                }
+
                 // store the imported missed views in the consensus state
                 consensus.state.view_history.missed_views.clear();
                 consensus
@@ -480,6 +503,8 @@ impl Consensus {
                 history = display(&consensus.state.view_history),
                 "~~~~~~~~~~> imported from db in"
             );
+// TODO(zf): merge the histories after finishing state sync i.e. when calling finish_migration() 
+//            merge_history(&mut consensus, &mut ckpt_history)?;
         } else {
             // store the missed views loaded from the checkpoint in the db
             for (view, leader) in consensus.state.view_history.missed_views.iter() {
@@ -3652,6 +3677,24 @@ impl Consensus {
             .get_block_and_receipts_and_transactions(BlockFilter::Height(migrate_at))?
             .expect("block must exist");
         let block_hash = brt.block.state_root_hash();
+
+// TODO(zf): add the views missed since the last replayed block to the history
+// imported from the checkpoint file for state-sync
+        let view = brt.block.view();  
+        let min_view = self.state.view_history.min_view;
+        if min_view > 1
+            && view.saturating_sub(LAG_BEHIND_CURRENT_VIEW) < min_view + MISSED_VIEW_WINDOW
+            || view > self.get_finalized_view()? + LAG_BEHIND_CURRENT_VIEW + 1
+        {
+            error!(
+                ?view,
+                min = min_view,
+                finalized = self.get_finalized_view()?,
+                "~~~~~~~~~~> missed view history not available during state-sync"
+            );
+            return Err(anyhow!("Missed view history not available during state-sync"));
+        }
+
         tracing::info!(number=%migrate_at,state=%block_hash, "State-sync");
         self.replay_proposal(
             brt.block,

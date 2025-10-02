@@ -17,6 +17,20 @@ Jailing will become active through a hardfork at the block height specified in t
 ## API methods
 There are two new API methods related to jailing. The `admin_missedViews` RPC method returns the missed views that determine the leader of the view specified as argument.
 
-The `admin_importViewHistory` RPC method reads the missed views from a checkpoint file and merges them with the missed view history of the node. There must be no gap between the current missed view history and the missed views imported from the checkpoint file. To use the `db.state_sync = true` setting to recontruct the state of passive-synced blocks from a checkpoint older than the one the node was originally started from, the node's missed view history must reach back to the view of the older checkpoint. If the node's missed view history is too short due to its `max_missed_view_age` setting, change the setting to e.g. `1000000` in the config file to retain all missed views for approx. 2 weeks after restarting the node, and wait until a new checkpoint is available to import the missed view history from. After completing the `admin_importViewHistory` RPC request, the node will be able to reconstruct the state of the passive-synced blocks, after which you can reduce or remove the `max_missed_view_age` setting from the config file and restart your node to prune its missed view history if you want to.
+The `admin_importViewHistory` RPC method reads the missed views from a checkpoint file and merges them with the missed view history of the node. There must be no gap between the current missed view history and the missed views imported from the checkpoint file.
+
+To use the `db.state_sync = true` setting to recontruct the state of passive-synced blocks from a checkpoint older than the one the node was originally started from, the node's missed view history must reach back to the view of the older checkpoint. If the node's missed view history is too short due to its `max_missed_view_age` setting, you can extend it as follows:
+# retrieve the current view `V2` by running
+```sh
+cast to-dec $(cast rpc admin_consensusInfo --rpc-url http://localhost:4202 | jq .view | tr -d '"')
+```
+# retrieve the checkpoint view `V1` by running the command below with the checkpoint block number, e.g. `15465600`
+```sh
+cast to-dec $(cast rpc eth_getBlockByNumber $(cast to-hex 15465600) false --rpc-url https://api.zilliqa.com | jq .view | tr -d '"')
+```
+# change `max_missed_view_age` in your config file to `V2 - V1 + 100000` and restart the node,
+# wait until the next daily checkpoint is available and import its missed views using the `admin_importViewHistory` RPC method
+
+After completing the `admin_importViewHistory` RPC request, the node will be able to reconstruct the state of the passive-synced blocks, after which you can reduce or remove the `max_missed_view_age` setting from the config file and restart your node to prune its missed view history if you want to.
 
 Jailing also alters the behavior of the `admin_getLeaders` RPC method. It will return the leaders only for the views it has the necessary missed view history for.
