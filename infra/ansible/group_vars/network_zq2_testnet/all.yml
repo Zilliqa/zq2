@@ -11,6 +11,7 @@ stats_endpoint: "stats.zq2-testnet.zilliqa.com"
 project_id: prj-d-zq2-testnet-g13pnaa8
 log_level: "zilliqa=info"
 enable_faucet: true
+ubuntu_version: "24.04"
 
 # Docker images
 zq2_image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zq2:v0.18.0

@@ -36,7 +36,23 @@
           - python3-dev
           - unzip
           - zip
+          - python3-venv
         state: present
+
+    - name: Ensure /opt/zilliqa exists
+      ansible.builtin.file:
+        path: /opt/zilliqa
+        state: directory
+        mode: '0755'
+
+    - name: Create a virtual environment
+      ansible.builtin.command:
+       cmd: python3 -m venv /opt/zilliqa/venv
+       creates: /opt/zilliqa/venv/bin/pip
+
+    - name: Ensure pip is installed in the new virtual environment
+      ansible.builtin.command: 
+        cmd: /opt/zilliqa/venv/bin/python3 -m ensurepip --upgrade
 
     - name: Install Python packages
       pip:
@@ -46,3 +62,4 @@
           - google-cloud-kms
           - requests
         state: present
+        virtualenv: /opt/zilliqa/venv

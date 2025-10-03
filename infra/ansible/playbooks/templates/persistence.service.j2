@@ -9,7 +9,7 @@ Environment=ETH_CHAIN_ID={{ eth_chain_id }}
 Environment=BACKUP_INTERVAL_BLOCKS={{ persistence_interval_blocks }}
 Environment=MAX_BACKUPS_TO_KEEP={{ persistence_max_item_to_keep }}
 Environment=DATA_DIR={{ persistence_dir }}
-ExecStart=/bin/bash -c 'python3 /usr/local/bin/persistence.py'
+ExecStart=/bin/bash -c '/opt/zilliqa/venv/bin/python3 /usr/local/bin/persistence.py'
 Restart=always
 RestartSec=60
 StandardOutput=journal

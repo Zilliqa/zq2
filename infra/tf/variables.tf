@@ -30,9 +30,10 @@ variable "apps" {
       stats     = optional(list(string), [])
     }), {})
     nodes = optional(list(object({
-      count  = number
-      region = optional(string)
-      zone   = optional(string)
+      count     = number
+      region    = optional(string)
+      zone      = optional(string)
+      os_images = optional(map(string), {})
     })), [])
   })
   default = {}
@@ -72,9 +73,10 @@ variable "api" {
       health = optional(list(string), [])
     }), {})
     nodes = optional(list(object({
-      count  = number
-      region = optional(string)
-      zone   = optional(string)
+      count     = number
+      region    = optional(string)
+      zone      = optional(string)
+      os_images = optional(map(string), {})
     })), [])
     allow_ip_ranges = optional(map(object({
       priority      = number
@@ -118,9 +120,10 @@ variable "validator" {
     provisioning_model   = optional(string, "STANDARD")
     generate_external_ip = optional(bool, false)
     nodes = optional(list(object({
-      count  = number
-      region = optional(string)
-      zone   = optional(string)
+      count     = number
+      region    = optional(string)
+      zone      = optional(string)
+      os_images = optional(map(string), {})
     })), [])
   })
   default = {}
@@ -148,9 +151,10 @@ variable "bootstrap" {
     provisioning_model   = optional(string, "STANDARD")
     generate_external_ip = optional(bool, true)
     nodes = optional(list(object({
-      count  = number
-      region = optional(string)
-      zone   = optional(string)
+      count     = number
+      region    = optional(string)
+      zone      = optional(string)
+      os_images = optional(map(string), {})
     })), [])
   })
   default = {}
@@ -183,9 +187,10 @@ variable "checkpoint" {
       default = optional(list(string), [])
     }), {})
     nodes = optional(list(object({
-      count  = number
-      region = optional(string)
-      zone   = optional(string)
+      count     = number
+      region    = optional(string)
+      zone      = optional(string)
+      os_images = optional(map(string), {})
     })), [])
   })
   default = {}
@@ -213,9 +218,10 @@ variable "persistence" {
     provisioning_model   = optional(string, "STANDARD")
     generate_external_ip = optional(bool, false)
     nodes = optional(list(object({
-      count  = number
-      region = optional(string)
-      zone   = optional(string)
+      count     = number
+      region    = optional(string)
+      zone      = optional(string)
+      os_images = optional(map(string), {})
     })), [])
   })
   default = {}

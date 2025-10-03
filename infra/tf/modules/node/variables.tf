@@ -20,6 +20,7 @@ variable "config" {
       count  = number
       region = optional(string)
       zone   = optional(string)
+      os_images = optional(map(string), {})
     }))
   })
   default = {
