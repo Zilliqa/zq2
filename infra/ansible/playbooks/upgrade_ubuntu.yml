@@ -16,7 +16,7 @@
   ansible.builtin.import_playbook: install_persistence_backup.yml
 
 # Ubuntu 24 upgrade tasks
-- name: Perform Ubuntu release upgrade to 24.04
+- name: Perform Ubuntu release upgrade
   hosts: all
   become: true
   tags:
