@@ -28,16 +28,13 @@ use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::*;
 
 use crate::{
-    api::{
-        admin::merge_history,
-        types::eth::SyncingStruct
-    },
+    api::{admin::merge_history, types::eth::SyncingStruct},
     aux, blockhooks,
     cfg::{ConsensusConfig, ForkName, NodeConfig},
     checkpoint::load_ckpt_history,
     constants::{
-        EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, LAG_BEHIND_CURRENT_VIEW,
-        MISSED_VIEW_WINDOW, TIME_TO_ALLOW_PROPOSAL_BROADCAST,
+        EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, LAG_BEHIND_CURRENT_VIEW, MISSED_VIEW_WINDOW,
+        TIME_TO_ALLOW_PROPOSAL_BROADCAST,
     },
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey, verify_messages},
     db::{self, BlockFilter, Db},
@@ -464,29 +461,20 @@ impl Consensus {
             "~~~~~~~~~~> found in db"
         );
 
-        if !imported_missed_views.is_empty() {
-// TODO(zf): store the history imported from the checkpoint file in the consensus state to extend it
-// with the missed views as we replay blocks during state-sync
-            let mut ckpt_history = consensus.state.view_history.new_at(finalized_view, max_missed_view_age);
-info!(?ckpt_history, "~~~~~~~~~~> 1st");
-            let mut ckpt_history = if let Some(ref checkpoint) = consensus.config.load_checkpoint {
+        if !imported_missed_views.is_empty() || consensus.config.load_checkpoint.is_none() {
+            // TODO(zf): remove one of the two ckpt_history variables and the logging below
+            let ckpt_history = consensus
+                .state
+                .view_history
+                .new_at(finalized_view, max_missed_view_age);
+            info!(?ckpt_history, "~~~~~~~~~~> 1st");
+            let ckpt_history = if let Some(ref checkpoint) = consensus.config.load_checkpoint {
                 load_ckpt_history(std::path::Path::new(checkpoint.file.as_str()))?
             } else {
                 ViewHistory::default()
             };
-info!(?ckpt_history, "~~~~~~~~~~> 2nd");
+            info!(?ckpt_history, "~~~~~~~~~~> 2nd");
             {
-// TODO(zf): remove this once closing the gap between and merging the histories is integrated into state-sync
-                // the history loaded from the checkpoint into the consensus state
-                // must not start before the history imported from the db, otherwise
-                // state sync will not be able to replay the passive synced blocks
-                // as we can't merge the two histories
-                if consensus.state.view_history.min_view < imported_min_view 
-                    && consensus.config.db.state_sync
-                {
-                    return Err(anyhow!("Missed view history not long enough"));
-                }
-
                 // store the imported missed views in the consensus state
                 consensus.state.view_history.missed_views.clear();
                 consensus
@@ -503,8 +491,8 @@ info!(?ckpt_history, "~~~~~~~~~~> 2nd");
                 history = display(&consensus.state.view_history),
                 "~~~~~~~~~~> imported from db in"
             );
-// TODO(zf): merge the histories after finishing state sync i.e. when calling finish_migration() 
-//            merge_history(&mut consensus, &mut ckpt_history)?;
+            consensus.state.ckpt_view_history = Some(ckpt_history);
+            consensus.state.ckpt_finalized_view = Some(ckpt_block.as_ref().unwrap().view());
         } else {
             // store the missed views loaded from the checkpoint in the db
             for (view, leader) in consensus.state.view_history.missed_views.iter() {
@@ -521,10 +509,7 @@ info!(?ckpt_history, "~~~~~~~~~~> 2nd");
                 .get_forks()?
                 .find_height_fork_first_activated(ForkName::ExecutableBlocks)
                 .unwrap_or_default();
-            info!(
-                min_view = consensus.state.view_history.min_view,
-                earliest, "~~~~~~~~~~> loaded from checkpoint"
-            );
+            info!(earliest, "~~~~~~~~~~>");
             consensus.state.view_history.min_view =
                 consensus.state.view_history.min_view.max(
                     earliest.saturating_sub(max_missed_view_age + LAG_BEHIND_CURRENT_VIEW + 1),
@@ -651,10 +636,7 @@ info!(?ckpt_history, "~~~~~~~~~~> 2nd");
     }
 
     pub fn get_lowest_block_view_number(&self) -> u64 {
-        self.db
-            .get_lowest_block_view_number()
-            .unwrap()
-            .unwrap()
+        self.db.get_lowest_block_view_number().unwrap().unwrap()
     }
 
     /// Function is called when the node has no other work to do. Check if:
@@ -2353,10 +2335,15 @@ info!(?ckpt_history, "~~~~~~~~~~> 2nd");
         }
         let max_missed_view_age = self.config.max_missed_view_age;
         let extended = self.state.view_history.append_history(&new_missed_views)?;
+        let min_view = self.state.view_history.min_view;
         let pruned = self
             .state
             .view_history
             .prune_history(block.view(), max_missed_view_age)?;
+        if min_view != self.state.view_history.min_view {
+            self.db
+                .set_min_view_of_view_history(self.state.view_history.min_view)?;
+        }
         // the following code is only for logging and can be commented out
         if extended || pruned {
             trace!(
@@ -2365,18 +2352,15 @@ info!(?ckpt_history, "~~~~~~~~~~> 2nd");
                 history = display(&self.state.view_history),
                 "~~~~~~~~~~> current"
             );
-            //TODO(jailing): do not update the db on every finalization to avoid impact on block times
-            if extended {
-                for (view, leader) in new_missed_views.iter().rev() {
-                    self.db.extend_view_history(*view, leader.as_bytes())?;
-                }
+        }
+        //TODO(jailing): do not update the db on every finalization to avoid impact on block times
+        if extended {
+            for (view, leader) in new_missed_views.iter().rev() {
+                self.db.extend_view_history(*view, leader.as_bytes())?;
             }
-            let min_view = self.state.view_history.min_view;
-            //TODO(jailing): skip next line if min_view did not increase in prune_history()
-            self.db.set_min_view_of_view_history(min_view)?;
-            if pruned {
-                self.db.prune_view_history(min_view)?;
-            }
+        }
+        if pruned {
+            self.db.prune_view_history(min_view)?;
         }
         self.state.finalized_view = block.view();
 
@@ -3672,27 +3656,29 @@ info!(?ckpt_history, "~~~~~~~~~~> 2nd");
             unimplemented!("parent state must exist!");
         };
 
+        // TODO(zf): were the views missed between the block and its parent included in the checkpoint file?
+
         let brt = self
             .db
             .get_block_and_receipts_and_transactions(BlockFilter::Height(migrate_at))?
             .expect("block must exist");
         let block_hash = brt.block.state_root_hash();
 
-// TODO(zf): add the views missed since the last replayed block to the history
-// imported from the checkpoint file for state-sync
-        let view = brt.block.view();  
+        let brt_view = brt.block.view();
         let min_view = self.state.view_history.min_view;
         if min_view > 1
-            && view.saturating_sub(LAG_BEHIND_CURRENT_VIEW) < min_view + MISSED_VIEW_WINDOW
-            || view > self.get_finalized_view()? + LAG_BEHIND_CURRENT_VIEW + 1
+            && brt_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW) < min_view + MISSED_VIEW_WINDOW
+            || brt_view > self.get_finalized_view()? + LAG_BEHIND_CURRENT_VIEW + 1
         {
             error!(
-                ?view,
+                ?brt_view,
                 min = min_view,
                 finalized = self.get_finalized_view()?,
                 "~~~~~~~~~~> missed view history not available during state-sync"
             );
-            return Err(anyhow!("Missed view history not available during state-sync"));
+            return Err(anyhow!(
+                "Missed view history not available during state-sync"
+            ));
         }
 
         tracing::info!(number=%migrate_at,state=%block_hash, "State-sync");
@@ -3710,6 +3696,35 @@ info!(?ckpt_history, "~~~~~~~~~~> 2nd");
                 tracing::warn!(number=%migrate_at,"State-sync retrying");
                 return Ok(true); // retry later
             };
+            // add the views missed since the last replayed block to the history imported from a checkpoint
+            let block = self
+                .get_canonical_block_by_number(migrate_at)?
+                .expect("Next block missing");
+            let state_at = self.state.at_root(block_hash.into());
+            let header = BlockHeader {
+                number: migrate_at - 1,
+                ..Default::default()
+            };
+            for view in brt_view + 1..block.view() {
+                if let Ok(leader) = state_at.leader(view, header) {
+                    if view == brt_view + 1 {
+                        trace!(
+                            view,
+                            id = &leader.as_bytes()[..3],
+                            "~~~~~~~~~~> skipping reorged"
+                        );
+                    } else {
+                        self.state
+                            .ckpt_view_history
+                            .as_mut()
+                            .expect("Checkpoint view history missing")
+                            .append_history(&[(view, leader)])?;
+                        // TODO(jailing): collect them in a vector and call append_history only once
+                    }
+                }
+            }
+            self.state.ckpt_finalized_view = Some(block.view());
+            // TODO(zf): persist them because these blocks won't be replayed again if the node is restarted
             if hash != block_hash {
                 state_trie.set_migrate_at(migrate_at)?;
                 return Ok(false);
@@ -3718,6 +3733,20 @@ info!(?ckpt_history, "~~~~~~~~~~> 2nd");
         // done
         tracing::info!("State-sync complete!");
         state_trie.finish_migration()?;
+        // TODO(zf): what if self.state.view_history.min_view > cutover_at due to history pruning?
+        merge_history(
+            self,
+            &mut self
+                .state
+                .ckpt_view_history
+                .clone()
+                .expect("Checkpoint view history missing"),
+            self.state
+                .ckpt_finalized_view
+                .expect("Checkpoint finalized view missing"),
+        )?;
+        self.state.ckpt_view_history = None;
+        self.state.ckpt_finalized_view = None;
         Ok(true)
     }
 }

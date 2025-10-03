@@ -68,8 +68,8 @@ async fn main() -> Result<()> {
         if let Some((view, _)) = view_history.missed_views.front() {
             println!("{}", view_history);
             if match args.id {
-                32769 => *view > 4770088,
-                33101 => *view > 8099088,
+                32769 => *view > 4770090,
+                33101 => *view > 8099090,
                 _ => false,
             } {
                 println!("Missed view history incomplete!");

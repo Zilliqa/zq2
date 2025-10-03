@@ -9,6 +9,8 @@ Once a number of views defined by `LAG_BEHIND_CURRENT_VIEW` has elapsed after a 
 ## Limitations
 Restarting a node with an increased `max_missed_view_age` in its config file has no affect on where its missed view history starts, which is denoted by the `min_view` property returned by the `admin_missedViews` RPC call described below. Increasing `max_missed_view_age` will only allow the node to retain a longer history as it grows over time. If the node has already been running and is then restarted with a checkpoint older than the one it was initially synced from, the start of its missed view history will not change. You must use the `admin_importViewHistory` RPC method described below to complete the missed view history with older views that were pruned due to a missing or low `max_missed_view_age` setting in the config file.
 
+To use the `db.state_sync = true` setting to recontruct and migrate the state of passive-synced blocks to RocksDB, the node's missed view history must reach back to the last migrated view. Make sure the node's missed view history is not cut too short due to its (missing) `max_missed_view_age` setting while the state sync is being performed. After completing the state sync you can reduce or remove the `max_missed_view_age` setting from the config file again and restart your node to prune its missed view history if you want to.
+
 Jailing changes the maximum lookahead i.e. how many view in the future the leader can be determined in advance. This is not an issue, on the contrary, it actually helps mitigate attacks against validators that require prior knowledge of when they are going to become the leader. 
 
 ## Activation
@@ -17,20 +19,6 @@ Jailing will become active through a hardfork at the block height specified in t
 ## API methods
 There are two new API methods related to jailing. The `admin_missedViews` RPC method returns the missed views that determine the leader of the view specified as argument.
 
-The `admin_importViewHistory` RPC method reads the missed views from a checkpoint file and merges them with the missed view history of the node. There must be no gap between the current missed view history and the missed views imported from the checkpoint file.
-
-To use the `db.state_sync = true` setting to recontruct the state of passive-synced blocks from a checkpoint older than the one the node was originally started from, the node's missed view history must reach back to the view of the older checkpoint. If the node's missed view history is too short due to its `max_missed_view_age` setting, you can extend it as follows:
-# retrieve the current view `V2` by running
-```sh
-cast to-dec $(cast rpc admin_consensusInfo --rpc-url http://localhost:4202 | jq .view | tr -d '"')
-```
-# retrieve the checkpoint view `V1` by running the command below with the checkpoint block number, e.g. `15465600`
-```sh
-cast to-dec $(cast rpc eth_getBlockByNumber $(cast to-hex 15465600) false --rpc-url https://api.zilliqa.com | jq .view | tr -d '"')
-```
-# change `max_missed_view_age` in your config file to `V2 - V1 + 100000` and restart the node,
-# wait until the next daily checkpoint is available and import its missed views using the `admin_importViewHistory` RPC method
-
-After completing the `admin_importViewHistory` RPC request, the node will be able to reconstruct the state of the passive-synced blocks, after which you can reduce or remove the `max_missed_view_age` setting from the config file and restart your node to prune its missed view history if you want to.
+The `admin_importViewHistory` RPC method reads the missed views from a checkpoint file and merges them with the missed view history of the node. There must be no gap between the node's missed view history and the missed views imported from the checkpoint file.
 
 Jailing also alters the behavior of the `admin_getLeaders` RPC method. It will return the leaders only for the views it has the necessary missed view history for.
