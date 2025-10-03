@@ -7,7 +7,7 @@ use alloy::{
     eips::{BlockId, BlockNumberOrTag, RpcBlockHash},
     primitives::{Address, B256, U64, U256},
     rpc::types::{
-        FeeHistory, FilteredParams,
+        FeeHistory, FilteredParams, TransactionRequest,
         pubsub::{self, SubscriptionKind},
     },
 };
@@ -30,7 +30,7 @@ use tracing::*;
 use super::{
     to_hex::ToHex,
     types::{
-        eth::{self, CallParams, ErrorCode, HashOrTransaction, SyncingResult, TransactionReceipt},
+        eth::{self, ErrorCode, HashOrTransaction, SyncingResult, TransactionReceipt},
         filters::{BlockFilter, FilterKind, LogFilter, PendingTxFilter},
     },
 };
@@ -42,7 +42,7 @@ use crate::{
     data_access,
     db::Db,
     error::ensure_success,
-    exec::zil_contract_address,
+    exec::{ExecType::Estimate, ExtraOpts, zil_contract_address},
     message::Block,
     node::Node,
     pool::{TransactionPool, TxAddResult},
@@ -206,7 +206,7 @@ fn call_many(_params: Params, _node: &Arc<Node>) -> Result<()> {
 
 fn call(params: Params, node: &Arc<Node>) -> Result<String> {
     let mut params = params.sequence();
-    let call_params: CallParams = params.next()?;
+    let call_params: TransactionRequest = params.next()?;
     let block_id: BlockId = params.optional_next()?.unwrap_or_default();
     expect_end_of_params(&mut params, 1, 2)?;
 
@@ -223,14 +223,10 @@ fn call(params: Params, node: &Arc<Node>) -> Result<String> {
     trace!("call_contract: block={:?}", block);
 
     let result = state.call_contract(
-        call_params.from,
-        call_params.to,
-        call_params
-            .data
-            .try_into_unique_input()?
-            .unwrap_or_default()
-            .to_vec(),
-        call_params.value.to(),
+        call_params.from.unwrap_or_default(),
+        call_params.to.and_then(|to| to.into_to()),
+        call_params.input.into_input().unwrap_or_default().to_vec(),
+        u128::try_from(call_params.value.unwrap_or_default())?,
         block.header,
     )?;
 
@@ -247,7 +243,7 @@ fn chain_id(params: Params, node: &Arc<Node>) -> Result<String> {
 
 fn estimate_gas(params: Params, node: &Arc<Node>) -> Result<String> {
     let mut params = params.sequence();
-    let call_params: CallParams = params.next()?;
+    let call_params: TransactionRequest = params.next()?;
     let block_number: BlockNumberOrTag = params.optional_next()?.unwrap_or_default();
     expect_end_of_params(&mut params, 1, 2)?;
 
@@ -263,18 +259,20 @@ fn estimate_gas(params: Params, node: &Arc<Node>) -> Result<String> {
     };
 
     let return_value = state.estimate_gas(
-        call_params.from,
-        call_params.to,
-        call_params
-            .data
-            .try_into_unique_input()?
-            .unwrap_or_default()
-            .to_vec(),
+        call_params.from.unwrap_or_default(),
+        call_params.to.and_then(|to| to.into_to()),
+        call_params.input.input().unwrap_or_default().to_vec(),
         block.header,
-        call_params.gas.map(|g| EvmGas(g.to())),
-        call_params.gas_price.map(|g| g.to()),
-        call_params.value.to(),
+        call_params.gas.map(EvmGas),
+        call_params.fee_cap(),
+        call_params.max_priority_fee_per_gas,
+        u128::try_from(call_params.value.unwrap_or_default())?,
         call_params.access_list,
+        ExtraOpts {
+            tx_type: call_params.transaction_type.unwrap_or_default().into(),
+            disable_eip3607: true,
+            exec_type: Estimate,
+        },
     )?;
 
     Ok(return_value.to_hex())
