@@ -58,8 +58,6 @@ pub mod deposit_v2 {
         Lazy::new(|| CONTRACT.abi.function("getPeerId").unwrap().clone());
     pub static GET_STAKERS: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("getStakers").unwrap().clone());
-    pub static GET_CUSTOM: Lazy<Function> =
-        Lazy::new(|| CONTRACT.abi.function("getCustomStakers").unwrap().clone());
     pub static GET_TOTAL_STAKE: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("getTotalStake").unwrap().clone());
     pub static COMMITTEE: Lazy<Function> =
