@@ -14,6 +14,7 @@
           - google-cloud-logging
           - requests
         state: present
+        virtualenv: /opt/zilliqa/venv
 
     - name: Create Checkpoints script
       template:

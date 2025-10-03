@@ -1,0 +1,46 @@
+---
+- name: Upgrade Ubuntu packages
+  hosts: all
+  become: true
+  tags:
+    - install
+    - all
+
+  vars:
+    reboot_required: false
+
+  tasks:
+    - name: Update apt package list (apt update)
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600 
+
+    - name: Upgrade packages (apt upgrade)
+      ansible.builtin.apt:
+        upgrade: dist
+        autoclean: yes
+      register: upgrade_result
+
+    - name: Set reboot_required if upgrade occurred
+      ansible.builtin.set_fact:
+        reboot_required: true
+      when: upgrade_result is changed
+
+    - name: Remove unused packages (apt autoremove)
+      ansible.builtin.apt:
+        autoremove: yes
+      register: autoremove_result
+
+    - name: Set reboot_required if autoremove occurred
+      ansible.builtin.set_fact:
+        reboot_required: true
+      when: autoremove_result is changed and not reboot_required
+
+    - name: Display reboot status
+      ansible.builtin.debug:
+        msg: "Reboot is required: {{ reboot_required }}"
+
+    - name: Reboot the server if required
+      ansible.builtin.reboot:
+        reboot_timeout: 600
+      when: reboot_required
