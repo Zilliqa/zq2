@@ -31,7 +31,6 @@ use crate::{
     api::{admin::merge_history, types::eth::SyncingStruct},
     aux, blockhooks,
     cfg::{ConsensusConfig, ForkName, NodeConfig},
-    checkpoint::load_ckpt_history,
     constants::{
         EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, LAG_BEHIND_CURRENT_VIEW, MISSED_VIEW_WINDOW,
         TIME_TO_ALLOW_PROPOSAL_BROADCAST,
@@ -50,7 +49,6 @@ use crate::{
         PendingOrQueued, TransactionPool, TxAddResult, TxPoolContent, TxPoolContentFrom,
         TxPoolStatus,
     },
-    precompiles::ViewHistory,
     state::{Code, State},
     static_hardfork_data::{
         XSGD_CODE, XSGD_MAINNET_ADDR, build_ignite_wallet_addr_scilla_code_map,
@@ -461,20 +459,27 @@ impl Consensus {
             "~~~~~~~~~~> found in db"
         );
 
-        if !imported_missed_views.is_empty() || consensus.config.load_checkpoint.is_none() {
-            let ckpt_history = consensus
-                .state
-                .view_history
-                .new_at(finalized_view, max_missed_view_age);
-            /* TODO(zf): remove the redundant loading of the checkpoint's view history
-            let ckpt_history = if let Some(ref checkpoint) = consensus.config.load_checkpoint {
-                load_ckpt_history(std::path::Path::new(checkpoint.file.as_str()))?
-            } else {
-                ViewHistory::default()
-            };
-            */
+        // TODO(jailing): the first few missed views after the switchover are missing
+        // in the genesis checkpoint, but jailing was not active at those views anyway
+
+        // if the node was started without or with a checkpoint older than its finalized view
+        if consensus.config.load_checkpoint.is_none()
+            || finalized_view
+                > ckpt_block
+                    .as_ref()
+                    .expect("Checkpoint block missing")
+                    .view()
+        /* TODO(zf): remove this condition
+        if imported_min_view > 0
+            || !imported_missed_views.is_empty()
+            || consensus.config.load_checkpoint.is_none()*/
+        {
             if state_sync {
-                consensus.state.ckpt_view_history = Some(ckpt_history);
+                consensus.state.ckpt_view_history = Some(consensus.state.view_history.new_at(
+                    finalized_view,
+                    finalized_view,
+                    max_missed_view_age,
+                ));
                 consensus.state.ckpt_finalized_view = Some(
                     ckpt_block
                         .as_ref()
@@ -2468,19 +2473,19 @@ impl Consensus {
             .ok_or(anyhow!("No checkpoint directory configured"))?;
         let file_name = db::get_checkpoint_filename(checkpoint_dir.clone(), &block)?;
         let hash = block.hash();
-        //TODO(jailing): export more than MISSED_VIEW_WINDOW in case we increase it in the future,
-        //             but not the entire missed view history as defined by max_missed_view_age
         let missed_view_age = self.config.max_missed_view_age; //constants::MISSED_VIEW_WINDOW;
-        // after loading the checkpoint we will need the leader of the parent block too
-        let view_history = self.state.view_history.new_at(
-            parent.view(), //block.view(),
-            missed_view_age,
-        );
+        // after loading the checkpoint we will need the leader of its parent block, but also
+        // have to include the potential missed views between the checkpoint block and its parent
+        let view_history =
+            self.state
+                .view_history
+                .new_at(parent.view(), block.view(), missed_view_age);
         info!(
             view = self.get_view()?,
-            checkpoint = parent.view(), //block.view(),
+            ckpt_parent_view = parent.view(),
+            ckpt_block_view = block.view(),
             view_history = display(&view_history),
-            "~~~~~~~~~~> saving in current"
+            "~~~~~~~~~~> saving checkpoint in current"
         );
         self.message_sender
             .send_message_to_coordinator(InternalMessage::ExportBlockCheckpoint(
@@ -3662,8 +3667,6 @@ impl Consensus {
             unimplemented!("parent state must exist!");
         };
 
-        // TODO(zf): were the views missed between the block and its parent included in the checkpoint file?
-
         let brt = self
             .db
             .get_block_and_receipts_and_transactions(BlockFilter::Height(migrate_at))?
@@ -3714,11 +3717,11 @@ impl Consensus {
             for view in brt_view + 1..block.view() {
                 if let Ok(leader) = state_at.leader(view, header) {
                     if view == brt_view + 1 {
-                        trace!(
+                        /*trace!(
                             view,
                             id = &leader.as_bytes()[..3],
                             "~~~~~~~~~~> skipping reorged"
-                        );
+                        );*/
                     } else {
                         self.state
                             .ckpt_view_history
@@ -3739,7 +3742,17 @@ impl Consensus {
         // done
         tracing::info!("State-sync complete!");
         state_trie.finish_migration()?;
-        // TODO(zf): what if self.state.view_history.min_view > cutover_at due to history pruning?
+        let cutover_view = self
+            .get_canonical_block_by_number(cutover_at)?
+            .expect("Cutover block does not exist")
+            .view();
+        // the merge will fail if the node's pruned view history does not reach back to the cutover block view
+        if self.state.view_history.min_view > cutover_view {
+            info!(
+                view_history = %self.state.view_history,
+                cutover_view, "History imported from the checkpoint can't be merged"
+            );
+        }
         merge_history(
             self,
             &mut self
