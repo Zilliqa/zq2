@@ -323,7 +323,6 @@ impl NodeLauncher {
                     trace!(?sleep_time, "timeout reset");
                     consensus_sleep.as_mut().reset(Instant::now() + sleep_time);
                 },
-
                 () = &mut mempool_sleep => {
                     self.node.process_transactions_to_broadcast()?;
                     mempool_sleep.as_mut().reset(Instant::now() + Duration::from_millis(50));
