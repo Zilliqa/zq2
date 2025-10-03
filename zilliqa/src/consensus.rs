@@ -462,18 +462,26 @@ impl Consensus {
         );
 
         if !imported_missed_views.is_empty() || consensus.config.load_checkpoint.is_none() {
-            // TODO(zf): remove one of the two ckpt_history variables and the logging below
             let ckpt_history = consensus
                 .state
                 .view_history
                 .new_at(finalized_view, max_missed_view_age);
-            info!(?ckpt_history, "~~~~~~~~~~> 1st");
+            /* TODO(zf): remove the redundant loading of the checkpoint's view history
             let ckpt_history = if let Some(ref checkpoint) = consensus.config.load_checkpoint {
                 load_ckpt_history(std::path::Path::new(checkpoint.file.as_str()))?
             } else {
                 ViewHistory::default()
             };
-            info!(?ckpt_history, "~~~~~~~~~~> 2nd");
+            */
+            if state_sync {
+                consensus.state.ckpt_view_history = Some(ckpt_history);
+                consensus.state.ckpt_finalized_view = Some(
+                    ckpt_block
+                        .as_ref()
+                        .expect("State-sync requires a checkpoint")
+                        .view(),
+                );
+            }
             {
                 // store the imported missed views in the consensus state
                 consensus.state.view_history.missed_views.clear();
@@ -491,8 +499,6 @@ impl Consensus {
                 history = display(&consensus.state.view_history),
                 "~~~~~~~~~~> imported from db in"
             );
-            consensus.state.ckpt_view_history = Some(ckpt_history);
-            consensus.state.ckpt_finalized_view = Some(ckpt_block.as_ref().unwrap().view());
         } else {
             // store the missed views loaded from the checkpoint in the db
             for (view, leader) in consensus.state.view_history.missed_views.iter() {
