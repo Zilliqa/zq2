@@ -73,11 +73,24 @@ fn missed_views(params: Params, node: &Arc<Node>) -> Result<NodeMissedViews> {
     let mut params = params.sequence();
     let current_view: u64 = params.next::<U64>()?.to::<u64>();
     let consensus = node.consensus.read();
-    let history = &consensus.state().view_history;
+    let (history, finalized_view) = if current_view < consensus.state().view_history.min_view
+        && consensus.state().ckpt_view_history.is_some()
+        && consensus.state().ckpt_finalized_view.is_some()
+    {
+        (
+            consensus.state().ckpt_view_history.as_ref().unwrap(),
+            consensus.state().ckpt_finalized_view.unwrap(),
+        )
+    } else {
+        (
+            &consensus.state().view_history,
+            consensus.get_finalized_view()?,
+        )
+    };
     let min_view = history.min_view;
     if min_view > 1
         && current_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW) < min_view + MISSED_VIEW_WINDOW
-        || current_view > node.consensus.read().get_finalized_view()? + LAG_BEHIND_CURRENT_VIEW + 1
+        || current_view > finalized_view + LAG_BEHIND_CURRENT_VIEW + 1
     {
         return Err(anyhow!("Missed view history not available"));
     }
