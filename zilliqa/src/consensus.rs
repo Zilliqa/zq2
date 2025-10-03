@@ -469,10 +469,6 @@ impl Consensus {
                     .as_ref()
                     .expect("Checkpoint block missing")
                     .view()
-        /* TODO(zf): remove this condition
-        if imported_min_view > 0
-            || !imported_missed_views.is_empty()
-            || consensus.config.load_checkpoint.is_none()*/
         {
             if state_sync {
                 consensus.state.ckpt_view_history = Some(consensus.state.view_history.new_at(
@@ -2972,6 +2968,10 @@ impl Consensus {
 
     pub fn leader_at_state(state: &State, block: &Block, view: u64) -> Option<Validator> {
         let executed_block = BlockHeader {
+            // we need to set the (parent) block's view at which we call the jailing
+            // precompile otherwise we won't know if we must use the node's history
+            // or the checkpoint's history gradually extended during state-syncing
+            view: block.header.view + 1,
             number: block.header.number + 1,
             ..Default::default()
         };
@@ -3674,15 +3674,24 @@ impl Consensus {
         let block_hash = brt.block.state_root_hash();
 
         let brt_view = brt.block.view();
-        let min_view = self.state.view_history.min_view;
-        if min_view > 1
-            && brt_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW) < min_view + MISSED_VIEW_WINDOW
-            || brt_view > self.get_finalized_view()? + LAG_BEHIND_CURRENT_VIEW + 1
+        let ckpt_min_view = self
+            .state
+            .ckpt_view_history
+            .as_ref()
+            .expect("Checkpoint view history not available")
+            .min_view;
+        let ckpt_finalized = self
+            .state
+            .ckpt_finalized_view
+            .expect("Checkpoint finalized view not available");
+        if ckpt_min_view > 1
+            && brt_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW) < ckpt_min_view + MISSED_VIEW_WINDOW
+            || brt_view > ckpt_finalized + LAG_BEHIND_CURRENT_VIEW + 1
         {
             error!(
                 ?brt_view,
-                min = min_view,
-                finalized = self.get_finalized_view()?,
+                ckpt_min_view,
+                ckpt_finalized,
                 "~~~~~~~~~~> missed view history not available during state-sync"
             );
             return Err(anyhow!(

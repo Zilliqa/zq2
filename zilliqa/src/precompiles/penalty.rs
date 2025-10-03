@@ -16,7 +16,7 @@ use revm::{
     },
 };
 use serde::{Deserialize, Serialize};
-use tracing::{debug, error, trace};
+use tracing::{debug, error};
 
 use crate::{
     constants::{LAG_BEHIND_CURRENT_VIEW, MISSED_VIEW_THRESHOLD, MISSED_VIEW_WINDOW},
@@ -72,7 +72,7 @@ impl ViewHistory {
     ) -> anyhow::Result<bool> {
         // new_missed_views are in descending order
         for (view, leader) in new_missed_views.iter().rev() {
-            /*trace!(
+            /*trace::trace!(
                 view,
                 id = &leader.as_bytes()[..3],
                 "++++++++++> adding missed"
@@ -92,7 +92,7 @@ impl ViewHistory {
             .max(view.saturating_sub(LAG_BEHIND_CURRENT_VIEW + max_missed_view_age));
         while let Some((view, _leader)) = self.missed_views.front() {
             if *view < self.min_view {
-                /*trace!(
+                /*trace::trace!(
                     view,
                     id = &leader.as_bytes()[..3],
                     "----------> deleting missed"
