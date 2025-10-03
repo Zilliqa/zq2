@@ -3,11 +3,11 @@
 - name: Upgrade Ubuntu packages
   ansible.builtin.import_playbook: upgrade_packages.yml
 
-- name: Healthcheck service configuration
-  ansible.builtin.import_playbook: configure_healthcheck.yml
-
 - name: Required packages installation
   ansible.builtin.import_playbook: install_packages.yml
+
+- name: Healthcheck service configuration
+  ansible.builtin.import_playbook: configure_healthcheck.yml
 
 - name: Import checkpoint service installation
   ansible.builtin.import_playbook: install_checkpoint_service.yml
