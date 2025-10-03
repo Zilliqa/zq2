@@ -11,6 +11,9 @@ use revm_inspectors::tracing::{TracingInspector, TracingInspectorConfig};
 use serde::Deserialize;
 
 use crate::{
+    api::{
+        disabled_err, format_panic_as_error, into_rpc_error, make_panic_hook, rpc_base_attributes,
+    },
     cfg::EnabledApi,
     crypto::Hash,
     exec::{PendingState, TransactionApplyResult},

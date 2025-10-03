@@ -34,7 +34,10 @@ use super::{
     },
 };
 use crate::{
-    api::types::zil::{CreateTransactionResponse, GetTxResponse, RPCErrorCode},
+    api::{
+        disabled_err, format_panic_as_error, into_rpc_error, make_panic_hook, rpc_base_attributes,
+        types::zil::{CreateTransactionResponse, GetTxResponse, RPCErrorCode},
+    },
     cfg::EnabledApi,
     crypto::Hash,
     data_access,

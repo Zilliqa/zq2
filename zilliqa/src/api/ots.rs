@@ -17,7 +17,10 @@ use super::{
     types::ots::{self, Operation, TraceEntry},
 };
 use crate::{
-    api::to_hex::ToHex,
+    api::{
+        disabled_err, format_panic_as_error, into_rpc_error, make_panic_hook, rpc_base_attributes,
+        to_hex::ToHex,
+    },
     cfg::EnabledApi,
     crypto::Hash,
     inspector::{self, CreatorInspector, OtterscanOperationInspector, OtterscanTraceInspector},

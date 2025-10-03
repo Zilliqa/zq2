@@ -3,7 +3,13 @@ use std::sync::Arc;
 use anyhow::Result;
 use jsonrpsee::{RpcModule, types::Params};
 
-use crate::{cfg::EnabledApi, node::Node};
+use crate::{
+    api::{
+        disabled_err, format_panic_as_error, into_rpc_error, make_panic_hook, rpc_base_attributes,
+    },
+    cfg::EnabledApi,
+    node::Node,
+};
 
 pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc<Node>> {
     super::declare_module!(

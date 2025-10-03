@@ -11,7 +11,10 @@ use serde::{Deserialize, Serialize};
 
 use super::types::{admin::VotesReceivedReturnee, eth::QuorumCertificate, hex};
 use crate::{
-    api::{to_hex::ToHex, types::admin::VoteCount},
+    api::{
+        disabled_err, format_panic_as_error, into_rpc_error, make_panic_hook, rpc_base_attributes,
+        to_hex::ToHex, types::admin::VoteCount,
+    },
     cfg::EnabledApi,
     checkpoint::load_ckpt_history,
     consensus::{BlockVotes, NewViewVote, Validator},
