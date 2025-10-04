@@ -107,6 +107,7 @@ pub struct NewNodeOptions {
     checkpoint: Option<Checkpoint>,
     prune_interval: Option<u64>,
     base_height: Option<u64>,
+    state_sync: Option<bool>,
 }
 
 impl NewNodeOptions {
@@ -560,6 +561,7 @@ impl Network {
                 }),
             )
         };
+        let datadir = tempfile::tempdir().unwrap();
         let config = NodeConfig {
             eth_chain_id: self.shard_id,
             api_servers: vec![ApiServer {
@@ -567,7 +569,7 @@ impl Network {
                 enabled_apis: api::all_enabled(),
             }],
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
-            data_dir: None,
+            data_dir: Some(datadir.path().to_str().unwrap().to_string()),
             state_cache_size: state_cache_size_default(),
             load_checkpoint: options.checkpoint.clone(),
             do_checkpoints: self.do_checkpoints,
@@ -622,8 +624,14 @@ impl Network {
 
         let secret_key = options.secret_key_or_random(self.rng.clone());
         let onchain_key = options.onchain_key_or_random(self.rng.clone());
-        let (node, receiver, local_receiver, request_responses) =
-            node(config, secret_key, onchain_key, self.nodes.len(), None).unwrap();
+        let (node, receiver, local_receiver, request_responses) = node(
+            config,
+            secret_key,
+            onchain_key,
+            self.nodes.len(),
+            Some(datadir),
+        )
+        .unwrap();
 
         let mut peers = self.nodes.iter().map(|n| n.peer_id).collect_vec();
         peers.shuffle(self.rng.lock().unwrap().deref_mut());
@@ -680,6 +688,99 @@ impl Network {
                 }
 
                 let config = self.nodes[i].inner.config.clone();
+
+                node(config, key.0, key.1, i, Some(new_data_dir)).unwrap()
+            })
+            .multiunzip();
+
+        let mut receivers: Vec<_> = external_receivers
+            .into_iter()
+            .chain(local_receivers)
+            .chain(request_response_receivers)
+            .collect();
+
+        let mut peers = nodes.iter().map(|n| n.peer_id).collect_vec();
+        peers.shuffle(self.rng.lock().unwrap().deref_mut());
+
+        for node in &nodes {
+            trace!(
+                "Node {}: {} (dir: {})",
+                node.index,
+                node.peer_id,
+                node.dir.as_ref().unwrap().path().to_string_lossy(),
+            );
+            node.peers.add_peers(peers.clone());
+        }
+
+        let (resend_message, receive_resend_message) = mpsc::unbounded_channel::<StreamMessage>();
+        let receive_resend_message = UnboundedReceiverStream::new(receive_resend_message).boxed();
+        receivers.push(receive_resend_message);
+
+        self.nodes = nodes;
+        self.receivers = receivers;
+        self.resend_message = resend_message;
+
+        // Now trigger a timeout in all of the nodes until we see network activity again
+        // this could of course spin forever, but the test itself should time out.
+        loop {
+            for node in &self.nodes {
+                node.inner.process_transactions_to_broadcast().unwrap();
+                // Trigger a tick so that block fetching can operate.
+                if node.inner.handle_timeout().unwrap() {
+                    return;
+                }
+                zilliqa::time::advance(Duration::from_millis(500));
+            }
+        }
+    }
+
+    pub fn restart_node_with_options(&mut self, index: usize, opts: NewNodeOptions) {
+        // We copy the data dirs from the original network, and re-use the same private keys.
+
+        // Note: the tempdir object has to be held in the vector or the OS
+        // will delete it when it goes out of scope.
+        let mut options = CopyOptions::new();
+        options.copy_inside = true;
+
+        // Collect the keys from the validators
+        let keys = self
+            .nodes
+            .iter()
+            .map(|n| (n.secret_key, n.onchain_key.clone()))
+            .collect::<Vec<_>>();
+
+        let (nodes, external_receivers, local_receivers, request_response_receivers): (
+            Vec<_>,
+            Vec<_>,
+            Vec<_>,
+            Vec<_>,
+        ) = keys
+            .into_iter()
+            .enumerate()
+            .map(|(i, key)| {
+                // Copy the persistence over
+                let new_data_dir = tempfile::tempdir().unwrap();
+
+                info!("Copying data dir over");
+
+                if let Ok(mut entry) = fs::read_dir(self.nodes[i].dir.as_ref().unwrap().path()) {
+                    let entry = entry.next().unwrap().unwrap();
+                    info!("Copying {:?} to {:?}", entry, new_data_dir);
+
+                    copy(entry.path(), new_data_dir.path(), &options).unwrap();
+                } else {
+                    warn!("Failed to copy data dir over");
+                }
+
+                // replace any config
+                let config = if index != i {
+                    self.nodes[i].inner.config.clone()
+                } else {
+                    let mut c = self.nodes[i].inner.config.clone();
+                    c.load_checkpoint = opts.checkpoint.clone();
+                    c.db.state_sync = opts.state_sync.unwrap_or_default();
+                    c
+                };
 
                 node(config, key.0, key.1, i, Some(new_data_dir)).unwrap()
             })
