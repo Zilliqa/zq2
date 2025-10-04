@@ -105,7 +105,7 @@ tokio = { version = "1.47.1", features = [
     "sync",
 ] }
 tokio-stream = "0.1.17"
-toml = "0.9.5"
+toml = "0.9.7"
 tower = "0.5.2"
 tower-http = { version = "0.6.6", features = ["cors"] }
 tracing = "0.1.41"
