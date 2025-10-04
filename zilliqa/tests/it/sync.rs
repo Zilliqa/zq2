@@ -25,6 +25,9 @@ async fn prune_interval(mut network: Network) {
 
 #[zilliqa_macros::test(do_checkpoints)]
 async fn base_height(mut network: Network) {
+    // Add a non-validator node, since passive-sync does not work otherwise
+    let non_validator_idx = network.add_node();
+
     // Populate network with transactions
     let wallet = network.genesis_wallet().await;
     network.run_until_block_finalized(5, 200).await.unwrap();
@@ -37,24 +40,23 @@ async fn base_height(mut network: Network) {
     // wait 10 blocks for checkpoint to happen - then 3 more to finalize that block
     network.run_until_block_finalized(13, 200).await.unwrap();
 
-    let idx = network.random_index();
     let checkpoint_path = network
-        .get_node_raw(idx)
+        .nodes
+        .first()
+        .unwrap()
         .dir
         .as_ref()
         .unwrap()
         .path()
+        .join(network.shard_id.to_string())
         .join("checkpoints")
         .join("10");
-
-    // Add a non-validator node, since passive-sync does not work otherwise
-    let non_validator_idx = network.add_node();
 
     // Create new node and pass it one of those checkpoint files
     let checkpoint_hash = wallet.get_block(10).await.unwrap().unwrap().hash.unwrap();
     let new_node_idx = network.add_node_with_options(NewNodeOptions {
         checkpoint: Some(Checkpoint {
-            file: checkpoint_path.to_str().unwrap().to_owned(),
+            file: checkpoint_path.to_str().unwrap().to_string(),
             hash: Hash(checkpoint_hash.0),
         }),
         base_height: Some(3),
@@ -69,9 +71,7 @@ async fn base_height(mut network: Network) {
     // check the new node catches up and keeps up with block production
     network.run_until_synced(non_validator_idx).await;
     network.run_until_synced(new_node_idx).await;
-    network
-        .run_until_block(&new_node_wallet, 20.into(), 200)
-        .await;
+    network.run_until_block_finalized(20, 200).await.unwrap();
 
     // check range of new wallet
     let base_height = *network
@@ -83,8 +83,12 @@ async fn base_height(mut network: Network) {
     assert_eq!(base_height, 3);
 }
 
-#[zilliqa_macros::test(do_checkpoints)] // default blocks_per_epoch = 10, epochs_per_checkpoint = 1
+#[zilliqa_macros::test(do_checkpoints)]
+// default blocks_per_epoch = 10, epochs_per_checkpoint = 1
 async fn state_migration(mut network: Network) {
+    // Add a non-validator node, since passive-sync does not work otherwise
+    let non_validator_idx = network.add_node();
+
     // Populate network with transactions
     let wallet = network.genesis_wallet().await;
     network.run_until_block_finalized(5, 200).await.unwrap();
@@ -101,20 +105,20 @@ async fn state_migration(mut network: Network) {
         .unwrap()
         .tx_hash();
 
-    network.run_until_block_finalized(25, 200).await.unwrap();
+    // wait for checkpoint 10 & 20 to be produced.
+    network.run_until_block_finalized(23, 200).await.unwrap();
 
-    let idx = network.random_index();
     let checkpoint_path = network
-        .get_node_raw(idx)
+        .nodes
+        .first()
+        .unwrap()
         .dir
         .as_ref()
         .unwrap()
         .path()
+        .join(network.shard_id.to_string())
         .join("checkpoints")
         .join("20");
-
-    // Add a non-validator node, since passive-sync does not work otherwise
-    let non_validator_idx = network.add_node();
 
     // Create new node and pass it one of those checkpoint files
     let checkpoint_hash = wallet.get_block(20).await.unwrap().unwrap().hash.unwrap();
