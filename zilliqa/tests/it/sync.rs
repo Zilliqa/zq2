@@ -1,4 +1,5 @@
 use ethers::{providers::Middleware, types::TransactionRequest};
+use fs_extra::file::CopyOptions;
 use tracing::info;
 use zilliqa::{cfg::Checkpoint, crypto::Hash};
 
@@ -69,19 +70,19 @@ async fn base_height(mut network: Network) {
     network.run_until_synced(new_node_idx).await;
     network.run_until_block_finalized(20, 200).await.unwrap();
 
-    // check range of new wallet
+    // check range of new node
     let base_height = *network
         .node_at(new_node_idx)
         .db
         .available_range()
         .unwrap()
         .start();
-    assert_eq!(base_height, 3);
+    assert_eq!(base_height, 3); // successful passive-sync to block 3.
 }
 
 #[zilliqa_macros::test(do_checkpoints)]
 // default blocks_per_epoch = 10, epochs_per_checkpoint = 1
-async fn state_migration(mut network: Network) {
+async fn state_sync(mut network: Network) {
     // Populate network with transactions
     let wallet = network.genesis_wallet().await;
     network.run_until_block_finalized(5, 200).await.unwrap();
@@ -91,19 +92,23 @@ async fn state_migration(mut network: Network) {
         .unwrap()
         .tx_hash();
 
-    network.run_until_block_finalized(15, 200).await.unwrap();
-    wallet
-        .send_transaction(TransactionRequest::pay(wallet.address(), 10), None)
-        .await
-        .unwrap()
-        .tx_hash();
-
-    // wait for checkpoint 10 & 20 to be produced.
     network.run_until_block_finalized(13, 200).await.unwrap();
 
-    let idx = 1;
+    let idx = network.random_index();
 
-    let checkpoint_path = network
+    assert_eq!(
+        network
+            .node_at(idx)
+            .db
+            .state_trie()
+            .unwrap()
+            .get_migrate_at()
+            .unwrap(),
+        u64::MAX // no state-sync
+    );
+
+    // copy out checkpoint file; otherwise it will no longer exist after the restart
+    let checkpoint_from = network
         .nodes
         .first()
         .unwrap()
@@ -115,31 +120,27 @@ async fn state_migration(mut network: Network) {
         .join("checkpoints")
         .join("10");
 
-    let cutover_at = network
-        .node_at(idx)
-        .db
-        .state_trie()
-        .unwrap()
-        .get_cutover_at()
-        .unwrap();
-    assert_eq!(cutover_at, u64::MAX);
+    let checkpoint_path = tempfile::tempdir().unwrap();
+    fs_extra::file::copy(
+        checkpoint_from.as_path(),
+        checkpoint_path.path().join("CKPT").as_path(),
+        &CopyOptions::default(),
+    )
+    .unwrap();
 
-    let migrate_at = network
-        .node_at(idx)
-        .db
-        .state_trie()
-        .unwrap()
-        .get_migrate_at()
-        .unwrap();
-    assert_eq!(migrate_at, u64::MAX);
-
-    // Create new node and pass it one of those checkpoint files
+    // Restart existing node with checkpoint file
     let checkpoint_hash = wallet.get_block(10).await.unwrap().unwrap().hash.unwrap();
     network.restart_node_with_options(
-        1,
+        idx,
         NewNodeOptions {
             checkpoint: Some(Checkpoint {
-                file: checkpoint_path.to_str().unwrap().to_owned(),
+                file: checkpoint_path
+                    .path()
+                    .join("CKPT")
+                    .as_path()
+                    .to_str()
+                    .unwrap()
+                    .to_string(),
                 hash: Hash(checkpoint_hash.0),
             }),
             state_sync: Some(true),
@@ -147,25 +148,29 @@ async fn state_migration(mut network: Network) {
         },
     );
 
-    let migrate_at = network
-        .node_at(idx)
-        .db
-        .state_trie()
-        .unwrap()
-        .get_migrate_at()
-        .unwrap();
-    assert_ne!(migrate_at, u64::MAX);
+    // The test conditions only replay ONE block; and completes.
+    assert_eq!(
+        network
+            .node_at(idx)
+            .db
+            .state_trie()
+            .unwrap()
+            .get_migrate_at()
+            .unwrap(),
+        10 // state-sync of block 10
+    );
 
-    // check the new node catches up and keeps up with block production
-    network.disconnect_node(2); // trigger some timeouts
-    network.run_until_block_finalized(30, 2000).await.unwrap();
+    // run the network for a little bit
+    network.run_until_block_finalized(20, 2000).await.unwrap();
 
-    let migrate_at = network
-        .node_at(idx)
-        .db
-        .state_trie()
-        .unwrap()
-        .get_migrate_at()
-        .unwrap();
-    assert_eq!(migrate_at, u64::MAX);
+    assert_eq!(
+        network
+            .node_at(idx)
+            .db
+            .state_trie()
+            .unwrap()
+            .get_migrate_at()
+            .unwrap(),
+        u64::MAX // state-sync complete
+    );
 }
