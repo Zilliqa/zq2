@@ -3708,24 +3708,22 @@ impl Consensus {
 
         // fast-forward to next block, skipping empty blocks, up to cutover threshold
         let cutover_at = state_trie.get_cutover_at()?;
+        let mut parent_view = brt_view;
         while migrate_at < cutover_at {
             migrate_at = migrate_at.saturating_add(1); // check next block
-            let Some(hash) = state_trie.get_root_hash(migrate_at)? else {
-                tracing::warn!(number=%migrate_at,"State-sync retrying");
-                return Ok(true); // retry later
-            };
             // add the views missed since the last replayed block to the history imported from a checkpoint
             let block = self
                 .get_canonical_block_by_number(migrate_at)?
                 .expect("Next block missing");
             let state_at = self.state.at_root(block_hash.into());
             let header = BlockHeader {
+                view: parent_view,
                 number: migrate_at - 1,
                 ..Default::default()
             };
-            for view in brt_view + 1..block.view() {
+            for view in parent_view + 1..block.view() {
                 if let Ok(leader) = state_at.leader(view, header) {
-                    if view == brt_view + 1 {
+                    if view == parent_view + 1 {
                         /*trace!(
                             view,
                             id = &leader.as_bytes()[..3],
@@ -3742,7 +3740,12 @@ impl Consensus {
                 }
             }
             self.state.ckpt_finalized_view = Some(block.view());
+            parent_view = block.view();
             // TODO(zf): persist them because these blocks won't be replayed again if the node is restarted
+            let Some(hash) = state_trie.get_root_hash(migrate_at)? else {
+                tracing::warn!(number=%migrate_at,"State-sync retrying");
+                return Ok(true); // retry later
+            };
             if hash != block_hash {
                 state_trie.set_migrate_at(migrate_at)?;
                 return Ok(false);
