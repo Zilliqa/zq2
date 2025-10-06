@@ -114,7 +114,7 @@ async fn main() -> Result<()> {
         &Hash::from_bytes(hex::decode(args.hash.as_bytes())?)?,
     )? {
         if let Some((view, _)) = view_history.missed_views.front() {
-            println!("{}", view_history);
+            println!("{view_history}");
             if match args.id {
                 32769 => *view > 4770090,
                 33101 => *view > 8099090,
