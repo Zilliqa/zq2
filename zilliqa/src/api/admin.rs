@@ -204,7 +204,7 @@ fn import_history(params: Params, node: &Arc<Node>) -> Result<()> {
         );
     }
     let mut consensus = node.consensus.write();
-    merge_history(&mut *consensus, &mut imported_history, block.view())
+    merge_history(&mut consensus, &mut imported_history, block.view())
 }
 
 #[derive(Clone, Debug, Serialize)]

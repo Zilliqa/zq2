@@ -350,7 +350,7 @@ impl State {
             forks: self.forks.clone(),
             finalized_view: self.finalized_view,
             view_history: self.view_history.clone(),
-            ckpt_finalized_view: self.ckpt_finalized_view.clone(),
+            ckpt_finalized_view: self.ckpt_finalized_view,
             ckpt_view_history: self.ckpt_view_history.clone(),
         }
     }
