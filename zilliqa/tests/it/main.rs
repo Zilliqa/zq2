@@ -648,108 +648,37 @@ impl Network {
         index
     }
 
+    // Creates a new network, re-using the private keys, and cloning the data directories.
     pub fn restart(&mut self) {
-        // We copy the data dirs from the original network, and re-use the same private keys.
+        let opts = NewNodeOptions {
+            secret_key: Some(self.nodes[0].secret_key.clone()),
+            onchain_key: Some(self.nodes[0].onchain_key.clone()),
+            checkpoint: self.nodes[0].inner.config.load_checkpoint.clone(),
+            prune_interval: Some(self.nodes[0].inner.config.sync.prune_interval),
+            base_height: Some(self.nodes[0].inner.config.sync.base_height),
+            state_sync: Some(self.nodes[0].inner.config.db.state_sync),
+        };
 
-        // Note: the tempdir object has to be held in the vector or the OS
-        // will delete it when it goes out of scope.
-        let mut options = CopyOptions::new();
-        options.copy_inside = true;
-
-        // Collect the keys from the validators
-        let keys = self
-            .nodes
-            .iter()
-            .map(|n| (n.secret_key, n.onchain_key.clone()))
-            .collect::<Vec<_>>();
-
-        let (nodes, external_receivers, local_receivers, request_response_receivers): (
-            Vec<_>,
-            Vec<_>,
-            Vec<_>,
-            Vec<_>,
-        ) = keys
-            .into_iter()
-            .enumerate()
-            .map(|(i, key)| {
-                // Move the persistence over
-                let chain_id = self.nodes[i].inner.chain_id;
-                let old_data_dir = self.nodes[i]
-                    .dir
-                    .as_ref()
-                    .unwrap()
-                    .path()
-                    .join(chain_id.eth.to_string());
-                let new_data_dir = tempfile::tempdir().unwrap();
-
-                info!(
-                    "Moving {} => {}",
-                    old_data_dir.display(),
-                    new_data_dir.path().display(),
-                );
-
-                fs_extra::dir::move_dir(
-                    old_data_dir,
-                    new_data_dir.path(),
-                    &CopyOptions::default().copy_inside(true),
-                )
-                .unwrap();
-
-                let config = self.nodes[i].inner.config.clone();
-
-                node(config, key.0, key.1, i, Some(new_data_dir)).unwrap()
-            })
-            .multiunzip();
-
-        let mut receivers: Vec<_> = external_receivers
-            .into_iter()
-            .chain(local_receivers)
-            .chain(request_response_receivers)
-            .collect();
-
-        let mut peers = nodes.iter().map(|n| n.peer_id).collect_vec();
-        peers.shuffle(self.rng.lock().unwrap().deref_mut());
-
-        for node in &nodes {
-            trace!(
-                "Node {}: {} (dir: {})",
-                node.index,
-                node.peer_id,
-                node.dir.as_ref().unwrap().path().to_string_lossy(),
-            );
-            node.peers.add_peers(peers.clone());
-        }
-
-        let (resend_message, receive_resend_message) = mpsc::unbounded_channel::<StreamMessage>();
-        let receive_resend_message = UnboundedReceiverStream::new(receive_resend_message).boxed();
-        receivers.push(receive_resend_message);
-
-        self.nodes = nodes;
-        self.receivers = receivers;
-        self.resend_message = resend_message;
-
-        // Now trigger a timeout in all of the nodes until we see network activity again
-        // this could of course spin forever, but the test itself should time out.
-        loop {
-            for node in &self.nodes {
-                node.inner.process_transactions_to_broadcast().unwrap();
-                // Trigger a tick so that block fetching can operate.
-                if node.inner.handle_timeout().unwrap() {
-                    return;
-                }
-                zilliqa::time::advance(Duration::from_millis(500));
-            }
-        }
+        self.restart_node_with_options(0, opts);
     }
 
+    // Similar to `restart()` but allows for custom options for ONE node.
     pub fn restart_node_with_options(&mut self, index: usize, opts: NewNodeOptions) {
-        // We copy the data dirs from the original network, and re-use the same private keys.
-
         // Collect the keys from the validators
         let keys = self
             .nodes
             .iter()
-            .map(|n| (n.secret_key, n.onchain_key.clone()))
+            .enumerate()
+            .map(|(i, n)| {
+                if i != index {
+                    (n.secret_key, n.onchain_key.clone())
+                } else {
+                    (
+                        opts.secret_key.unwrap_or(n.secret_key),
+                        opts.onchain_key.clone().unwrap_or(n.onchain_key.clone()),
+                    )
+                }
+            })
             .collect::<Vec<_>>();
 
         let (nodes, external_receivers, local_receivers, request_response_receivers): (
@@ -791,6 +720,8 @@ impl Network {
                     let mut c = self.nodes[i].inner.config.clone();
                     c.load_checkpoint = opts.checkpoint.clone();
                     c.db.state_sync = opts.state_sync.unwrap_or_default();
+                    c.sync.prune_interval = opts.prune_interval.unwrap_or(u64::MAX);
+                    c.sync.base_height = opts.base_height.unwrap_or(u64::MAX);
                     c
                 };
 
