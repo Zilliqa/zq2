@@ -2322,6 +2322,7 @@ impl Consensus {
             })?;
             let state_at = self.state.at_root(parent.state_root_hash().into());
             let block_header = BlockHeader {
+                view: parent.header.view,
                 number: parent.header.number,
                 ..Default::default()
             };
