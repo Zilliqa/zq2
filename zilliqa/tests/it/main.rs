@@ -37,7 +37,6 @@ use std::{
     collections::{HashMap, HashSet},
     env,
     fmt::Debug,
-    fs::{self},
     ops::DerefMut,
     path::Path,
     pin::Pin,
@@ -673,19 +672,28 @@ impl Network {
             .into_iter()
             .enumerate()
             .map(|(i, key)| {
-                // Copy the persistence over
+                // Move the persistence over
+                let chain_id = self.nodes[i].inner.chain_id;
+                let old_data_dir = self.nodes[i]
+                    .dir
+                    .as_ref()
+                    .unwrap()
+                    .path()
+                    .join(chain_id.eth.to_string());
                 let new_data_dir = tempfile::tempdir().unwrap();
 
-                info!("Copying data dir over");
+                info!(
+                    "Moving {} => {}",
+                    old_data_dir.display(),
+                    new_data_dir.path().display(),
+                );
 
-                if let Ok(mut entry) = fs::read_dir(self.nodes[i].dir.as_ref().unwrap().path()) {
-                    let entry = entry.next().unwrap().unwrap();
-                    info!("Copying {:?} to {:?}", entry, new_data_dir);
-
-                    copy(entry.path(), new_data_dir.path(), &options).unwrap();
-                } else {
-                    warn!("Failed to copy data dir over");
-                }
+                fs_extra::dir::move_dir(
+                    old_data_dir,
+                    new_data_dir.path(),
+                    &CopyOptions::default().copy_inside(true),
+                )
+                .unwrap();
 
                 let config = self.nodes[i].inner.config.clone();
 
@@ -737,11 +745,6 @@ impl Network {
     pub fn restart_node_with_options(&mut self, index: usize, opts: NewNodeOptions) {
         // We copy the data dirs from the original network, and re-use the same private keys.
 
-        // Note: the tempdir object has to be held in the vector or the OS
-        // will delete it when it goes out of scope.
-        let mut options = CopyOptions::new();
-        options.copy_inside = true;
-
         // Collect the keys from the validators
         let keys = self
             .nodes
@@ -758,19 +761,28 @@ impl Network {
             .into_iter()
             .enumerate()
             .map(|(i, key)| {
-                // Copy the persistence over
+                // Move the persistence over
+                let chain_id = self.nodes[i].inner.chain_id;
+                let old_data_dir = self.nodes[i]
+                    .dir
+                    .as_ref()
+                    .unwrap()
+                    .path()
+                    .join(chain_id.eth.to_string());
                 let new_data_dir = tempfile::tempdir().unwrap();
 
-                info!("Copying data dir over");
+                info!(
+                    "Moving {} => {}",
+                    old_data_dir.display(),
+                    new_data_dir.path().display(),
+                );
 
-                if let Ok(mut entry) = fs::read_dir(self.nodes[i].dir.as_ref().unwrap().path()) {
-                    let entry = entry.next().unwrap().unwrap();
-                    info!("Copying {:?} to {:?}", entry, new_data_dir);
-
-                    copy(entry.path(), new_data_dir.path(), &options).unwrap();
-                } else {
-                    warn!("Failed to copy data dir over");
-                }
+                fs_extra::dir::move_dir(
+                    old_data_dir,
+                    new_data_dir.path(),
+                    &CopyOptions::default().copy_inside(true),
+                )
+                .unwrap();
 
                 // replace any config
                 let config = if index != i {
