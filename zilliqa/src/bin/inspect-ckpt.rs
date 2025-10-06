@@ -123,16 +123,14 @@ async fn main() -> Result<()> {
                 println!("Missed view history incomplete!");
             }
             display_missed_views(&args, view_history)?;
+        } else if match args.id {
+            32769 => block.number() == 4770089,
+            33101 => block.number() == 8099089,
+            _ => block.number() == 1,
+        } {
+            println!("Switchover or genesis checkpoint.");
         } else {
-            if match args.id {
-                32769 => block.number() == 4770089,
-                33101 => block.number() == 8099089,
-                _ => block.number() == 1,
-            } {
-                println!("Switchover or genesis checkpoint.");
-            } else {
-                println!("Empty missed view history only allowed in switchover checkpoint!");
-            }
+            println!("Empty missed view history only allowed in switchover checkpoint!");
         }
     };
     Ok(())
