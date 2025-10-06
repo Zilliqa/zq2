@@ -37,7 +37,6 @@ use std::{
     collections::{HashMap, HashSet},
     env,
     fmt::Debug,
-    fs::{self},
     ops::DerefMut,
     path::Path,
     pin::Pin,
@@ -107,6 +106,7 @@ pub struct NewNodeOptions {
     checkpoint: Option<Checkpoint>,
     prune_interval: Option<u64>,
     base_height: Option<u64>,
+    state_sync: Option<bool>,
 }
 
 impl NewNodeOptions {
@@ -641,19 +641,42 @@ impl Network {
         index
     }
 
+    // Creates a new network, re-using the private keys, and cloning the data directories.
     pub fn restart(&mut self) {
-        // We copy the data dirs from the original network, and re-use the same private keys.
+        let opts = NewNodeOptions {
+            secret_key: Some(self.nodes[0].secret_key),
+            onchain_key: Some(self.nodes[0].onchain_key.clone()),
+            checkpoint: self.nodes[0].inner.config.load_checkpoint.clone(),
+            prune_interval: Some(self.nodes[0].inner.config.sync.prune_interval),
+            base_height: Some(self.nodes[0].inner.config.sync.base_height),
+            state_sync: Some(self.nodes[0].inner.config.db.state_sync),
+        };
 
-        // Note: the tempdir object has to be held in the vector or the OS
-        // will delete it when it goes out of scope.
-        let mut options = CopyOptions::new();
-        options.copy_inside = true;
+        self.restart_node_with_options(0, opts, false);
+    }
 
+    // Similar to `restart()` but allows for custom options for ONE node.
+    pub fn restart_node_with_options(
+        &mut self,
+        index: usize,
+        opts: NewNodeOptions,
+        skip_timeouts: bool,
+    ) {
         // Collect the keys from the validators
         let keys = self
             .nodes
             .iter()
-            .map(|n| (n.secret_key, n.onchain_key.clone()))
+            .enumerate()
+            .map(|(i, n)| {
+                if i != index {
+                    (n.secret_key, n.onchain_key.clone())
+                } else {
+                    (
+                        opts.secret_key.unwrap_or(n.secret_key),
+                        opts.onchain_key.clone().unwrap_or(n.onchain_key.clone()),
+                    )
+                }
+            })
             .collect::<Vec<_>>();
 
         let (nodes, external_receivers, local_receivers, request_response_receivers): (
@@ -665,21 +688,40 @@ impl Network {
             .into_iter()
             .enumerate()
             .map(|(i, key)| {
-                // Copy the persistence over
+                // Move the persistence over
+                let chain_id = self.nodes[i].inner.chain_id;
+                let old_data_dir = self.nodes[i]
+                    .dir
+                    .as_ref()
+                    .unwrap()
+                    .path()
+                    .join(chain_id.eth.to_string());
                 let new_data_dir = tempfile::tempdir().unwrap();
 
-                info!("Copying data dir over");
+                info!(
+                    "Moving {} => {}",
+                    old_data_dir.display(),
+                    new_data_dir.path().display(),
+                );
 
-                if let Ok(mut entry) = fs::read_dir(self.nodes[i].dir.as_ref().unwrap().path()) {
-                    let entry = entry.next().unwrap().unwrap();
-                    info!("Copying {:?} to {:?}", entry, new_data_dir);
+                fs_extra::dir::move_dir(
+                    old_data_dir,
+                    new_data_dir.path(),
+                    &CopyOptions::default().copy_inside(true),
+                )
+                .unwrap();
 
-                    copy(entry.path(), new_data_dir.path(), &options).unwrap();
+                // replace any config
+                let config = if index != i {
+                    self.nodes[i].inner.config.clone()
                 } else {
-                    warn!("Failed to copy data dir over");
-                }
-
-                let config = self.nodes[i].inner.config.clone();
+                    let mut c = self.nodes[i].inner.config.clone();
+                    c.load_checkpoint = opts.checkpoint.clone();
+                    c.db.state_sync = opts.state_sync.unwrap_or_default();
+                    c.sync.prune_interval = opts.prune_interval.unwrap_or(u64::MAX);
+                    c.sync.base_height = opts.base_height.unwrap_or(u64::MAX);
+                    c
+                };
 
                 node(config, key.0, key.1, i, Some(new_data_dir)).unwrap()
             })
@@ -712,16 +754,18 @@ impl Network {
         self.receivers = receivers;
         self.resend_message = resend_message;
 
-        // Now trigger a timeout in all of the nodes until we see network activity again
-        // this could of course spin forever, but the test itself should time out.
-        loop {
-            for node in &self.nodes {
-                node.inner.process_transactions_to_broadcast().unwrap();
-                // Trigger a tick so that block fetching can operate.
-                if node.inner.handle_timeout().unwrap() {
-                    return;
+        if !skip_timeouts {
+            // Now trigger a timeout in all of the nodes until we see network activity again
+            // this could of course spin forever, but the test itself should time out.
+            loop {
+                for node in &self.nodes {
+                    node.inner.process_transactions_to_broadcast().unwrap();
+                    // Trigger a tick so that block fetching can operate.
+                    if node.inner.handle_timeout().unwrap() {
+                        return;
+                    }
+                    zilliqa::time::advance(Duration::from_millis(500));
                 }
-                zilliqa::time::advance(Duration::from_millis(500));
             }
         }
     }

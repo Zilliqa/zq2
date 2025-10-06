@@ -57,3 +57,6 @@
 - name: Ethereum Metrics Exporter installation
   ansible.builtin.import_playbook: install_ethereum_metrics_exporter.yml
   when: ethereum_metrics_exporter_image is defined and ethereum_metrics_exporter_image != ""
+
+- name: Import rocksdb-tools installation
+  ansible.builtin.import_playbook: install_rocksdb_tools.yml

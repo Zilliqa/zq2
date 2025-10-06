@@ -24,7 +24,7 @@
     - all
 
   vars:
-    target_release: "24.04"
+    target_release: "{{ ubuntu_version }}"
 
   tasks:
     - name: Ensure update-manager-core is installed
