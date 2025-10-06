@@ -644,7 +644,7 @@ impl Network {
     // Creates a new network, re-using the private keys, and cloning the data directories.
     pub fn restart(&mut self) {
         let opts = NewNodeOptions {
-            secret_key: Some(self.nodes[0].secret_key.clone()),
+            secret_key: Some(self.nodes[0].secret_key),
             onchain_key: Some(self.nodes[0].onchain_key.clone()),
             checkpoint: self.nodes[0].inner.config.load_checkpoint.clone(),
             prune_interval: Some(self.nodes[0].inner.config.sync.prune_interval),
