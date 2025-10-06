@@ -94,19 +94,6 @@ async fn state_sync(mut network: Network) {
 
     network.run_until_block_finalized(13, 200).await.unwrap();
 
-    let idx = network.random_index();
-
-    assert_eq!(
-        network
-            .node_at(idx)
-            .db
-            .state_trie()
-            .unwrap()
-            .get_migrate_at()
-            .unwrap(),
-        u64::MAX // no state-sync
-    );
-
     // copy out checkpoint file; otherwise it will no longer exist after the restart
     let checkpoint_from = network
         .nodes
@@ -128,7 +115,20 @@ async fn state_sync(mut network: Network) {
     )
     .unwrap();
 
-    // Restart existing node with checkpoint file
+    // pick a random node.
+    let idx = network.random_index();
+    assert_eq!(
+        network
+            .node_at(idx)
+            .db
+            .state_trie()
+            .unwrap()
+            .get_migrate_at()
+            .unwrap(),
+        u64::MAX // no state-sync
+    );
+
+    // Restart chosen node with checkpoint file
     let checkpoint_hash = wallet.get_block(10).await.unwrap().unwrap().hash.unwrap();
     network.restart_node_with_options(
         idx,
@@ -146,9 +146,9 @@ async fn state_sync(mut network: Network) {
             state_sync: Some(true),
             ..Default::default()
         },
+        true,
     );
 
-    // The test conditions only replay ONE block; and completes.
     assert_eq!(
         network
             .node_at(idx)
@@ -157,10 +157,11 @@ async fn state_sync(mut network: Network) {
             .unwrap()
             .get_migrate_at()
             .unwrap(),
-        10 // state-sync of block 10
+        10 // state-sync starts at the checkpoint block 10.
     );
 
     // run the network for a little bit
+    // The test conditions only replay ONE block; and completes.
     network.run_until_block_finalized(20, 2000).await.unwrap();
 
     assert_eq!(

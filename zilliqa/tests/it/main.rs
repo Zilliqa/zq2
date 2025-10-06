@@ -560,7 +560,6 @@ impl Network {
                 }),
             )
         };
-        let datadir = tempfile::tempdir().unwrap();
         let config = NodeConfig {
             eth_chain_id: self.shard_id,
             api_servers: vec![ApiServer {
@@ -568,7 +567,7 @@ impl Network {
                 enabled_apis: api::all_enabled(),
             }],
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
-            data_dir: Some(datadir.path().to_str().unwrap().to_string()),
+            data_dir: None,
             state_cache_size: state_cache_size_default(),
             load_checkpoint: options.checkpoint.clone(),
             do_checkpoints: self.do_checkpoints,
@@ -623,14 +622,8 @@ impl Network {
 
         let secret_key = options.secret_key_or_random(self.rng.clone());
         let onchain_key = options.onchain_key_or_random(self.rng.clone());
-        let (node, receiver, local_receiver, request_responses) = node(
-            config,
-            secret_key,
-            onchain_key,
-            self.nodes.len(),
-            Some(datadir),
-        )
-        .unwrap();
+        let (node, receiver, local_receiver, request_responses) =
+            node(config, secret_key, onchain_key, self.nodes.len(), None).unwrap();
 
         let mut peers = self.nodes.iter().map(|n| n.peer_id).collect_vec();
         peers.shuffle(self.rng.lock().unwrap().deref_mut());
@@ -659,11 +652,16 @@ impl Network {
             state_sync: Some(self.nodes[0].inner.config.db.state_sync),
         };
 
-        self.restart_node_with_options(0, opts);
+        self.restart_node_with_options(0, opts, false);
     }
 
     // Similar to `restart()` but allows for custom options for ONE node.
-    pub fn restart_node_with_options(&mut self, index: usize, opts: NewNodeOptions) {
+    pub fn restart_node_with_options(
+        &mut self,
+        index: usize,
+        opts: NewNodeOptions,
+        skip_timeouts: bool,
+    ) {
         // Collect the keys from the validators
         let keys = self
             .nodes
@@ -756,16 +754,18 @@ impl Network {
         self.receivers = receivers;
         self.resend_message = resend_message;
 
-        // Now trigger a timeout in all of the nodes until we see network activity again
-        // this could of course spin forever, but the test itself should time out.
-        loop {
-            for node in &self.nodes {
-                node.inner.process_transactions_to_broadcast().unwrap();
-                // Trigger a tick so that block fetching can operate.
-                if node.inner.handle_timeout().unwrap() {
-                    return;
+        if !skip_timeouts {
+            // Now trigger a timeout in all of the nodes until we see network activity again
+            // this could of course spin forever, but the test itself should time out.
+            loop {
+                for node in &self.nodes {
+                    node.inner.process_transactions_to_broadcast().unwrap();
+                    // Trigger a tick so that block fetching can operate.
+                    if node.inner.handle_timeout().unwrap() {
+                        return;
+                    }
+                    zilliqa::time::advance(Duration::from_millis(500));
                 }
-                zilliqa::time::advance(Duration::from_millis(500));
             }
         }
     }
