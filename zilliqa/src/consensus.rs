@@ -417,6 +417,8 @@ impl Consensus {
                 if consensus.get_block(&genesis.hash())?.is_none() {
                     consensus.add_block(None, genesis.clone())?;
                 }
+                // Initialize state trie storage
+                consensus.db.state_trie()?.init_state_trie(forks)?;
             }
             // treat genesis as finalized
             consensus.set_finalized_view(latest_block_view)?;
