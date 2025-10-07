@@ -157,6 +157,11 @@ fn rpc_base_attributes(method: &'static str) -> Vec<KeyValue> {
     ]
 }
 
+enum HandlerType {
+    Fast,
+    Slow,
+}
+
 /// Returns an `RpcModule<Arc<Node>>`. Call with the following syntax:
 /// ```ignore
 /// declare_module!(
@@ -176,7 +181,7 @@ macro_rules! declare_module {
     (
         $node:expr,
         $enabled_apis:expr,
-        [ $(($name:expr, $method:expr)),* $(,)? ] $(,)?
+        [ $(($name:expr, $method:expr, $handler_type:expr)),* $(,)? ] $(,)?
     ) => {{
         let mut module: jsonrpsee::RpcModule<std::sync::Arc<crate::node::Node>> = jsonrpsee::RpcModule::new($node.clone());
         let meter = opentelemetry::global::meter("zilliqa");
@@ -188,50 +193,102 @@ macro_rules! declare_module {
                 .with_boundaries(vec![0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0])
                 .with_unit("s")
                 .build();
-            module
-                .register_method($name, move |params, context, _| {
-                    tracing::debug!("API Call start {}: params: {:?}", $name, params);
 
-                    if !enabled {
-                        return Err(disabled_err($name));
-                    }
 
-                    let mut attributes = rpc_base_attributes($name);
+            match $handler_type {
+                HandlerType::Slow => {
+                    module
+                    .register_blocking_method($name, move |params, context, _| {
+                        tracing::debug!("API Call start {}: params: {:?}", $name, params);
 
-                    let start = std::time::SystemTime::now();
+                        if !enabled {
+                            return Err(disabled_err($name));
+                        }
 
-                    // Store the original panic hook
-                    let original_hook = std::panic::take_hook();
+                        let mut attributes = rpc_base_attributes($name);
 
-                    // Set our custom panic hook to capture backtrace
-                    std::panic::set_hook(make_panic_hook());
+                        let start = std::time::SystemTime::now();
 
-                    #[allow(clippy::redundant_closure_call)]
-                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| $method(params.clone(), context)));
+                        // Store the original panic hook
+                        let original_hook = std::panic::take_hook();
 
-                    // Restore the original panic hook
-                    std::panic::set_hook(original_hook);
+                        // Set our custom panic hook to capture backtrace
+                        std::panic::set_hook(make_panic_hook());
 
-                    let result = result.unwrap_or_else(|_| Err(format_panic_as_error($name)));
+                        #[allow(clippy::redundant_closure_call)]
+                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| $method(params.clone(), &context)));
 
-                    let result = result.map_err(into_rpc_error);
+                        // Restore the original panic hook
+                        std::panic::set_hook(original_hook);
 
-                    if let Err(err) = &result {
-                        attributes.push(opentelemetry::KeyValue::new(opentelemetry_semantic_conventions::attribute::RPC_JSONRPC_ERROR_CODE, err.code() as i64));
-                    }
-                    let duration = start.elapsed().map_or(0.0, |d| d.as_secs_f64());
+                        let result = result.unwrap_or_else(|_| Err(format_panic_as_error($name)));
 
-                    rpc_server_duration.record(
-                        duration,
-                        &attributes,
-                    );
-                    if duration > 1.0 {
-                        tracing::error!("API Call long: {}{:?}, took {}s", $name, params, duration);
-                    }
-                    tracing::debug!("API Call end {}", $name);
-                    result
-                })
-                .unwrap();
+                        let result = result.map_err(into_rpc_error);
+
+                        if let Err(err) = &result {
+                            attributes.push(opentelemetry::KeyValue::new(opentelemetry_semantic_conventions::attribute::RPC_JSONRPC_ERROR_CODE, err.code() as i64));
+                        }
+                        let duration = start.elapsed().map_or(0.0, |d| d.as_secs_f64());
+
+                        rpc_server_duration.record(
+                            duration,
+                            &attributes,
+                        );
+                        if duration > 1.0 {
+                            tracing::error!("API Call long: {}{:?}, took {}s", $name, params, duration);
+                        }
+                        tracing::debug!("API Call end {}", $name);
+                        result
+                    })
+                    .unwrap();
+                }
+                HandlerType::Fast => {
+                    module
+                    .register_method($name, move |params, context, _| {
+                        tracing::debug!("API Call start {}: params: {:?}", $name, params);
+
+                        if !enabled {
+                            return Err(disabled_err($name));
+                        }
+
+                        let mut attributes = rpc_base_attributes($name);
+
+                        let start = std::time::SystemTime::now();
+
+                        // Store the original panic hook
+                        let original_hook = std::panic::take_hook();
+
+                        // Set our custom panic hook to capture backtrace
+                        std::panic::set_hook(make_panic_hook());
+
+                        #[allow(clippy::redundant_closure_call)]
+                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| $method(params.clone(), context)));
+
+                        // Restore the original panic hook
+                        std::panic::set_hook(original_hook);
+
+                        let result = result.unwrap_or_else(|_| Err(format_panic_as_error($name)));
+
+                        let result = result.map_err(into_rpc_error);
+
+                        if let Err(err) = &result {
+                            attributes.push(opentelemetry::KeyValue::new(opentelemetry_semantic_conventions::attribute::RPC_JSONRPC_ERROR_CODE, err.code() as i64));
+                        }
+                        let duration = start.elapsed().map_or(0.0, |d| d.as_secs_f64());
+
+                        rpc_server_duration.record(
+                            duration,
+                            &attributes,
+                        );
+                        if duration > 1.0 {
+                            tracing::error!("API Call long: {}{:?}, took {}s", $name, params, duration);
+                        }
+                        tracing::debug!("API Call end {}", $name);
+                        result
+                    })
+                    .unwrap();
+                }
+            }
         )*
 
         module

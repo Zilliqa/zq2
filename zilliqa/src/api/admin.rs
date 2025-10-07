@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use super::types::{admin::VotesReceivedReturnee, eth::QuorumCertificate, hex};
 use crate::{
     api::{
-        disabled_err, format_panic_as_error, into_rpc_error, make_panic_hook, rpc_base_attributes,
-        to_hex::ToHex, types::admin::VoteCount,
+        HandlerType, disabled_err, format_panic_as_error, into_rpc_error, make_panic_hook,
+        rpc_base_attributes, to_hex::ToHex, types::admin::VoteCount,
     },
     cfg::EnabledApi,
     checkpoint::load_ckpt_history,
@@ -29,17 +29,17 @@ pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc
         node,
         enabled_apis,
         [
-            ("admin_consensusInfo", consensus_info),
-            ("admin_generateCheckpoint", checkpoint),
-            ("admin_blockRange", admin_block_range),
-            ("admin_forceView", force_view),
-            ("admin_getPeers", get_peers),
-            ("admin_votesReceived", votes_received),
-            ("admin_clearMempool", clear_mempool),
-            ("admin_getLeaders", get_leaders),
-            ("admin_syncing", syncing),
-            ("admin_missedViews", missed_views),
-            ("admin_importViewHistory", import_history),
+            ("admin_consensusInfo", consensus_info, HandlerType::Fast),
+            ("admin_generateCheckpoint", checkpoint, HandlerType::Fast),
+            ("admin_blockRange", admin_block_range, HandlerType::Fast),
+            ("admin_forceView", force_view, HandlerType::Fast),
+            ("admin_getPeers", get_peers, HandlerType::Fast),
+            ("admin_votesReceived", votes_received, HandlerType::Fast),
+            ("admin_clearMempool", clear_mempool, HandlerType::Fast),
+            ("admin_getLeaders", get_leaders, HandlerType::Fast),
+            ("admin_syncing", syncing, HandlerType::Fast),
+            ("admin_missedViews", missed_views, HandlerType::Fast),
+            ("admin_importViewHistory", import_history, HandlerType::Fast),
         ]
     )
 }
@@ -165,7 +165,7 @@ fn import_history(params: Params, node: &Arc<Node>) -> Result<()> {
         );
     }
     let imported_missed_views = &imported_history.missed_views;
-    // merge the two missed view histories and store the delta in the db
+    // merge the two missed view histories and stor&e the delta in the db
     imported_missed_views
         .iter()
         .rev()

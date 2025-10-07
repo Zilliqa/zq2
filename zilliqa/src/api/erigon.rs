@@ -6,7 +6,8 @@ use jsonrpsee::{RpcModule, types::Params};
 use super::types::eth;
 use crate::{
     api::{
-        disabled_err, format_panic_as_error, into_rpc_error, make_panic_hook, rpc_base_attributes,
+        HandlerType, disabled_err, format_panic_as_error, into_rpc_error, make_panic_hook,
+        rpc_base_attributes,
     },
     cfg::EnabledApi,
     node::Node,
@@ -17,17 +18,30 @@ pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc
         node,
         enabled_apis,
         [
-            ("erigon_blockNumber", block_number),
-            ("erigon_forks", forks),
-            ("erigon_getBlockByTimestamp", get_block_by_timestamp),
+            ("erigon_blockNumber", block_number, HandlerType::Slow),
+            ("erigon_forks", forks, HandlerType::Slow),
+            (
+                "erigon_getBlockByTimestamp",
+                get_block_by_timestamp,
+                HandlerType::Slow
+            ),
             (
                 "erigon_getBlockReceiptsByBlockHash",
-                get_block_receipts_by_block_hash
+                get_block_receipts_by_block_hash,
+                HandlerType::Slow
             ),
-            ("erigon_getHeaderByHash", get_header_by_hash),
-            ("erigon_getHeaderByNumber", get_header_by_number),
-            ("erigon_getLatestLogs", get_latest_logs),
-            ("erigon_getLogsByHash", get_logs_by_hash),
+            (
+                "erigon_getHeaderByHash",
+                get_header_by_hash,
+                HandlerType::Slow
+            ),
+            (
+                "erigon_getHeaderByNumber",
+                get_header_by_number,
+                HandlerType::Slow
+            ),
+            ("erigon_getLatestLogs", get_latest_logs, HandlerType::Slow),
+            ("erigon_getLogsByHash", get_logs_by_hash, HandlerType::Slow),
         ]
     )
 }

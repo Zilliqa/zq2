@@ -28,6 +28,7 @@ use serde_json::json;
 use tracing::*;
 
 use super::{
+    HandlerType,
     to_hex::ToHex,
     types::{
         eth::{self, CallParams, ErrorCode, HashOrTransaction, SyncingResult, TransactionReceipt},
@@ -59,65 +60,118 @@ pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc
         node,
         enabled_apis,
         [
-            ("eth_accounts", accounts),
-            ("eth_blobBaseFee", blob_base_fee),
-            ("eth_blockNumber", block_number),
-            ("eth_call", call),
-            ("eth_callMany", call_many),
-            ("eth_chainId", chain_id),
-            ("eth_estimateGas", estimate_gas),
-            ("eth_feeHistory", fee_history),
-            ("eth_gasPrice", get_gas_price),
-            ("eth_getAccount", get_account),
-            ("eth_getBalance", get_balance),
-            ("eth_getBlockByHash", get_block_by_hash),
-            ("eth_getBlockByNumber", get_block_by_number),
-            ("eth_getBlockReceipts", get_block_receipts),
+            ("eth_accounts", accounts, HandlerType::Fast),
+            ("eth_blobBaseFee", blob_base_fee, HandlerType::Fast),
+            ("eth_blockNumber", block_number, HandlerType::Fast),
+            ("eth_call", call, HandlerType::Fast),
+            ("eth_callMany", call_many, HandlerType::Fast),
+            ("eth_chainId", chain_id, HandlerType::Fast),
+            ("eth_estimateGas", estimate_gas, HandlerType::Fast),
+            ("eth_feeHistory", fee_history, HandlerType::Fast),
+            ("eth_gasPrice", get_gas_price, HandlerType::Fast),
+            ("eth_getAccount", get_account, HandlerType::Fast),
+            ("eth_getBalance", get_balance, HandlerType::Fast),
+            ("eth_getBlockByHash", get_block_by_hash, HandlerType::Fast),
+            (
+                "eth_getBlockByNumber",
+                get_block_by_number,
+                HandlerType::Fast
+            ),
+            (
+                "eth_getBlockReceipts",
+                get_block_receipts,
+                HandlerType::Fast
+            ),
             (
                 "eth_getBlockTransactionCountByHash",
-                get_block_transaction_count_by_hash
+                get_block_transaction_count_by_hash,
+                HandlerType::Fast
             ),
             (
                 "eth_getBlockTransactionCountByNumber",
-                get_block_transaction_count_by_number
+                get_block_transaction_count_by_number,
+                HandlerType::Fast
             ),
-            ("eth_getCode", get_code),
-            ("eth_getFilterChanges", get_filter_changes),
-            ("eth_getFilterLogs", get_filter_logs),
-            ("eth_getLogs", get_logs),
-            ("eth_getProof", get_proof),
-            ("eth_getStorageAt", get_storage_at),
+            ("eth_getCode", get_code, HandlerType::Fast),
+            (
+                "eth_getFilterChanges",
+                get_filter_changes,
+                HandlerType::Fast
+            ),
+            ("eth_getFilterLogs", get_filter_logs, HandlerType::Fast),
+            ("eth_getLogs", get_logs, HandlerType::Fast),
+            ("eth_getProof", get_proof, HandlerType::Fast),
+            ("eth_getStorageAt", get_storage_at, HandlerType::Fast),
             (
                 "eth_getTransactionByBlockHashAndIndex",
-                get_transaction_by_block_hash_and_index
+                get_transaction_by_block_hash_and_index,
+                HandlerType::Fast
             ),
             (
                 "eth_getTransactionByBlockNumberAndIndex",
-                get_transaction_by_block_number_and_index
+                get_transaction_by_block_number_and_index,
+                HandlerType::Fast
             ),
-            ("eth_getTransactionByHash", get_transaction_by_hash),
-            ("eth_getTransactionCount", get_transaction_count),
-            ("eth_getTransactionReceipt", get_transaction_receipt),
-            ("eth_getUncleByBlockHashAndIndex", get_uncle),
-            ("eth_getUncleByBlockNumberAndIndex", get_uncle),
-            ("eth_getUncleCountByBlockHash", get_uncle_count),
-            ("eth_getUncleCountByBlockNumber", get_uncle_count),
-            ("eth_hashrate", hashrate),
-            ("eth_maxPriorityFeePerGas", max_priority_fee_per_gas),
-            ("eth_mining", mining),
-            ("eth_newBlockFilter", new_block_filter),
-            ("eth_newFilter", new_filter),
+            (
+                "eth_getTransactionByHash",
+                get_transaction_by_hash,
+                HandlerType::Fast
+            ),
+            (
+                "eth_getTransactionCount",
+                get_transaction_count,
+                HandlerType::Fast
+            ),
+            (
+                "eth_getTransactionReceipt",
+                get_transaction_receipt,
+                HandlerType::Fast
+            ),
+            (
+                "eth_getUncleByBlockHashAndIndex",
+                get_uncle,
+                HandlerType::Fast
+            ),
+            (
+                "eth_getUncleByBlockNumberAndIndex",
+                get_uncle,
+                HandlerType::Fast
+            ),
+            (
+                "eth_getUncleCountByBlockHash",
+                get_uncle_count,
+                HandlerType::Fast
+            ),
+            (
+                "eth_getUncleCountByBlockNumber",
+                get_uncle_count,
+                HandlerType::Fast
+            ),
+            ("eth_hashrate", hashrate, HandlerType::Fast),
+            (
+                "eth_maxPriorityFeePerGas",
+                max_priority_fee_per_gas,
+                HandlerType::Fast
+            ),
+            ("eth_mining", mining, HandlerType::Fast),
+            ("eth_newBlockFilter", new_block_filter, HandlerType::Fast),
+            ("eth_newFilter", new_filter, HandlerType::Fast),
             (
                 "eth_newPendingTransactionFilter",
-                new_pending_transaction_filter
+                new_pending_transaction_filter,
+                HandlerType::Fast
             ),
-            ("eth_protocolVersion", protocol_version),
-            ("eth_sendRawTransaction", send_raw_transaction),
-            ("eth_signTransaction", sign_transaction),
-            ("eth_simulateV1", simulate_v1),
-            ("eth_submitWork", submit_work),
-            ("eth_syncing", syncing),
-            ("eth_uninstallFilter", uninstall_filter),
+            ("eth_protocolVersion", protocol_version, HandlerType::Fast),
+            (
+                "eth_sendRawTransaction",
+                send_raw_transaction,
+                HandlerType::Fast
+            ),
+            ("eth_signTransaction", sign_transaction, HandlerType::Fast),
+            ("eth_simulateV1", simulate_v1, HandlerType::Fast),
+            ("eth_submitWork", submit_work, HandlerType::Fast),
+            ("eth_syncing", syncing, HandlerType::Fast),
+            ("eth_uninstallFilter", uninstall_filter, HandlerType::Fast),
         ],
     );
 

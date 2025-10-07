@@ -5,7 +5,8 @@ use jsonrpsee::{RpcModule, types::Params};
 
 use crate::{
     api::{
-        disabled_err, format_panic_as_error, into_rpc_error, make_panic_hook, rpc_base_attributes,
+        HandlerType, disabled_err, format_panic_as_error, into_rpc_error, make_panic_hook,
+        rpc_base_attributes,
     },
     cfg::EnabledApi,
     node::Node,
@@ -16,9 +17,9 @@ pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc
         node,
         enabled_apis,
         [
-            ("net_listening", net_listening),
-            ("net_peerCount", net_peer_count),
-            ("net_version", version),
+            ("net_listening", net_listening, HandlerType::Fast),
+            ("net_peerCount", net_peer_count, HandlerType::Fast),
+            ("net_version", version, HandlerType::Fast),
         ]
     )
 }

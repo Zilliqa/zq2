@@ -4,7 +4,7 @@ use alloy::primitives::Address;
 use anyhow::Result;
 use jsonrpsee::{RpcModule, types::Params};
 
-use super::types;
+use super::{HandlerType, types};
 use crate::{
     api::{
         disabled_err, format_panic_as_error, into_rpc_error, make_panic_hook, rpc_base_attributes,
@@ -19,10 +19,10 @@ pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc
         node,
         enabled_apis,
         [
-            ("txpool_content", txpool_content),
-            ("txpool_contentFrom", txpool_content_from),
-            ("txpool_inspect", txpool_inspect),
-            ("txpool_status", txpool_status),
+            ("txpool_content", txpool_content, HandlerType::Fast),
+            ("txpool_contentFrom", txpool_content_from, HandlerType::Fast),
+            ("txpool_inspect", txpool_inspect, HandlerType::Fast),
+            ("txpool_status", txpool_status, HandlerType::Fast),
         ]
     )
 }

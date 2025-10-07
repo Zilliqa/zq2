@@ -35,7 +35,8 @@ use super::{
 };
 use crate::{
     api::{
-        disabled_err, format_panic_as_error, into_rpc_error, make_panic_hook, rpc_base_attributes,
+        HandlerType, disabled_err, format_panic_as_error, into_rpc_error, make_panic_hook,
+        rpc_base_attributes,
         types::zil::{CreateTransactionResponse, GetTxResponse, RPCErrorCode},
     },
     cfg::EnabledApi,
@@ -61,63 +62,138 @@ pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc
         node,
         enabled_apis,
         [
-            ("CreateTransaction", create_transaction),
+            ("CreateTransaction", create_transaction, HandlerType::Fast),
             (
                 "GetContractAddressFromTransactionID",
-                get_contract_address_from_transaction_id
+                get_contract_address_from_transaction_id,
+                HandlerType::Fast
             ),
-            ("GetBlockchainInfo", get_blockchain_info),
-            ("GetNumTxBlocks", get_num_tx_blocks),
-            ("GetSmartContractState", get_smart_contract_state),
-            ("GetSmartContractCode", get_smart_contract_code),
-            ("GetSmartContractInit", get_smart_contract_init),
-            ("GetTransaction", get_transaction),
-            ("GetBalance", get_balance),
-            ("GetCurrentMiniEpoch", get_current_mini_epoch),
-            ("GetLatestTxBlock", get_latest_tx_block),
-            ("GetMinimumGasPrice", get_minimum_gas_price),
-            ("GetNetworkId", get_network_id),
-            ("GetVersion", get_version),
-            ("GetTransactionsForTxBlock", get_transactions_for_tx_block),
-            ("GetTxBlock", get_tx_block),
-            ("GetTxBlockVerbose", get_tx_block_verbose),
-            ("GetSmartContracts", get_smart_contracts),
-            ("GetDSBlock", get_ds_block),
-            ("GetDSBlockVerbose", get_ds_block_verbose),
-            ("GetLatestDSBlock", get_latest_ds_block),
-            ("GetCurrentDSComm", get_current_ds_comm),
-            ("GetCurrentDSEpoch", get_current_ds_epoch),
-            ("DSBlockListing", ds_block_listing),
-            ("GetDSBlockRate", get_ds_block_rate),
-            ("GetTxBlockRate", get_tx_block_rate),
-            ("TxBlockListing", tx_block_listing),
-            ("GetNumPeers", get_num_peers),
-            ("GetTransactionRate", get_tx_rate),
+            ("GetBlockchainInfo", get_blockchain_info, HandlerType::Fast),
+            ("GetNumTxBlocks", get_num_tx_blocks, HandlerType::Fast),
+            (
+                "GetSmartContractState",
+                get_smart_contract_state,
+                HandlerType::Slow
+            ),
+            (
+                "GetSmartContractCode",
+                get_smart_contract_code,
+                HandlerType::Fast
+            ),
+            (
+                "GetSmartContractInit",
+                get_smart_contract_init,
+                HandlerType::Fast
+            ),
+            ("GetTransaction", get_transaction, HandlerType::Fast),
+            ("GetBalance", get_balance, HandlerType::Fast),
+            (
+                "GetCurrentMiniEpoch",
+                get_current_mini_epoch,
+                HandlerType::Fast
+            ),
+            ("GetLatestTxBlock", get_latest_tx_block, HandlerType::Fast),
+            (
+                "GetMinimumGasPrice",
+                get_minimum_gas_price,
+                HandlerType::Fast
+            ),
+            ("GetNetworkId", get_network_id, HandlerType::Fast),
+            ("GetVersion", get_version, HandlerType::Fast),
+            (
+                "GetTransactionsForTxBlock",
+                get_transactions_for_tx_block,
+                HandlerType::Fast
+            ),
+            ("GetTxBlock", get_tx_block, HandlerType::Fast),
+            ("GetTxBlockVerbose", get_tx_block_verbose, HandlerType::Fast),
+            ("GetSmartContracts", get_smart_contracts, HandlerType::Fast),
+            ("GetDSBlock", get_ds_block, HandlerType::Fast),
+            ("GetDSBlockVerbose", get_ds_block_verbose, HandlerType::Fast),
+            ("GetLatestDSBlock", get_latest_ds_block, HandlerType::Fast),
+            ("GetCurrentDSComm", get_current_ds_comm, HandlerType::Fast),
+            ("GetCurrentDSEpoch", get_current_ds_epoch, HandlerType::Fast),
+            ("DSBlockListing", ds_block_listing, HandlerType::Fast),
+            ("GetDSBlockRate", get_ds_block_rate, HandlerType::Fast),
+            ("GetTxBlockRate", get_tx_block_rate, HandlerType::Fast),
+            ("TxBlockListing", tx_block_listing, HandlerType::Fast),
+            ("GetNumPeers", get_num_peers, HandlerType::Fast),
+            ("GetTransactionRate", get_tx_rate, HandlerType::Fast),
             (
                 "GetTransactionsForTxBlockEx",
-                get_transactions_for_tx_block_ex
+                get_transactions_for_tx_block_ex,
+                HandlerType::Fast
             ),
-            ("GetTxnBodiesForTxBlock", get_txn_bodies_for_tx_block),
-            ("GetTxnBodiesForTxBlockEx", get_txn_bodies_for_tx_block_ex),
-            ("GetNumDSBlocks", get_num_ds_blocks),
-            ("GetRecentTransactions", get_recent_transactions),
-            ("GetNumTransactions", get_num_transactions),
-            ("GetNumTxnsTXEpoch", get_num_txns_tx_epoch),
-            ("GetNumTxnsDSEpoch", get_num_txns_ds_epoch),
-            ("GetTotalCoinSupply", get_total_coin_supply),
-            ("GetTotalCoinSupplyAsInt", get_total_coin_supply_as_int),
-            ("GetMinerInfo", get_miner_info),
-            ("GetNodeType", get_node_type),
-            ("GetPrevDifficulty", get_prev_difficulty),
-            ("GetPrevDSDifficulty", get_prev_ds_difficulty),
-            ("GetShardingStructure", get_sharding_structure),
-            ("GetSmartContractSubState", get_smart_contract_sub_state),
+            (
+                "GetTxnBodiesForTxBlock",
+                get_txn_bodies_for_tx_block,
+                HandlerType::Fast
+            ),
+            (
+                "GetTxnBodiesForTxBlockEx",
+                get_txn_bodies_for_tx_block_ex,
+                HandlerType::Fast
+            ),
+            ("GetNumDSBlocks", get_num_ds_blocks, HandlerType::Fast),
+            (
+                "GetRecentTransactions",
+                get_recent_transactions,
+                HandlerType::Fast
+            ),
+            (
+                "GetNumTransactions",
+                get_num_transactions,
+                HandlerType::Fast
+            ),
+            (
+                "GetNumTxnsTXEpoch",
+                get_num_txns_tx_epoch,
+                HandlerType::Fast
+            ),
+            (
+                "GetNumTxnsDSEpoch",
+                get_num_txns_ds_epoch,
+                HandlerType::Fast
+            ),
+            (
+                "GetTotalCoinSupply",
+                get_total_coin_supply,
+                HandlerType::Fast
+            ),
+            (
+                "GetTotalCoinSupplyAsInt",
+                get_total_coin_supply_as_int,
+                HandlerType::Fast
+            ),
+            ("GetMinerInfo", get_miner_info, HandlerType::Fast),
+            ("GetNodeType", get_node_type, HandlerType::Fast),
+            ("GetPrevDifficulty", get_prev_difficulty, HandlerType::Fast),
+            (
+                "GetPrevDSDifficulty",
+                get_prev_ds_difficulty,
+                HandlerType::Fast
+            ),
+            (
+                "GetShardingStructure",
+                get_sharding_structure,
+                HandlerType::Fast
+            ),
+            (
+                "GetSmartContractSubState",
+                get_smart_contract_sub_state,
+                HandlerType::Slow
+            ),
             (
                 "GetSoftConfirmedTransaction",
-                get_soft_confirmed_transaction
+                get_soft_confirmed_transaction,
+                HandlerType::Fast
             ),
-            ("GetStateProof", get_state_proof),
-            ("GetTransactionStatus", get_transaction_status),
+            ("GetStateProof", get_state_proof, HandlerType::Fast),
+            (
+                "GetTransactionStatus",
+                get_transaction_status,
+                HandlerType::Fast
+            ),
         ],
     )
 }
@@ -653,8 +729,7 @@ fn get_smart_contract_state(params: Params, node: &Arc<Node>) -> Result<Value> {
             }
         }
     }
-
-    Ok(result.into())
+    Ok(json!({}))
 }
 
 // GetSmartContractCode
