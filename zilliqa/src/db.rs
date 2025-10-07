@@ -1346,19 +1346,17 @@ impl Db {
             block.header.state_root_hash = Hash::ZERO;
         }
 
+        // retrieve the receipts, in-order
         let receipts = self.get_transaction_receipts_in_block(&block.header.hash)?;
-
         let receipt_hashes = receipts.iter().map(|r| r.tx_hash).collect::<Vec<Hash>>();
 
+        // retrieve the set of transactions, out-of-order
         let mut tx_by_hash: HashMap<Hash, SignedTransaction> =
             HashMap::with_capacity(receipt_hashes.len());
-
         let placeholders = std::iter::repeat_n("?", receipt_hashes.len())
             .collect::<Vec<_>>()
             .join(",");
-
-        let hashes = self
-            .pool
+        self.pool
             .get()?
             .prepare(&format!(
                 r#"SELECT data, tx_hash FROM transactions WHERE tx_hash IN ({placeholders})"#
@@ -1368,13 +1366,12 @@ impl Db {
                 let hash: Hash = row.get(1)?;
                 Ok((txn, hash))
             })?
-            .map(|x| {
-                let (txn, hash) = x.unwrap();
+            .flatten()
+            .for_each(|(txn, hash)| {
                 tx_by_hash.insert(hash, txn.clone());
-                hash
-            })
-            .collect::<Vec<_>>();
+            });
 
+        // construct the set of transactions, in-order
         let transactions: Vec<VerifiedTransaction> = receipts
             .iter()
             .map(|r| {
@@ -1385,7 +1382,7 @@ impl Db {
             })
             .collect::<Result<_, _>>()?;
 
-        block.transactions = hashes;
+        block.transactions = receipt_hashes;
 
         assert_eq!(receipts.len(), transactions.len());
 
