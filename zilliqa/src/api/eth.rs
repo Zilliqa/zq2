@@ -704,11 +704,6 @@ fn get_logs_inner(params: &alloy::rpc::types::Filter, node: &Arc<Node>) -> Resul
                 return Err(anyhow!("`from` is greater than `to` ({from} > {to})"));
             }
 
-            const MAX_BLOCKS_TO_FETCH: u64 = 50;
-            if to - from > MAX_BLOCKS_TO_FETCH {
-                return Err(anyhow!("Range of blocks exceeds {MAX_BLOCKS_TO_FETCH}"));
-            }
-
             let db = node.db.clone();
             db.get_blocks_by_height_range(from..=to)?
         }
