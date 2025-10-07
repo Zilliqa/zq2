@@ -3687,6 +3687,7 @@ impl Consensus {
         let block_hash = brt.block.state_root_hash();
 
         let brt_view = brt.block.view();
+        // the history kept in memory is missing due to a node restart, load it from the database
         if self.state.ckpt_view_history.is_none() {
             let missed_views = self
                 .db
@@ -3701,25 +3702,10 @@ impl Consensus {
             };
             self.state.ckpt_view_history = Some(ckpt_view_history);
         }
-        let ckpt_min_view = self
-            .state
-            .ckpt_view_history
-            .as_ref()
-            .unwrap()
-            // TODO(zf): remove next line
-            //.expect("Checkpoint view history not available")
-            .min_view;
+        let ckpt_min_view = self.state.ckpt_view_history.as_ref().unwrap().min_view;
         self.state.ckpt_finalized_view = Some(brt_view);
-        /* TODO(zf): remove next lines
-        let ckpt_finalized = self
-            .state
-            .ckpt_finalized_view
-            .expect("Checkpoint finalized view not available");
-        */
         if ckpt_min_view > 1
             && brt_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW) < ckpt_min_view + MISSED_VIEW_WINDOW
-        // TODO(zf): remove next line
-        //    || brt_view > brt_view + LAG_BEHIND_CURRENT_VIEW + 1
         {
             error!(
                 ?brt_view,
@@ -3787,17 +3773,58 @@ impl Consensus {
         // done
         tracing::info!("State-sync complete!");
         state_trie.finish_migration()?;
-        let cutover_view = self
-            .get_canonical_block_by_number(cutover_at)?
-            .expect("Cutover block does not exist")
-            .view();
-        // the merge will fail if the node's pruned view history does not reach back to the cutover block view
-        if self.state.view_history.min_view > cutover_view {
-            info!(
-                view_history = %self.state.view_history,
-                cutover_view, "History imported from the checkpoint can't be merged"
-            );
+        Ok(true)
+    }
+
+    pub fn merge_missed_view_history(&mut self) -> Result<()> {
+        // state syncing finished at view >= cutover_at so the state
+        // required to determine the leader is always available now
+        let mut view = self
+            .state
+            .ckpt_finalized_view
+            .expect("Checkpoint finalized view missing");
+        // we continue extending the checkpoint's missed views until
+        // we reach the beginning of the node's missed view history
+        loop {
+            // find the next missed view
+            while self.get_block_by_view(view)?.is_some() && self.state.view_history.min_view > view
+            {
+                view += 1;
+            }
+            if self.state.view_history.min_view <= view {
+                break;
+            }
+            // the parent view was the one before we found a missed view in the loop above
+            let block = self
+                .get_block_by_view(view.saturating_sub(1))?
+                .expect("Parent block missing");
+            let state_at = self.state.at_root(block.hash().into());
+            let header = BlockHeader {
+                view: block.view(),
+                number: block.number(),
+                ..Default::default()
+            };
+            // skip the first missed view in a row as its block must have been reorged
+            view += 1;
+            // but add all subsequent missed views to the history
+            while self.get_block_by_view(view)?.is_none() && self.state.view_history.min_view > view
+            {
+                if let Ok(leader) = state_at.leader(view, header) {
+                    self.state
+                        .ckpt_view_history
+                        .as_mut()
+                        .expect("Checkpoint view history missing")
+                        .append_history(&[(view, leader)])?;
+                    self.db.extend_ckpt_view_history(view, leader.as_bytes())?;
+                    // TODO(jailing): collect them in a vector and call append_history only once
+                }
+                view += 1;
+            }
         }
+        info!(
+            view_history = %self.state.view_history,
+            last_ckpt_view = view, "History imported from the checkpoint can be merged"
+        );
         merge_history(
             self,
             &mut self
@@ -3812,6 +3839,6 @@ impl Consensus {
         self.state.ckpt_view_history = None;
         self.state.ckpt_finalized_view = None;
         self.db.reset_ckpt_view_history()?;
-        Ok(true)
+        Ok(())
     }
 }
