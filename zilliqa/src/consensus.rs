@@ -3833,9 +3833,7 @@ impl Consensus {
                 .ckpt_view_history
                 .clone()
                 .expect("Checkpoint view history missing"),
-            self.state
-                .ckpt_finalized_view
-                .expect("Checkpoint finalized view missing"),
+            view,
         )?;
         self.state.ckpt_view_history = None;
         self.state.ckpt_finalized_view = None;
