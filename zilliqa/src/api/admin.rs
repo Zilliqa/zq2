@@ -128,16 +128,11 @@ pub fn merge_history(
             "~~~~~~~~~~> initial consensus state"
         );
     }
-    let first = {
-        match history.missed_views.front() {
-            None => history.min_view,
-            Some((view, _)) => *view,
-        }
-    };
+    let first_existing = history.min_view;
     let mut last_imported = ckpt_view;
 
     // make sure there is no gap between the existing and the imported history
-    if first > last_imported {
+    if first_existing > last_imported {
         return Err(anyhow!(
             "Gap between imported and existing history detected"
         ));
@@ -158,7 +153,7 @@ pub fn merge_history(
             // the node's view history now starts before the remaining imported history
             return Ok(());
         }
-        if last_imported < first {
+        if last_imported < first_existing {
             break;
         }
         imported_history.missed_views.pop_back();
