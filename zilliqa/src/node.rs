@@ -500,19 +500,12 @@ impl Node {
             let (_, remaining, _) = self.consensus.read().get_consensus_timeout_params()?;
             let period = Duration::from_millis(remaining) / 4; // steal < 250ms
             let now = Instant::now();
-            let mut state_sync_finished = false;
             while now.elapsed() < period {
                 match self.consensus.write().migrate_state_trie() {
-                    Ok(done) if done => {
-                        state_sync_finished = true;
-                        break;
-                    }
+                    Ok(done) if done => break,
                     Err(e) => tracing::error!(err=%e, "State-sync failed"), // log and ignore errors
                     _ => {}
                 };
-            }
-            if state_sync_finished {
-                self.consensus.write().merge_missed_view_history()?;
             }
         }
 

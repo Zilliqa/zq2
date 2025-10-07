@@ -3773,6 +3773,7 @@ impl Consensus {
         // done
         tracing::info!("State-sync complete!");
         state_trie.finish_migration()?;
+        self.merge_missed_view_history()?;
         Ok(true)
     }
 

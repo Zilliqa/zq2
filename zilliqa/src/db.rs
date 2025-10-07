@@ -524,9 +524,9 @@ impl Db {
         self.pool
             .get()?
             .prepare_cached(
-                ("INSERT INTO ckpt_view_history (view, leader) VALUES (".to_string()
+                ("UPDATE ckpt_view_history SET view = ".to_string()
                     + LARGE_OFFSET.to_string().as_str()
-                    + ", NULL)")
+                    + " WHERE leader IS NULL")
                     .as_str(),
             )?
             //.execute(rusqlite::params![view, leader])?;
