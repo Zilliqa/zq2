@@ -473,18 +473,18 @@ impl Consensus {
                     .expect("Checkpoint block missing")
                     .view()
         {
-            if state_sync {
+            // if state_sync but no checkpoint is specified in the config then
+            // the already started state syncing will be resumed, otherwise
+            // it will be (re)started from the checkpoint specified
+            if state_sync && ckpt_block.is_some() {
                 consensus.state.ckpt_view_history = Some(consensus.state.view_history.new_at(
                     finalized_view,
                     finalized_view,
                     max_missed_view_age,
                 ));
-                consensus.state.ckpt_finalized_view = Some(
-                    ckpt_block
-                        .as_ref()
-                        .expect("State-sync requires a checkpoint")
-                        .view(),
-                );
+                consensus.state.ckpt_finalized_view = Some(ckpt_block.as_ref().unwrap().view());
+                // also persist the checkpoint's view history in the db otherwise
+                // we won't be able to resume state syncing if the node is restarted
                 let ckpt_view_history = consensus.state.ckpt_view_history.clone().unwrap();
                 consensus
                     .db
