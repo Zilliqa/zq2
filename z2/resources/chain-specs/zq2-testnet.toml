@@ -70,7 +70,7 @@ consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
 # Gas parameters
 consensus.eth_block_gas_limit = 84000000
 consensus.gas_price = "4_761_904_800_000"
-consensus.contract_upgrades = { deposit_v5 = { height = 0, reinitialise_params = { withdrawal_period = 1209600 } }, deposit_v6 = { height = 14997600 }, deposit_v7 = { height = 15984000, reinitialise_params = { withdrawal_period = 461680 } } }
+consensus.contract_upgrades = { deposit_v5 = { height = 0, reinitialise_params = { withdrawal_period = 1209600 } }, deposit_v6 = { height = 14997600 }, deposit_v7 = { height = 16560000, reinitialise_params = { withdrawal_period = 461680 } } }
 consensus.new_view_broadcast_interval = { secs = 30, nanos = 0 }
 sync.ignore_passive = true
 

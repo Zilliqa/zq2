@@ -486,6 +486,80 @@ impl Db {
             )?;
         }
 
+        if version < 6 {
+            connection.execute_batch(
+                ("
+                BEGIN;
+
+                INSERT INTO schema_version VALUES (6);
+
+                CREATE TABLE IF NOT EXISTS ckpt_view_history (view INTEGER NOT NULL PRIMARY KEY, leader BLOB) WITHOUT ROWID;
+
+                INSERT INTO ckpt_view_history (view, leader) VALUES (".to_string() + LARGE_OFFSET.to_string().as_str() + ", NULL);
+
+                COMMIT;
+            ").as_str(),
+            )?;
+        }
+
+        Ok(())
+    }
+
+    pub fn read_ckpt_view_history(&self) -> Result<Vec<(u64, Vec<u8>)>> {
+        Ok(self
+            .pool
+            .get()?
+            .prepare_cached(
+                "SELECT view, leader FROM ckpt_view_history WHERE leader NOT NULL ORDER BY view",
+            )?
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?)
+    }
+
+    pub fn reset_ckpt_view_history(&self) -> Result<()> {
+        self.pool
+            .get()?
+            .prepare_cached("DELETE FROM ckpt_view_history WHERE leader NOT NULL")?
+            .execute([])?;
+        self.pool
+            .get()?
+            .prepare_cached(
+                ("INSERT INTO ckpt_view_history (view, leader) VALUES (".to_string()
+                    + LARGE_OFFSET.to_string().as_str()
+                    + ", NULL)")
+                    .as_str(),
+            )?
+            //.execute(rusqlite::params![view, leader])?;
+            .execute([])?;
+        Ok(())
+    }
+
+    pub fn extend_ckpt_view_history(&self, view: u64, leader: Vec<u8>) -> Result<()> {
+        self.pool
+            .get()?
+            .prepare_cached("INSERT INTO ckpt_view_history (view, leader) VALUES (?1, ?2)")?
+            //.execute(rusqlite::params![view, leader])?;
+            .execute((view, leader))?;
+        Ok(())
+    }
+
+    pub fn get_min_view_of_ckpt_view_history(&self) -> Result<u64> {
+        let min_view: u64 = self
+            .pool
+            .get()?
+            .prepare_cached("SELECT view FROM ckpt_view_history WHERE leader IS NULL LIMIT 1")?
+            .query_row([], |row| row.get(0))
+            .unwrap_or_default();
+        // to prevent primary key collision with missed views stored in the table
+        Ok(min_view - LARGE_OFFSET)
+    }
+
+    pub fn set_min_view_of_ckpt_view_history(&self, min_view: u64) -> Result<()> {
+        self.pool
+            .get()?
+            .prepare_cached("UPDATE ckpt_view_history SET view = ?1 WHERE leader IS NULL")?
+            // to prevent primary key collision with missed views stored in the table
+            .execute([min_view + LARGE_OFFSET])?;
         Ok(())
     }
 

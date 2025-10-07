@@ -462,7 +462,8 @@ impl Consensus {
         );
 
         // TODO(jailing): the first few missed views after the switchover are missing
-        // in the genesis checkpoint, but jailing was not active at those views anyway
+        // in the genesis checkpoint, but it does not have any impact as it is long
+        // before the jailing hardfork is actived
 
         // if the node was started without or with a checkpoint older than its finalized view
         if consensus.config.load_checkpoint.is_none()
@@ -484,6 +485,15 @@ impl Consensus {
                         .expect("State-sync requires a checkpoint")
                         .view(),
                 );
+                let ckpt_view_history = consensus.state.ckpt_view_history.clone().unwrap();
+                consensus
+                    .db
+                    .set_min_view_of_ckpt_view_history(ckpt_view_history.min_view)?;
+                for (view, leader) in ckpt_view_history.missed_views {
+                    consensus
+                        .db
+                        .extend_ckpt_view_history(view, leader.as_bytes())?;
+                }
             }
             {
                 // store the imported missed views in the consensus state
@@ -3677,24 +3687,44 @@ impl Consensus {
         let block_hash = brt.block.state_root_hash();
 
         let brt_view = brt.block.view();
+        if self.state.ckpt_view_history.is_none() {
+            let missed_views = self
+                .db
+                .read_ckpt_view_history()
+                .unwrap()
+                .iter()
+                .map(|(view, pubkey)| (*view, NodePublicKey::from_bytes(pubkey).unwrap()))
+                .collect::<std::collections::VecDeque<(u64, NodePublicKey)>>();
+            let ckpt_view_history = crate::precompiles::ViewHistory {
+                min_view: self.db.get_min_view_of_ckpt_view_history().unwrap(),
+                missed_views: missed_views,
+            };
+            self.state.ckpt_view_history = Some(ckpt_view_history);
+        }
         let ckpt_min_view = self
             .state
             .ckpt_view_history
             .as_ref()
-            .expect("Checkpoint view history not available")
+            .unwrap()
+            // TODO(zf): remove next line
+            //.expect("Checkpoint view history not available")
             .min_view;
+        self.state.ckpt_finalized_view = Some(brt_view);
+        /* TODO(zf): remove next lines
         let ckpt_finalized = self
             .state
             .ckpt_finalized_view
             .expect("Checkpoint finalized view not available");
+        */
         if ckpt_min_view > 1
             && brt_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW) < ckpt_min_view + MISSED_VIEW_WINDOW
-            || brt_view > ckpt_finalized + LAG_BEHIND_CURRENT_VIEW + 1
+        // TODO(zf): remove next line
+        //    || brt_view > brt_view + LAG_BEHIND_CURRENT_VIEW + 1
         {
             error!(
                 ?brt_view,
                 ckpt_min_view,
-                ckpt_finalized,
+                ckpt_finalized = brt_view,
                 "~~~~~~~~~~> missed view history not available during state-sync"
             );
             return Err(anyhow!(
@@ -3702,7 +3732,8 @@ impl Consensus {
             ));
         }
 
-        tracing::info!(number=%migrate_at,state=%block_hash, "State-sync");
+        let cutover_at = state_trie.get_cutover_at()?;
+        tracing::info!(end=%cutover_at,number=%migrate_at,state=%block_hash, "State-sync");
         self.replay_proposal(
             brt.block,
             brt.transactions.into_iter().map(|t| t.tx).collect_vec(),
@@ -3710,7 +3741,6 @@ impl Consensus {
         )?;
 
         // fast-forward to next block, skipping empty blocks, up to cutover threshold
-        let cutover_at = state_trie.get_cutover_at()?;
         let mut parent_view = brt_view;
         while migrate_at < cutover_at {
             migrate_at = migrate_at.saturating_add(1); // check next block
@@ -3738,13 +3768,13 @@ impl Consensus {
                             .as_mut()
                             .expect("Checkpoint view history missing")
                             .append_history(&[(view, leader)])?;
+                        self.db.extend_ckpt_view_history(view, leader.as_bytes())?;
                         // TODO(jailing): collect them in a vector and call append_history only once
                     }
                 }
             }
             self.state.ckpt_finalized_view = Some(block.view());
             parent_view = block.view();
-            // TODO(zf): persist them because these blocks won't be replayed again if the node is restarted
             let Some(hash) = state_trie.get_root_hash(migrate_at)? else {
                 tracing::warn!(number=%migrate_at,"State-sync retrying");
                 return Ok(true); // retry later
@@ -3781,6 +3811,7 @@ impl Consensus {
         )?;
         self.state.ckpt_view_history = None;
         self.state.ckpt_finalized_view = None;
+        self.db.reset_ckpt_view_history()?;
         Ok(true)
     }
 }
