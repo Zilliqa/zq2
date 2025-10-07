@@ -10,6 +10,7 @@ pub mod crypto;
 mod data_access;
 pub mod db;
 mod error;
+mod evm;
 pub mod exec;
 mod health;
 pub mod inspector;
