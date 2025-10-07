@@ -3698,7 +3698,7 @@ impl Consensus {
                 .collect::<std::collections::VecDeque<(u64, NodePublicKey)>>();
             let ckpt_view_history = crate::precompiles::ViewHistory {
                 min_view: self.db.get_min_view_of_ckpt_view_history().unwrap(),
-                missed_views: missed_views,
+                missed_views,
             };
             self.state.ckpt_view_history = Some(ckpt_view_history);
         }
