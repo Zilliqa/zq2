@@ -3,18 +3,6 @@
 - name: Upgrade Ubuntu packages
   ansible.builtin.import_playbook: upgrade_packages.yml
 
-- name: Required packages installation
-  ansible.builtin.import_playbook: install_packages.yml
-
-- name: Healthcheck service configuration
-  ansible.builtin.import_playbook: configure_healthcheck.yml
-
-- name: Import checkpoint service installation
-  ansible.builtin.import_playbook: install_checkpoint_service.yml
-
-- name: Import persistence backup installation
-  ansible.builtin.import_playbook: install_persistence_backup.yml
-
 # Ubuntu 24 upgrade tasks
 - name: Perform Ubuntu release upgrade
   hosts: all
@@ -61,3 +49,16 @@
       ansible.builtin.reboot:
         reboot_timeout: 900
       when: perform_upgrade | bool
+
+# Reinstall packages and services after upgrade
+- name: Required packages installation
+  ansible.builtin.import_playbook: install_packages.yml
+
+- name: Healthcheck service configuration
+  ansible.builtin.import_playbook: configure_healthcheck.yml
+
+- name: Import checkpoint service installation
+  ansible.builtin.import_playbook: install_checkpoint_service.yml
+
+- name: Import persistence backup installation
+  ansible.builtin.import_playbook: install_persistence_backup.yml
