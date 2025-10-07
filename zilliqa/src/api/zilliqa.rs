@@ -729,7 +729,7 @@ fn get_smart_contract_state(params: Params, node: &Arc<Node>) -> Result<Value> {
             }
         }
     }
-    Ok(json!({}))
+    Ok(result.into())
 }
 
 // GetSmartContractCode

@@ -41,9 +41,8 @@ mod time_impl {
         }
 
         pub fn duration_since(&self, other: SystemTime) -> Result<Duration, SystemTimeError> {
-            self.0
-                .duration_since(other.0)
-                .map_err(|e| SystemTimeError(e.duration()))
+            Ok(self.0
+                .duration_since(other.0).unwrap_or_default())
         }
 
         pub fn checked_sub(&self, duration: Duration) -> Option<Self> {
