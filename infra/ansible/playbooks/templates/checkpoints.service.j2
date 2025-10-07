@@ -8,7 +8,7 @@ User=root
 Environment=NETWORK_NAME={{ chain_name }}
 Environment=ETH_CHAIN_ID={{ eth_chain_id }}
 Environment=CHECK_INTERVAL_SECONDS={{ checkpoint_interval_seconds | default('1800') }}
-ExecStart=/usr/bin/python3 /usr/local/bin/checkpoints.py
+ExecStart=/opt/zilliqa/venv/bin/python3 /usr/local/bin/checkpoints.py
 Restart=always
 RestartSec=10
 StandardOutput=journal

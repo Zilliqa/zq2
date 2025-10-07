@@ -1,0 +1,64 @@
+---
+# Prerequisites
+- name: Upgrade Ubuntu packages
+  ansible.builtin.import_playbook: upgrade_packages.yml
+
+# Ubuntu 24 upgrade tasks
+- name: Perform Ubuntu release upgrade
+  hosts: all
+  become: true
+  tags:
+    - install
+    - all
+
+  vars:
+    target_release: "{{ ubuntu_version }}"
+
+  tasks:
+    - name: Ensure update-manager-core is installed
+      ansible.builtin.apt:
+        name: update-manager-core
+        state: present
+        update_cache: yes
+
+    - name: Determine current Ubuntu release
+      ansible.builtin.command: lsb_release -cs
+      register: current_codename_result
+      changed_when: false
+
+    - name: Set fact to control the upgrade task
+      ansible.builtin.set_fact:
+        perform_upgrade: "{{ ansible_distribution_version is version(target_release, '<') }}"
+
+    - name: Run do-release-upgrade non-interactively
+      ansible.builtin.shell:
+        cmd: "do-release-upgrade -f DistUpgradeViewNonInteractive"
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+      register: upgrade_output
+      when: perform_upgrade | bool
+      vars:
+        ansible_timeout: 3600
+
+    - name: Display upgrade results
+      ansible.builtin.debug:
+        var: upgrade_output
+      when: perform_upgrade | bool
+
+    - name: Reboot server to complete the upgrade
+      ansible.builtin.reboot:
+        reboot_timeout: 900
+      when: perform_upgrade | bool
+
+# Reinstall packages and services after upgrade
+- name: Required packages installation
+  ansible.builtin.import_playbook: install_packages.yml
+
+- name: Healthcheck service configuration
+  ansible.builtin.import_playbook: configure_healthcheck.yml
+
+- name: Import checkpoint service installation
+  ansible.builtin.import_playbook: install_checkpoint_service.yml
+
+- name: Import persistence backup installation
+  ansible.builtin.import_playbook: install_persistence_backup.yml
