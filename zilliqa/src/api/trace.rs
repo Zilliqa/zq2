@@ -11,6 +11,10 @@ use revm_inspectors::tracing::{TracingInspector, TracingInspectorConfig};
 use serde::Deserialize;
 
 use crate::{
+    api::{
+        HandlerType, disabled_err, format_panic_as_error, into_rpc_error, make_panic_hook,
+        rpc_base_attributes,
+    },
     cfg::EnabledApi,
     crypto::Hash,
     exec::{PendingState, TransactionApplyResult},
@@ -22,17 +26,26 @@ pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc
         node,
         enabled_apis,
         [
-            ("trace_block", trace_block),
-            ("trace_call", trace_call),
-            ("trace_callMany", trace_call_many),
-            ("trace_filter", trace_filter),
-            ("trace_rawTransaction", trace_raw_transaction),
+            ("trace_block", trace_block, HandlerType::Slow),
+            ("trace_call", trace_call, HandlerType::Slow),
+            ("trace_callMany", trace_call_many, HandlerType::Slow),
+            ("trace_filter", trace_filter, HandlerType::Slow),
+            (
+                "trace_rawTransaction",
+                trace_raw_transaction,
+                HandlerType::Slow
+            ),
             (
                 "trace_replayBlockTransactions",
-                trace_replay_block_transactions
+                trace_replay_block_transactions,
+                HandlerType::Slow
             ),
-            ("trace_replayTransaction", trace_replay_transaction),
-            ("trace_transaction", trace_transaction),
+            (
+                "trace_replayTransaction",
+                trace_replay_transaction,
+                HandlerType::Slow
+            ),
+            ("trace_transaction", trace_transaction, HandlerType::Slow),
         ]
     )
 }

@@ -32,7 +32,8 @@ use zilliqa::{
         consensus_timeout_default, disable_get_full_state_for_contracts_default,
         eth_chain_id_default, failed_request_sleep_duration_default, scilla_address_default,
         scilla_ext_libs_path_default, scilla_server_socket_directory_default,
-        scilla_stdlib_dir_default, state_rpc_limit_default, total_native_token_supply_default,
+        scilla_stdlib_dir_default, slow_rpc_queries_handlers_count_default,
+        state_rpc_limit_default, total_native_token_supply_default,
     },
     transaction::EvmGas,
 };
@@ -511,6 +512,7 @@ impl Setup {
                 p2p_port: 0,
                 external_address: None,
                 network: String::from("localhost"),
+                slow_rpc_queries_handlers_count: slow_rpc_queries_handlers_count_default(),
             };
             // @todo should pass this in!
             let port = self.get_json_rpc_port(*node_index as u16, false);

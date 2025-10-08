@@ -58,6 +58,110 @@ pub fn all_enabled() -> Vec<crate::cfg::EnabledApi> {
     .collect()
 }
 
+use std::panic::PanicHookInfo;
+
+thread_local! {
+    pub static PANIC_INFO: std::cell::RefCell<Option<(String, String)>> = const { std::cell::RefCell::new(None) };
+}
+
+#[inline]
+fn format_panic_as_error(name: &'static str) -> anyhow::Error {
+    let (panic_msg, backtrace) = PANIC_INFO.with(|info| {
+        info.borrow_mut().take().unwrap_or_else(|| {
+            (
+                "Unknown panic (no info captured)".to_string(),
+                "No backtrace available".to_string(),
+            )
+        })
+    });
+    let error_msg =
+        format!("Unhandled panic in RPC handler {name}: {panic_msg}\n\nBacktrace:\n{backtrace}");
+    tracing::error!(
+        "PANIC in RPC handler {}: {}\nBacktrace:\n{}",
+        name,
+        panic_msg,
+        backtrace
+    );
+    anyhow::anyhow!(error_msg)
+}
+
+#[inline]
+pub fn make_panic_hook() -> Box<dyn Fn(&PanicHookInfo) + Sync + Send + 'static> {
+    Box::new(|panic_info: &PanicHookInfo| {
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        let panic_msg = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "Unknown panic".to_string()
+        };
+
+        let location = if let Some(location) = panic_info.location() {
+            format!(
+                " at {}:{}:{}",
+                location.file(),
+                location.line(),
+                location.column()
+            )
+        } else {
+            String::new()
+        };
+
+        let full_panic_msg = format!("{panic_msg}{location}");
+
+        PANIC_INFO.with(|info| {
+            *info.borrow_mut() = Some((full_panic_msg, format!("{backtrace}")));
+        });
+    })
+}
+
+use anyhow::Error as AnyError;
+use jsonrpsee::types::{ErrorObjectOwned as RpcError, error::ErrorCode};
+#[inline]
+pub fn into_rpc_error(e: AnyError) -> RpcError {
+    // If it's already an RpcError, return it
+    if let Some(existing) = e.downcast_ref::<RpcError>() {
+        return existing.clone();
+    }
+    // Otherwise, log (unless it's the known benign case) and wrap as InternalError
+    if !e.to_string().starts_with("Txn Hash not Present") {
+        tracing::error!(error = %e);
+    }
+    RpcError::owned(
+        ErrorCode::InternalError.code(),
+        e.to_string(),
+        Option::<String>::None,
+    )
+}
+
+#[inline]
+fn disabled_err(name: &'static str) -> RpcError {
+    RpcError::owned(
+        ErrorCode::InvalidRequest.code(),
+        format!("{name} is disabled"),
+        Option::<String>::None,
+    )
+}
+
+use opentelemetry::KeyValue;
+use opentelemetry_semantic_conventions::attribute::*;
+#[inline]
+fn rpc_base_attributes(method: &'static str) -> Vec<KeyValue> {
+    vec![
+        KeyValue::new(RPC_SYSTEM, "jsonrpc"),
+        KeyValue::new(RPC_SERVICE, "zilliqa.eth"),
+        KeyValue::new(RPC_METHOD, method),
+        KeyValue::new(NETWORK_TRANSPORT, "tcp"),
+        KeyValue::new(RPC_JSONRPC_VERSION, "2.0"),
+    ]
+}
+
+enum HandlerType {
+    Fast,
+    Slow,
+}
+
 /// Returns an `RpcModule<Arc<Node>>`. Call with the following syntax:
 /// ```ignore
 /// declare_module!(
@@ -77,7 +181,7 @@ macro_rules! declare_module {
     (
         $node:expr,
         $enabled_apis:expr,
-        [ $(($name:expr, $method:expr)),* $(,)? ] $(,)?
+        [ $(($name:expr, $method:expr, $handler_type:expr)),* $(,)? ] $(,)?
     ) => {{
         let mut module: jsonrpsee::RpcModule<std::sync::Arc<crate::node::Node>> = jsonrpsee::RpcModule::new($node.clone());
         let meter = opentelemetry::global::meter("zilliqa");
@@ -89,118 +193,102 @@ macro_rules! declare_module {
                 .with_boundaries(vec![0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0])
                 .with_unit("s")
                 .build();
-            module
-                .register_method($name, move |params, context, _| {
-                    tracing::debug!("API Call start {}: params: {:?}", $name, params);
-                    if !enabled {
-                        return Err(jsonrpsee::types::ErrorObject::owned(
-                            jsonrpsee::types::error::ErrorCode::InvalidRequest.code(),
-                            format!("{} is disabled", $name),
-                            None as Option<String>,
-                        ));
-                    }
 
-                    let mut attributes = vec![
-                        opentelemetry::KeyValue::new(opentelemetry_semantic_conventions::attribute::RPC_SYSTEM, "jsonrpc"),
-                        opentelemetry::KeyValue::new(opentelemetry_semantic_conventions::attribute::RPC_SERVICE, "zilliqa.eth"),
-                        opentelemetry::KeyValue::new(opentelemetry_semantic_conventions::attribute::RPC_METHOD, $name),
-                        opentelemetry::KeyValue::new(opentelemetry_semantic_conventions::attribute::NETWORK_TRANSPORT, "tcp"),
-                        opentelemetry::KeyValue::new(opentelemetry_semantic_conventions::attribute::RPC_JSONRPC_VERSION, "2.0"),
-                    ];
 
-                    let start = std::time::SystemTime::now();
+            match $handler_type {
+                HandlerType::Slow => {
+                    module
+                    .register_blocking_method($name, move |params, context, _| {
+                        tracing::debug!("API Call start {}: params: {:?}", $name, params);
 
-                    // Thread-local storage for panic info
-                    thread_local! {
-                        static PANIC_INFO: std::cell::RefCell<Option<(String, String)>> = std::cell::RefCell::new(None);
-                    }
-
-                    // Store the original panic hook
-                    let original_hook = std::panic::take_hook();
-
-                    // Set our custom panic hook to capture backtrace
-                    std::panic::set_hook(Box::new(|panic_info| {
-                        let backtrace = std::backtrace::Backtrace::force_capture();
-                        let panic_msg = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
-                            s.to_string()
-                        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
-                            s.clone()
-                        } else {
-                            "Unknown panic".to_string()
-                        };
-
-                        let location = if let Some(location) = panic_info.location() {
-                            format!(" at {}:{}:{}", location.file(), location.line(), location.column())
-                        } else {
-                            String::new()
-                        };
-
-                        let full_panic_msg = format!("{}{}", panic_msg, location);
-
-                        PANIC_INFO.with(|info| {
-                            *info.borrow_mut() = Some((full_panic_msg, format!("{}", backtrace)));
-                        });
-                    }));
-
-                    #[allow(clippy::redundant_closure_call)]
-                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| $method(params.clone(), context)));
-
-                    // Restore the original panic hook
-                    std::panic::set_hook(original_hook);
-
-                    let result = result.unwrap_or_else(|_cause| {
-                        // Get the panic info we captured
-                        let (panic_msg, backtrace) = PANIC_INFO.with(|info| {
-                            info.borrow_mut().take().unwrap_or_else(|| {
-                                ("Unknown panic (no info captured)".to_string(), "No backtrace available".to_string())
-                            })
-                        });
-
-                        let error_msg = format!(
-                            "Unhandled panic in RPC handler {}: {}\n\nBacktrace:\n{}",
-                            $name,
-                            panic_msg,
-                            backtrace
-                        );
-
-                        // Log the panic as an error with full details
-                        tracing::error!("PANIC in RPC handler {}: {}\nBacktrace:\n{}", $name, panic_msg, backtrace);
-
-                        Err(anyhow::anyhow!(error_msg))
-                    });
-
-                    let result = result.map_err(|e| {
-                        // If the error is already an `ErrorObjectOwned`, we can just return that. Otherwise, wrap it
-                        // with an `InternalError` code.
-                        match e.downcast::<jsonrpsee::types::ErrorObjectOwned>() {
-                            Ok(e) => e,
-                            Err(e) => {
-                                if !e.to_string().starts_with("Txn Hash not Present") {
-                                     tracing::error!(?e);
-                                }
-                                jsonrpsee::types::ErrorObject::owned(
-                                jsonrpsee::types::error::ErrorCode::InternalError.code(),
-                                e.to_string(),
-                                None as Option<String>,
-                            )}
+                        if !enabled {
+                            return Err(disabled_err($name));
                         }
-                    });
-                    if let Err(err) = &result {
-                        attributes.push(opentelemetry::KeyValue::new(opentelemetry_semantic_conventions::attribute::RPC_JSONRPC_ERROR_CODE, err.code() as i64));
-                    }
-                    let duration = start.elapsed().map_or(0.0, |d| d.as_secs_f64());
 
-                    rpc_server_duration.record(
-                        duration,
-                        &attributes,
-                    );
-                    if duration > 1.0 {
-                        tracing::error!("API Call long: {}{:?}, took {}s", $name, params, duration);
-                    }
-                    tracing::debug!("API Call end {}", $name);
-                    result
-                })
-                .unwrap();
+                        let mut attributes = rpc_base_attributes($name);
+
+                        let start = std::time::SystemTime::now();
+
+                        // Store the original panic hook
+                        let original_hook = std::panic::take_hook();
+
+                        // Set our custom panic hook to capture backtrace
+                        std::panic::set_hook(make_panic_hook());
+
+                        #[allow(clippy::redundant_closure_call)]
+                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| $method(params.clone(), &context)));
+
+                        // Restore the original panic hook
+                        std::panic::set_hook(original_hook);
+
+                        let result = result.unwrap_or_else(|_| Err(format_panic_as_error($name)));
+
+                        let result = result.map_err(into_rpc_error);
+
+                        if let Err(err) = &result {
+                            attributes.push(opentelemetry::KeyValue::new(opentelemetry_semantic_conventions::attribute::RPC_JSONRPC_ERROR_CODE, err.code() as i64));
+                        }
+                        let duration = start.elapsed().map_or(0.0, |d| d.as_secs_f64());
+
+                        rpc_server_duration.record(
+                            duration,
+                            &attributes,
+                        );
+                        if duration > 1.0 {
+                            tracing::error!("API Call long: {}{:?}, took {}s", $name, params, duration);
+                        }
+                        tracing::debug!("API Call end {}", $name);
+                        result
+                    })
+                    .unwrap();
+                }
+                HandlerType::Fast => {
+                    module
+                    .register_method($name, move |params, context, _| {
+                        tracing::debug!("API Call start {}: params: {:?}", $name, params);
+
+                        if !enabled {
+                            return Err(disabled_err($name));
+                        }
+
+                        let mut attributes = rpc_base_attributes($name);
+
+                        let start = std::time::SystemTime::now();
+
+                        // Store the original panic hook
+                        let original_hook = std::panic::take_hook();
+
+                        // Set our custom panic hook to capture backtrace
+                        std::panic::set_hook(make_panic_hook());
+
+                        #[allow(clippy::redundant_closure_call)]
+                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| $method(params.clone(), context)));
+
+                        // Restore the original panic hook
+                        std::panic::set_hook(original_hook);
+
+                        let result = result.unwrap_or_else(|_| Err(format_panic_as_error($name)));
+
+                        let result = result.map_err(into_rpc_error);
+
+                        if let Err(err) = &result {
+                            attributes.push(opentelemetry::KeyValue::new(opentelemetry_semantic_conventions::attribute::RPC_JSONRPC_ERROR_CODE, err.code() as i64));
+                        }
+                        let duration = start.elapsed().map_or(0.0, |d| d.as_secs_f64());
+
+                        rpc_server_duration.record(
+                            duration,
+                            &attributes,
+                        );
+                        if duration > 1.0 {
+                            tracing::error!("API Call long: {}{:?}, took {}s", $name, params, duration);
+                        }
+                        tracing::debug!("API Call end {}", $name);
+                        result
+                    })
+                    .unwrap();
+                }
+            }
         )*
 
         module
