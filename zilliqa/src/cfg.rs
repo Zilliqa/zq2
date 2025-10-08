@@ -41,6 +41,12 @@ pub struct Config {
     /// The base address of the OTLP collector. If not set, metrics will not be exported.
     #[serde(default)]
     pub otlp_collector_endpoint: Option<String>,
+    #[serde(default = "slow_rpc_queries_handlers_count_default")]
+    pub slow_rpc_queries_handlers_count: usize,
+}
+
+pub fn slow_rpc_queries_handlers_count_default() -> usize {
+    1
 }
 
 #[derive(Debug, Clone)]

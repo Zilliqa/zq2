@@ -8,21 +8,54 @@ use alloy::{
 use anyhow::{Result, anyhow};
 use jsonrpsee::{RpcModule, types::Params};
 
-use crate::{cfg::EnabledApi, crypto::Hash, inspector, node::Node};
+use crate::{
+    api::{
+        HandlerType, disabled_err, format_panic_as_error, into_rpc_error, make_panic_hook,
+        rpc_base_attributes,
+    },
+    cfg::EnabledApi,
+    crypto::Hash,
+    inspector,
+    node::Node,
+};
 
 pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc<Node>> {
     super::declare_module!(
         node,
         enabled_apis,
         [
-            ("debug_getBadBlocks", debug_get_bad_blocks),
-            ("debug_getTrieFlushInterval", debug_get_trie_flush_interval),
-            ("debug_storageRangeAt", debug_storage_range_at),
-            ("debug_traceBlock", debug_trace_block),
-            ("debug_traceBlockByHash", debug_trace_block_by_hash),
-            ("debug_traceBlockByNumber", debug_trace_block_by_number),
-            ("debug_traceCall", debug_trace_call),
-            ("debug_traceTransaction", debug_trace_transaction),
+            (
+                "debug_getBadBlocks",
+                debug_get_bad_blocks,
+                HandlerType::Slow
+            ),
+            (
+                "debug_getTrieFlushInterval",
+                debug_get_trie_flush_interval,
+                HandlerType::Slow
+            ),
+            (
+                "debug_storageRangeAt",
+                debug_storage_range_at,
+                HandlerType::Slow
+            ),
+            ("debug_traceBlock", debug_trace_block, HandlerType::Slow),
+            (
+                "debug_traceBlockByHash",
+                debug_trace_block_by_hash,
+                HandlerType::Slow
+            ),
+            (
+                "debug_traceBlockByNumber",
+                debug_trace_block_by_number,
+                HandlerType::Slow
+            ),
+            ("debug_traceCall", debug_trace_call, HandlerType::Slow),
+            (
+                "debug_traceTransaction",
+                debug_trace_transaction,
+                HandlerType::Slow
+            ),
         ]
     )
 }
