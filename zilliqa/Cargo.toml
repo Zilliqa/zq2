@@ -125,7 +125,7 @@ opentelemetry-semantic-conventions = { version = "0.30.0", features = [
 semver = "1.0.23"
 foundry-compilers = { version = "0.14.1", features = ["svm-solc"] }
 reth-ipc = { git = "https://github.com/paradigmxyz/reth", version = "1.4.1" }
-parking_lot = { version = "0.12.4", features = ["send_guard"] }
+parking_lot = { version = "0.12.5", features = ["send_guard"] }
 dashmap = "6.1.0"
 sled = { version = "0.34.7", features = ["no_logs"] }
 r2d2 = "0.8.10"
