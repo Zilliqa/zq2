@@ -3778,8 +3778,9 @@ impl Consensus {
     }
 
     pub fn merge_missed_view_history(&mut self) -> Result<()> {
-        // state syncing finished at view >= cutover_at so the state
-        // required to determine the leader is always available now
+        // state sync finished at ckpt_finalized_view which is equal
+        // or greater than the cutover block's view, so the state
+        // required to determine the leader is always available
         let mut view = self
             .state
             .ckpt_finalized_view
