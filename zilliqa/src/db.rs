@@ -472,33 +472,37 @@ impl Db {
 
         if version < 5 {
             connection.execute_batch(
-                ("
+                "
                 BEGIN;
 
                 INSERT INTO schema_version VALUES (5);
 
                 CREATE TABLE IF NOT EXISTS view_history (view INTEGER NOT NULL PRIMARY KEY, leader BLOB) WITHOUT ROWID;
 
-                INSERT INTO view_history (view, leader) VALUES (".to_string() + LARGE_OFFSET.to_string().as_str() + ", NULL);
+                CREATE INDEX IF NOT EXISTS idx_view_history_leader ON view_history(leader);
+
+                INSERT INTO view_history (view, leader) VALUES (1000000000000, NULL);
 
                 COMMIT;
-            ").as_str(),
+            ",
             )?;
         }
 
         if version < 6 {
             connection.execute_batch(
-                ("
+                "
                 BEGIN;
 
                 INSERT INTO schema_version VALUES (6);
 
                 CREATE TABLE IF NOT EXISTS ckpt_view_history (view INTEGER NOT NULL PRIMARY KEY, leader BLOB) WITHOUT ROWID;
 
-                INSERT INTO ckpt_view_history (view, leader) VALUES (".to_string() + LARGE_OFFSET.to_string().as_str() + ", NULL);
+                CREATE INDEX IF NOT EXISTS idx_ckpt_view_history_leader ON ckpt_view_history(leader);
+
+                INSERT INTO ckpt_view_history (view, leader) VALUES (1000000000000, NULL);
 
                 COMMIT;
-            ").as_str(),
+            ",
             )?;
         }
 
@@ -524,9 +528,7 @@ impl Db {
         self.pool
             .get()?
             .prepare_cached(
-                ("UPDATE ckpt_view_history SET view = ".to_string()
-                    + LARGE_OFFSET.to_string().as_str()
-                    + " WHERE leader IS NULL")
+                format!("UPDATE ckpt_view_history SET view = {LARGE_OFFSET} WHERE leader IS NULL")
                     .as_str(),
             )?
             //.execute(rusqlite::params![view, leader])?;
@@ -1714,6 +1716,10 @@ mod tests {
             "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE height = (SELECT MAX(height) FROM blocks) LIMIT 1",
             "SELECT data, transactions.tx_hash FROM transactions INNER JOIN receipts ON transactions.tx_hash = receipts.tx_hash WHERE receipts.block_hash = ?1 ORDER BY receipts.tx_index ASC",
             "SELECT state_root_hash FROM blocks WHERE is_canonical = TRUE AND height = ?1",
+            "SELECT view FROM view_history WHERE leader IS NULL LIMIT 1",
+            "UPDATE view_history SET view = ?1 WHERE leader IS NULL",
+            "SELECT view FROM ckpt_view_history WHERE leader IS NULL LIMIT 1",
+            "UPDATE ckpt_view_history SET view = ?1 WHERE leader IS NULL",
             // TODO: Add more queries
         ];
 
