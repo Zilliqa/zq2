@@ -16,7 +16,7 @@ use revm::{
     },
 };
 use serde::{Deserialize, Serialize};
-use tracing::{debug, error, trace};
+use tracing::{debug, error};
 
 use crate::{
     constants::{LAG_BEHIND_CURRENT_VIEW, MISSED_VIEW_THRESHOLD, MISSED_VIEW_WINDOW},
@@ -45,13 +45,18 @@ impl ViewHistory {
         }
     }
 
-    pub fn new_at(&self, finalized_view: u64, max_missed_view_age: u64) -> ViewHistory {
-        let min_view = finalized_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW + max_missed_view_age);
+    pub fn new_at(
+        &self,
+        parent_view: u64,
+        block_view: u64,
+        max_missed_view_age: u64,
+    ) -> ViewHistory {
+        let min_view = parent_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW + max_missed_view_age);
         let mut deque = VecDeque::new();
         let source = &self.missed_views;
         //TODO(jailing): use binary search to find the range to be copied
         for (view, leader) in source.iter() {
-            if *view >= min_view && *view < finalized_view {
+            if *view >= min_view && *view < block_view {
                 deque.push_back((*view, *leader));
             }
         }
@@ -67,11 +72,11 @@ impl ViewHistory {
     ) -> anyhow::Result<bool> {
         // new_missed_views are in descending order
         for (view, leader) in new_missed_views.iter().rev() {
-            trace!(
+            /*trace::trace!(
                 view,
                 id = &leader.as_bytes()[..3],
                 "++++++++++> adding missed"
-            );
+            );*/
             self.missed_views.push_back((*view, *leader));
         }
         //TODO(jailing): replace the above loop with the line below once logging is not needed anymore
@@ -85,13 +90,13 @@ impl ViewHistory {
         self.min_view = self
             .min_view
             .max(view.saturating_sub(LAG_BEHIND_CURRENT_VIEW + max_missed_view_age));
-        while let Some((view, leader)) = self.missed_views.front() {
+        while let Some((view, _leader)) = self.missed_views.front() {
             if *view < self.min_view {
-                trace!(
+                /*trace::trace!(
                     view,
                     id = &leader.as_bytes()[..3],
                     "----------> deleting missed"
-                );
+                );*/
                 self.missed_views.pop_front();
             } else {
                 break; // keys are monotonic
@@ -170,6 +175,8 @@ pub fn dispatch<I: ScillaInspector>(
     };
     let leader = decoded.first().unwrap().to_owned().into_bytes().unwrap();
     let view = decoded.last().unwrap().to_owned().into_uint().unwrap();
+    // if the current block is beyond the jailing fork activation height when calling the precompile
+    // jailing will be applied regardless of whether the view was before or after the fork activation
     if !external_context.fork.validator_jailing {
         //debug!(?view, "==========> jailing not activated yet");
         let output = encode(&[Token::Bool(false)]);

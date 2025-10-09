@@ -550,6 +550,19 @@ impl State {
         padded_view_number[24..].copy_from_slice(&current_block.view.to_be_bytes());
 
         let fork = self.forks.get(current_block.number).clone();
+        // if the view number is lower than min view of the node's missed view history and
+        // state-sync is going on, use the checkpoint's history instead of the node's history
+        let (view_history, finalized_view) = if current_block.view < self.view_history.min_view
+            && self.ckpt_view_history.is_some()
+            && self.ckpt_finalized_view.is_some()
+        {
+            (
+                self.ckpt_view_history.clone().unwrap(),
+                self.ckpt_finalized_view.unwrap(),
+            )
+        } else {
+            (self.view_history.clone(), self.finalized_view)
+        };
         let external_context = ExternalContext {
             inspector,
             fork: &fork,
@@ -557,8 +570,8 @@ impl State {
             callers: vec![from_addr],
             has_evm_failed: false,
             has_called_scilla_precompile: false,
-            finalized_view: self.finalized_view,
-            view_history: self.view_history.clone(),
+            finalized_view,
+            view_history,
         };
         let access_list = if fork.inject_access_list {
             access_list.unwrap_or_default()

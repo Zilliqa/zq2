@@ -58,6 +58,8 @@ pub struct State {
     pub forks: Forks,
     pub finalized_view: u64,
     pub view_history: ViewHistory,
+    pub ckpt_finalized_view: Option<u64>,
+    pub ckpt_view_history: Option<ViewHistory>,
 }
 
 impl State {
@@ -79,6 +81,8 @@ impl State {
             forks: consensus_config.get_forks()?,
             finalized_view: 0,
             view_history: ViewHistory::new(),
+            ckpt_finalized_view: None,
+            ckpt_view_history: None,
         })
     }
 
@@ -346,6 +350,8 @@ impl State {
             forks: self.forks.clone(),
             finalized_view: self.finalized_view,
             view_history: self.view_history.clone(),
+            ckpt_finalized_view: self.ckpt_finalized_view,
+            ckpt_view_history: self.ckpt_view_history.clone(),
         }
     }
 
