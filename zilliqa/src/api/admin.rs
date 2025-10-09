@@ -194,6 +194,18 @@ fn import_history(params: Params, node: &Arc<Node>) -> Result<()> {
     let param: &str = params.next::<&str>()?;
     let path = std::path::Path::new(param);
     let (block, _, _) = load_ckpt_blocks(path)?;
+    {
+        if node
+            .consensus
+            .read()
+            .state_at(block.number() + 1)
+            .ok()
+            .flatten()
+            .is_none()
+        {
+            return Err(anyhow!("Importing missed views requires executed blocks"));
+        }
+    }
     let mut imported_history = load_ckpt_history(path)?;
     {
         tracing::info!(
