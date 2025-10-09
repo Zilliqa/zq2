@@ -37,10 +37,10 @@ pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc
             ("admin_getPeers", get_peers, HandlerType::Fast),
             ("admin_votesReceived", votes_received, HandlerType::Fast),
             ("admin_clearMempool", clear_mempool, HandlerType::Fast),
-            ("admin_getLeaders", get_leaders, HandlerType::Fast),
+            ("admin_getLeaders", get_leaders, HandlerType::Slow),
             ("admin_syncing", syncing, HandlerType::Fast),
             ("admin_missedViews", missed_views, HandlerType::Fast),
-            ("admin_importViewHistory", import_history, HandlerType::Fast),
+            ("admin_importViewHistory", import_history, HandlerType::Slow),
         ]
     )
 }
