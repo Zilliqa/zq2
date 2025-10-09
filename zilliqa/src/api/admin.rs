@@ -380,16 +380,16 @@ fn get_leaders(params: Params, node: &Arc<Node>) -> Result<Vec<(u64, Validator)>
         node.consensus.read().head_block()
     } else {
         let lowest = node.consensus.read().get_lowest_block_view_number();
-        let mut parent_view = view - 1;
+        let mut parent_view = view.saturating_sub(1);
         // there won't be too many missing views before we find a parent block due to the
         // exponential backoff unless we don't store any blocks older than the requested view
-        if parent_view < lowest {
-            return Ok(leaders);
-        }
         loop {
+            if parent_view < lowest {
+                return Ok(leaders);
+            }
             match node.consensus.read().get_block_by_view(parent_view)? {
                 Some(parent_block) => break parent_block,
-                None => parent_view -= 1,
+                None => parent_view = parent_view.saturating_sub(1),
             }
         }
     };
