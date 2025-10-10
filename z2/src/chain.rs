@@ -114,7 +114,7 @@ impl Chain {
                     reinitialise_params: None,
                 }),
                 deposit_v7: Some(ContractUpgradeConfig {
-                    height: 16560000,
+                    height: 16740000,
                     reinitialise_params: Some(ReinitialiseParams {
                         withdrawal_period: 461680,
                     }), // https://github.com/Zilliqa/zq2/pull/3221
