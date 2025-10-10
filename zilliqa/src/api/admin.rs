@@ -198,9 +198,7 @@ fn import_history(params: Params, node: &Arc<Node>) -> Result<()> {
         if node
             .consensus
             .read()
-            .state_at(block.number() + 1)
-            .ok()
-            .flatten()
+            .state_at(block.number() + 1)?
             .is_none()
         {
             return Err(anyhow!("Importing missed views requires executed blocks"));

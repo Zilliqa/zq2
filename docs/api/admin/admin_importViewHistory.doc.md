@@ -8,9 +8,9 @@ admin,jailing,penalty,leader,validators,consensus,view
 
 # Description
 
-Imports the missed view history from a checkpoint file specified as input parameter up to the first missed view already present in the node's missed view history. There must not be any gap between the node's current missed view history and the histored imported from the checkpoint. The length of the imported history will be adjusted according to the node's `max_missed_view_age` setting and the `min_view` will also be updated accordingly.
+Imports the missed view history from a checkpoint file specified as input parameter up to the first missed view already present in the node's missed view history. There must not be any gap between the node's current missed view history and the histored imported from the checkpoint. The length of the imported history will be adjusted according to the node's `max_missed_view_age` setting and the `min_view` will also be updated accordingly. Before starting the import, make sure that the node has already downloaded and executed the blocks in the range of the imported missed views beforehand.
 
-This RPC method is used to avoid the need for re-syncing archive nodes before the jailing hardfork is activated. The only thing the node operator has to do is to import the missed view history reaching back to the genesis / switchover block from a recent checkpoint. Consequently, the `load_checkpoint` settings should be ommitted in the config file.
+This RPC method can be used to avoid the need for re-syncing archive nodes before the jailing hardfork is activated. The only thing the node operator has to do is to import the missed view history reaching back to the genesis / switchover block from a recent checkpoint. Consequently, the `load_checkpoint` settings should be ommitted in the config file.
 
 # Curl
 
