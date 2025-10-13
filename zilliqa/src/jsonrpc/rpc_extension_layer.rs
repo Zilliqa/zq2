@@ -1,0 +1,100 @@
+use anyhow::Result;
+use futures::{FutureExt, TryFutureExt};
+use http::Method;
+use jsonrpsee::{
+    core::BoxError,
+    server::{HttpRequest, HttpResponse},
+};
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    pin::Pin,
+    str::FromStr,
+    task::{Context, Poll},
+};
+use tower::{Layer, Service};
+
+/// Adds some extra data to the request
+#[derive(Debug, Clone, Default)]
+pub struct RpcExtensionLayer {
+    // connection pool
+}
+
+impl RpcExtensionLayer {
+    pub fn new() -> Self {
+        // pass in setup information
+        // create the connection-pool
+        Self::default()
+    }
+}
+
+impl<S> Layer<S> for RpcExtensionLayer {
+    type Service = RpcExtensionHeader<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        RpcExtensionHeader { inner }
+    }
+}
+
+/// Every POST request is modified by added additional headers with information.
+#[derive(Debug, Clone)]
+pub struct RpcExtensionHeader<S> {
+    inner: S,
+    // connection pool
+}
+
+impl<S> Service<HttpRequest> for RpcExtensionHeader<S>
+where
+    S: Service<HttpRequest, Response = HttpResponse>,
+    S::Response: 'static,
+    S::Error: Into<BoxError> + 'static,
+    S::Future: Send + 'static,
+{
+    type Response = S::Response;
+    type Error = BoxError;
+    type Future =
+        Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send + 'static>>;
+
+    #[inline]
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx).map_err(Into::into)
+    }
+
+    fn call(&mut self, mut req: HttpRequest) -> Self::Future {
+        // early exit for non-POST requests
+        if req.method() != Method::POST {
+            return self.inner.call(req).map_err(Into::into).boxed();
+        }
+
+        // add the remote-ip address
+        let ip = req
+            .headers()
+            .get("X-Forwarded-For")
+            .map(|xff| {
+                xff.to_str()
+                    .unwrap_or_default()
+                    .split(',')
+                    .next()
+                    .map(|ip_str| IpAddr::from_str(ip_str.trim()).unwrap())
+                    .unwrap()
+            })
+            .unwrap_or(Ipv4Addr::UNSPECIFIED.into());
+
+        // add the available credit
+        // add the remote user
+
+        let ext = RpcCreditExt {
+            ip_addr: ip,
+            balance: 100,
+        };
+        req.extensions_mut().insert(ext);
+
+        self.inner.call(req).map_err(Into::into).boxed()
+    }
+}
+
+/// Every POST request is modified by added additional headers with information.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RpcCreditExt {
+    pub ip_addr: IpAddr,
+    pub balance: u64,
+}
