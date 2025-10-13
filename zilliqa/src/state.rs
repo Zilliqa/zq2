@@ -231,6 +231,23 @@ impl State {
                 self.upgrade_deposit_contract(block_header, deposit_v6_contract, None)?;
             }
         }
+        if let Some(deposit_v7_deploy_config) = &config.contract_upgrades.deposit_v7 {
+            if deposit_v7_deploy_config.height == block_header.number {
+                let deposit_v7_contract =
+                    Lazy::<contracts::Contract>::force(&contracts::deposit_v7::CONTRACT);
+                let reinitialise_params = deposit_v7_deploy_config
+                    .reinitialise_params
+                    .clone()
+                    .unwrap_or(ReinitialiseParams::default());
+                let deposit_v7_reinitialise_data = contracts::deposit_v7::REINITIALIZE
+                    .encode_input(&[Token::Uint(reinitialise_params.withdrawal_period.into())])?;
+                self.upgrade_deposit_contract(
+                    block_header,
+                    deposit_v7_contract,
+                    Some(deposit_v7_reinitialise_data),
+                )?;
+            }
+        }
         Ok(())
     }
 
