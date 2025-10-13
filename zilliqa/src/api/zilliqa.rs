@@ -645,6 +645,7 @@ fn get_smart_contract_state(params: Params, node: &Arc<Node>) -> Result<Value> {
 
     if node
         .config
+        .api_limits
         .disable_get_full_state_for_contracts
         .contains(&address)
     {
