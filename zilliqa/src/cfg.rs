@@ -1,9 +1,6 @@
 use std::{ops::Deref, str::FromStr, time::Duration};
 
-use alloy::{
-    primitives::{Address, address},
-    rlp::Encodable,
-};
+use alloy::{primitives::Address, rlp::Encodable};
 use anyhow::{Result, anyhow};
 use libp2p::{Multiaddr, PeerId};
 use rand::{Rng, distributions::Alphanumeric};
@@ -120,6 +117,19 @@ pub struct ApiServer {
     pub port: u16,
     /// RPC APIs to enable.
     pub enabled_apis: Vec<EnabledApi>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ApiLimits {
+    #[serde(default)]
+    pub max_blocks_to_fetch: Option<u64>,
+
+    #[serde(default)]
+    pub max_txns_in_block_to_fetch: Option<u64>,
+
+    #[serde(default)]
+    pub disable_get_full_state_for_contracts: Vec<Address>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -247,9 +257,8 @@ pub struct NodeConfig {
     /// The default is sufficient to compute the leaders of the next views, but does not allow the node to compute leaders of past views.
     #[serde(default = "max_missed_view_age_default")]
     pub max_missed_view_age: u64,
-    #[serde(default = "disable_get_full_state_for_contracts_default")]
-    /// Disabled state queries for the following contracts
-    pub disable_get_full_state_for_contracts: Vec<Address>,
+    #[serde(default)]
+    pub api_limits: ApiLimits,
 }
 
 impl Default for NodeConfig {
@@ -271,7 +280,7 @@ impl Default for NodeConfig {
             enable_ots_indices: false,
             max_rpc_response_size: max_rpc_response_size_default(),
             max_missed_view_age: max_missed_view_age_default(),
-            disable_get_full_state_for_contracts: disable_get_full_state_for_contracts_default(),
+            api_limits: ApiLimits::default(),
         }
     }
 }
@@ -397,13 +406,6 @@ pub fn failed_request_sleep_duration_default() -> Duration {
 
 pub fn max_missed_view_age_default() -> u64 {
     MISSED_VIEW_WINDOW
-}
-
-pub fn disable_get_full_state_for_contracts_default() -> Vec<Address> {
-    vec![
-        address!("54d10Ee86cd2C3258b23FDb78782F70e84966683"),
-        address!("a7c67d49c82c7dc1b73d231640b2e4d0661d37c1"),
-    ]
 }
 
 /// Wrapper for [u128] that (de)serializes with a string. `serde_toml` does not support `u128`s.
