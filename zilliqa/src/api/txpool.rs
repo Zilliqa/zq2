@@ -19,10 +19,10 @@ pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc
         node,
         enabled_apis,
         [
-            ("txpool_content", txpool_content, HandlerType::Fast),
-            ("txpool_contentFrom", txpool_content_from, HandlerType::Fast),
-            ("txpool_inspect", txpool_inspect, HandlerType::Fast),
-            ("txpool_status", txpool_status, HandlerType::Fast),
+            ("txpool_content", txpool_content, HandlerType::Slow),
+            ("txpool_contentFrom", txpool_content_from, HandlerType::Slow),
+            ("txpool_inspect", txpool_inspect, HandlerType::Slow),
+            ("txpool_status", txpool_status, HandlerType::Slow),
         ]
     )
 }
