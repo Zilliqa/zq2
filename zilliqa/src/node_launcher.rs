@@ -7,7 +7,10 @@ use std::{
 use anyhow::{Result, anyhow};
 use arc_swap::ArcSwap;
 use http::{Method, header};
-use jsonrpsee::server::{ServerConfig, middleware::http::ProxyGetRequestLayer};
+use jsonrpsee::{
+    server::{ServerConfig, middleware::http::ProxyGetRequestLayer},
+    ws_client::RpcServiceBuilder,
+};
 use libp2p::{PeerId, futures::StreamExt};
 use node::Node;
 use opentelemetry::KeyValue;
@@ -30,10 +33,13 @@ use crate::{
     api::{self, subscription_id_provider::EthIdProvider},
     cfg::NodeConfig,
     crypto::SecretKey,
+    jsonrpc::{
+        rpc_extension_layer::RpcExtensionLayer,
+        rpc_rate_limit::{RateLimit, RpcRateLimit},
+    },
     message::{ExternalMessage, InternalMessage},
     node::{self, OutgoingMessageFailure},
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
-    rpc::rpc_extension_layer::RpcExtensionLayer,
     sync::SyncPeers,
 };
 
@@ -132,19 +138,27 @@ impl NodeLauncher {
         let node = Arc::new(node);
 
         for api_server in &config.api_servers {
+            // Collect all enabled modules
             let rpc_module = api::rpc_module(Arc::clone(&node), &api_server.enabled_apis);
-            // Construct the JSON-RPC API server. We inject a [CorsLayer] to ensure web browsers can call our API directly.
+
+            // HTTP middleware
             let cors = CorsLayer::new()
                 .allow_methods(Method::POST)
                 .allow_origin(Any)
-                .allow_headers([header::CONTENT_TYPE]);
+                .allow_headers([header::CONTENT_TYPE]); // We inject a [CorsLayer] to ensure web browsers can call our API directly.
             let health = ProxyGetRequestLayer::new([("/health", "system_health")])?;
             let rpc_exts = RpcExtensionLayer::new();
-
-            let middleware = tower::ServiceBuilder::new()
+            let http_middleware = tower::ServiceBuilder::new()
                 .layer(rpc_exts)
                 .layer(health)
                 .layer(cors);
+
+            // RPC middleware
+            let rpc_middleware = RpcServiceBuilder::new().layer_fn(|service| {
+                RpcRateLimit::new(service, RateLimit::new(1, Duration::from_secs(1)))
+            });
+
+            // Construct the JSON-RPC API server.
             let server = jsonrpsee::server::ServerBuilder::new()
                 .set_config(
                     ServerConfig::builder()
@@ -152,7 +166,8 @@ impl NodeLauncher {
                         .set_id_provider(EthIdProvider)
                         .build(),
                 )
-                .set_http_middleware(middleware)
+                .set_http_middleware(http_middleware)
+                .set_rpc_middleware(rpc_middleware)
                 .build((Ipv4Addr::UNSPECIFIED, api_server.port))
                 .await;
 
