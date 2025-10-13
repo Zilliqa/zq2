@@ -170,8 +170,18 @@ impl ContextPrecompile for Penalty {
         let Ok(decoded) = decode(&[ParamType::Bytes, ParamType::Uint(256)], &raw_input[4..]) else {
             return Err("ABI input decoding error!".into());
         };
-        let leader = decoded.first().unwrap().to_owned().into_bytes().unwrap();
-        let view = decoded.last().unwrap().to_owned().into_uint().unwrap();
+        let leader = decoded
+            .first()
+            .ok_or("Can't decode leader".to_string())?
+            .to_owned()
+            .into_bytes()
+            .ok_or("Can't decode leader".to_string())?;
+        let view = decoded
+            .last()
+            .ok_or("Can't decode view".to_string())?
+            .to_owned()
+            .into_uint()
+            .ok_or("Can't decode view".to_string())?;
         // if the current block is beyond the jailing fork activation height when calling the precompile
         // jailing will be applied regardless of whether the view was before or after the fork activation
         if !ctx.chain.fork.validator_jailing {
@@ -223,8 +233,11 @@ impl ContextPrecompile for Penalty {
         let first_range = &first_slice[first_start_idx..first_end_idx];
         // filter the missed views that had the same leader as the selected one
         let filter = |(key, value): &(u64, NodePublicKey)| {
-            if value == &NodePublicKey::from_bytes(leader.as_slice()).unwrap() {
-                Some(*key)
+            if let Ok(decoded) = NodePublicKey::from_bytes(leader.as_slice()) {
+                if decoded == *value {
+                    return Some(*key);
+                }
+                None
             } else {
                 None
             }

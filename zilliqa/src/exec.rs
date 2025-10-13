@@ -548,7 +548,7 @@ impl State {
         padded_view_number[24..].copy_from_slice(&current_block.view.to_be_bytes());
 
         let fork = self.forks.get(current_block.number);
-        let fork = self.forks.get(current_block.number).clone();
+        //let fork = self.forks.get(current_block.number).clone();
         // if the view number is lower than min view of the node's missed view history and
         // state-sync is going on, use the checkpoint's history instead of the node's history
         let (view_history, finalized_view) = if current_block.view < self.view_history.min_view
