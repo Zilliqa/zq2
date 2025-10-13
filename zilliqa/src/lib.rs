@@ -11,7 +11,6 @@ mod data_access;
 pub mod db;
 mod error;
 pub mod exec;
-mod health;
 pub mod inspector;
 pub mod message;
 pub mod node;

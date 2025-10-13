@@ -46,6 +46,14 @@ pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc
         .merge(zilliqa::rpc_module(node.clone(), enabled_apis))
         .unwrap();
 
+    // Handle GET /health
+    module
+        .register_method(
+            "system_health",
+            |_, _, _| serde_json::json!({ "health": true }),
+        )
+        .unwrap();
+
     module
 }
 
