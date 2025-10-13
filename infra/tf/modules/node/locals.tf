@@ -17,6 +17,7 @@ locals {
         zone            = node.zone != null ? node.zone : ([for region in data.google_compute_zones.available : region if region.region == node.region][0].names[n % length([for region in data.google_compute_zones.available : region if region.region == node.region][0].names)])
         resource_name   = format("%s-%s-%s-%s", var.chain_name, lookup(local.labels, "private-api", var.role), var.region_mappings[(node.region != null ? node.region : ([for region in data.google_compute_zones.available : region if contains(region.names, node.zone)][0].region))], n)
         resource_id     = format("%s-%s-%s-%s", var.chain_name, var.role, var.region_mappings[(node.region != null ? node.region : ([for region in data.google_compute_zones.available : region if contains(region.names, node.zone)][0].region))], n)
+        image           = lookup(try(node.os_images, {}), tostring(n), "ubuntu-os-cloud/ubuntu-2204-lts")
       }
     ]
   ])

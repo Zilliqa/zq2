@@ -21,19 +21,7 @@ struct Args {
     log_json: bool,
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    let args = Args::parse();
-
-    let builder = tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .with_line_number(true);
-    if args.log_json {
-        builder.json().init();
-    } else {
-        builder.init();
-    }
-
+async fn app(args: Args, config: Config) -> Result<()> {
     // Set a panic hook that records the panic as a `tracing` event at the `ERROR` verbosity level.
     std::panic::set_hook(Box::new(|panic| {
         let message = match panic.payload().downcast_ref::<&'static str>() {
@@ -79,27 +67,6 @@ async fn main() -> Result<()> {
         }
     }));
 
-    let mut merged_config = toml::Table::new();
-    for config_file in args.config_file {
-        let config = fs::read_to_string(&config_file)?;
-        let config: toml::Table = toml::from_str(&config)?;
-        for key in config.keys() {
-            if merged_config.contains_key(key) {
-                return Err(anyhow!(
-                    "configuration conflict: {config_file:?} contained a key {key:?} that was already included in an earlier file"
-                ));
-            }
-        }
-        merged_config.extend(config);
-    }
-
-    let config: Config = serde::Deserialize::deserialize(merged_config)?;
-
-    assert!(
-        !config.nodes.is_empty(),
-        "At least one shard must be configured"
-    );
-
     if let Some(endpoint) = &config.otlp_collector_endpoint {
         let export_config = ExportConfig {
             endpoint: Some(endpoint.clone()),
@@ -122,4 +89,45 @@ async fn main() -> Result<()> {
         .await?;
 
     node.start().await
+}
+
+fn main() -> Result<()> {
+    let args = Args::parse();
+
+    let builder = tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .with_line_number(true);
+    if args.log_json {
+        builder.json().init();
+    } else {
+        builder.init();
+    }
+
+    let mut merged_config = toml::Table::new();
+    for config_file in &args.config_file {
+        let config = fs::read_to_string(config_file)?;
+        let config: toml::Table = toml::from_str(&config)?;
+        for key in config.keys() {
+            if merged_config.contains_key(key) {
+                return Err(anyhow!(
+                    "configuration conflict: {config_file:?} contained a key {key:?} that was already included in an earlier file"
+                ));
+            }
+        }
+        merged_config.extend(config);
+    }
+
+    let config: Config = serde::Deserialize::deserialize(merged_config)?;
+
+    assert!(
+        !config.nodes.is_empty(),
+        "At least one shard must be configured"
+    );
+
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .max_blocking_threads(config.slow_rpc_queries_handlers_count)
+        .enable_all()
+        .build()?;
+
+    rt.block_on(async { app(args, config).await })
 }

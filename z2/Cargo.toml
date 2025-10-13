@@ -47,7 +47,7 @@ itertools = "0.14.0"
 k256 = "0.13.4"
 libp2p = { version = "0.56.0", features = ["identify"] }
 log = "0.4.28"
-parking_lot = "0.12.4"
+parking_lot = "0.12.5"
 primitive-types = "0.12.2"
 prost = "0.14.1"
 rand = "0.8.5"

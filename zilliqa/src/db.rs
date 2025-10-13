@@ -472,20 +472,96 @@ impl Db {
 
         if version < 5 {
             connection.execute_batch(
-                ("
+                "
                 BEGIN;
 
                 INSERT INTO schema_version VALUES (5);
 
                 CREATE TABLE IF NOT EXISTS view_history (view INTEGER NOT NULL PRIMARY KEY, leader BLOB) WITHOUT ROWID;
 
-                INSERT INTO view_history (view, leader) VALUES (".to_string() + LARGE_OFFSET.to_string().as_str() + ", NULL);
+                CREATE INDEX IF NOT EXISTS idx_view_history_leader ON view_history(leader);
+
+                INSERT INTO view_history (view, leader) VALUES (1000000000000, NULL);
 
                 COMMIT;
-            ").as_str(),
+            ",
             )?;
         }
 
+        if version < 6 {
+            connection.execute_batch(
+                "
+                BEGIN;
+
+                INSERT INTO schema_version VALUES (6);
+
+                CREATE TABLE IF NOT EXISTS ckpt_view_history (view INTEGER NOT NULL PRIMARY KEY, leader BLOB) WITHOUT ROWID;
+
+                CREATE INDEX IF NOT EXISTS idx_ckpt_view_history_leader ON ckpt_view_history(leader);
+
+                INSERT INTO ckpt_view_history (view, leader) VALUES (1000000000000, NULL);
+
+                COMMIT;
+            ",
+            )?;
+        }
+
+        Ok(())
+    }
+
+    pub fn read_ckpt_view_history(&self) -> Result<Vec<(u64, Vec<u8>)>> {
+        Ok(self
+            .pool
+            .get()?
+            .prepare_cached(
+                "SELECT view, leader FROM ckpt_view_history WHERE leader NOT NULL ORDER BY view",
+            )?
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?)
+    }
+
+    pub fn reset_ckpt_view_history(&self) -> Result<()> {
+        self.pool
+            .get()?
+            .prepare_cached("DELETE FROM ckpt_view_history WHERE leader NOT NULL")?
+            .execute([])?;
+        self.pool
+            .get()?
+            .prepare_cached(
+                format!("UPDATE ckpt_view_history SET view = {LARGE_OFFSET} WHERE leader IS NULL")
+                    .as_str(),
+            )?
+            //.execute(rusqlite::params![view, leader])?;
+            .execute([])?;
+        Ok(())
+    }
+
+    pub fn extend_ckpt_view_history(&self, view: u64, leader: Vec<u8>) -> Result<()> {
+        self.pool
+            .get()?
+            .prepare_cached("INSERT INTO ckpt_view_history (view, leader) VALUES (?1, ?2)")?
+            //.execute(rusqlite::params![view, leader])?;
+            .execute((view, leader))?;
+        Ok(())
+    }
+
+    pub fn get_min_view_of_ckpt_view_history(&self) -> Result<u64> {
+        let min_view: u64 = self
+            .pool
+            .get()?
+            .prepare_cached("SELECT view FROM ckpt_view_history WHERE leader IS NULL LIMIT 1")?
+            .query_row([], |row| row.get(0))
+            .unwrap_or_default();
+        // to prevent primary key collision with missed views stored in the table
+        Ok(min_view - LARGE_OFFSET)
+    }
+
+    pub fn set_min_view_of_ckpt_view_history(&self, min_view: u64) -> Result<()> {
+        self.pool
+            .get()?
+            .prepare_cached("UPDATE ckpt_view_history SET view = ?1 WHERE leader IS NULL")?
+            // to prevent primary key collision with missed views stored in the table
+            .execute([min_view + LARGE_OFFSET])?;
         Ok(())
     }
 
@@ -799,6 +875,25 @@ impl Db {
             .query_row((), |row| {
                 row.get(0).map_err(|e| {
                     // workaround where MAX(height) returns NULL if there are no blocks, instead of a NoRows error
+                    if let rusqlite::Error::InvalidColumnType(_, _, typ) = e {
+                        if typ == rusqlite::types::Type::Null {
+                            return rusqlite::Error::QueryReturnedNoRows;
+                        }
+                    }
+                    e
+                })
+            })
+            .optional()?)
+    }
+
+    pub fn get_lowest_block_view_number(&self) -> Result<Option<u64>> {
+        Ok(self
+            .pool
+            .get()?
+            .prepare_cached("SELECT MIN(view) FROM blocks")?
+            .query_row((), |row| {
+                row.get(0).map_err(|e| {
+                    // workaround where MIN(view) returns NULL if there are no blocks, instead of a NoRows error
                     if let rusqlite::Error::InvalidColumnType(_, _, typ) = e {
                         if typ == rusqlite::types::Type::Null {
                             return rusqlite::Error::QueryReturnedNoRows;
@@ -1346,19 +1441,17 @@ impl Db {
             block.header.state_root_hash = Hash::ZERO;
         }
 
+        // retrieve the receipts, in-order
         let receipts = self.get_transaction_receipts_in_block(&block.header.hash)?;
-
         let receipt_hashes = receipts.iter().map(|r| r.tx_hash).collect::<Vec<Hash>>();
 
+        // retrieve the set of transactions, out-of-order
         let mut tx_by_hash: HashMap<Hash, SignedTransaction> =
             HashMap::with_capacity(receipt_hashes.len());
-
         let placeholders = std::iter::repeat_n("?", receipt_hashes.len())
             .collect::<Vec<_>>()
             .join(",");
-
-        let hashes = self
-            .pool
+        self.pool
             .get()?
             .prepare(&format!(
                 r#"SELECT data, tx_hash FROM transactions WHERE tx_hash IN ({placeholders})"#
@@ -1368,13 +1461,12 @@ impl Db {
                 let hash: Hash = row.get(1)?;
                 Ok((txn, hash))
             })?
-            .map(|x| {
-                let (txn, hash) = x.unwrap();
+            .flatten()
+            .for_each(|(txn, hash)| {
                 tx_by_hash.insert(hash, txn.clone());
-                hash
-            })
-            .collect::<Vec<_>>();
+            });
 
+        // construct the set of transactions, in-order
         let transactions: Vec<VerifiedTransaction> = receipts
             .iter()
             .map(|r| {
@@ -1385,7 +1477,7 @@ impl Db {
             })
             .collect::<Result<_, _>>()?;
 
-        block.transactions = hashes;
+        block.transactions = receipt_hashes;
 
         assert_eq!(receipts.len(), transactions.len());
 
@@ -1624,6 +1716,10 @@ mod tests {
             "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE height = (SELECT MAX(height) FROM blocks) LIMIT 1",
             "SELECT data, transactions.tx_hash FROM transactions INNER JOIN receipts ON transactions.tx_hash = receipts.tx_hash WHERE receipts.block_hash = ?1 ORDER BY receipts.tx_index ASC",
             "SELECT state_root_hash FROM blocks WHERE is_canonical = TRUE AND height = ?1",
+            "SELECT view FROM view_history WHERE leader IS NULL LIMIT 1",
+            "UPDATE view_history SET view = ?1 WHERE leader IS NULL",
+            "SELECT view FROM ckpt_view_history WHERE leader IS NULL LIMIT 1",
+            "UPDATE ckpt_view_history SET view = ?1 WHERE leader IS NULL",
             // TODO: Add more queries
         ];
 

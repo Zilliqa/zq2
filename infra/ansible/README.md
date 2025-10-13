@@ -180,6 +180,12 @@ ansible-playbook -i inventory.gcp.yml -l network_zq2_infratest,localhost playboo
   -e "zq2_image=asia-docker.pkg.dev/your-project/zq2:new-version"
 ```
 
+### Upgrade Ubuntu
+```bash
+# Update Ubuntu version to 24.04 for api nodes
+ansible-playbook -i inventory.gcp.yml -l network_zq2_infratest,localhost playbooks/upgrade_ubuntu.yml --limit role_api
+```
+
 ## Contributing
 
 1. Fork the repository

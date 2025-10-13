@@ -1,0 +1,18 @@
+---
+- name: Install required packages
+  hosts: all:!role_apps
+  become: true
+  tags:
+    - install
+    - all
+  
+  tasks:
+
+    - name: Ensure rocksdb-tools is installed
+      ansible.builtin.apt:
+        name: rocksdb-tools
+        state: present
+        update_cache: yes
+      when:
+        - ansible_distribution == "Ubuntu"
+        - ansible_distribution_version is version("24.04", '>=')

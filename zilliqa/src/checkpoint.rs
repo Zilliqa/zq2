@@ -311,7 +311,8 @@ pub fn load_ckpt_state(
 
     // reconstruct the state trie from accounts/storage leaf nodes
     let (account_count, record_count) = {
-        let mut account_storage = EthTrie::new(trie_storage.clone());
+        let mut state_trie = EthTrie::new(trie_storage.clone());
+        let mem_storage = Arc::new(MemoryDB::new(true));
 
         let mut account_count = 0;
         let mut record_count = 0;
@@ -320,11 +321,26 @@ pub fn load_ckpt_state(
         while let Ok(account_key) =
             bincode::decode_from_std_read::<Vec<u8>, _, _>(&mut reader, BIN_CONFIG)
         {
-            let account_val: Vec<u8> = bincode::decode_from_std_read(&mut reader, BIN_CONFIG)?;
-            account_storage.insert(account_key.as_slice(), account_val.as_slice())?;
+            if account_count % 10000 == 0 {
+                tracing::debug!(account=%account_count, record=%record_count, "Loaded");
+                // Due to the way EthTrie works, we need to flush the trie to disk from time-to-time.
+                //
+                // Otherwise, we may run out of memory when the final root_hash() is called as it
+                // takes up double the memory space when converting the data from its internal form
+                // into a set of vectors that are passed to insert_batch().
+                //
+                // Unfortunately, this introduces intermediate states that will not be used normally.
+                // So, we do this in batches.
+                if account_count % 100000 == 0 {
+                    state_trie.root_hash()?;
+                }
+            }
 
-            // load the storage trie to memory
-            let mem_storage = Arc::new(MemoryDB::new(true));
+            let account_val: Vec<u8> = bincode::decode_from_std_read(&mut reader, BIN_CONFIG)?;
+            state_trie.insert(account_key.as_slice(), account_val.as_slice())?;
+            let account_root = Account::try_from(account_val.as_slice())?.storage_root;
+
+            // load the storage trie
             let mut account_trie = EthTrie::new(mem_storage.clone());
             let count: usize = bincode::serde::decode_from_std_read(&mut reader, BIN_CONFIG)?;
             for _ in 0..count {
@@ -336,25 +352,25 @@ pub fn load_ckpt_state(
 
             // compute the root trie for this account
             let root_hash = account_trie.root_hash()?;
-            let account_root = Account::try_from(account_val.as_slice())?.storage_root;
             ensure!(
                 *root_hash == *account_root,
                 "Account storage root {root_hash} mismatch",
             );
 
-            // commit the in-memory trie to disk
+            // commit the account-trie to disk
             let (keys, vals): (Vec<_>, Vec<_>) = mem_storage.storage.write().drain().unzip();
             trie_storage.insert_batch(keys, vals)?;
 
             account_count += 1;
         }
-        // compute state_root_hash for parent block; also flushes nodes to disk.
-        let root_hash = Hash(account_storage.root_hash()?.into());
+        tracing::info!(account=%account_count, record=%record_count, "Loaded"); // final update
+
+        // compute state_root_hash for parent block; flushes nodes to disk.
+        let root_hash = Hash(state_trie.root_hash()?.into());
         ensure!(
             root_hash == *state_root_hash,
             "State root hash {root_hash} mismatch",
         );
-
         (account_count, record_count)
     };
 
@@ -395,6 +411,7 @@ pub fn load_ckpt(
 
     let view_history = load_ckpt_history(path)?;
 
+    tracing::info!(account=%account_count, record=%record_count, "Loaded"); // final update
     Ok(Some((block, transactions, parent, view_history)))
 }
 
@@ -451,34 +468,36 @@ pub fn save_ckpt(
 
     // write the accounts in the state trie at this point
     zipwriter.start_file("state.bincode", options)?;
-    let state_trie_storage = trie_storage.clone();
-
-    let accounts =
-        EthTrie::new(state_trie_storage.clone()).at_root(parent.state_root_hash().into());
-    let account_storage = EthTrie::new(state_trie_storage.clone());
 
     let mut account_count = 0;
     let mut record_count = 0;
     // iterate over accounts and save the accounts to the checkpoint file.
     // do not save intermediate state trie values.
-    for (key, serialised_account) in accounts.iter().flatten() {
+    let state_trie = EthTrie::new(trie_storage.clone()).at_root(parent.state_root_hash().into());
+    for (key, serialised_account) in state_trie.iter().flatten() {
+        if account_count % 10000 == 0 {
+            tracing::debug!(account=%account_count, record=%record_count, "Saved");
+        }
+
         bincode::encode_into_std_write(&key, &mut zipwriter, BIN_CONFIG)?;
         bincode::encode_into_std_write(&serialised_account, &mut zipwriter, BIN_CONFIG)?;
 
-        let account_root = Account::try_from(serialised_account.as_slice())?.storage_root;
-
         // iterate over account storage keys, and save them to the checkpoint file.
-        let account_trie = account_storage.at_root(account_root);
+        let account_root = Account::try_from(serialised_account.as_slice())?.storage_root;
+        let account_trie = EthTrie::new(trie_storage.clone()).at_root(account_root);
+
         let count = account_trie.iter().count();
         bincode::serde::encode_into_std_write(count, &mut zipwriter, BIN_CONFIG)?;
+
         for (storage_key, storage_val) in account_trie.iter().flatten() {
             bincode::encode_into_std_write(&storage_key, &mut zipwriter, BIN_CONFIG)?;
             bincode::encode_into_std_write(&storage_val, &mut zipwriter, BIN_CONFIG)?;
             record_count += 1;
         }
-
         account_count += 1;
     }
+
+    tracing::info!(account=%account_count, record=%record_count, "Saved"); // final update
 
     let meta = Checkpoint {
         account_count,

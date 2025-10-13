@@ -1,6 +1,5 @@
-use std::fs;
-
 use ethers::{providers::Middleware, types::TransactionRequest};
+use fs_extra::file::CopyOptions;
 use tracing::info;
 use zilliqa::{cfg::Checkpoint, crypto::Hash};
 
@@ -29,51 +28,33 @@ async fn prune_interval(mut network: Network) {
 async fn base_height(mut network: Network) {
     // Populate network with transactions
     let wallet = network.genesis_wallet().await;
-    // Run until block 9 so that we can insert a tx in block 10 (note that this transaction may not *always* appear in the desired block, therefore we do not assert its presence later)
-    network.run_until_block(&wallet, 9.into(), 200).await;
-
-    let _hash = wallet
+    network.run_until_block_finalized(5, 200).await.unwrap();
+    wallet
         .send_transaction(TransactionRequest::pay(wallet.address(), 10), None)
         .await
         .unwrap()
         .tx_hash();
 
     // wait 10 blocks for checkpoint to happen - then 3 more to finalize that block
-    network.run_until_block(&wallet, 13.into(), 200).await;
+    network.run_until_block_finalized(13, 200).await.unwrap();
 
-    let checkpoint_files = network
+    let checkpoint_path = network
         .nodes
-        .iter()
-        .map(|node| {
-            node.dir
-                .as_ref()
-                .unwrap()
-                .path()
-                .join(network.shard_id.to_string())
-                .join("checkpoints")
-                .join("10")
-        })
-        .collect::<Vec<_>>();
-
-    let mut len_check = 0;
-    for path in &checkpoint_files {
-        let metadata = fs::metadata(path).unwrap();
-        assert!(metadata.is_file());
-        let file_len = metadata.len();
-        assert!(file_len != 0);
-        assert!(len_check == 0 || len_check == file_len); // len_check = 0 on first loop iteration
-        len_check = file_len;
-    }
-
-    // Add a non-validator node, since passive-sync does not work otherwise
-    let non_validator_idx = network.add_node();
+        .first()
+        .unwrap()
+        .dir
+        .as_ref()
+        .unwrap()
+        .path()
+        .join(network.shard_id.to_string())
+        .join("checkpoints")
+        .join("10");
 
     // Create new node and pass it one of those checkpoint files
-    let checkpoint_path = checkpoint_files[0].to_str().unwrap().to_owned();
     let checkpoint_hash = wallet.get_block(10).await.unwrap().unwrap().hash.unwrap();
     let new_node_idx = network.add_node_with_options(NewNodeOptions {
         checkpoint: Some(Checkpoint {
-            file: checkpoint_path,
+            file: checkpoint_path.to_str().unwrap().to_string(),
             hash: Hash(checkpoint_hash.0),
         }),
         base_height: Some(3),
@@ -86,18 +67,111 @@ async fn base_height(mut network: Network) {
     assert_eq!(latest_block_number, 10.into());
 
     // check the new node catches up and keeps up with block production
-    network.run_until_synced(non_validator_idx).await;
     network.run_until_synced(new_node_idx).await;
-    network
-        .run_until_block(&new_node_wallet, 20.into(), 200)
-        .await;
+    network.run_until_block_finalized(20, 200).await.unwrap();
 
-    // check range of new wallet
+    // check range of new node
     let base_height = *network
         .node_at(new_node_idx)
         .db
         .available_range()
         .unwrap()
         .start();
-    assert_eq!(base_height, 3);
+    assert_eq!(base_height, 3); // successful passive-sync to block 3.
+}
+
+#[zilliqa_macros::test(do_checkpoints)]
+// default blocks_per_epoch = 10, epochs_per_checkpoint = 1
+async fn state_sync(mut network: Network) {
+    // Populate network with transactions
+    let wallet = network.genesis_wallet().await;
+    network.run_until_block_finalized(5, 200).await.unwrap();
+    wallet
+        .send_transaction(TransactionRequest::pay(wallet.address(), 10), None)
+        .await
+        .unwrap()
+        .tx_hash();
+
+    network.run_until_block_finalized(13, 200).await.unwrap();
+
+    // copy out checkpoint file; otherwise it will no longer exist after the restart
+    let checkpoint_from = network
+        .nodes
+        .first()
+        .unwrap()
+        .dir
+        .as_ref()
+        .unwrap()
+        .path()
+        .join(network.shard_id.to_string())
+        .join("checkpoints")
+        .join("10");
+
+    let checkpoint_path = tempfile::tempdir().unwrap();
+    fs_extra::file::copy(
+        checkpoint_from.as_path(),
+        checkpoint_path.path().join("CKPT").as_path(),
+        &CopyOptions::default(),
+    )
+    .unwrap();
+
+    // pick a random node.
+    let idx = network.random_index();
+    assert_eq!(
+        network
+            .node_at(idx)
+            .db
+            .state_trie()
+            .unwrap()
+            .get_migrate_at()
+            .unwrap(),
+        u64::MAX // no state-sync
+    );
+
+    // Restart chosen node with checkpoint file
+    let checkpoint_hash = wallet.get_block(10).await.unwrap().unwrap().hash.unwrap();
+    network.restart_node_with_options(
+        idx,
+        NewNodeOptions {
+            checkpoint: Some(Checkpoint {
+                file: checkpoint_path
+                    .path()
+                    .join("CKPT")
+                    .as_path()
+                    .to_str()
+                    .unwrap()
+                    .to_string(),
+                hash: Hash(checkpoint_hash.0),
+            }),
+            state_sync: Some(true),
+            ..Default::default()
+        },
+        true,
+    );
+
+    assert_eq!(
+        network
+            .node_at(idx)
+            .db
+            .state_trie()
+            .unwrap()
+            .get_migrate_at()
+            .unwrap(),
+        10 // state-sync starts at the checkpoint block 10.
+    );
+
+    // run the network for a little bit
+    // The test conditions only replay ONE block; and completes.
+    network.run_until_block_finalized(20, 2000).await.unwrap();
+
+    assert_eq!(
+        network
+            .node_at(idx)
+            .db
+            .state_trie()
+            .unwrap()
+            .get_migrate_at()
+            .unwrap(),
+        u64::MAX // state-sync complete
+    );
 }

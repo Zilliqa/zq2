@@ -3,7 +3,7 @@ Description=Zilliqa Node Healthcheck
 
 [Service]
 Type=simple
-ExecStart=/bin/bash -c 'python3 /usr/local/bin/healthcheck.py'
+ExecStart=/bin/bash -c '/opt/zilliqa/venv/bin/python3 /usr/local/bin/healthcheck.py'
 ExecStop=pkill -f /usr/local/bin/healthcheck.py
 RemainAfterExit=yes
 Restart=on-failure
