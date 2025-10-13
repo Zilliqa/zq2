@@ -49,9 +49,9 @@ pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc
     // Handle GET /health
     module
         .register_method("system_health", |_params, _node, _ext| {
-            _ext.get::<crate::rpc::rpc_extension_layer::RpcCreditExt>()
+            _ext.get::<crate::jsonrpc::rpc_extension_layer::RpcCreditExt>()
                 .map(|ext| serde_json::json!({ "health": true, "ext": ext }))
-                .unwrap_or_else(|| serde_json::json!({ "health": true}))
+                .unwrap_or_else(|| serde_json::json!({ "health": true }))
         })
         .unwrap();
 
