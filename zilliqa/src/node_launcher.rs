@@ -33,6 +33,7 @@ use crate::{
     message::{ExternalMessage, InternalMessage},
     node::{self, OutgoingMessageFailure},
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
+    rpc::rpc_extension_layer::RpcExtensionLayer,
     sync::SyncPeers,
 };
 
@@ -137,8 +138,13 @@ impl NodeLauncher {
                 .allow_methods(Method::POST)
                 .allow_origin(Any)
                 .allow_headers([header::CONTENT_TYPE]);
-            let health_check = ProxyGetRequestLayer::new([("/health", "system_health")])?;
-            let middleware = tower::ServiceBuilder::new().layer(health_check).layer(cors);
+            let health = ProxyGetRequestLayer::new([("/health", "system_health")])?;
+            let rpc_exts = RpcExtensionLayer::new();
+
+            let middleware = tower::ServiceBuilder::new()
+                .layer(rpc_exts)
+                .layer(health)
+                .layer(cors);
             let server = jsonrpsee::server::ServerBuilder::new()
                 .set_config(
                     ServerConfig::builder()
