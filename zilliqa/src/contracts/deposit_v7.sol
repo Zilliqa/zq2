@@ -151,6 +151,8 @@ contract Deposit is UUPSUpgradeable {
         _disableInitializers();
     }
 
+    // Do not change the order of the reinitializers!
+
     // explicitly set version number in contract code
     // solhint-disable-next-line no-empty-blocks
     function reinitialize() public reinitializer(VERSION) {}
