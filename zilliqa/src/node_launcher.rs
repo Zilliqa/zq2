@@ -7,7 +7,7 @@ use std::{
 use anyhow::{Result, anyhow};
 use arc_swap::ArcSwap;
 use http::{Method, header};
-use jsonrpsee::server::ServerConfig;
+use jsonrpsee::server::{ServerConfig, middleware::http::ProxyGetRequestLayer};
 use libp2p::{PeerId, futures::StreamExt};
 use node::Node;
 use opentelemetry::KeyValue;
@@ -30,7 +30,6 @@ use crate::{
     api::{self, subscription_id_provider::EthIdProvider},
     cfg::NodeConfig,
     crypto::SecretKey,
-    health::HealthLayer,
     message::{ExternalMessage, InternalMessage},
     node::{self, OutgoingMessageFailure},
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
@@ -138,7 +137,8 @@ impl NodeLauncher {
                 .allow_methods(Method::POST)
                 .allow_origin(Any)
                 .allow_headers([header::CONTENT_TYPE]);
-            let middleware = tower::ServiceBuilder::new().layer(HealthLayer).layer(cors);
+            let health_check = ProxyGetRequestLayer::new([("/health", "system_health")])?;
+            let middleware = tower::ServiceBuilder::new().layer(health_check).layer(cors);
             let server = jsonrpsee::server::ServerBuilder::new()
                 .set_config(
                     ServerConfig::builder()
