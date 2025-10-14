@@ -108,7 +108,7 @@ where
     fn call<'a>(&self, req: Request<'a>) -> impl Future<Output = Self::MethodResponse> + Send + 'a {
         if let Some(ext) = req
             .extensions()
-            .get::<crate::jsonrpc::rpc_extension_layer::RpcCreditExt>()
+            .get::<crate::jsonrpc::rpc_extension_layer::RpcHeaderExt>()
         {
             tracing::info!("CALL {ext:?}");
         }
@@ -130,7 +130,7 @@ where
     ) -> impl Future<Output = Self::BatchResponse> + Send + 'a {
         if let Some(ext) = batch
             .extensions()
-            .get::<crate::jsonrpc::rpc_extension_layer::RpcCreditExt>()
+            .get::<crate::jsonrpc::rpc_extension_layer::RpcHeaderExt>()
         {
             tracing::info!("BATCH {ext:?}");
         }

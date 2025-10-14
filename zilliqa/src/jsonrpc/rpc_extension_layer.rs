@@ -60,13 +60,13 @@ where
     }
 
     fn call(&mut self, mut req: HttpRequest) -> Self::Future {
-        // early exit for non-POST requests
+        // early exit for non-POST request
         if req.method() != Method::POST {
             return self.inner.call(req).map_err(Into::into).boxed();
         }
 
-        // add the remote-ip address
-        let ip = req
+        // add the remote-ip
+        let remote_ip = req
             .headers()
             .get("X-Forwarded-For")
             .map(|xff| {
@@ -79,14 +79,18 @@ where
             })
             .unwrap_or(Ipv4Addr::UNSPECIFIED.into());
 
-        // add the available credit
-        // add the remote user
+        // add the remote-user
+        let remote_user = req
+            .headers()
+            .get("Authorization")
+            .map(|auth| auth.to_str().unwrap_or_default().to_string())
+            .unwrap_or(String::default());
 
-        let ext = RpcCreditExt {
-            ip_addr: ip,
-            balance: 100,
-        };
-        req.extensions_mut().insert(ext);
+        // Add extra underlying metadata to the request extension.
+        req.extensions_mut().insert(RpcHeaderExt {
+            remote_ip,
+            remote_user,
+        });
 
         self.inner.call(req).map_err(Into::into).boxed()
     }
@@ -94,7 +98,7 @@ where
 
 /// Every POST request is modified by added additional headers with information.
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct RpcCreditExt {
-    pub ip_addr: IpAddr,
-    pub balance: u64,
+pub struct RpcHeaderExt {
+    pub remote_ip: IpAddr,
+    pub remote_user: String,
 }
