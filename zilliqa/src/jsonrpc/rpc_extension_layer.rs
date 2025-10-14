@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::Result;
 use futures::{FutureExt, TryFutureExt};
-use http::Method;
+use http::header::AUTHORIZATION;
 use jsonrpsee::{
     core::BoxError,
     server::{HttpRequest, HttpResponse},
@@ -61,11 +61,6 @@ where
     }
 
     fn call(&mut self, mut req: HttpRequest) -> Self::Future {
-        // early exit for non-POST request
-        if req.method() != Method::POST {
-            return self.inner.call(req).map_err(Into::into).boxed();
-        }
-
         // add the remote-ip
         let remote_ip = req
             .headers()
@@ -83,7 +78,7 @@ where
         // add the remote-user
         let remote_user = req
             .headers()
-            .get("Authorization")
+            .get(AUTHORIZATION)
             .map(|auth| auth.to_str().unwrap_or_default().to_string())
             .unwrap_or_default();
 

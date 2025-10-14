@@ -1,4 +1,7 @@
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 /// Based on https://github.com/paritytech/jsonrpsee/blob/master/examples/examples/rpc_middleware_rate_limiting.rs
 ///
@@ -19,16 +22,20 @@ use crate::jsonrpc::{
 #[derive(Clone)]
 pub struct RpcRateLimit<S> {
     service: S,
-    credit_store: RpcCreditStore,
-    credit_list: RpcCreditList,
+    credit_store: Arc<RpcCreditStore>,
+    credit_list: Arc<RpcCreditList>,
 }
 
 impl<S> RpcRateLimit<S> {
-    pub fn new(service: S, credit_store: RpcCreditStore, credit_list: RpcCreditList) -> Self {
+    pub fn new(
+        service: S,
+        credit_store: Arc<RpcCreditStore>,
+        credit_list: Arc<RpcCreditList>,
+    ) -> Self {
         Self {
             service,
-            credit_store,
-            credit_list,
+            credit_store: credit_store.clone(),
+            credit_list: credit_list.clone(),
         }
     }
 

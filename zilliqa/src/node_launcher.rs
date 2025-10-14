@@ -136,6 +136,8 @@ impl NodeLauncher {
         )?;
 
         let node = Arc::new(node);
+        let credit_list = Arc::new(RpcCreditList::new(config.credit_list.clone()));
+        let credit_store = Arc::new(RpcCreditStore::new());
 
         for api_server in &config.api_servers {
             // Collect all enabled modules
@@ -153,10 +155,9 @@ impl NodeLauncher {
                 .layer(health)
                 .layer(cors);
 
-            let credit_list = RpcCreditList::new(Default::default());
-            let credit_store = RpcCreditStore::new();
-
             // RPC middleware
+            let credit_list = credit_list.clone();
+            let credit_store = credit_store.clone();
             let rpc_middleware = RpcServiceBuilder::new().layer_fn(move |service| {
                 RpcRateLimit::new(service, credit_store.clone(), credit_list.clone())
             });
