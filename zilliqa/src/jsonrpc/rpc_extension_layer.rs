@@ -22,8 +22,6 @@ pub struct RpcExtensionLayer {
 
 impl RpcExtensionLayer {
     pub fn new() -> Self {
-        // pass in setup information
-        // create the connection-pool
         Self::default()
     }
 }

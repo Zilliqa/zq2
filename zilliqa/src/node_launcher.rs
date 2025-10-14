@@ -133,8 +133,8 @@ impl NodeLauncher {
         )?;
 
         let node = Arc::new(node);
-        let price_list = Arc::new(RpcPriceList::new(config.credit_list.clone()));
         let credit_store = Arc::new(RpcCreditStore::new());
+        let price_list = Arc::new(RpcPriceList::new(Default::default()));
 
         for api_server in &config.api_servers {
             // Collect all enabled modules
@@ -153,10 +153,16 @@ impl NodeLauncher {
                 .layer(cors);
 
             // RPC middleware
-            let price_list = price_list.clone();
             let credit_store = credit_store.clone();
+            let price_list = price_list.clone();
+            let default_limit = api_server.default_credit;
             let rpc_middleware = RpcServiceBuilder::new().layer_fn(move |service| {
-                RpcRateLimit::new(service, credit_store.clone(), price_list.clone())
+                RpcRateLimit::new(
+                    service,
+                    credit_store.clone(),
+                    price_list.clone(),
+                    default_limit,
+                )
             });
 
             // Construct the JSON-RPC API server.

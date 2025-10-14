@@ -1,6 +1,6 @@
-use std::time::{Duration, Instant};
-
+use crate::jsonrpc::RateLimitState;
 use anyhow::Result;
+use std::time::{Duration, Instant};
 
 /// Abstraction for managing global rate limits and user-specific rate limits.
 #[derive(Debug, Clone)]
@@ -35,22 +35,4 @@ impl Default for RpcCreditStore {
     fn default() -> Self {
         Self::new()
     }
-}
-
-#[derive(Debug, Copy, Clone, Default)]
-pub struct RateLimit {
-    pub balance: u64,
-    pub period: Duration,
-}
-
-impl RateLimit {
-    pub fn new(balance: u64, period: Duration) -> Self {
-        Self { balance, period }
-    }
-}
-
-#[derive(Debug, Copy, Clone)]
-pub enum RateLimitState {
-    Deny { until: Instant },
-    Allow { until: Instant, balance: u64 },
 }

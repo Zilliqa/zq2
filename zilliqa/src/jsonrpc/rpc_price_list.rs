@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use dashmap::DashMap;
 
 static DEFAULT_CREDIT: u64 = 500;
@@ -13,7 +11,7 @@ pub struct RpcPriceList {
 // The conversion rate should be around 1ms:1credit such that a 5ms call costs 5 credits.
 
 impl RpcPriceList {
-    pub fn new(credit_list: HashMap<String, u64>) -> Self {
+    pub fn new(credit_list: Vec<(String, u64)>) -> Self {
         let credits = DashMap::with_capacity(credit_list.len());
         for (key, value) in credit_list.into_iter() {
             credits.insert(key, value);
