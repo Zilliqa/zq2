@@ -17,6 +17,7 @@ impl RpcCreditStore {
     }
 
     pub fn get_user_state(&self, _key: &str) -> Result<RateLimitState> {
+        tracing::info!("GET {_key}");
         Ok(RateLimitState::Allow {
             until: Instant::now() + Duration::from_secs(5),
             rem: 10000,
@@ -24,6 +25,7 @@ impl RpcCreditStore {
     }
 
     pub fn update_user_state(&self, _key: &str, _state: &RateLimitState) -> Result<()> {
+        tracing::info!("SET {_key}");
         // Implement logic to update user state
         Ok(())
     }
