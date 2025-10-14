@@ -1,15 +1,16 @@
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    pin::Pin,
+    str::FromStr,
+    task::{Context, Poll},
+};
+
 use anyhow::Result;
 use futures::{FutureExt, TryFutureExt};
 use http::Method;
 use jsonrpsee::{
     core::BoxError,
     server::{HttpRequest, HttpResponse},
-};
-use std::{
-    net::{IpAddr, Ipv4Addr},
-    pin::Pin,
-    str::FromStr,
-    task::{Context, Poll},
 };
 use tower::{Layer, Service};
 
@@ -84,7 +85,7 @@ where
             .headers()
             .get("Authorization")
             .map(|auth| auth.to_str().unwrap_or_default().to_string())
-            .unwrap_or(String::default());
+            .unwrap_or_default();
 
         // Add extra underlying metadata to the request extension.
         req.extensions_mut().insert(RpcHeaderExt {
@@ -101,4 +102,19 @@ where
 pub struct RpcHeaderExt {
     pub remote_ip: IpAddr,
     pub remote_user: String,
+}
+
+impl Default for RpcHeaderExt {
+    fn default() -> Self {
+        Self::new(Ipv4Addr::UNSPECIFIED.into(), String::default())
+    }
+}
+
+impl RpcHeaderExt {
+    pub fn new(remote_ip: IpAddr, remote_user: String) -> Self {
+        Self {
+            remote_ip,
+            remote_user,
+        }
+    }
 }

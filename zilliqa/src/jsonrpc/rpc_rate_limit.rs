@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 /// Based on https://github.com/paritytech/jsonrpsee/blob/master/examples/examples/rpc_middleware_rate_limiting.rs
 ///
 use jsonrpsee::{
@@ -7,85 +9,71 @@ use jsonrpsee::{
     },
     types::{ErrorObject, Request},
 };
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
 
-#[derive(Debug, Copy, Clone)]
-pub struct RateLimit {
-    num: u64,
-    period: Duration,
-}
-
-impl RateLimit {
-    pub fn new(num: u64, period: Duration) -> Self {
-        Self { num, period }
-    }
-}
-
-#[derive(Debug, Copy, Clone)]
-enum State {
-    Deny { until: Instant },
-    Allow { until: Instant, rem: u64 },
-}
+use crate::jsonrpc::{
+    rpc_credit_list::RpcCreditList,
+    rpc_credit_store::{RateLimit, RateLimitState, RpcCreditStore},
+    rpc_extension_layer::RpcHeaderExt,
+};
 
 #[derive(Clone)]
 pub struct RpcRateLimit<S> {
     service: S,
-    state: Arc<Mutex<State>>,
-    rate: RateLimit,
+    credit_store: RpcCreditStore,
+    credit_list: RpcCreditList,
 }
 
 impl<S> RpcRateLimit<S> {
-    pub fn new(service: S, rate: RateLimit) -> Self {
-        let period = rate.period;
-        let num = rate.num;
-
+    pub fn new(service: S, credit_store: RpcCreditStore, credit_list: RpcCreditList) -> Self {
         Self {
             service,
-            rate,
-            state: Arc::new(Mutex::new(State::Allow {
-                until: Instant::now() + period,
-                rem: num + 1,
-            })),
+            credit_store,
+            credit_list,
         }
     }
 
-    fn rate_limit_deny(&self) -> bool {
-        let now = Instant::now();
-        let mut lock = self.state.lock().unwrap();
-        let next_state = match *lock {
-            State::Deny { until } => {
-                if now > until {
-                    State::Allow {
-                        until: now + self.rate.period,
-                        rem: self.rate.num - 1,
-                    }
+    fn check_rate_limit(
+        &self,
+        state: RateLimitState,
+        limit: RateLimit,
+        method: &str,
+    ) -> Option<RateLimitState> {
+        // accuracy for simplicity trade-off.
+        let next_state = match state {
+            RateLimitState::Deny { until } => {
+                let now = Instant::now();
+                if now < until {
+                    // continue to deny
+                    RateLimitState::Deny { until }
                 } else {
-                    State::Deny { until }
+                    // change to allow, with new credit balance
+                    let cost = self.credit_list.get_credit(method);
+                    RateLimitState::Allow {
+                        until: now + limit.period,
+                        rem: limit.balance.saturating_sub(cost),
+                    }
                 }
             }
-            State::Allow { until, rem } => {
-                if now > until {
-                    State::Allow {
-                        until: now + self.rate.period,
-                        rem: self.rate.num - 1,
+            RateLimitState::Allow { until, rem } => {
+                if rem > 0 {
+                    // update credit balance
+                    let cost = self.credit_list.get_credit(method);
+                    RateLimitState::Allow {
+                        until: until + limit.period,
+                        rem: rem.saturating_sub(cost),
                     }
                 } else {
-                    let n = rem - 1;
-                    if n > 0 {
-                        State::Allow {
-                            until: now + self.rate.period,
-                            rem: n,
-                        }
-                    } else {
-                        State::Deny { until }
+                    // block now
+                    let now = Instant::now();
+                    RateLimitState::Deny {
+                        until: now + limit.period,
                     }
                 }
             }
         };
 
-        *lock = next_state;
-        matches!(next_state, State::Deny { .. })
+        // Some(balance)
+        Some(next_state)
     }
 }
 
@@ -106,21 +94,37 @@ where
 
     // Single calls
     fn call<'a>(&self, req: Request<'a>) -> impl Future<Output = Self::MethodResponse> + Send + 'a {
-        if let Some(ext) = req
+        let ext = req
             .extensions()
-            .get::<crate::jsonrpc::rpc_extension_layer::RpcHeaderExt>()
-        {
-            tracing::info!("CALL {ext:?}");
-        }
+            .get::<RpcHeaderExt>()
+            .expect("RpcHeaderExt must be present");
+        tracing::info!("CALL {ext:?}");
 
-        if self.rate_limit_deny() {
-            ResponseFuture::ready(MethodResponse::error(
-                req.id,
-                ErrorObject::borrowed(-32000, "RPC rate limit", None),
-            ))
-        } else {
-            ResponseFuture::future(self.service.call(req))
+        // identify by IP
+        let key = ext.remote_ip.to_string();
+
+        // Get the user state
+        let state = self
+            .credit_store
+            .get_user_state(&key)
+            .expect("Failed to get user state");
+
+        // TODO: Extract limit from Authorization header
+        let limit = RateLimit::new(10000, Duration::from_secs(5));
+
+        if let Some(balance) = self.check_rate_limit(state, limit, req.method_name()) {
+            self.credit_store
+                .update_user_state(&key, &balance)
+                .expect("Failed to update user state");
+
+            if matches!(balance, RateLimitState::Allow { .. }) {
+                return ResponseFuture::future(self.service.call(req));
+            }
         }
+        ResponseFuture::ready(MethodResponse::error(
+            req.id,
+            ErrorObject::borrowed(-32000, "RPC rate limit", None),
+        ))
     }
 
     // Batch calls
@@ -128,33 +132,46 @@ where
         &self,
         mut batch: Batch<'a>,
     ) -> impl Future<Output = Self::BatchResponse> + Send + 'a {
-        if let Some(ext) = batch
+        let ext = batch
             .extensions()
-            .get::<crate::jsonrpc::rpc_extension_layer::RpcHeaderExt>()
-        {
-            tracing::info!("BATCH {ext:?}");
-        }
+            .get::<RpcHeaderExt>()
+            .expect("RpcHeaderExt must be present");
+        tracing::info!("BATCH {ext:?}");
 
-        // If the rate limit is reached then we modify each entry
-        // in the batch to be a request with an error.
-        //
-        // This makes sure that the client will receive an error
-        // for each request in the batch.
-        if self.rate_limit_deny() {
-            for entry in batch.iter_mut() {
-                let id = match entry {
-                    Ok(BatchEntry::Call(req)) => req.id.clone(),
-                    Ok(BatchEntry::Notification(_)) => continue,
-                    Err(_) => continue,
-                };
+        // identify by IP
+        let key = ext.remote_ip.to_string();
 
-                // This will create a new error response for batch and replace the method call
-                *entry = Err(BatchEntryErr::new(
-                    id,
-                    ErrorObject::borrowed(-32000, "RPC rate limit", None),
-                ));
+        // Get the user state
+        let mut state = self
+            .credit_store
+            .get_user_state(&key)
+            .expect("Failed to get user state");
+
+        // TODO: Extract limit from Authorization header
+        let limit = RateLimit::new(10000, Duration::from_secs(5));
+
+        for entry in batch.iter_mut() {
+            match entry {
+                Ok(BatchEntry::Call(req)) => {
+                    if let Some(balance) = self.check_rate_limit(state, limit, req.method_name()) {
+                        state = balance;
+                        if matches!(state, RateLimitState::Allow { .. }) {
+                            continue;
+                        }
+                    }
+                    *entry = Err(BatchEntryErr::new(
+                        req.id.clone(),
+                        ErrorObject::borrowed(-32000, "RPC rate limit", None),
+                    ));
+                }
+                Ok(BatchEntry::Notification(_)) => continue,
+                Err(_) => continue,
             }
         }
+
+        self.credit_store
+            .update_user_state(&key, &state)
+            .expect("Failed to update user state");
 
         self.service.batch(batch)
     }
@@ -164,12 +181,8 @@ where
         &self,
         n: Notification<'a>,
     ) -> impl Future<Output = Self::NotificationResponse> + Send + 'a {
-        if self.rate_limit_deny() {
-            // Notifications are not expected to return a response so just ignore
-            // if the rate limit is reached.
-            ResponseFuture::ready(MethodResponse::notification())
-        } else {
-            ResponseFuture::future(self.service.notification(n))
-        }
+        // TODO: implement notification rate-limits
+        // ResponseFuture::ready(MethodResponse::notification())
+        ResponseFuture::future(self.service.notification(n))
     }
 }

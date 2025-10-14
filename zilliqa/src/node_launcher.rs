@@ -34,8 +34,8 @@ use crate::{
     cfg::NodeConfig,
     crypto::SecretKey,
     jsonrpc::{
-        rpc_extension_layer::RpcExtensionLayer,
-        rpc_rate_limit::{RateLimit, RpcRateLimit},
+        rpc_credit_list::RpcCreditList, rpc_credit_store::RpcCreditStore,
+        rpc_extension_layer::RpcExtensionLayer, rpc_rate_limit::RpcRateLimit,
     },
     message::{ExternalMessage, InternalMessage},
     node::{self, OutgoingMessageFailure},
@@ -153,9 +153,12 @@ impl NodeLauncher {
                 .layer(health)
                 .layer(cors);
 
+            let credit_list = RpcCreditList::new(Default::default());
+            let credit_store = RpcCreditStore::new();
+
             // RPC middleware
-            let rpc_middleware = RpcServiceBuilder::new().layer_fn(|service| {
-                RpcRateLimit::new(service, RateLimit::new(1, Duration::from_secs(1)))
+            let rpc_middleware = RpcServiceBuilder::new().layer_fn(move |service| {
+                RpcRateLimit::new(service, credit_store.clone(), credit_list.clone())
             });
 
             // Construct the JSON-RPC API server.
