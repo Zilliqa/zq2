@@ -33,10 +33,7 @@ use crate::{
     api::{self, subscription_id_provider::EthIdProvider},
     cfg::NodeConfig,
     crypto::SecretKey,
-    jsonrpc::{
-        rpc_credit_list::RpcCreditList, rpc_credit_store::RpcCreditStore,
-        rpc_extension_layer::RpcExtensionLayer, rpc_rate_limit::RpcRateLimit,
-    },
+    jsonrpc::{RpcCreditStore, RpcExtensionLayer, RpcPriceList, RpcRateLimit},
     message::{ExternalMessage, InternalMessage},
     node::{self, OutgoingMessageFailure},
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
@@ -136,7 +133,7 @@ impl NodeLauncher {
         )?;
 
         let node = Arc::new(node);
-        let credit_list = Arc::new(RpcCreditList::new(config.credit_list.clone()));
+        let price_list = Arc::new(RpcPriceList::new(config.credit_list.clone()));
         let credit_store = Arc::new(RpcCreditStore::new());
 
         for api_server in &config.api_servers {
@@ -156,10 +153,10 @@ impl NodeLauncher {
                 .layer(cors);
 
             // RPC middleware
-            let credit_list = credit_list.clone();
+            let price_list = price_list.clone();
             let credit_store = credit_store.clone();
             let rpc_middleware = RpcServiceBuilder::new().layer_fn(move |service| {
-                RpcRateLimit::new(service, credit_store.clone(), credit_list.clone())
+                RpcRateLimit::new(service, credit_store.clone(), price_list.clone())
             });
 
             // Construct the JSON-RPC API server.

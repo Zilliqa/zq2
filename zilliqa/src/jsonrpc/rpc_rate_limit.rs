@@ -13,39 +13,36 @@ use jsonrpsee::{
     types::{ErrorObject, Request},
 };
 
-use crate::jsonrpc::{
-    rpc_credit_list::RpcCreditList,
-    rpc_credit_store::{RateLimit, RateLimitState, RpcCreditStore},
-    rpc_extension_layer::RpcHeaderExt,
-};
+use crate::jsonrpc::{RateLimit, RateLimitState, RpcCreditStore, RpcHeaderExt, RpcPriceList};
 
 #[derive(Clone)]
 pub struct RpcRateLimit<S> {
     service: S,
     credit_store: Arc<RpcCreditStore>,
-    credit_list: Arc<RpcCreditList>,
+    credit_list: Arc<RpcPriceList>,
 }
 
 impl<S> RpcRateLimit<S> {
     pub fn new(
         service: S,
         credit_store: Arc<RpcCreditStore>,
-        credit_list: Arc<RpcCreditList>,
+        price_list: Arc<RpcPriceList>,
     ) -> Self {
         Self {
             service,
             credit_store: credit_store.clone(),
-            credit_list: credit_list.clone(),
+            credit_list: price_list.clone(),
         }
     }
 
-    fn check_rate_limit(
+    fn check_credit_limit(
         &self,
         state: RateLimitState,
         limit: RateLimit,
         method: &str,
     ) -> Option<RateLimitState> {
-        // accuracy for simplicity trade-off.
+        // simplifies the code by allowing the case where:
+        // as long as balance > 0, we can always make at least one request.
         let next_state = match state {
             RateLimitState::Deny { until } => {
                 let now = Instant::now();
@@ -57,17 +54,17 @@ impl<S> RpcRateLimit<S> {
                     let cost = self.credit_list.get_credit(method);
                     RateLimitState::Allow {
                         until: now + limit.period,
-                        rem: limit.balance.saturating_sub(cost),
+                        balance: limit.balance.saturating_sub(cost),
                     }
                 }
             }
-            RateLimitState::Allow { until, rem } => {
-                if rem > 0 {
+            RateLimitState::Allow { until, balance } => {
+                if balance > 0 {
                     // update credit balance
                     let cost = self.credit_list.get_credit(method);
                     RateLimitState::Allow {
                         until: until + limit.period,
-                        rem: rem.saturating_sub(cost),
+                        balance: balance.saturating_sub(cost),
                     }
                 } else {
                     // block now
@@ -119,7 +116,7 @@ where
         // TODO: Extract limit from Authorization header
         let limit = RateLimit::new(10000, Duration::from_secs(5));
 
-        if let Some(balance) = self.check_rate_limit(state, limit, req.method_name()) {
+        if let Some(balance) = self.check_credit_limit(state, limit, req.method_name()) {
             self.credit_store
                 .update_user_state(&key, &balance)
                 .expect("Failed to update user state");
@@ -160,7 +157,8 @@ where
         for entry in batch.iter_mut() {
             match entry {
                 Ok(BatchEntry::Call(req)) => {
-                    if let Some(balance) = self.check_rate_limit(state, limit, req.method_name()) {
+                    if let Some(balance) = self.check_credit_limit(state, limit, req.method_name())
+                    {
                         state = balance;
                         if matches!(state, RateLimitState::Allow { .. }) {
                             continue;
