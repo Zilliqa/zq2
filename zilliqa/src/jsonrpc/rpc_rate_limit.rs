@@ -18,6 +18,7 @@ use crate::jsonrpc::{RateLimit, RateLimitState, RpcCreditStore, RpcHeaderExt, Rp
 #[derive(Clone)]
 pub struct RpcRateLimit<S> {
     service: S,
+    default_limit: RateLimit,
     credit_store: Arc<RpcCreditStore>,
     credit_list: Arc<RpcPriceList>,
 }
@@ -27,9 +28,14 @@ impl<S> RpcRateLimit<S> {
         service: S,
         credit_store: Arc<RpcCreditStore>,
         price_list: Arc<RpcPriceList>,
+        default_limit: Option<RateLimit>,
     ) -> Self {
         Self {
             service,
+            default_limit: default_limit.unwrap_or(RateLimit {
+                balance: u64::MAX,
+                period: Duration::from_secs(1),
+            }),
             credit_store: credit_store.clone(),
             credit_list: price_list.clone(),
         }
@@ -38,7 +44,7 @@ impl<S> RpcRateLimit<S> {
     fn check_credit_limit(
         &self,
         state: RateLimitState,
-        limit: RateLimit,
+        limit: &RateLimit,
         method: &str,
     ) -> Option<RateLimitState> {
         // simplifies the code by allowing the case where:
@@ -114,7 +120,7 @@ where
             .expect("Failed to get user state");
 
         // TODO: Extract limit from Authorization header
-        let limit = RateLimit::new(10000, Duration::from_secs(5));
+        let limit = &self.default_limit;
 
         if let Some(balance) = self.check_credit_limit(state, limit, req.method_name()) {
             self.credit_store
@@ -152,7 +158,7 @@ where
             .expect("Failed to get user state");
 
         // TODO: Extract limit from Authorization header
-        let limit = RateLimit::new(10000, Duration::from_secs(5));
+        let limit = &self.default_limit;
 
         for entry in batch.iter_mut() {
             match entry {
