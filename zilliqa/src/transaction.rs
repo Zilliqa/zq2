@@ -10,7 +10,7 @@ use alloy::{
     consensus::{
         SignableTransaction, TxEip1559, TxEip2930, TxLegacy, transaction::RlpEcdsaEncodableTx,
     },
-    primitives::{Address, B256, PrimitiveSignature, TxKind, U256, keccak256},
+    primitives::{Address, B256, Signature, TxKind, U256, keccak256},
     rlp::{EMPTY_STRING_CODE, Encodable, Header},
     sol_types::SolValue,
 };
@@ -18,7 +18,8 @@ use anyhow::{Result, anyhow};
 use bytes::{BufMut, BytesMut};
 use itertools::Itertools;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
-use revm::primitives::AccessListItem;
+use revm::context_interface::{TransactionType, transaction::AccessList};
+use revm_context::TxEnv;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use sha3::{
@@ -148,17 +149,17 @@ pub enum SignedTransaction {
     Legacy {
         #[serde(with = "ser_rlp")]
         tx: TxLegacy,
-        sig: PrimitiveSignature,
+        sig: Signature,
     },
     Eip2930 {
         #[serde(with = "ser_rlp")]
         tx: TxEip2930,
-        sig: PrimitiveSignature,
+        sig: Signature,
     },
     Eip1559 {
         #[serde(with = "ser_rlp")]
         tx: TxEip1559,
-        sig: PrimitiveSignature,
+        sig: Signature,
     },
     Zilliqa {
         tx: TxZilliqa,
@@ -792,11 +793,11 @@ impl Transaction {
         }
     }
 
-    pub fn access_list(&self) -> Option<Vec<AccessListItem>> {
+    pub fn access_list(&self) -> Option<AccessList> {
         match self {
             Transaction::Legacy(_) => None,
-            Transaction::Eip2930(TxEip2930 { access_list, .. }) => Some(access_list.0.clone()),
-            Transaction::Eip1559(TxEip1559 { access_list, .. }) => Some(access_list.0.clone()),
+            Transaction::Eip2930(TxEip2930 { access_list, .. }) => Some(access_list.clone()),
+            Transaction::Eip1559(TxEip1559 { access_list, .. }) => Some(access_list.clone()),
             Transaction::Zilliqa(_) => None,
             Transaction::Intershard(_) => None,
         }
@@ -812,6 +813,44 @@ impl Transaction {
             // "ZIL" + 1
             Transaction::Intershard(_) => 90_73_77,
         }
+    }
+
+    pub fn revm_transaction_type(&self) -> TransactionType {
+        match self {
+            Transaction::Legacy(_) => TransactionType::Legacy,
+            Transaction::Eip2930(_) => TransactionType::Eip2930,
+            Transaction::Eip1559(_) => TransactionType::Eip1559,
+            Transaction::Zilliqa(_) => TransactionType::Custom,
+            Transaction::Intershard(_) => TransactionType::Custom,
+        }
+    }
+}
+
+impl TryFrom<VerifiedTransaction> for TxEnv {
+    type Error = anyhow::Error;
+
+    fn try_from(txn: VerifiedTransaction) -> std::result::Result<TxEnv, anyhow::Error> {
+        let signer = txn.signer;
+        let inner = txn.tx.into_transaction();
+        Ok(Self {
+            tx_type: inner.revm_transaction_type().into(),
+            caller: signer,
+            gas_limit: inner.gas_limit().0,
+            gas_price: inner.max_fee_per_gas(),
+            kind: match inner.to_addr() {
+                Some(addr) => TxKind::Call(addr),
+                _ => TxKind::Create,
+            },
+            value: inner.amount().try_into()?,
+            data: inner.payload().to_vec().into(),
+            nonce: inner.nonce().unwrap_or_default(),
+            chain_id: inner.chain_id(),
+            access_list: inner.access_list().unwrap_or_default(),
+            gas_priority_fee: inner.max_priority_fee_per_gas(),
+            blob_hashes: vec![],
+            max_fee_per_blob_gas: 0,
+            authorization_list: vec![],
+        })
     }
 }
 

@@ -7,7 +7,7 @@ use alloy::{
     primitives::Bytes, rpc::types::error::EthRpcErrorCode, sol_types::decode_revert_reason,
 };
 use jsonrpsee::types::ErrorObjectOwned;
-use revm::primitives::{ExecutionResult, HaltReason, OutOfGasError};
+use revm::context::result::{ExecutionResult, HaltReason, OutOfGasError};
 
 use crate::api::to_hex::ToHex;
 
@@ -27,6 +27,7 @@ pub fn ensure_success(result: ExecutionResult) -> Result<Bytes, TransactionError
                 OutOfGasError::InvalidOperand => {
                     Err(TransactionError::InvalidOperandOutOfGas(gas_used))
                 }
+                OutOfGasError::ReentrancySentry => Err(TransactionError::BasicOutOfGas(gas_used)),
             },
             reason => Err(TransactionError::EvmHalt(reason)),
         },
