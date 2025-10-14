@@ -20,7 +20,7 @@ impl RpcCreditStore {
         tracing::info!("GET {_key}");
         Ok(RateLimitState::Allow {
             until: Instant::now() + Duration::from_secs(5),
-            rem: 10000,
+            balance: 10000,
         })
     }
 
@@ -52,5 +52,5 @@ impl RateLimit {
 #[derive(Debug, Copy, Clone)]
 pub enum RateLimitState {
     Deny { until: Instant },
-    Allow { until: Instant, rem: u64 },
+    Allow { until: Instant, balance: u64 },
 }
