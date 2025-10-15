@@ -32,7 +32,7 @@ use tracing::*;
 use crate::{
     api::{self, subscription_id_provider::EthIdProvider},
     cfg::NodeConfig,
-    credits::{RpcCreditStore, RpcExtensionLayer, RpcPriceList, RpcRateLimit},
+    credits::{RpcCreditLimit, RpcCreditRate, RpcCreditStore, RpcExtensionLayer},
     crypto::SecretKey,
     message::{ExternalMessage, InternalMessage},
     node::{self, OutgoingMessageFailure},
@@ -134,7 +134,7 @@ impl NodeLauncher {
 
         let node = Arc::new(node);
         let credit_store = Arc::new(RpcCreditStore::new(None));
-        let price_list = Arc::new(RpcPriceList::new(config.credit_list.clone()));
+        let credit_rate = Arc::new(RpcCreditRate::new(config.credit_rates.clone()));
 
         for api_server in &config.api_servers {
             // Collect all enabled modules
@@ -154,13 +154,13 @@ impl NodeLauncher {
 
             // RPC middleware
             let credit_store = credit_store.clone();
-            let price_list = price_list.clone();
+            let credit_rate = credit_rate.clone();
             let default_limit = api_server.default_credit;
             let rpc_middleware = RpcServiceBuilder::new().layer_fn(move |service| {
-                RpcRateLimit::new(
+                RpcCreditLimit::new(
                     service,
                     credit_store.clone(),
-                    price_list.clone(),
+                    credit_rate.clone(),
                     default_limit,
                 )
             });

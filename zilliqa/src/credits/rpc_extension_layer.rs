@@ -5,8 +5,9 @@ use jsonrpsee::{
     core::BoxError,
     server::{HttpRequest, HttpResponse},
 };
+use serde::Serialize;
 use std::{
-    net::{IpAddr, Ipv4Addr},
+    net::IpAddr,
     pin::Pin,
     str::FromStr,
     task::{Context, Poll},
@@ -86,16 +87,10 @@ where
 }
 
 /// Every POST request is modified by added additional headers with information.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, Serialize, Default)]
 pub struct RpcHeaderExt {
     pub remote_ip: Option<IpAddr>,
     pub remote_user: Option<String>,
-}
-
-impl Default for RpcHeaderExt {
-    fn default() -> Self {
-        Self::new(Ipv4Addr::UNSPECIFIED.into(), String::default())
-    }
 }
 
 impl RpcHeaderExt {
