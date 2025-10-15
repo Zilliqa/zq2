@@ -1,7 +1,7 @@
 # RPC Rate Limits Configuration
 # Values represent empirical estimates and derived limits for various RPC endpoints
 
-[credit_rate]
+[credit_rates]
 CreateTransaction = 80
 GetContractAddressFromTransactionID = 250
 GetBlockchainInfo = 500
@@ -69,7 +69,7 @@ net_version = 5
 net_peerCount = 80
 net_listening = 5
 
-web3_clientVersion = 80
+web3_clientVersion = 5
 
 ots_getApiLevel = 5
 ots_getBlockDetails = 80
