@@ -103,6 +103,7 @@ impl NodeLauncher {
         request_responses_sender: UnboundedSender<(ResponseChannel, ExternalMessage)>,
         peer_num: Arc<AtomicUsize>,
         swarm_peers: Arc<ArcSwap<Vec<PeerId>>>,
+        redis_address: Option<String>,
     ) -> Result<(Self, NodeInputChannels, Arc<SyncPeers>)> {
         /// Helper to create a (sender, receiver) pair for a channel.
         fn sender_receiver<T>() -> (UnboundedSender<T>, UnboundedReceiverStream<T>) {
@@ -133,7 +134,7 @@ impl NodeLauncher {
         )?;
 
         let node = Arc::new(node);
-        let credit_store = Arc::new(RpcCreditStore::new(None));
+        let credit_store = Arc::new(RpcCreditStore::new(redis_address));
         let credit_rate = Arc::new(RpcCreditRate::new(config.credit_rates.clone()));
 
         for api_server in &config.api_servers {

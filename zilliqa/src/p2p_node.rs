@@ -239,7 +239,11 @@ impl P2pNode {
         }
     }
 
-    pub async fn add_shard_node(&mut self, config: NodeConfig) -> Result<()> {
+    pub async fn add_shard_node(
+        &mut self,
+        config: NodeConfig,
+        redis_address: Option<String>,
+    ) -> Result<()> {
         let shard_id = config.eth_chain_id;
         if self.shard_nodes.contains_key(&shard_id) {
             info!("LaunchShard message received for a shard we're already running. Ignoring...");
@@ -253,6 +257,7 @@ impl P2pNode {
             self.request_responses_sender.clone(),
             self.peer_num.clone(),
             self.swarm_peers.clone(),
+            redis_address,
         )
         .await?;
         self.shard_peers.insert(shard_id, peers);
@@ -461,7 +466,7 @@ impl P2pNode {
                                 .cloned()
                                 .unwrap_or_else(
                                     || Self::generate_child_config(self.config.nodes.first().unwrap(), shard_id));
-                            self.add_shard_node(shard_config.clone()).await?;
+                            self.add_shard_node(shard_config.clone(), self.config.redis_address.clone()).await?;
                         },
                         InternalMessage::LaunchLink(_) | InternalMessage::IntershardCall(_) => {
                             self.send_to(&Self::shard_id_to_topic(destination, None).hash(), |c| c.local_messages.send((source, message)))?;

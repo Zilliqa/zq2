@@ -15,7 +15,7 @@ pub struct RpcCreditStore {
 
 impl RpcCreditStore {
     const REDIS_BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
-    // Implement methods here
+    // uri e.g. "redis://localhost:6379"
     pub fn new(uri: Option<String>) -> Self {
         let num_workers = tokio::runtime::Handle::try_current()
             .map(|h| h.metrics().num_workers().max(4))
