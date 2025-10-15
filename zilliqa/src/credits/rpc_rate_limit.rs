@@ -10,7 +10,7 @@ use jsonrpsee::{
 };
 use std::{
     sync::Arc,
-    time::{Duration, Instant},
+    time::{Duration, SystemTime},
 };
 
 const RPC_ERROR_CODE: i32 = -32000;
@@ -54,7 +54,7 @@ impl<S> RpcRateLimit<S> {
         // TODO: make this strict, if so desired.
         let next_state = match state {
             RateLimitState::Deny { until } => {
-                let now = Instant::now();
+                let now = SystemTime::now();
                 if now < until {
                     // continue to deny
                     RateLimitState::Deny { until }
@@ -68,7 +68,7 @@ impl<S> RpcRateLimit<S> {
                 }
             }
             RateLimitState::Allow { until, balance } => {
-                let now = Instant::now();
+                let now = SystemTime::now();
                 if now > until {
                     // refresh period
                     let cost = self.credit_list.get_credit(method);

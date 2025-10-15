@@ -133,7 +133,7 @@ impl NodeLauncher {
         )?;
 
         let node = Arc::new(node);
-        let credit_store = Arc::new(RpcCreditStore::new());
+        let credit_store = Arc::new(RpcCreditStore::new(None));
         let price_list = Arc::new(RpcPriceList::new(config.credit_list.clone()));
 
         for api_server in &config.api_servers {

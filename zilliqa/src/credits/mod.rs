@@ -9,7 +9,7 @@ pub use rpc_price_list::*;
 pub use rpc_rate_limit::*;
 
 use serde::{Deserialize, Deserializer, Serialize};
-use std::time::{Duration, Instant};
+use std::time::{Duration, SystemTime};
 
 #[derive(Debug, Copy, Clone, Default, Serialize, Deserialize)]
 pub struct RateLimit {
@@ -32,8 +32,8 @@ impl RateLimit {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub enum RateLimitState {
-    Deny { until: Instant },
-    Allow { until: Instant, balance: u64 },
+    Deny { until: SystemTime },
+    Allow { until: SystemTime, balance: u64 },
 }
