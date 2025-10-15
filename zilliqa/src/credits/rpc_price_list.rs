@@ -1,7 +1,7 @@
 use dashmap::DashMap;
 use std::collections::HashMap;
 
-static DEFAULT_CREDIT: u64 = 500;
+const DEFAULT_CREDIT: u64 = 500;
 
 #[derive(Debug, Clone)]
 pub struct RpcPriceList {
