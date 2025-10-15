@@ -1,23 +1,40 @@
 use crate::credits::RateLimitState;
 use anyhow::Result;
 use parking_lot::RwLock;
-use std::time::Instant;
+use r2d2::Pool;
+use redis::{Client, TypedCommands};
+use std::time::SystemTime;
+
+const REDIS_BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
+
+// sane default, immediately expires and passes.
+const NULL_STATE: RateLimitState = RateLimitState::Deny {
+    until: SystemTime::UNIX_EPOCH,
+};
 
 /// Abstraction for managing global rate limits and user-specific rate limits.
 #[derive(Debug)]
 pub struct RpcCreditStore {
+    pool: Option<Pool<Client>>,
     // this is the glocal state, that is used in testing w/o needing a redis server.
     null_state: RwLock<RateLimitState>,
 }
 
 impl RpcCreditStore {
     // Implement methods here
-    pub fn new() -> Self {
+    pub fn new(uri: Option<String>) -> Self {
+        let num_workers = tokio::runtime::Handle::try_current()
+            .map(|h| h.metrics().num_workers().max(4))
+            .unwrap_or(4);
+
         RpcCreditStore {
-            // sane default, immediately expires and passes.
-            null_state: RwLock::new(RateLimitState::Deny {
-                until: Instant::now(),
+            pool: uri.and_then(|uri| {
+                Pool::builder()
+                    .max_size(2 * num_workers as u32)
+                    .build(Client::open(uri).unwrap())
+                    .ok()
             }),
+            null_state: RwLock::new(NULL_STATE.clone()),
         }
     }
 
@@ -28,10 +45,17 @@ impl RpcCreditStore {
             return Ok(self.null_state.read().clone());
         }
 
-        // sane default, immediately expires and passes.
-        Ok(RateLimitState::Deny {
-            until: Instant::now(),
-        })
+        // get from redis pool, if one is configured
+        if let Some(pool) = self.pool.as_ref() {
+            let mut conn = pool.get()?;
+            let bin = conn.get(key)?.unwrap_or_default();
+            let state = bincode::serde::decode_from_slice::<RateLimitState, _>(
+                bin.as_bytes(),
+                REDIS_BINCODE_CONFIG,
+            )?;
+            return Ok(state.0);
+        }
+        Ok(NULL_STATE.clone())
     }
 
     pub fn update_user_state(&self, key: &str, state: &RateLimitState) -> Result<()> {
@@ -39,15 +63,31 @@ impl RpcCreditStore {
         if key.is_empty() {
             // this is a special case for empty key, which is treated as a global rate-limit.
             *self.null_state.write() = state.clone();
+            return Ok(());
         }
 
-        // Implement logic to update user state
+        // set to redis pool, if one is configured
+        if let Some(pool) = self.pool.as_ref() {
+            let secs = match state {
+                RateLimitState::Allow { until, .. } => until
+                    .duration_since(SystemTime::now())
+                    .unwrap_or_default()
+                    .as_secs(),
+                RateLimitState::Deny { until } => until
+                    .duration_since(SystemTime::now())
+                    .unwrap_or_default()
+                    .as_secs(),
+            };
+            let bin = bincode::serde::encode_to_vec(state, REDIS_BINCODE_CONFIG)?;
+            let mut conn = pool.get()?;
+            conn.set_ex(key, bin, secs)?; // set expiry, helps to manage redis size
+        }
         Ok(())
     }
 }
 
 impl Default for RpcCreditStore {
     fn default() -> Self {
-        Self::new()
+        Self::new(None)
     }
 }
