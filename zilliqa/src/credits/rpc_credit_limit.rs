@@ -125,17 +125,15 @@ where
         let key = ext.remote_ip.map(|ip| ip.to_string()).unwrap_or_default();
 
         // Get the user state
-        let state = self
-            .credit_store
-            .get_user_state(&key)
-            .expect("Failed to get user state");
+        let state = self.credit_store.get_user_state(&key).unwrap_or_default();
 
         if let Some(balance) =
             self.check_credit_limit(state, &self.default_limit, req.method_name())
         {
             self.credit_store
                 .update_user_state(&key, &balance)
-                .expect("Failed to update user state");
+                .map_err(|err| tracing::error!(%err, "Credit store"))
+                .ok(); // ignore errors
 
             if matches!(balance, RateState::Allow { .. }) {
                 return ResponseFuture::future(self.service.call(req));
@@ -162,10 +160,7 @@ where
         let key = ext.remote_ip.map(|ip| ip.to_string()).unwrap_or_default();
 
         // Get the user state
-        let mut state = self
-            .credit_store
-            .get_user_state(&key)
-            .expect("Failed to get user state");
+        let mut state = self.credit_store.get_user_state(&key).unwrap_or_default();
 
         for entry in batch.iter_mut() {
             match entry {
@@ -190,7 +185,8 @@ where
 
         self.credit_store
             .update_user_state(&key, &state)
-            .expect("Failed to update user state");
+            .map_err(|err| tracing::error!(%err, "Credit store"))
+            .ok(); // ignore errors
 
         self.service.batch(batch)
     }
