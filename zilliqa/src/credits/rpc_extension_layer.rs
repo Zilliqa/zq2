@@ -61,19 +61,19 @@ where
 
     fn call(&mut self, mut req: HttpRequest) -> Self::Future {
         // add the remote-ip
-        let remote_ip = req.headers().get(X_FORWARDED_FOR).and_then(|xff| {
-            xff.to_str()
-                .ok()
-                .and_then(|value| value.split(',').next())
-                .and_then(|first| IpAddr::from_str(first.trim()).ok())
-        });
+        let remote_ip = req
+            .headers()
+            .get(X_FORWARDED_FOR)
+            .and_then(|val| val.to_str().ok())
+            .and_then(|list| list.split(',').next())
+            .and_then(|first| IpAddr::from_str(first.trim()).ok());
 
         // add the remote-user
         let remote_user = req
             .headers()
             .get(AUTHORIZATION)
-            .and_then(|value| value.to_str().ok())
-            .map(|value| value.to_string());
+            .and_then(|val| val.to_str().ok())
+            .map(|user| user.to_string());
 
         // Add extra underlying metadata to the request extension.
         req.extensions_mut().insert(RpcHeaderExt {
