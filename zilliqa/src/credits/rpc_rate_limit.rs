@@ -33,7 +33,7 @@ impl<S> RpcRateLimit<S> {
     ) -> Self {
         Self {
             service,
-            // default rate-limit is effectively, unlimited
+            // default rate-limit is unlimited
             default_limit: default_limit.unwrap_or(RateLimit {
                 balance: u64::MAX,
                 period: Duration::default(),
