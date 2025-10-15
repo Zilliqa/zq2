@@ -1,15 +1,12 @@
 use dashmap::DashMap;
 use std::collections::HashMap;
 
-const DEFAULT_CREDIT: u64 = 500;
+const DEFAULT_CREDIT: u64 = 500; // arbitrarily chosen
 
 #[derive(Debug, Clone)]
 pub struct RpcCreditRate {
     credits: DashMap<String, u64>,
 }
-
-// Pricing should be derived based on the typical/average timing of the RPC calls.
-// The conversion rate should be around 1ms:1credit such that a 5ms call costs 5 credits.
 
 impl RpcCreditRate {
     pub fn new(credit_list: HashMap<String, u64>) -> Self {
@@ -17,6 +14,8 @@ impl RpcCreditRate {
         for (key, value) in credit_list.into_iter() {
             credits.insert(key, value);
         }
+        // Zero fee for health check
+        credits.insert(String::from("health_check"), 0);
         Self { credits }
     }
 
