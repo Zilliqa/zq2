@@ -42,6 +42,8 @@ pub struct Config {
     pub otlp_collector_endpoint: Option<String>,
     #[serde(default = "slow_rpc_queries_handlers_count_default")]
     pub slow_rpc_queries_handlers_count: usize,
+    #[serde(default)]
+    pub redis_address: Option<String>,
 }
 
 pub fn slow_rpc_queries_handlers_count_default() -> usize {
