@@ -252,7 +252,8 @@ pub struct NodeConfig {
     /// Disabled state queries for the following contracts
     pub disable_get_full_state_for_contracts: Vec<Address>,
     #[serde(default)]
-    pub credit_list: HashMap<String, u64>,
+    /// Rate list for each RPC method
+    pub credit_rates: HashMap<String, u64>,
 }
 
 impl Default for NodeConfig {
@@ -275,7 +276,7 @@ impl Default for NodeConfig {
             max_rpc_response_size: max_rpc_response_size_default(),
             max_missed_view_age: max_missed_view_age_default(),
             disable_get_full_state_for_contracts: disable_get_full_state_for_contracts_default(),
-            credit_list: HashMap::new(),
+            credit_rates: HashMap::new(),
         }
     }
 }
