@@ -10,6 +10,7 @@ bootstrap_address = [
 eth_chain_id = 33101
 allowed_timestamp_skew = { secs = 60, nanos = 0 }
 data_dir = "/data"
+api_limits.disable_get_full_state_for_contracts = []
 consensus.genesis_accounts = [ ["0x214695413d1ea6a4a4453cd24ffd151fbc95496a", "900_000_000_000_000_000_000_000_000" ] ]
 consensus.genesis_deposits = [
   [
