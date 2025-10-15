@@ -1,6 +1,8 @@
-/// Based on https://github.com/paritytech/jsonrpsee/blob/master/examples/examples/rpc_middleware_rate_limiting.rs
-///
-use crate::credits::{RateLimit, RateLimitState, RpcCreditRate, RpcCreditStore, RpcHeaderExt};
+use std::{
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
+
 use jsonrpsee::{
     MethodResponse,
     core::middleware::{
@@ -8,10 +10,10 @@ use jsonrpsee::{
     },
     types::{ErrorObject, Request},
 };
-use std::{
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+
+/// Based on https://github.com/paritytech/jsonrpsee/blob/master/examples/examples/rpc_middleware_rate_limiting.rs
+///
+use crate::credits::{RateLimit, RateLimitState, RpcCreditRate, RpcCreditStore, RpcHeaderExt};
 
 const RPC_ERROR_CODE: i32 = -32000;
 const RPC_ERROR_MESSAGE: &str = "RPC_RATE_LIMIT";
