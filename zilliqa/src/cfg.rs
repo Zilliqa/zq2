@@ -1,7 +1,7 @@
 use crate::{
     constants::MISSED_VIEW_WINDOW,
+    credits::RateLimit,
     crypto::{Hash, NodePublicKey},
-    jsonrpc::RateLimit,
     transaction::EvmGas,
 };
 use alloy::{
