@@ -3,7 +3,7 @@ use std::time::SystemTime;
 use anyhow::Result;
 use parking_lot::RwLock;
 use r2d2::Pool;
-use redis::{Client, TypedCommands};
+use redis::{Client, Commands};
 
 use crate::credits::RateState;
 
@@ -44,9 +44,9 @@ impl RpcCreditStore {
         // get from redis pool, if one is configured
         if let Some(pool) = self.pool.as_ref() {
             let mut conn = pool.get()?;
-            let bin = conn.get(key)?.unwrap_or_default();
+            let bin: Vec<u8> = conn.get(key)?;
             let state = bincode::serde::decode_from_slice::<RateState, _>(
-                bin.as_bytes(),
+                bin.as_slice(),
                 Self::REDIS_BINCODE_CONFIG,
             )?;
             return Ok(state.0);
@@ -74,7 +74,7 @@ impl RpcCreditStore {
                 .as_secs();
             let bin = bincode::serde::encode_to_vec(state, Self::REDIS_BINCODE_CONFIG)?;
             let mut conn = pool.get()?;
-            conn.set_ex(key, bin, secs)?; // set expiry, helps to manage redis size
+            let _: () = conn.set_ex(key, bin, secs)?;
         }
         Ok(())
     }
