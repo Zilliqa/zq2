@@ -145,7 +145,7 @@ impl NodeLauncher {
                 .allow_methods(Method::POST)
                 .allow_origin(Any)
                 .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION, header::ACCEPT]); // We inject a [CorsLayer] to ensure web browsers can call our API directly.
-            let health = ProxyGetRequestLayer::new([("/health", "system_health")])?;
+            let health = ProxyGetRequestLayer::new([("/health", "health_check")])?;
             let rpc_exts = RpcExtensionLayer::new();
             let http_middleware = tower::ServiceBuilder::new()
                 .layer(rpc_exts)
