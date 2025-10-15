@@ -35,7 +35,7 @@ impl RpcCreditStore {
     }
 
     pub fn get_user_state(&self, key: &str) -> Result<RateState> {
-        tracing::trace!(%key, "GET");
+        tracing::debug!(%key, "GET");
         if key.is_empty() {
             // this is a special case for empty key, which is treated as a global rate-limit.
             return Ok(*self.null_state.read());
@@ -55,7 +55,7 @@ impl RpcCreditStore {
     }
 
     pub fn update_user_state(&self, key: &str, state: &RateState) -> Result<()> {
-        tracing::trace!(%key, ?state, "SET");
+        tracing::debug!(%key, ?state, "SET");
         if key.is_empty() {
             // this is a special case for empty key, which is treated as a global rate-limit.
             *self.null_state.write() = *state;

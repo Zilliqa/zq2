@@ -54,47 +54,46 @@ impl<S> RpcCreditLimit<S> {
         // simplifies the code by allowing the case where:
         // as long as balance > 0, we can always make at least one request.
         // TODO: make this strict, if so desired.
-        let next_state = match state {
+        let now = SystemTime::now();
+        match state {
             RateState::Deny { until } => {
-                let now = SystemTime::now();
                 if now < until {
                     // continue to deny
-                    RateState::Deny { until }
+                    return Some(RateState::Deny { until });
                 } else {
                     // refresh quota
                     let cost = self.credit_list.get_credit(method);
-                    RateState::Allow {
+                    return Some(RateState::Allow {
                         until: now + quota.period,
                         balance: quota.balance.saturating_sub(cost),
-                    }
+                    });
                 }
             }
             RateState::Allow { until, balance } => {
-                let now = SystemTime::now();
                 if now > until {
                     // refresh quota
                     let cost = self.credit_list.get_credit(method);
-                    RateState::Allow {
+                    return Some(RateState::Allow {
                         until: now + quota.period,
                         balance: quota.balance.saturating_sub(cost),
-                    }
+                    });
                 } else if balance > 0 {
                     // reduce balance
                     let cost = self.credit_list.get_credit(method);
-                    RateState::Allow {
+                    return Some(RateState::Allow {
                         until,
                         balance: balance.saturating_sub(cost),
-                    }
+                    });
                 } else {
                     // block
-                    RateState::Deny {
+                    Some(RateState::Deny {
                         until: now + quota.period,
-                    }
+                    })
                 }
             }
         };
 
-        Some(next_state)
+        None
     }
 }
 
@@ -119,7 +118,6 @@ where
             .extensions()
             .get::<RpcHeaderExt>()
             .expect("RpcHeaderExt must be present");
-        tracing::info!("CALL {ext:?}");
 
         // identify by IP
         let key = ext.remote_ip.map(|ip| ip.to_string()).unwrap_or_default();
@@ -132,7 +130,7 @@ where
         {
             self.credit_store
                 .update_user_state(&key, &balance)
-                .map_err(|err| tracing::error!(%err, "Credit store"))
+                .map_err(|err| tracing::error!(%err, "CALL"))
                 .ok(); // ignore errors
 
             if matches!(balance, RateState::Allow { .. }) {
@@ -154,7 +152,6 @@ where
             .extensions()
             .get::<RpcHeaderExt>()
             .expect("RpcHeaderExt must be present");
-        tracing::info!("BATCH {ext:?}");
 
         // identify by IP
         let key = ext.remote_ip.map(|ip| ip.to_string()).unwrap_or_default();
@@ -185,7 +182,7 @@ where
 
         self.credit_store
             .update_user_state(&key, &state)
-            .map_err(|err| tracing::error!(%err, "Credit store"))
+            .map_err(|err| tracing::error!(%err, "BATCH"))
             .ok(); // ignore errors
 
         self.service.batch(batch)
