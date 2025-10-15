@@ -1,10 +1,6 @@
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
-
 /// Based on https://github.com/paritytech/jsonrpsee/blob/master/examples/examples/rpc_middleware_rate_limiting.rs
 ///
+use crate::credits::{RateLimit, RateLimitState, RpcCreditStore, RpcHeaderExt, RpcPriceList};
 use jsonrpsee::{
     MethodResponse,
     core::middleware::{
@@ -12,8 +8,13 @@ use jsonrpsee::{
     },
     types::{ErrorObject, Request},
 };
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
-use crate::credits::{RateLimit, RateLimitState, RpcCreditStore, RpcHeaderExt, RpcPriceList};
+const RPC_ERROR_CODE: i32 = -32009;
+const RPC_ERROR_MESSAGE: &str = "RPC rate limit";
 
 #[derive(Clone)]
 pub struct RpcRateLimit<S> {
@@ -50,6 +51,7 @@ impl<S> RpcRateLimit<S> {
     ) -> Option<RateLimitState> {
         // simplifies the code by allowing the case where:
         // as long as balance > 0, we can always make at least one request.
+        // TODO: make this strict, if so desired.
         let next_state = match state {
             RateLimitState::Deny { until } => {
                 let now = Instant::now();
@@ -83,7 +85,6 @@ impl<S> RpcRateLimit<S> {
             }
         };
 
-        // Some(balance)
         Some(next_state)
     }
 }
@@ -120,10 +121,9 @@ where
             .get_user_state(&key)
             .expect("Failed to get user state");
 
-        // TODO: Extract limit from Authorization header
-        let limit = &self.default_limit;
-
-        if let Some(balance) = self.check_credit_limit(state, limit, req.method_name()) {
+        if let Some(balance) =
+            self.check_credit_limit(state, &self.default_limit, req.method_name())
+        {
             self.credit_store
                 .update_user_state(&key, &balance)
                 .expect("Failed to update user state");
@@ -134,7 +134,7 @@ where
         }
         ResponseFuture::ready(MethodResponse::error(
             req.id,
-            ErrorObject::borrowed(-32000, "RPC rate limit", None),
+            ErrorObject::borrowed(RPC_ERROR_CODE, RPC_ERROR_MESSAGE, None),
         ))
     }
 
@@ -158,13 +158,11 @@ where
             .get_user_state(&key)
             .expect("Failed to get user state");
 
-        // TODO: Extract limit from Authorization header
-        let limit = &self.default_limit;
-
         for entry in batch.iter_mut() {
             match entry {
                 Ok(BatchEntry::Call(req)) => {
-                    if let Some(balance) = self.check_credit_limit(state, limit, req.method_name())
+                    if let Some(balance) =
+                        self.check_credit_limit(state, &self.default_limit, req.method_name())
                     {
                         state = balance;
                         if matches!(state, RateLimitState::Allow { .. }) {
@@ -173,7 +171,7 @@ where
                     }
                     *entry = Err(BatchEntryErr::new(
                         req.id.clone(),
-                        ErrorObject::borrowed(-32000, "RPC rate limit", None),
+                        ErrorObject::borrowed(RPC_ERROR_CODE, RPC_ERROR_MESSAGE, None),
                     ));
                 }
                 Ok(BatchEntry::Notification(_)) => continue,
