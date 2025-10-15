@@ -5,13 +5,6 @@ use r2d2::Pool;
 use redis::{Client, TypedCommands};
 use std::time::SystemTime;
 
-const REDIS_BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
-
-// sane default, immediately expires and passes.
-const NULL_STATE: RateLimitState = RateLimitState::Deny {
-    until: SystemTime::UNIX_EPOCH,
-};
-
 /// Abstraction for managing global rate limits and user-specific rate limits.
 #[derive(Debug)]
 pub struct RpcCreditStore {
@@ -21,6 +14,7 @@ pub struct RpcCreditStore {
 }
 
 impl RpcCreditStore {
+    const REDIS_BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
     // Implement methods here
     pub fn new(uri: Option<String>) -> Self {
         let num_workers = tokio::runtime::Handle::try_current()
@@ -34,7 +28,7 @@ impl RpcCreditStore {
                     .build(Client::open(uri).unwrap())
                     .ok()
             }),
-            null_state: RwLock::new(NULL_STATE.clone()),
+            null_state: RwLock::new(RateLimitState::default()),
         }
     }
 
@@ -51,11 +45,11 @@ impl RpcCreditStore {
             let bin = conn.get(key)?.unwrap_or_default();
             let state = bincode::serde::decode_from_slice::<RateLimitState, _>(
                 bin.as_bytes(),
-                REDIS_BINCODE_CONFIG,
+                Self::REDIS_BINCODE_CONFIG,
             )?;
             return Ok(state.0);
         }
-        Ok(NULL_STATE.clone())
+        Ok(RateLimitState::default())
     }
 
     pub fn update_user_state(&self, key: &str, state: &RateLimitState) -> Result<()> {
@@ -68,17 +62,15 @@ impl RpcCreditStore {
 
         // set to redis pool, if one is configured
         if let Some(pool) = self.pool.as_ref() {
-            let secs = match state {
-                RateLimitState::Allow { until, .. } => until
-                    .duration_since(SystemTime::now())
-                    .unwrap_or_default()
-                    .as_secs(),
-                RateLimitState::Deny { until } => until
-                    .duration_since(SystemTime::now())
-                    .unwrap_or_default()
-                    .as_secs(),
+            let until = match state {
+                RateLimitState::Allow { until, .. } => until,
+                RateLimitState::Deny { until } => until,
             };
-            let bin = bincode::serde::encode_to_vec(state, REDIS_BINCODE_CONFIG)?;
+            let secs = until
+                .duration_since(SystemTime::now())
+                .unwrap_or_default()
+                .as_secs();
+            let bin = bincode::serde::encode_to_vec(state, Self::REDIS_BINCODE_CONFIG)?;
             let mut conn = pool.get()?;
             conn.set_ex(key, bin, secs)?; // set expiry, helps to manage redis size
         }
