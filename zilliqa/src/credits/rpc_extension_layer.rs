@@ -60,25 +60,19 @@ where
 
     fn call(&mut self, mut req: HttpRequest) -> Self::Future {
         // add the remote-ip
-        let remote_ip = req
-            .headers()
-            .get("X-Forwarded-For")
-            .map(|xff| {
-                xff.to_str()
-                    .unwrap_or_default()
-                    .split(',')
-                    .next()
-                    .map(|ip_str| IpAddr::from_str(ip_str.trim()).unwrap())
-                    .unwrap()
-            })
-            .unwrap_or(Ipv4Addr::UNSPECIFIED.into());
+        let remote_ip = req.headers().get("X-Forwarded-For").and_then(|xff| {
+            xff.to_str()
+                .ok()
+                .and_then(|value| value.split(',').next())
+                .and_then(|first| IpAddr::from_str(first.trim()).ok())
+        });
 
         // add the remote-user
         let remote_user = req
             .headers()
             .get(AUTHORIZATION)
-            .map(|auth| auth.to_str().unwrap_or_default().to_string())
-            .unwrap_or_default();
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.to_string());
 
         // Add extra underlying metadata to the request extension.
         req.extensions_mut().insert(RpcHeaderExt {
@@ -93,8 +87,8 @@ where
 /// Every POST request is modified by added additional headers with information.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct RpcHeaderExt {
-    pub remote_ip: IpAddr,
-    pub remote_user: String,
+    pub remote_ip: Option<IpAddr>,
+    pub remote_user: Option<String>,
 }
 
 impl Default for RpcHeaderExt {
@@ -106,8 +100,8 @@ impl Default for RpcHeaderExt {
 impl RpcHeaderExt {
     pub fn new(remote_ip: IpAddr, remote_user: String) -> Self {
         Self {
-            remote_ip,
-            remote_user,
+            remote_ip: Some(remote_ip),
+            remote_user: Some(remote_user),
         }
     }
 }
