@@ -5,14 +5,14 @@ use parking_lot::RwLock;
 use r2d2::Pool;
 use redis::{Client, TypedCommands};
 
-use crate::credits::RateLimitState;
+use crate::credits::RateState;
 
 /// Abstraction for managing global rate limits and user-specific rate limits.
 #[derive(Debug)]
 pub struct RpcCreditStore {
     pool: Option<Pool<Client>>,
     // this is the glocal state, that is used in testing w/o needing a redis server.
-    null_state: RwLock<RateLimitState>,
+    null_state: RwLock<RateState>,
 }
 
 impl RpcCreditStore {
@@ -30,11 +30,11 @@ impl RpcCreditStore {
                     .build(Client::open(uri).unwrap())
                     .ok()
             }),
-            null_state: RwLock::new(RateLimitState::default()),
+            null_state: RwLock::new(RateState::default()),
         }
     }
 
-    pub fn get_user_state(&self, key: &str) -> Result<RateLimitState> {
+    pub fn get_user_state(&self, key: &str) -> Result<RateState> {
         tracing::trace!(%key, "GET");
         if key.is_empty() {
             // this is a special case for empty key, which is treated as a global rate-limit.
@@ -45,16 +45,16 @@ impl RpcCreditStore {
         if let Some(pool) = self.pool.as_ref() {
             let mut conn = pool.get()?;
             let bin = conn.get(key)?.unwrap_or_default();
-            let state = bincode::serde::decode_from_slice::<RateLimitState, _>(
+            let state = bincode::serde::decode_from_slice::<RateState, _>(
                 bin.as_bytes(),
                 Self::REDIS_BINCODE_CONFIG,
             )?;
             return Ok(state.0);
         }
-        Ok(RateLimitState::default())
+        Ok(RateState::default())
     }
 
-    pub fn update_user_state(&self, key: &str, state: &RateLimitState) -> Result<()> {
+    pub fn update_user_state(&self, key: &str, state: &RateState) -> Result<()> {
         tracing::trace!(%key, ?state, "SET");
         if key.is_empty() {
             // this is a special case for empty key, which is treated as a global rate-limit.
@@ -65,8 +65,8 @@ impl RpcCreditStore {
         // set to redis pool, if one is configured
         if let Some(pool) = self.pool.as_ref() {
             let until = match state {
-                RateLimitState::Allow { until, .. } => until,
-                RateLimitState::Deny { until } => until,
+                RateState::Allow { until, .. } => until,
+                RateState::Deny { until } => until,
             };
             let secs = until
                 .duration_since(SystemTime::now())

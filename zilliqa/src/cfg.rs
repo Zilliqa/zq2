@@ -12,7 +12,7 @@ use serde_json::json;
 
 use crate::{
     constants::MISSED_VIEW_WINDOW,
-    credits::RateLimit,
+    credits::RateQuota,
     crypto::{Hash, NodePublicKey},
     transaction::EvmGas,
 };
@@ -124,7 +124,7 @@ pub struct ApiServer {
     /// RPC APIs to enable.
     pub enabled_apis: Vec<EnabledApi>,
     #[serde(default)]
-    pub default_credit: Option<RateLimit>,
+    pub default_quota: Option<RateQuota>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

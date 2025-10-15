@@ -521,7 +521,7 @@ impl Setup {
                 api_servers: vec![ApiServer {
                     port,
                     enabled_apis: api::all_enabled(),
-                    default_credit: None,
+                    default_quota: None,
                 }],
                 credit_rates: HashMap::new(),
                 allowed_timestamp_skew: allowed_timestamp_skew_default(),
