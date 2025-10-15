@@ -4,14 +4,14 @@ use std::collections::HashMap;
 const DEFAULT_CREDIT: u64 = 500;
 
 #[derive(Debug, Clone)]
-pub struct RpcPriceList {
+pub struct RpcCreditRate {
     credits: DashMap<String, u64>,
 }
 
 // Pricing should be derived based on the typical/average timing of the RPC calls.
 // The conversion rate should be around 1ms:1credit such that a 5ms call costs 5 credits.
 
-impl RpcPriceList {
+impl RpcCreditRate {
     pub fn new(credit_list: HashMap<String, u64>) -> Self {
         let credits = DashMap::with_capacity(credit_list.len());
         for (key, value) in credit_list.into_iter() {

@@ -1,6 +1,6 @@
 /// Based on https://github.com/paritytech/jsonrpsee/blob/master/examples/examples/rpc_middleware_rate_limiting.rs
 ///
-use crate::credits::{RateLimit, RateLimitState, RpcCreditStore, RpcHeaderExt, RpcPriceList};
+use crate::credits::{RateLimit, RateLimitState, RpcCreditRate, RpcCreditStore, RpcHeaderExt};
 use jsonrpsee::{
     MethodResponse,
     core::middleware::{
@@ -17,18 +17,18 @@ const RPC_ERROR_CODE: i32 = -32000;
 const RPC_ERROR_MESSAGE: &str = "RPC_RATE_LIMIT";
 
 #[derive(Clone)]
-pub struct RpcRateLimit<S> {
+pub struct RpcCreditLimit<S> {
     service: S,
     default_limit: RateLimit,
     credit_store: Arc<RpcCreditStore>,
-    credit_list: Arc<RpcPriceList>,
+    credit_list: Arc<RpcCreditRate>,
 }
 
-impl<S> RpcRateLimit<S> {
+impl<S> RpcCreditLimit<S> {
     pub fn new(
         service: S,
         credit_store: Arc<RpcCreditStore>,
-        price_list: Arc<RpcPriceList>,
+        price_list: Arc<RpcCreditRate>,
         default_limit: Option<RateLimit>,
     ) -> Self {
         Self {
@@ -96,7 +96,7 @@ impl<S> RpcRateLimit<S> {
     }
 }
 
-impl<S> RpcServiceT for RpcRateLimit<S>
+impl<S> RpcServiceT for RpcCreditLimit<S>
 where
     S: RpcServiceT<
             MethodResponse = MethodResponse,
