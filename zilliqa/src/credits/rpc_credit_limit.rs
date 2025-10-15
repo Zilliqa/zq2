@@ -48,7 +48,7 @@ impl<S> RpcCreditLimit<S> {
     fn check_credit_limit(
         &self,
         state: RateLimitState,
-        limit: &RateLimit,
+        quota: &RateLimit,
         method: &str,
     ) -> Option<RateLimitState> {
         // simplifies the code by allowing the case where:
@@ -61,22 +61,22 @@ impl<S> RpcCreditLimit<S> {
                     // continue to deny
                     RateLimitState::Deny { until }
                 } else {
-                    // refresh period
+                    // refresh quota
                     let cost = self.credit_list.get_credit(method);
                     RateLimitState::Allow {
-                        until: now + limit.period,
-                        balance: limit.balance.saturating_sub(cost),
+                        until: now + quota.period,
+                        balance: quota.balance.saturating_sub(cost),
                     }
                 }
             }
             RateLimitState::Allow { until, balance } => {
                 let now = SystemTime::now();
                 if now > until {
-                    // refresh period
+                    // refresh quota
                     let cost = self.credit_list.get_credit(method);
                     RateLimitState::Allow {
-                        until: now + limit.period,
-                        balance: limit.balance.saturating_sub(cost),
+                        until: now + quota.period,
+                        balance: quota.balance.saturating_sub(cost),
                     }
                 } else if balance > 0 {
                     // reduce balance
@@ -88,7 +88,7 @@ impl<S> RpcCreditLimit<S> {
                 } else {
                     // block
                     RateLimitState::Deny {
-                        until: now + limit.period,
+                        until: now + quota.period,
                     }
                 }
             }
