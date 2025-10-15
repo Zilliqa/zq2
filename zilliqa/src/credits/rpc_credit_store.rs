@@ -1,9 +1,11 @@
-use crate::credits::RateLimitState;
+use std::time::SystemTime;
+
 use anyhow::Result;
 use parking_lot::RwLock;
 use r2d2::Pool;
 use redis::{Client, TypedCommands};
-use std::time::SystemTime;
+
+use crate::credits::RateLimitState;
 
 /// Abstraction for managing global rate limits and user-specific rate limits.
 #[derive(Debug)]
@@ -36,7 +38,7 @@ impl RpcCreditStore {
         tracing::trace!(%key, "GET");
         if key.is_empty() {
             // this is a special case for empty key, which is treated as a global rate-limit.
-            return Ok(self.null_state.read().clone());
+            return Ok(*self.null_state.read());
         }
 
         // get from redis pool, if one is configured
@@ -53,10 +55,10 @@ impl RpcCreditStore {
     }
 
     pub fn update_user_state(&self, key: &str, state: &RateLimitState) -> Result<()> {
-        tracing::trace!(%key, ?state,"SET");
+        tracing::trace!(%key, ?state, "SET");
         if key.is_empty() {
             // this is a special case for empty key, which is treated as a global rate-limit.
-            *self.null_state.write() = state.clone();
+            *self.null_state.write() = *state;
             return Ok(());
         }
 
