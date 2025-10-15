@@ -13,7 +13,7 @@ use libp2p::{Multiaddr, PeerId};
 use rand::{Rng, distributions::Alphanumeric};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::json;
-use std::{ops::Deref, str::FromStr, time::Duration};
+use std::{collections::HashMap, ops::Deref, str::FromStr, time::Duration};
 
 // Note that z2 constructs instances of this to save as a configuration so it must be both
 // serializable and deserializable.
@@ -251,6 +251,8 @@ pub struct NodeConfig {
     #[serde(default = "disable_get_full_state_for_contracts_default")]
     /// Disabled state queries for the following contracts
     pub disable_get_full_state_for_contracts: Vec<Address>,
+    #[serde(default)]
+    pub credit_list: HashMap<String, u64>,
 }
 
 impl Default for NodeConfig {
@@ -273,6 +275,7 @@ impl Default for NodeConfig {
             max_rpc_response_size: max_rpc_response_size_default(),
             max_missed_view_age: max_missed_view_age_default(),
             disable_get_full_state_for_contracts: disable_get_full_state_for_contracts_default(),
+            credit_list: HashMap::new(),
         }
     }
 }
