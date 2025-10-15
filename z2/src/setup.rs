@@ -19,9 +19,9 @@ use tokio::fs;
 use zilliqa::{
     api,
     cfg::{
-        ApiServer, DbConfig, SyncConfig, genesis_fork_default, max_missed_view_age_default,
-        max_rpc_response_size_default, new_view_broadcast_interval_default,
-        state_cache_size_default,
+        ApiLimits, ApiServer, DbConfig, SyncConfig, genesis_fork_default,
+        max_missed_view_age_default, max_rpc_response_size_default,
+        new_view_broadcast_interval_default, state_cache_size_default,
     },
     crypto::{SecretKey, TransactionPublicKey},
 };
@@ -29,11 +29,11 @@ use zilliqa::{
     cfg::{
         self, Amount, ConsensusConfig, ContractUpgrades, GenesisDeposit,
         allowed_timestamp_skew_default, block_request_limit_default, block_time_default,
-        consensus_timeout_default, disable_get_full_state_for_contracts_default,
-        eth_chain_id_default, failed_request_sleep_duration_default, scilla_address_default,
-        scilla_ext_libs_path_default, scilla_server_socket_directory_default,
-        scilla_stdlib_dir_default, slow_rpc_queries_handlers_count_default,
-        state_rpc_limit_default, total_native_token_supply_default,
+        consensus_timeout_default, eth_chain_id_default, failed_request_sleep_duration_default,
+        scilla_address_default, scilla_ext_libs_path_default,
+        scilla_server_socket_directory_default, scilla_stdlib_dir_default,
+        slow_rpc_queries_handlers_count_default, state_rpc_limit_default,
+        total_native_token_supply_default,
     },
     transaction::EvmGas,
 };
@@ -559,8 +559,7 @@ impl Setup {
                 enable_ots_indices: false,
                 max_rpc_response_size: max_rpc_response_size_default(),
                 max_missed_view_age: max_missed_view_age_default(),
-                disable_get_full_state_for_contracts: disable_get_full_state_for_contracts_default(
-                ),
+                api_limits: ApiLimits::default(),
             };
             println!("🧩  Node {node_index} has RPC port {port}");
 
