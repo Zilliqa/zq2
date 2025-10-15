@@ -1,10 +1,3 @@
-use std::{
-    net::{IpAddr, Ipv4Addr},
-    pin::Pin,
-    str::FromStr,
-    task::{Context, Poll},
-};
-
 use anyhow::Result;
 use futures::{FutureExt, TryFutureExt};
 use http::header::AUTHORIZATION;
@@ -12,7 +5,15 @@ use jsonrpsee::{
     core::BoxError,
     server::{HttpRequest, HttpResponse},
 };
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    pin::Pin,
+    str::FromStr,
+    task::{Context, Poll},
+};
 use tower::{Layer, Service};
+
+const X_FORWARDED_FOR: &str = "x-forwarded-for";
 
 /// Adds some extra data to the request
 #[derive(Debug, Clone, Default)]
@@ -60,7 +61,7 @@ where
 
     fn call(&mut self, mut req: HttpRequest) -> Self::Future {
         // add the remote-ip
-        let remote_ip = req.headers().get("X-Forwarded-For").and_then(|xff| {
+        let remote_ip = req.headers().get(X_FORWARDED_FOR).and_then(|xff| {
             xff.to_str()
                 .ok()
                 .and_then(|value| value.split(',').next())
