@@ -157,13 +157,13 @@ impl NodeLauncher {
             // RPC middleware
             let credit_store = credit_store.clone();
             let credit_rate = credit_rate.clone();
-            let default_limit = api_server.default_credit;
+            let default_quota = api_server.default_quota;
             let rpc_middleware = RpcServiceBuilder::new().layer_fn(move |service| {
                 RpcCreditLimit::new(
                     service,
                     credit_store.clone(),
                     credit_rate.clone(),
-                    default_limit,
+                    default_quota,
                 )
             });
 

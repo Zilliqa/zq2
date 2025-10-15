@@ -13,7 +13,7 @@ use jsonrpsee::{
 
 /// Based on https://github.com/paritytech/jsonrpsee/blob/master/examples/examples/rpc_middleware_rate_limiting.rs
 ///
-use crate::credits::{RateLimit, RateLimitState, RpcCreditRate, RpcCreditStore, RpcHeaderExt};
+use crate::credits::{RateQuota, RateState, RpcCreditRate, RpcCreditStore, RpcHeaderExt};
 
 const RPC_ERROR_CODE: i32 = -32000;
 const RPC_ERROR_MESSAGE: &str = "RPC_RATE_LIMIT";
@@ -21,7 +21,7 @@ const RPC_ERROR_MESSAGE: &str = "RPC_RATE_LIMIT";
 #[derive(Clone)]
 pub struct RpcCreditLimit<S> {
     service: S,
-    default_limit: RateLimit,
+    default_limit: RateQuota,
     credit_store: Arc<RpcCreditStore>,
     credit_list: Arc<RpcCreditRate>,
 }
@@ -31,12 +31,12 @@ impl<S> RpcCreditLimit<S> {
         service: S,
         credit_store: Arc<RpcCreditStore>,
         price_list: Arc<RpcCreditRate>,
-        default_limit: Option<RateLimit>,
+        default_quota: Option<RateQuota>,
     ) -> Self {
         Self {
             service,
             // default rate-limit is unlimited
-            default_limit: default_limit.unwrap_or(RateLimit {
+            default_limit: default_quota.unwrap_or(RateQuota {
                 balance: u64::MAX,
                 period: Duration::default(),
             }),
@@ -47,47 +47,47 @@ impl<S> RpcCreditLimit<S> {
 
     fn check_credit_limit(
         &self,
-        state: RateLimitState,
-        quota: &RateLimit,
+        state: RateState,
+        quota: &RateQuota,
         method: &str,
-    ) -> Option<RateLimitState> {
+    ) -> Option<RateState> {
         // simplifies the code by allowing the case where:
         // as long as balance > 0, we can always make at least one request.
         // TODO: make this strict, if so desired.
         let next_state = match state {
-            RateLimitState::Deny { until } => {
+            RateState::Deny { until } => {
                 let now = SystemTime::now();
                 if now < until {
                     // continue to deny
-                    RateLimitState::Deny { until }
+                    RateState::Deny { until }
                 } else {
                     // refresh quota
                     let cost = self.credit_list.get_credit(method);
-                    RateLimitState::Allow {
+                    RateState::Allow {
                         until: now + quota.period,
                         balance: quota.balance.saturating_sub(cost),
                     }
                 }
             }
-            RateLimitState::Allow { until, balance } => {
+            RateState::Allow { until, balance } => {
                 let now = SystemTime::now();
                 if now > until {
                     // refresh quota
                     let cost = self.credit_list.get_credit(method);
-                    RateLimitState::Allow {
+                    RateState::Allow {
                         until: now + quota.period,
                         balance: quota.balance.saturating_sub(cost),
                     }
                 } else if balance > 0 {
                     // reduce balance
                     let cost = self.credit_list.get_credit(method);
-                    RateLimitState::Allow {
+                    RateState::Allow {
                         until,
                         balance: balance.saturating_sub(cost),
                     }
                 } else {
                     // block
-                    RateLimitState::Deny {
+                    RateState::Deny {
                         until: now + quota.period,
                     }
                 }
@@ -137,7 +137,7 @@ where
                 .update_user_state(&key, &balance)
                 .expect("Failed to update user state");
 
-            if matches!(balance, RateLimitState::Allow { .. }) {
+            if matches!(balance, RateState::Allow { .. }) {
                 return ResponseFuture::future(self.service.call(req));
             }
         }
@@ -174,7 +174,7 @@ where
                         self.check_credit_limit(state, &self.default_limit, req.method_name())
                     {
                         state = balance;
-                        if matches!(state, RateLimitState::Allow { .. }) {
+                        if matches!(state, RateState::Allow { .. }) {
                             continue;
                         }
                     }

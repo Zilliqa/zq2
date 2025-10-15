@@ -12,7 +12,7 @@ pub use rpc_extension_layer::*;
 use serde::{Deserialize, Deserializer, Serialize};
 
 #[derive(Debug, Copy, Clone, Default, Serialize, Deserialize)]
-pub struct RateLimit {
+pub struct RateQuota {
     pub balance: u64,
     #[serde(deserialize_with = "deserialize_duration")]
     pub period: Duration,
@@ -26,19 +26,19 @@ where
     Ok(Duration::from_secs(x))
 }
 
-impl RateLimit {
+impl RateQuota {
     pub fn new(balance: u64, period: Duration) -> Self {
         Self { balance, period }
     }
 }
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
-pub enum RateLimitState {
+pub enum RateState {
     Deny { until: SystemTime },
     Allow { until: SystemTime, balance: u64 },
 }
 
-impl Default for RateLimitState {
+impl Default for RateState {
     #[inline]
     fn default() -> Self {
         Self::Deny {
