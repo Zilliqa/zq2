@@ -32,9 +32,10 @@ impl<S> RpcRateLimit<S> {
     ) -> Self {
         Self {
             service,
+            // default rate-limit is effectively, unlimited
             default_limit: default_limit.unwrap_or(RateLimit {
                 balance: u64::MAX,
-                period: Duration::from_secs(1),
+                period: Duration::default(),
             }),
             credit_store: credit_store.clone(),
             credit_list: price_list.clone(),
@@ -111,7 +112,7 @@ where
         tracing::info!("CALL {ext:?}");
 
         // identify by IP
-        let key = ext.remote_ip.to_string();
+        let key = ext.remote_ip.map(|ip| ip.to_string()).unwrap_or_default();
 
         // Get the user state
         let state = self
@@ -149,7 +150,7 @@ where
         tracing::info!("BATCH {ext:?}");
 
         // identify by IP
-        let key = ext.remote_ip.to_string();
+        let key = ext.remote_ip.map(|ip| ip.to_string()).unwrap_or_default();
 
         // Get the user state
         let mut state = self
