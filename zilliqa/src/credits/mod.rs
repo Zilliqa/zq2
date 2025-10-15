@@ -37,3 +37,12 @@ pub enum RateLimitState {
     Deny { until: SystemTime },
     Allow { until: SystemTime, balance: u64 },
 }
+
+impl RateLimitState {
+    #[inline]
+    pub fn default() -> Self {
+        Self::Deny {
+            until: SystemTime::UNIX_EPOCH,
+        }
+    }
+}
