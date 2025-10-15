@@ -32,8 +32,8 @@ use tracing::*;
 use crate::{
     api::{self, subscription_id_provider::EthIdProvider},
     cfg::NodeConfig,
+    credits::{RpcCreditStore, RpcExtensionLayer, RpcPriceList, RpcRateLimit},
     crypto::SecretKey,
-    jsonrpc::{RpcCreditStore, RpcExtensionLayer, RpcPriceList, RpcRateLimit},
     message::{ExternalMessage, InternalMessage},
     node::{self, OutgoingMessageFailure},
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},

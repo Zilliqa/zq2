@@ -13,7 +13,7 @@ use jsonrpsee::{
     types::{ErrorObject, Request},
 };
 
-use crate::jsonrpc::{RateLimit, RateLimitState, RpcCreditStore, RpcHeaderExt, RpcPriceList};
+use crate::credits::{RateLimit, RateLimitState, RpcCreditStore, RpcHeaderExt, RpcPriceList};
 
 #[derive(Clone)]
 pub struct RpcRateLimit<S> {
