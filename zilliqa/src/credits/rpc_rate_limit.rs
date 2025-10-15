@@ -13,8 +13,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-const RPC_ERROR_CODE: i32 = -32009;
-const RPC_ERROR_MESSAGE: &str = "RPC rate limit";
+const RPC_ERROR_CODE: i32 = -32000;
+const RPC_ERROR_MESSAGE: &str = "RPC_RATE_LIMIT";
 
 #[derive(Clone)]
 pub struct RpcRateLimit<S> {
@@ -59,7 +59,7 @@ impl<S> RpcRateLimit<S> {
                     // continue to deny
                     RateLimitState::Deny { until }
                 } else {
-                    // change to allow, with new credit balance
+                    // refresh period
                     let cost = self.credit_list.get_credit(method);
                     RateLimitState::Allow {
                         until: now + limit.period,
@@ -68,16 +68,23 @@ impl<S> RpcRateLimit<S> {
                 }
             }
             RateLimitState::Allow { until, balance } => {
-                if balance > 0 {
-                    // update credit balance
+                let now = Instant::now();
+                if now > until {
+                    // refresh period
                     let cost = self.credit_list.get_credit(method);
                     RateLimitState::Allow {
-                        until: until + limit.period,
+                        until: now + limit.period,
+                        balance: limit.balance.saturating_sub(cost),
+                    }
+                } else if balance > 0 {
+                    // reduce balance
+                    let cost = self.credit_list.get_credit(method);
+                    RateLimitState::Allow {
+                        until,
                         balance: balance.saturating_sub(cost),
                     }
                 } else {
-                    // block now
-                    let now = Instant::now();
+                    // block
                     RateLimitState::Deny {
                         until: now + limit.period,
                     }
