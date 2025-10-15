@@ -3,13 +3,13 @@ mod rpc_credit_rate;
 mod rpc_credit_store;
 mod rpc_extension_layer;
 
+use std::time::{Duration, SystemTime};
+
 pub use rpc_credit_limit::*;
 pub use rpc_credit_rate::*;
 pub use rpc_credit_store::*;
 pub use rpc_extension_layer::*;
-
 use serde::{Deserialize, Deserializer, Serialize};
-use std::time::{Duration, SystemTime};
 
 #[derive(Debug, Copy, Clone, Default, Serialize, Deserialize)]
 pub struct RateLimit {
@@ -38,9 +38,9 @@ pub enum RateLimitState {
     Allow { until: SystemTime, balance: u64 },
 }
 
-impl RateLimitState {
+impl Default for RateLimitState {
     #[inline]
-    pub fn default() -> Self {
+    fn default() -> Self {
         Self::Deny {
             until: SystemTime::UNIX_EPOCH,
         }

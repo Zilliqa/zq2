@@ -1,5 +1,6 @@
-use dashmap::DashMap;
 use std::collections::HashMap;
+
+use dashmap::DashMap;
 
 const DEFAULT_CREDIT: u64 = 500; // arbitrarily chosen
 

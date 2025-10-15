@@ -1,3 +1,10 @@
+use std::{
+    net::IpAddr,
+    pin::Pin,
+    str::FromStr,
+    task::{Context, Poll},
+};
+
 use anyhow::Result;
 use futures::{FutureExt, TryFutureExt};
 use http::header::AUTHORIZATION;
@@ -6,12 +13,6 @@ use jsonrpsee::{
     server::{HttpRequest, HttpResponse},
 };
 use serde::Serialize;
-use std::{
-    net::IpAddr,
-    pin::Pin,
-    str::FromStr,
-    task::{Context, Poll},
-};
 use tower::{Layer, Service};
 
 const X_FORWARDED_FOR: &str = "x-forwarded-for";

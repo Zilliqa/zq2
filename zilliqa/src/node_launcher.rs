@@ -95,6 +95,7 @@ pub struct NodeInputChannels {
 }
 
 impl NodeLauncher {
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         secret_key: SecretKey,
         config: NodeConfig,

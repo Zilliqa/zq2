@@ -1,9 +1,5 @@
-use crate::{
-    constants::MISSED_VIEW_WINDOW,
-    credits::RateLimit,
-    crypto::{Hash, NodePublicKey},
-    transaction::EvmGas,
-};
+use std::{collections::HashMap, ops::Deref, str::FromStr, time::Duration};
+
 use alloy::{
     primitives::{Address, address},
     rlp::Encodable,
@@ -13,7 +9,13 @@ use libp2p::{Multiaddr, PeerId};
 use rand::{Rng, distributions::Alphanumeric};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::json;
-use std::{collections::HashMap, ops::Deref, str::FromStr, time::Duration};
+
+use crate::{
+    constants::MISSED_VIEW_WINDOW,
+    credits::RateLimit,
+    crypto::{Hash, NodePublicKey},
+    transaction::EvmGas,
+};
 
 // Note that z2 constructs instances of this to save as a configuration so it must be both
 // serializable and deserializable.
