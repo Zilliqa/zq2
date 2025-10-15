@@ -1,4 +1,4 @@
-use crate::jsonrpc::RateLimitState;
+use crate::credits::RateLimitState;
 use anyhow::Result;
 use std::time::{Duration, Instant};
 
