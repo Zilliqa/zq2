@@ -59,39 +59,39 @@ impl<S> RpcCreditLimit<S> {
             RateState::Deny { until } => {
                 if now < until {
                     // continue to deny
-                    return Some(RateState::Deny { until });
+                    Some(RateState::Deny { until })
                 } else {
                     // refresh quota
                     let cost = self.credit_rate.get_credit(method);
-                    return Some(RateState::Allow {
+                    Some(RateState::Allow {
                         until: now + quota.period,
                         balance: quota.balance.saturating_sub(cost),
-                    });
+                    })
                 }
             }
             RateState::Allow { until, balance } => {
                 if now > until {
                     // refresh quota
                     let cost = self.credit_rate.get_credit(method);
-                    return Some(RateState::Allow {
+                    Some(RateState::Allow {
                         until: now + quota.period,
                         balance: quota.balance.saturating_sub(cost),
-                    });
+                    })
                 } else if balance > 0 {
                     // reduce balance
                     let cost = self.credit_rate.get_credit(method);
-                    return Some(RateState::Allow {
+                    Some(RateState::Allow {
                         until,
                         balance: balance.saturating_sub(cost),
-                    });
+                    })
                 } else {
                     // block
-                    return Some(RateState::Deny {
+                    Some(RateState::Deny {
                         until: now + quota.period,
-                    });
+                    })
                 }
             }
-        };
+        }
     }
 }
 
@@ -126,7 +126,7 @@ where
             .check_credit_limit(state, &self.default_limit, req.method_name())
             .expect("Never None");
         self.credit_store
-            .update_release(&key, state.clone(), token)
+            .update_release(&key, state, token)
             .unwrap();
 
         if matches!(state, RateState::Deny { .. }) {
