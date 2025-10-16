@@ -12,6 +12,7 @@ pub use rpc_extension_layer::*;
 use serde::{Deserialize, Deserializer, Serialize};
 
 #[derive(Debug, Copy, Clone, Default, Serialize, Deserialize)]
+// Currently supports time-based rate-limiting
 pub struct RateQuota {
     pub balance: u64,
     #[serde(deserialize_with = "deserialize_duration")]
@@ -33,6 +34,7 @@ impl RateQuota {
 }
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+// Can be extended to support more features
 pub enum RateState {
     Deny { until: SystemTime },
     Allow { until: SystemTime, balance: u64 },
@@ -40,6 +42,7 @@ pub enum RateState {
 
 impl Default for RateState {
     #[inline]
+    // sane default - immediately expires and switches to allow.
     fn default() -> Self {
         Self::Deny {
             until: SystemTime::UNIX_EPOCH,
