@@ -86,14 +86,12 @@ impl<S> RpcCreditLimit<S> {
                     });
                 } else {
                     // block
-                    Some(RateState::Deny {
+                    return Some(RateState::Deny {
                         until: now + quota.period,
-                    })
+                    });
                 }
             }
         };
-
-        None
     }
 }
 
@@ -122,25 +120,31 @@ where
         // identify by IP
         let key = ext.remote_ip.map(|ip| ip.to_string()).unwrap_or_default();
 
-        // Get the user state
+        // R-M-W mechanism
+        self.credit_store
+            .acquire(&key)
+            .map_err(|e| {
+                tracing::error!(%e, "Failed to acquire credit");
+            })
+            .ok();
         let state = self.credit_store.get_user_state(&key).unwrap_or_default();
+        let balance = self
+            .check_credit_limit(state, &self.default_limit, req.method_name())
+            .expect("Never None");
+        self.credit_store
+            .update_user_state(&key, &balance)
+            .map_err(|err| tracing::error!(%err, "CALL"))
+            .ok(); // ignore errors
+        self.credit_store.release(&key).ok();
 
-        if let Some(balance) =
-            self.check_credit_limit(state, &self.default_limit, req.method_name())
-        {
-            self.credit_store
-                .update_user_state(&key, &balance)
-                .map_err(|err| tracing::error!(%err, "CALL"))
-                .ok(); // ignore errors
-
-            if matches!(balance, RateState::Allow { .. }) {
-                return ResponseFuture::future(self.service.call(req));
-            }
+        if matches!(balance, RateState::Deny { .. }) {
+            return ResponseFuture::ready(MethodResponse::error(
+                req.id,
+                ErrorObject::borrowed(RPC_ERROR_CODE, RPC_ERROR_MESSAGE, None),
+            ));
         }
-        ResponseFuture::ready(MethodResponse::error(
-            req.id,
-            ErrorObject::borrowed(RPC_ERROR_CODE, RPC_ERROR_MESSAGE, None),
-        ))
+
+        ResponseFuture::future(self.service.call(req))
     }
 
     // Batch calls
@@ -156,34 +160,37 @@ where
         // identify by IP
         let key = ext.remote_ip.map(|ip| ip.to_string()).unwrap_or_default();
 
-        // Get the user state
+        // R-M-W mechanism
+        self.credit_store
+            .acquire(&key)
+            .map_err(|e| {
+                tracing::error!(%e, "Failed to acquire credit");
+            })
+            .ok();
         let mut state = self.credit_store.get_user_state(&key).unwrap_or_default();
-
         for entry in batch.iter_mut() {
             match entry {
                 Ok(BatchEntry::Call(req)) => {
-                    if let Some(balance) =
-                        self.check_credit_limit(state, &self.default_limit, req.method_name())
-                    {
-                        state = balance;
-                        if matches!(state, RateState::Allow { .. }) {
-                            continue;
-                        }
+                    let balance = self
+                        .check_credit_limit(state, &self.default_limit, req.method_name())
+                        .expect("Never None");
+                    state = balance;
+                    if matches!(state, RateState::Deny { .. }) {
+                        *entry = Err(BatchEntryErr::new(
+                            req.id.clone(),
+                            ErrorObject::borrowed(RPC_ERROR_CODE, RPC_ERROR_MESSAGE, None),
+                        ));
                     }
-                    *entry = Err(BatchEntryErr::new(
-                        req.id.clone(),
-                        ErrorObject::borrowed(RPC_ERROR_CODE, RPC_ERROR_MESSAGE, None),
-                    ));
                 }
                 Ok(BatchEntry::Notification(_)) => continue,
                 Err(_) => continue,
             }
         }
-
         self.credit_store
             .update_user_state(&key, &state)
             .map_err(|err| tracing::error!(%err, "BATCH"))
             .ok(); // ignore errors
+        self.credit_store.release(&key).ok();
 
         self.service.batch(batch)
     }
