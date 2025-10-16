@@ -104,7 +104,7 @@ impl NodeLauncher {
         request_responses_sender: UnboundedSender<(ResponseChannel, ExternalMessage)>,
         peer_num: Arc<AtomicUsize>,
         swarm_peers: Arc<ArcSwap<Vec<PeerId>>>,
-        redis_address: Option<String>,
+        redis_address: Option<url::Url>,
     ) -> Result<(Self, NodeInputChannels, Arc<SyncPeers>)> {
         /// Helper to create a (sender, receiver) pair for a channel.
         fn sender_receiver<T>() -> (UnboundedSender<T>, UnboundedReceiverStream<T>) {

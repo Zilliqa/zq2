@@ -242,7 +242,7 @@ impl P2pNode {
     pub async fn add_shard_node(
         &mut self,
         config: NodeConfig,
-        redis_address: Option<String>,
+        redis_address: Option<url::Url>,
     ) -> Result<()> {
         let shard_id = config.eth_chain_id;
         if self.shard_nodes.contains_key(&shard_id) {
