@@ -23,14 +23,14 @@ pub struct RpcCreditLimit<S> {
     service: S,
     default_limit: RateQuota,
     credit_store: Arc<RpcCreditStore>,
-    credit_list: Arc<RpcCreditRate>,
+    credit_rate: RpcCreditRate,
 }
 
 impl<S> RpcCreditLimit<S> {
     pub fn new(
         service: S,
         credit_store: Arc<RpcCreditStore>,
-        price_list: Arc<RpcCreditRate>,
+        credit_rate: RpcCreditRate,
         default_quota: Option<RateQuota>,
     ) -> Self {
         Self {
@@ -41,7 +41,7 @@ impl<S> RpcCreditLimit<S> {
                 period: Duration::default(),
             }),
             credit_store: credit_store.clone(),
-            credit_list: price_list.clone(),
+            credit_rate,
         }
     }
 
@@ -62,7 +62,7 @@ impl<S> RpcCreditLimit<S> {
                     return Some(RateState::Deny { until });
                 } else {
                     // refresh quota
-                    let cost = self.credit_list.get_credit(method);
+                    let cost = self.credit_rate.get_credit(method);
                     return Some(RateState::Allow {
                         until: now + quota.period,
                         balance: quota.balance.saturating_sub(cost),
@@ -72,14 +72,14 @@ impl<S> RpcCreditLimit<S> {
             RateState::Allow { until, balance } => {
                 if now > until {
                     // refresh quota
-                    let cost = self.credit_list.get_credit(method);
+                    let cost = self.credit_rate.get_credit(method);
                     return Some(RateState::Allow {
                         until: now + quota.period,
                         balance: quota.balance.saturating_sub(cost),
                     });
                 } else if balance > 0 {
                     // reduce balance
-                    let cost = self.credit_list.get_credit(method);
+                    let cost = self.credit_rate.get_credit(method);
                     return Some(RateState::Allow {
                         until,
                         balance: balance.saturating_sub(cost),

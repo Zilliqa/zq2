@@ -135,8 +135,8 @@ impl NodeLauncher {
         )?;
 
         let node = Arc::new(node);
-        let credit_store = Arc::new(RpcCreditStore::new(redis_address));
-        let credit_rate = Arc::new(RpcCreditRate::new(config.credit_rates.clone()));
+        let credit_store = Arc::new(RpcCreditStore::new(redis_address.clone()));
+        let credit_rate = RpcCreditRate::new(config.credit_rates.clone());
 
         for api_server in &config.api_servers {
             // Collect all enabled modules
@@ -155,8 +155,8 @@ impl NodeLauncher {
                 .layer(cors);
 
             // RPC middleware
-            let credit_store = credit_store.clone();
             let credit_rate = credit_rate.clone();
+            let credit_store = credit_store.clone();
             let default_quota = api_server.default_quota;
             let rpc_middleware = RpcServiceBuilder::new().layer_fn(move |service| {
                 RpcCreditLimit::new(
@@ -180,6 +180,7 @@ impl NodeLauncher {
                 .build((Ipv4Addr::UNSPECIFIED, api_server.port))
                 .await;
 
+            // Start the JSON-RPC server.
             match server {
                 Ok(server) => {
                     let port = server.local_addr()?.port();
