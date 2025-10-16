@@ -1,7 +1,6 @@
 use std::time::SystemTime;
 
 use anyhow::Result;
-use parking_lot::RwLock;
 use r2d2::Pool;
 use redis::{Client, Commands};
 use url::Url;
@@ -13,45 +12,39 @@ use crate::credits::RateState;
 pub struct RpcCreditStore {
     ns: String,
     pool: Option<Pool<Client>>,
-    // this is the glocal state, that is used in testing w/o needing a redis server.
-    null_state: RwLock<RateState>,
 }
 
 impl RpcCreditStore {
     const REDIS_BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
-    // uri e.g. "redis://localhost:6379"
+    // URI e.g. "redis://[<username>][:<password>@]<hostname>[:port][/[<db>][?protocol=<protocol>]]"
     pub fn new(uri: Option<Url>) -> Self {
+        // spin up redis connection pool
         let num_workers = tokio::runtime::Handle::try_current()
             .map(|h| h.metrics().num_workers().max(4))
             .unwrap_or(4);
+        let pool = uri.as_ref().and_then(|url| {
+            Pool::builder()
+                .max_size(2 * num_workers as u32)
+                .build(Client::open(url.to_string()).unwrap())
+                .ok()
+        });
 
-        RpcCreditStore {
-            // use the fragment as the namespace
-            ns: uri
-                .as_ref()
-                .and_then(|url| url.fragment().map(|s| s.to_string()))
-                .unwrap_or_default(),
-            // use the url for the connection
-            pool: uri.as_ref().and_then(|url| {
-                Pool::builder()
-                    .max_size(2 * num_workers as u32)
-                    .build(Client::open(url.to_string()).unwrap())
-                    .ok()
-            }),
-            null_state: RwLock::new(RateState::default()),
-        }
+        // get namespace
+        let ns = uri
+            .as_ref()
+            .and_then(|url| url.fragment().map(|s| s.to_string()))
+            .unwrap_or_default();
+
+        RpcCreditStore { ns, pool }
     }
 
     pub fn get_user_state(&self, key: &str) -> Result<RateState> {
-        tracing::debug!("GET {}#{key}", self.ns);
-        // this is a special case for empty key, which is treated as a global rate-limit.
-        if key.is_empty() {
-            return Ok(*self.null_state.read());
-        }
+        let key = format!("{}#{key}", self.ns);
+        tracing::debug!("GET {key}");
         // get from redis pool, if one is configured
         if let Some(pool) = self.pool.as_ref() {
             let mut conn = pool.get()?;
-            let bin: Vec<u8> = conn.get(format!("{}#{key}", self.ns))?;
+            let bin: Vec<u8> = conn.get(&key)?;
             let state = bincode::serde::decode_from_slice::<RateState, _>(
                 bin.as_slice(),
                 Self::REDIS_BINCODE_CONFIG,
@@ -63,12 +56,8 @@ impl RpcCreditStore {
     }
 
     pub fn update_user_state(&self, key: &str, state: &RateState) -> Result<()> {
-        tracing::debug!(?state, "SET {}#{key}", self.ns);
-        // this is a special case for empty key, which is treated as a global rate-limit.
-        if key.is_empty() {
-            *self.null_state.write() = *state;
-            return Ok(());
-        }
+        let key = format!("{}#{key}", self.ns);
+        tracing::debug!(?state, "SET {key}");
         // set to redis pool, if one is configured
         if let Some(pool) = self.pool.as_ref() {
             let until = match state {
@@ -82,7 +71,7 @@ impl RpcCreditStore {
             let bin = bincode::serde::encode_to_vec(state, Self::REDIS_BINCODE_CONFIG)?;
             let mut conn = pool.get()?;
             // set key expiry, to avoid stale data
-            let _: () = conn.set_ex(format!("{}#{key}", self.ns), bin, secs)?;
+            let _: () = conn.set_ex(&key, bin, secs)?;
             return Ok(());
         }
         Err(anyhow::anyhow!("State not updated"))

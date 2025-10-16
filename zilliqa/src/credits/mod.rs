@@ -5,6 +5,7 @@ mod rpc_extension_layer;
 
 use std::time::{Duration, SystemTime};
 
+use lru_mem::HeapSize;
 pub use rpc_credit_limit::*;
 pub use rpc_credit_rate::*;
 pub use rpc_credit_store::*;
@@ -38,6 +39,12 @@ impl RateQuota {
 pub enum RateState {
     Deny { until: SystemTime },
     Allow { until: SystemTime, balance: u64 },
+}
+
+impl HeapSize for RateState {
+    fn heap_size(&self) -> usize {
+        128 // make sure this is more than needed
+    }
 }
 
 impl Default for RateState {
