@@ -121,23 +121,15 @@ where
         let key = ext.remote_ip.map(|ip| ip.to_string()).unwrap_or_default();
 
         // R-M-W mechanism
-        self.credit_store
-            .acquire(&key)
-            .map_err(|e| {
-                tracing::error!(%e, "Failed to acquire credit");
-            })
-            .ok();
-        let state = self.credit_store.get_user_state(&key).unwrap_or_default();
-        let balance = self
+        let (token, state) = self.credit_store.acquire_state(&key).unwrap();
+        let state = self
             .check_credit_limit(state, &self.default_limit, req.method_name())
             .expect("Never None");
         self.credit_store
-            .update_user_state(&key, &balance)
-            .map_err(|err| tracing::error!(%err, "CALL"))
-            .ok(); // ignore errors
-        self.credit_store.release(&key).ok();
+            .update_release(&key, state.clone(), token)
+            .unwrap();
 
-        if matches!(balance, RateState::Deny { .. }) {
+        if matches!(state, RateState::Deny { .. }) {
             return ResponseFuture::ready(MethodResponse::error(
                 req.id,
                 ErrorObject::borrowed(RPC_ERROR_CODE, RPC_ERROR_MESSAGE, None),
@@ -161,13 +153,7 @@ where
         let key = ext.remote_ip.map(|ip| ip.to_string()).unwrap_or_default();
 
         // R-M-W mechanism
-        self.credit_store
-            .acquire(&key)
-            .map_err(|e| {
-                tracing::error!(%e, "Failed to acquire credit");
-            })
-            .ok();
-        let mut state = self.credit_store.get_user_state(&key).unwrap_or_default();
+        let (token, mut state) = self.credit_store.acquire_state(&key).unwrap();
         for entry in batch.iter_mut() {
             match entry {
                 Ok(BatchEntry::Call(req)) => {
@@ -187,10 +173,8 @@ where
             }
         }
         self.credit_store
-            .update_user_state(&key, &state)
-            .map_err(|err| tracing::error!(%err, "BATCH"))
-            .ok(); // ignore errors
-        self.credit_store.release(&key).ok();
+            .update_release(&key, state, token)
+            .unwrap();
 
         self.service.batch(batch)
     }
