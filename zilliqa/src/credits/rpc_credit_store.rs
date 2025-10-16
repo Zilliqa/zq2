@@ -38,43 +38,75 @@ impl RpcCreditStore {
         RpcCreditStore { ns, pool }
     }
 
-    pub fn get_user_state(&self, key: &str) -> Result<RateState> {
-        let key = format!("{}#{key}", self.ns);
-        tracing::debug!("GET {key}");
+    pub fn release(&self, key: &str) -> Result<()> {
+        tracing::debug!("UNLOCK {key}");
+        let key = format!("{}#{key}.lock", self.ns);
         // get from redis pool, if one is configured
         if let Some(pool) = self.pool.as_ref() {
             let mut conn = pool.get()?;
-            let bin: Vec<u8> = conn.get(&key)?;
-            let state = bincode::serde::decode_from_slice::<RateState, _>(
-                bin.as_slice(),
-                Self::REDIS_BINCODE_CONFIG,
-            )
-            .map_or_else(|_e| RateState::default(), |bin| bin.0);
-            return Ok(state);
+            let _: () = conn.del(&key)?;
+            return Ok(());
         }
-        Err(anyhow::anyhow!("State not found"))
+        Err(anyhow::anyhow!("Redis pool not configured"))
+    }
+
+    pub fn acquire(&self, key: &str) -> Result<bool> {
+        tracing::debug!("LOCK {key}");
+        let key = format!("{}#{key}.lock", self.ns);
+        if let Some(pool) = self.pool.as_ref() {
+            let opts = redis::SetOptions::default()
+                .conditional_set(redis::ExistenceCheck::NX) // set-if-not-exist
+                .with_expiration(redis::SetExpiry::EX(55)); // set lock-expiration
+            let mut conn = pool.get()?;
+            loop {
+                match conn.set_options::<_, _, String>(&key, 0, opts) {
+                    Ok(rv) if rv == "OK" => return Ok(true), // successfully acquired lock
+                    _ => continue,                           // wait until lock is acquired
+                };
+            }
+        }
+        Err(anyhow::anyhow!("Redis pool not configured"))
+    }
+
+    pub fn get_user_state(&self, key: &str) -> Result<RateState> {
+        tracing::debug!("GET {key}");
+        let key = format!("{}#{key}", self.ns);
+        // get from redis pool, if one is configured
+        let Some(pool) = self.pool.as_ref() else {
+            return Err(anyhow::anyhow!("Redis not found not found"));
+        };
+
+        let mut conn = pool.get()?;
+        let bin: Vec<u8> = conn.get(&key)?;
+        let state = bincode::serde::decode_from_slice::<RateState, _>(
+            bin.as_slice(),
+            Self::REDIS_BINCODE_CONFIG,
+        )
+        .map_or_else(|_e| RateState::default(), |bin| bin.0);
+        Ok(state)
     }
 
     pub fn update_user_state(&self, key: &str, state: &RateState) -> Result<()> {
-        let key = format!("{}#{key}", self.ns);
         tracing::debug!(?state, "SET {key}");
+        let key = format!("{}#{key}", self.ns);
         // set to redis pool, if one is configured
-        if let Some(pool) = self.pool.as_ref() {
-            let until = match state {
-                RateState::Allow { until, .. } => until,
-                RateState::Deny { until } => until,
-            };
-            let secs = until
-                .duration_since(SystemTime::now())
-                .unwrap_or_default()
-                .as_secs();
-            let bin = bincode::serde::encode_to_vec(state, Self::REDIS_BINCODE_CONFIG)?;
-            let mut conn = pool.get()?;
-            // set key expiry, to avoid stale data
-            let _: () = conn.set_ex(&key, bin, secs)?;
-            return Ok(());
-        }
-        Err(anyhow::anyhow!("State not updated"))
+        let Some(pool) = self.pool.as_ref() else {
+            return Err(anyhow::anyhow!("State not updated"));
+        };
+
+        let until = match state {
+            RateState::Allow { until, .. } => until,
+            RateState::Deny { until } => until,
+        };
+        let secs = until
+            .duration_since(SystemTime::now())
+            .unwrap_or_default()
+            .as_secs();
+        let bin = bincode::serde::encode_to_vec(state, Self::REDIS_BINCODE_CONFIG)?;
+        let mut conn = pool.get()?;
+        // set key expiry, to avoid stale data
+        conn.set_ex::<_, _, ()>(&key, bin, secs)?;
+        Ok(())
     }
 }
 
