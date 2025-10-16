@@ -4,6 +4,7 @@ use anyhow::Result;
 use r2d2::Pool;
 use redis::{Client, Commands};
 use url::Url;
+use uuid::Uuid;
 
 use crate::credits::RateState;
 
@@ -38,19 +39,37 @@ impl RpcCreditStore {
         RpcCreditStore { ns, pool }
     }
 
-    pub fn release(&self, key: &str) -> Result<()> {
+    pub fn acquire_state(&self, key: &str) -> Result<(String, RateState)> {
+        let token = self.acquire(key)?;
+        let state = self.get_user_state(key)?;
+        Ok((token, state))
+    }
+
+    pub fn update_release(&self, key: &str, state: RateState, token: String) -> Result<()> {
+        self.update_user_state(key, &state)?;
+        self.release(key, token)?;
+        Ok(())
+    }
+
+    pub fn release(&self, key: &str, token: String) -> Result<()> {
         tracing::debug!("UNLOCK {key}");
         let key = format!("{}#{key}.lock", self.ns);
         // get from redis pool, if one is configured
         if let Some(pool) = self.pool.as_ref() {
             let mut conn = pool.get()?;
-            let _: () = conn.del(&key)?;
+            let val = conn.get::<_, String>(&key)?;
+            // delete the key if the token matches
+            if val == token {
+                conn.del::<_, ()>(&key)?;
+            }
             return Ok(());
         }
         Err(anyhow::anyhow!("Redis pool not configured"))
     }
 
-    pub fn acquire(&self, key: &str) -> Result<bool> {
+    // Waits until the lock is acquired.
+    // Returns the token used to release the lock.
+    pub fn acquire(&self, key: &str) -> Result<String> {
         tracing::debug!("LOCK {key}");
         let key = format!("{}#{key}.lock", self.ns);
         if let Some(pool) = self.pool.as_ref() {
@@ -58,10 +77,11 @@ impl RpcCreditStore {
                 .conditional_set(redis::ExistenceCheck::NX) // set-if-not-exist
                 .with_expiration(redis::SetExpiry::EX(55)); // set lock-expiration
             let mut conn = pool.get()?;
+            let val = Uuid::new_v4();
             loop {
-                match conn.set_options::<_, _, String>(&key, 0, opts) {
-                    Ok(rv) if rv == "OK" => return Ok(true), // successfully acquired lock
-                    _ => continue,                           // wait until lock is acquired
+                match conn.set_options::<_, _, String>(&key, val.to_string(), opts) {
+                    Ok(rv) if rv == "OK" => return Ok(val.to_string()), // successfully acquired lock
+                    _ => continue, // wait until lock is acquired
                 };
             }
         }
