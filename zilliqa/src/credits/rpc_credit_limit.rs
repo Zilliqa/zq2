@@ -3,6 +3,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+use anyhow::Result;
 use jsonrpsee::{
     MethodResponse,
     core::middleware::{
@@ -43,6 +44,18 @@ impl<S> RpcCreditLimit<S> {
             credit_store: credit_store.clone(),
             credit_rate,
         }
+    }
+
+    fn acquire_state(&self, key: &str) -> Result<(u64, RateState)> {
+        let token = self.credit_store.acquire(key)?;
+        let state = self.credit_store.get_user_state(key)?;
+        Ok((token, state))
+    }
+
+    fn update_release(&self, key: &str, state: RateState, token: u64) -> Result<()> {
+        self.credit_store.update_user_state(key, &state)?;
+        self.credit_store.release(key, token)?;
+        Ok(())
     }
 
     fn check_credit_limit(
@@ -121,13 +134,11 @@ where
         let key = ext.remote_ip.map(|ip| ip.to_string()).unwrap_or_default();
 
         // R-M-W mechanism
-        let (token, state) = self.credit_store.acquire_state(&key).unwrap();
+        let (token, state) = self.acquire_state(&key).unwrap_or_default(); // sane default
         let state = self
             .check_credit_limit(state, &self.default_limit, req.method_name())
             .expect("Never None");
-        self.credit_store
-            .update_release(&key, state, token)
-            .unwrap();
+        self.update_release(&key, state, token).ok(); // ignore errors
 
         if matches!(state, RateState::Deny { .. }) {
             return ResponseFuture::ready(MethodResponse::error(
@@ -153,7 +164,7 @@ where
         let key = ext.remote_ip.map(|ip| ip.to_string()).unwrap_or_default();
 
         // R-M-W mechanism
-        let (token, mut state) = self.credit_store.acquire_state(&key).unwrap();
+        let (token, mut state) = self.acquire_state(&key).unwrap_or_default();
         for entry in batch.iter_mut() {
             match entry {
                 Ok(BatchEntry::Call(req)) => {
@@ -172,9 +183,7 @@ where
                 Err(_) => continue,
             }
         }
-        self.credit_store
-            .update_release(&key, state, token)
-            .unwrap();
+        self.update_release(&key, state, token).ok();
 
         self.service.batch(batch)
     }

@@ -1,10 +1,10 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, UNIX_EPOCH};
 
 use anyhow::Result;
 use r2d2::Pool;
+use rand::{RngCore, thread_rng};
 use redis::{Client, Commands};
 use url::Url;
-use uuid::Uuid;
 
 use crate::credits::RateState;
 
@@ -26,6 +26,7 @@ impl RpcCreditStore {
         let pool = uri.as_ref().and_then(|url| {
             Pool::builder()
                 .max_size(2 * num_workers as u32)
+                .connection_timeout(Duration::from_secs(1)) // fail fast
                 .build(Client::open(url.to_string()).unwrap())
                 .ok()
         });
@@ -39,25 +40,13 @@ impl RpcCreditStore {
         RpcCreditStore { ns, pool }
     }
 
-    pub fn acquire_state(&self, key: &str) -> Result<(String, RateState)> {
-        let token = self.acquire(key)?;
-        let state = self.get_user_state(key)?;
-        Ok((token, state))
-    }
-
-    pub fn update_release(&self, key: &str, state: RateState, token: String) -> Result<()> {
-        self.update_user_state(key, &state)?;
-        self.release(key, token)?;
-        Ok(())
-    }
-
-    pub fn release(&self, key: &str, token: String) -> Result<()> {
+    pub fn release(&self, key: &str, token: u64) -> Result<()> {
         tracing::debug!("UNLOCK {key}");
         let key = format!("{}#{key}.lock", self.ns);
         // get from redis pool, if one is configured
         if let Some(pool) = self.pool.as_ref() {
             let mut conn = pool.get()?;
-            let val = conn.get::<_, String>(&key)?;
+            let val = conn.get::<_, u64>(&key)?;
             // delete the key if the token matches
             if val == token {
                 conn.del::<_, ()>(&key)?;
@@ -69,19 +58,28 @@ impl RpcCreditStore {
 
     // Waits until the lock is acquired.
     // Returns the token used to release the lock.
-    pub fn acquire(&self, key: &str) -> Result<String> {
+    pub fn acquire(&self, key: &str) -> Result<u64> {
         tracing::debug!("LOCK {key}");
         let key = format!("{}#{key}.lock", self.ns);
         if let Some(pool) = self.pool.as_ref() {
+            // since the state computation is done before the rpc call is made, the lock does not need to be acquired for a long time.
+            // set lock-expiration to 5-secs. it should practically, be under 1s.
             let opts = redis::SetOptions::default()
-                .conditional_set(redis::ExistenceCheck::NX) // set-if-not-exist
-                .with_expiration(redis::SetExpiry::EX(55)); // set lock-expiration
+                .conditional_set(redis::ExistenceCheck::NX)
+                .with_expiration(redis::SetExpiry::EX(5));
+            let token = thread_rng().next_u64(); // random token
+
             let mut conn = pool.get()?;
-            let val = Uuid::new_v4();
             loop {
-                match conn.set_options::<_, _, String>(&key, val.to_string(), opts) {
-                    Ok(rv) if rv == "OK" => return Ok(val.to_string()), // successfully acquired lock
-                    _ => continue, // wait until lock is acquired
+                match conn.set_options::<_, _, String>(&key, token, opts) {
+                    // locked
+                    Ok(rv) if rv == "OK" => return Ok(token),
+                    // !nil, we throw the error.
+                    Err(err) if err.kind() != redis::ErrorKind::TypeError => {
+                        tracing::error!(%err, "REDIS");
+                        return Err(err.into());
+                    }
+                    _ => {}
                 };
             }
         }

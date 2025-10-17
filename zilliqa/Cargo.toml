@@ -125,7 +125,6 @@ eth_trie = { git = "https://github.com/Zilliqa/eth-trie.rs.git", branch = "zilli
 arc-swap = "1.7.1"
 redis = { version = "0.32.7", features = ["keep-alive", "r2d2", "tcp_nodelay"], default-features = false }
 url = { version = "2.5.7", features = ["serde"] }
-uuid = { version = "1.18.1", features = ["v4"] }
 
 [dev-dependencies]
 alloy = { version = "0.12.4", default-features = false, features = [
