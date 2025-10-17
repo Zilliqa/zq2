@@ -1,4 +1,4 @@
-use std::time::SystemTime;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use r2d2::Pool;
@@ -114,18 +114,23 @@ impl RpcCreditStore {
             return Err(anyhow::anyhow!("State not updated"));
         };
 
-        let until = match state {
-            RateState::Allow { until, .. } => until,
-            RateState::Deny { until } => until,
+        // compute expiration time
+        let until_at = match state {
+            RateState::Allow { until, .. } => until
+                .duration_since(UNIX_EPOCH)
+                .expect("time travel")
+                .as_secs(),
+            RateState::Deny { until } => until
+                .duration_since(UNIX_EPOCH)
+                .expect("time travel")
+                .as_secs(),
         };
-        let secs = until
-            .duration_since(SystemTime::now())
-            .unwrap_or_default()
-            .as_secs();
+        let opts = redis::SetOptions::default().with_expiration(redis::SetExpiry::EXAT(until_at));
+
+        // set the key-value
         let bin = bincode::serde::encode_to_vec(state, Self::REDIS_BINCODE_CONFIG)?;
         let mut conn = pool.get()?;
-        // set key expiry, to avoid stale data
-        conn.set_ex::<_, _, ()>(&key, bin, secs)?;
+        conn.set_options::<_, _, ()>(&key, bin, opts)?;
         Ok(())
     }
 }
