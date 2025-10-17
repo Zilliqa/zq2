@@ -40,24 +40,23 @@ impl<S> RpcCreditLimit<S> {
         }
     }
 
+    #[inline]
     fn acquire_state(&self, key: &str) -> Result<(u64, RateState)> {
         let token = self.credit_store.acquire(key)?;
+        // acquire before getting state
         let state = self.credit_store.get_user_state(key)?;
         Ok((token, state))
     }
 
+    #[inline]
     fn update_release(&self, key: &str, state: RateState, token: u64) -> Result<()> {
         self.credit_store.update_user_state(key, &state)?;
+        // release after updating state
         self.credit_store.release(key, token)?;
         Ok(())
     }
 
-    fn check_credit_limit(
-        &self,
-        state: RateState,
-        quota: &RateQuota,
-        method: &str,
-    ) -> Option<RateState> {
+    fn check_credit_limit(&self, state: RateState, quota: &RateQuota, method: &str) -> RateState {
         // simplifies the code by allowing the case where:
         // as long as balance > 0, we can always make at least one request.
         // TODO: make this strict, if so desired.
@@ -66,36 +65,36 @@ impl<S> RpcCreditLimit<S> {
             RateState::Deny { until } => {
                 if now < until {
                     // continue to deny
-                    Some(RateState::Deny { until })
+                    RateState::Deny { until }
                 } else {
                     // refresh quota
                     let cost = self.credit_rate.get_credit(method);
-                    Some(RateState::Allow {
+                    RateState::Allow {
                         until: now + quota.period,
                         balance: quota.balance.saturating_sub(cost),
-                    })
+                    }
                 }
             }
             RateState::Allow { until, balance } => {
                 if now > until {
                     // refresh quota
                     let cost = self.credit_rate.get_credit(method);
-                    Some(RateState::Allow {
+                    RateState::Allow {
                         until: now + quota.period,
                         balance: quota.balance.saturating_sub(cost),
-                    })
+                    }
                 } else if balance > 0 {
                     // reduce balance
                     let cost = self.credit_rate.get_credit(method);
-                    Some(RateState::Allow {
+                    RateState::Allow {
                         until,
                         balance: balance.saturating_sub(cost),
-                    })
+                    }
                 } else {
                     // block
-                    Some(RateState::Deny {
+                    RateState::Deny {
                         until: now + quota.period,
-                    })
+                    }
                 }
             }
         }
@@ -129,9 +128,7 @@ where
 
         // R-M-W mechanism
         let (token, state) = self.acquire_state(&key).unwrap_or_default(); // sane default
-        let state = self
-            .check_credit_limit(state, &self.default_quota, req.method_name())
-            .expect("Never None");
+        let state = self.check_credit_limit(state, &self.default_quota, req.method_name());
         self.update_release(&key, state, token).ok(); // ignore errors
 
         if matches!(state, RateState::Deny { .. }) {
@@ -162,9 +159,8 @@ where
         for entry in batch.iter_mut() {
             match entry {
                 Ok(BatchEntry::Call(req)) => {
-                    let balance = self
-                        .check_credit_limit(state, &self.default_quota, req.method_name())
-                        .expect("Never None");
+                    let balance =
+                        self.check_credit_limit(state, &self.default_quota, req.method_name());
                     state = balance;
                     if matches!(state, RateState::Deny { .. }) {
                         *entry = Err(BatchEntryErr::new(
