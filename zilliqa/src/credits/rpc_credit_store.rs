@@ -26,9 +26,19 @@ impl RpcCreditStore {
         let pool = uri.as_ref().and_then(|url| {
             Pool::builder()
                 .max_size(2 * num_workers as u32)
+                .min_idle(Some(1))
                 .connection_timeout(Duration::from_secs(1)) // fail fast
                 .build(Client::open(url.to_string()).unwrap())
-                .ok()
+                .map_or_else(
+                    |e| {
+                        tracing::error!("REDIS {e}");
+                        None
+                    },
+                    |p| {
+                        tracing::debug!("REDIS {p:?}");
+                        Some(p)
+                    },
+                )
         });
 
         // get namespace
