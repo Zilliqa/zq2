@@ -12,7 +12,7 @@ pub use rpc_credit_store::*;
 pub use rpc_extension_layer::*;
 use serde::{Deserialize, Deserializer, Serialize};
 
-#[derive(Debug, Copy, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 // Currently supports time-based rate-limiting
 pub struct RateQuota {
     pub balance: u64,
@@ -31,6 +31,12 @@ where
 impl RateQuota {
     pub fn new(balance: u64, period: Duration) -> Self {
         Self { balance, period }
+    }
+}
+
+impl Default for RateQuota {
+    fn default() -> Self {
+        Self::new(u64::MAX, Duration::from_secs(60))
     }
 }
 
