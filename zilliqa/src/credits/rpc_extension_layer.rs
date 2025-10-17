@@ -19,9 +19,7 @@ const X_FORWARDED_FOR: &str = "x-forwarded-for";
 
 /// Adds some extra data to the request
 #[derive(Debug, Clone, Default)]
-pub struct RpcExtensionLayer {
-    // connection pool
-}
+pub struct RpcExtensionLayer {}
 
 impl RpcExtensionLayer {
     pub fn new() -> Self {
@@ -41,7 +39,6 @@ impl<S> Layer<S> for RpcExtensionLayer {
 #[derive(Debug, Clone)]
 pub struct RpcExtensionHeader<S> {
     inner: S,
-    // connection pool
 }
 
 impl<S> Service<HttpRequest> for RpcExtensionHeader<S>

@@ -50,79 +50,89 @@ impl RpcCreditStore {
         RpcCreditStore { ns, pool }
     }
 
+    // Only deletes the lock if the token matches.
     pub fn release(&self, key: &str, token: u64) -> Result<()> {
-        tracing::debug!("UNLOCK {key}");
+        tracing::debug!("RELEASE {key}");
+        let Some(pool) = self.pool.as_ref() else {
+            return Err(anyhow::anyhow!("Redis pool not configured"));
+        };
         let key = format!("{}#{key}.lock", self.ns);
-        // get from redis pool, if one is configured
-        if let Some(pool) = self.pool.as_ref() {
-            let mut conn = pool.get()?;
-            let val = conn.get::<_, u64>(&key)?;
-            // delete the key if the token matches
-            if val == token {
-                conn.del::<_, ()>(&key)?;
-            }
-            return Ok(());
-        }
-        Err(anyhow::anyhow!("Redis pool not configured"))
+
+        let mut conn = pool.get()?;
+        // https://redis.io/docs/latest/commands/set/#patterns
+        redis::cmd("EVAL")
+            .arg("if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end")
+            .arg(1)
+            .arg(key)
+            .arg(token)
+            .exec(&mut conn)?;
+        Ok(())
     }
 
     // Waits until the lock is acquired.
     // Returns the token used to release the lock.
     pub fn acquire(&self, key: &str) -> Result<u64> {
-        tracing::debug!("LOCK {key}");
+        tracing::debug!("ACQUIRE {key}");
+        let Some(pool) = self.pool.as_ref() else {
+            return Err(anyhow::anyhow!("Redis pool not configured"));
+        };
         let key = format!("{}#{key}.lock", self.ns);
-        if let Some(pool) = self.pool.as_ref() {
-            // since the state computation is done before the rpc call is made, the lock does not need to be acquired for a long time.
-            // set lock-expiration to 5-secs. it should practically, be under 1s.
-            let opts = redis::SetOptions::default()
-                .conditional_set(redis::ExistenceCheck::NX)
-                .with_expiration(redis::SetExpiry::EX(5));
-            let token = thread_rng().next_u64(); // random token
 
-            let mut conn = pool.get()?;
-            loop {
-                match conn.set_options::<_, _, String>(&key, token, opts) {
-                    // locked
-                    Ok(rv) if rv == "OK" => return Ok(token),
-                    // !nil, we throw the error.
-                    Err(err) if err.kind() != redis::ErrorKind::TypeError => {
-                        tracing::error!(%err, "REDIS");
-                        return Err(err.into());
-                    }
-                    _ => {}
-                };
-            }
+        // Since the state computation is done before the rpc call is made,
+        // the lock does not need to be acquired for a long time.
+        // Set lock-expiration to 3-secs - it should be under 1s.
+        let opts = redis::SetOptions::default()
+            .conditional_set(redis::ExistenceCheck::NX)
+            .with_expiration(redis::SetExpiry::EX(3));
+        let token = thread_rng().next_u64(); // random token
+
+        let mut conn = pool.get()?;
+        // the loop will either acquire a lock; or return a redis error.
+        // it is not infinite.
+        loop {
+            match conn.set_options::<_, _, String>(&key, token, opts) {
+                // locked
+                Ok(rv) if rv == "OK" => return Ok(token),
+                // !nil, we throw the error.
+                Err(err) if err.kind() != redis::ErrorKind::TypeError => {
+                    tracing::error!(%err, "REDIS");
+                    return Err(err.into());
+                }
+                _ => {} // spin
+            };
         }
-        Err(anyhow::anyhow!("Redis pool not configured"))
     }
 
+    // Returns the stored user state, or default state if non exists.
     pub fn get_user_state(&self, key: &str) -> Result<RateState> {
         tracing::debug!("GET {key}");
-        let key = format!("{}#{key}", self.ns);
-        // get from redis pool, if one is configured
         let Some(pool) = self.pool.as_ref() else {
             return Err(anyhow::anyhow!("Redis not found not found"));
         };
-
+        let key = format!("{}#{key}", self.ns);
         let mut conn = pool.get()?;
         let bin: Vec<u8> = conn.get(&key)?;
         let state = bincode::serde::decode_from_slice::<RateState, _>(
             bin.as_slice(),
             Self::REDIS_BINCODE_CONFIG,
         )
+        // returns default state, if there is none in redis
         .map_or_else(|_e| RateState::default(), |bin| bin.0);
         Ok(state)
     }
 
+    // Update the user state, or create a new one if it doesn't exist.
     pub fn update_user_state(&self, key: &str, state: &RateState) -> Result<()> {
         tracing::debug!(?state, "SET {key}");
-        let key = format!("{}#{key}", self.ns);
-        // set to redis pool, if one is configured
         let Some(pool) = self.pool.as_ref() else {
             return Err(anyhow::anyhow!("State not updated"));
         };
+        let key = format!("{}#{key}", self.ns);
 
         // compute expiration time
+        // we exploit redis's internal expiration mechanism so that:
+        // 1. the state storage does not grow infinitely; and
+        // 2. the quota gets reset upon expiry
         let until_at = match state {
             RateState::Allow { until, .. } => until
                 .duration_since(UNIX_EPOCH)
