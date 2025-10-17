@@ -1,7 +1,4 @@
-use std::{
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+use std::{sync::Arc, time::SystemTime};
 
 use anyhow::Result;
 use jsonrpsee::{
@@ -22,7 +19,7 @@ const RPC_ERROR_MESSAGE: &str = "RPC_RATE_LIMIT";
 #[derive(Clone)]
 pub struct RpcCreditLimit<S> {
     service: S,
-    default_limit: RateQuota,
+    default_quota: RateQuota,
     credit_store: Arc<RpcCreditStore>,
     credit_rate: RpcCreditRate,
 }
@@ -37,10 +34,7 @@ impl<S> RpcCreditLimit<S> {
         Self {
             service,
             // default rate-limit is unlimited
-            default_limit: default_quota.unwrap_or(RateQuota {
-                balance: u64::MAX,
-                period: Duration::default(),
-            }),
+            default_quota: default_quota.unwrap_or_default(),
             credit_store: credit_store.clone(),
             credit_rate,
         }
@@ -136,7 +130,7 @@ where
         // R-M-W mechanism
         let (token, state) = self.acquire_state(&key).unwrap_or_default(); // sane default
         let state = self
-            .check_credit_limit(state, &self.default_limit, req.method_name())
+            .check_credit_limit(state, &self.default_quota, req.method_name())
             .expect("Never None");
         self.update_release(&key, state, token).ok(); // ignore errors
 
@@ -169,7 +163,7 @@ where
             match entry {
                 Ok(BatchEntry::Call(req)) => {
                     let balance = self
-                        .check_credit_limit(state, &self.default_limit, req.method_name())
+                        .check_credit_limit(state, &self.default_quota, req.method_name())
                         .expect("Never None");
                     state = balance;
                     if matches!(state, RateState::Deny { .. }) {
