@@ -35,7 +35,8 @@ impl<S> Layer<S> for RpcExtensionLayer {
     }
 }
 
-/// Every POST request is modified by added additional headers with information.
+/// Supplement each request with added additional metadata.
+/// https://docs.rs/jsonrpsee/latest/jsonrpsee/struct.Extensions.html
 #[derive(Debug, Clone)]
 pub struct RpcExtensionHeader<S> {
     inner: S,

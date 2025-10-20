@@ -54,7 +54,7 @@ impl RpcCreditStore {
     pub fn release(&self, key: &str, token: u64) -> Result<()> {
         tracing::debug!("RELEASE {key}");
         let Some(pool) = self.pool.as_ref() else {
-            return Err(anyhow::anyhow!("Redis pool not configured"));
+            return Err(anyhow::anyhow!("Redis pool missing"));
         };
         let key = format!("{}#{key}.lock", self.ns);
 
@@ -74,7 +74,7 @@ impl RpcCreditStore {
     pub fn acquire(&self, key: &str) -> Result<u64> {
         tracing::debug!("ACQUIRE {key}");
         let Some(pool) = self.pool.as_ref() else {
-            return Err(anyhow::anyhow!("Redis pool not configured"));
+            return Err(anyhow::anyhow!("Redis pool missing"));
         };
         let key = format!("{}#{key}.lock", self.ns);
 
@@ -107,7 +107,7 @@ impl RpcCreditStore {
     pub fn get_user_state(&self, key: &str) -> Result<RateState> {
         tracing::debug!("GET {key}");
         let Some(pool) = self.pool.as_ref() else {
-            return Err(anyhow::anyhow!("Redis not found not found"));
+            return Err(anyhow::anyhow!("Redis pool missing"));
         };
         let key = format!("{}#{key}", self.ns);
         let mut conn = pool.get()?;
@@ -125,7 +125,7 @@ impl RpcCreditStore {
     pub fn update_user_state(&self, key: &str, state: &RateState) -> Result<()> {
         tracing::debug!(?state, "SET {key}");
         let Some(pool) = self.pool.as_ref() else {
-            return Err(anyhow::anyhow!("State not updated"));
+            return Err(anyhow::anyhow!("Redis pool missing"));
         };
         let key = format!("{}#{key}", self.ns);
 
