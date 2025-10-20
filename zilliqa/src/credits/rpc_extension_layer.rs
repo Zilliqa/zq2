@@ -65,7 +65,7 @@ where
             .headers()
             .get(X_FORWARDED_FOR)
             .and_then(|val| val.to_str().ok())
-            .and_then(|list| list.split(',').next())
+            .and_then(|list| list.split(',').rev().nth(1)) // https://cloud.google.com/load-balancing/docs/https#x-forwarded-for_header
             .and_then(|first| IpAddr::from_str(first.trim()).ok());
 
         // add the remote-user
