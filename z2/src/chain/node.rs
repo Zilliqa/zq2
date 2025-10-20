@@ -700,14 +700,22 @@ impl ChainNode {
         let eth_chain_id = self.eth_chain_id.to_string();
         let contract_upgrades = self.chain()?.get_contract_upgrades_block_heights();
         // 4201 is the publically exposed port - We don't expose everything there.
-        let public_api = if self.role == NodeRole::Api || self.role == NodeRole::PrivateApi {
-            // Enable all APIs, except `admin_` for API nodes.
+        let public_api = if self.role == NodeRole::Api {
+            // Enable all APIs, except `admin_` for API nodes; with default quota
             json!({
+                // arbitrarily chosen
+                "default_quota": {
+                    "balance": 4_000,
+                    "period": 1,
+                },
                 "port": 4201,
                 "enabled_apis": [
                     "erigon",
                     "eth",
                     "net",
+                    "txpool",
+                    "web3",
+                    "zilliqa",
                     {
                         "namespace": "ots",
                         // Enable all APIs except `ots_getContractCreator` until #2381 is resolved.
@@ -725,16 +733,33 @@ impl ChainNode {
                             "traceTransaction",
                         ],
                     },
+                ]
+            })
+        } else if self.role == NodeRole::PrivateApi {
+            // Enable all APIs, except `admin_` for API nodes; with no quota
+            json!({
+                "port": 4201,
+                "enabled_apis": [
+                    "erigon",
+                    "eth",
+                    "net",
+                    "ots",
                     "txpool",
                     "web3",
                     "zilliqa",
                 ]
             })
         } else {
-            // Only enable `eth_blockNumber` for other nodes.
-            json!({"port": 4201, "enabled_apis": [ { "namespace": "eth", "apis": ["blockNumber"] } ] })
+            // Only enable `eth_blockNumber` for other nodes; with default quota
+            json!({
+                "default_quota": {
+                    "balance": 500,
+                    "period": 1,
+                },
+                "port": 4201,
+                "enabled_apis": [ { "namespace": "eth", "apis": ["blockNumber"] } ] })
         };
-        // 4202 is not exposed, so enable everything for local debugging.
+        // 4202 is not exposed, so enable everything for local debugging; with no quota
         let private_api = json!({ "port": 4202, "enabled_apis": ["admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] });
         let api_servers = json!([public_api, private_api]);
 
