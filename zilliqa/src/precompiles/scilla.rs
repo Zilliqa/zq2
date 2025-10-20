@@ -12,7 +12,7 @@ use revm::{
 };
 use revm_context::JournalTr;
 use revm_inspector::JournalExt;
-use revm_precompile::PrecompileError;
+use revm_precompile::{PrecompileError, PrecompileOutput};
 use scilla_parser::{
     ast::nodes::{
         NodeAddressType, NodeByteStr, NodeMetaIdentifier, NodeScillaType, NodeTypeMapKey,
@@ -427,7 +427,7 @@ impl ContextPrecompile for ScillaCall {
         _is_static: bool,
         gas_limit: u64,
     ) -> Result<Option<InterpreterResult>, String> {
-        let mut gas = Gas::new(gas_limit);
+        let gas = Gas::new(gas_limit);
         let gas_exempt = ctx
             .chain
             .fork
@@ -442,7 +442,7 @@ impl ContextPrecompile for ScillaCall {
         // 2. if precompile failed and gas_exempt -> mark entire txn as failed (not only the current precompile)
         // 3. Otherwise, let it run with what it's given and let the caller decide
 
-        let outcome = scilla_call_precompile(input, &mut gas, ctx, gas_exempt);
+        let outcome = scilla_call_precompile(input, gas.limit(), ctx, gas_exempt);
 
         // Copied from `EvmContext::call_precompile`
         let mut result = InterpreterResult {
@@ -452,21 +452,22 @@ impl ContextPrecompile for ScillaCall {
         };
 
         match outcome {
-            Ok(res) => {
-                if let Some(res) = res {
-                    result.output = res.output;
+            Ok(output) => {
+                if result.gas.record_cost(output.gas_used) {
+                    result.result = InstructionResult::Return;
+                    result.output = output.bytes;
+                } else {
+                    result.result = InstructionResult::PrecompileOOG;
                 }
             }
             Err(PrecompileErrors::Error(e)) => {
                 result.result = if e.is_oog() {
-                    InstructionResult::OutOfGas
+                    InstructionResult::PrecompileOOG
                 } else {
                     InstructionResult::PrecompileError
-                }
+                };
             }
-            Err(PrecompileErrors::Fatal { msg }) => {
-                return Err(msg);
-            }
+            Err(PrecompileErrors::Fatal { msg }) => return Err(msg),
         }
 
         if ctx
@@ -491,18 +492,17 @@ impl ContextPrecompile for ScillaCall {
 
 fn scilla_call_precompile(
     input: &InputsImpl,
-    gas_tracker: &mut Gas,
+    gas_limit: u64,
     ctx: &mut ZQ2EvmContext,
     gas_exempt: bool,
-) -> std::result::Result<Option<InterpreterResult>, PrecompileErrors> {
+) -> std::result::Result<PrecompileOutput, PrecompileErrors> {
     let Ok(input_len) = u64::try_from(input.input.len()) else {
         return err("input too long");
     };
 
     let required_gas = input_len * PER_BYTE_COST + BASE_COST + EvmGas::from(SCILLA_INVOKE_RUNNER).0;
-    let input_gas_limit = gas_tracker.limit();
 
-    if !gas_exempt && input_gas_limit < required_gas {
+    if !gas_exempt && gas_limit < required_gas {
         return oog();
     }
 
@@ -643,7 +643,7 @@ fn scilla_call_precompile(
         if gas_exempt {
             EvmGas(u64::MAX).into()
         } else {
-            EvmGas(input_gas_limit - required_gas).into()
+            EvmGas(gas_limit - required_gas).into()
         },
         address,
         effective_value,
@@ -698,19 +698,12 @@ fn scilla_call_precompile(
 
     // TODO(#767): Handle transfer to Scilla contract if `result.accepted`.
 
-    let gas_result = if gas_exempt {
-        gas_tracker.record_cost(u64::min(required_gas, input_gas_limit))
-    } else {
-        gas_tracker.record_cost(required_gas + result.gas_used.0)
-    };
-
-    if !gas_result {
-        return oog();
-    }
-
-    Ok(Some(InterpreterResult::new(
-        InstructionResult::default(),
+    Ok(PrecompileOutput::new(
+        if gas_exempt {
+            u64::min(required_gas, gas_limit)
+        } else {
+            required_gas + result.gas_used.0
+        },
         Bytes::default(),
-        *gas_tracker,
-    )))
+    ))
 }
