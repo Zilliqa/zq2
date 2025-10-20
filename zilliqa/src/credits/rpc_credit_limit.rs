@@ -126,10 +126,22 @@ where
         // identify by IP
         let key = ext.remote_ip.map(|ip| ip.to_string()).unwrap_or_default();
 
-        // R-M-W mechanism
-        let (token, state) = self.acquire_state(&key).unwrap_or_default(); // sane default
+        // compute credits **before** executing the request.
+        // this simplifies the error handling and ensures that the credit is always deducted.
+        let (token, state) = self
+            .acquire_state(&key)
+            .map_err(|err| {
+                tracing::error!(%err, "Failed to acquire state");
+                err
+            })
+            .unwrap_or_default();
         let state = self.check_credit_limit(state, &self.default_quota, req.method_name());
-        self.update_release(&key, state, token).ok(); // ignore errors
+        self.update_release(&key, state, token)
+            .map_err(|err| {
+                tracing::error!(%err, "Failed to update release");
+                err
+            })
+            .ok(); // ignore errors
 
         if matches!(state, RateState::Deny { .. }) {
             return ResponseFuture::ready(MethodResponse::error(
@@ -138,6 +150,7 @@ where
             ));
         }
 
+        // underlying service handler
         ResponseFuture::future(self.service.call(req))
     }
 
@@ -154,8 +167,16 @@ where
         // identify by IP
         let key = ext.remote_ip.map(|ip| ip.to_string()).unwrap_or_default();
 
-        // R-M-W mechanism
-        let (token, mut state) = self.acquire_state(&key).unwrap_or_default();
+        // due to the way limits are applied, call ordering is irrelevant.
+        // compute the credit budget and immediately mutate/fail any that are denied.
+        // the denied calls are skipped by the underlying service handler.
+        let (token, mut state) = self
+            .acquire_state(&key)
+            .map_err(|err| {
+                tracing::error!(%err, "Failed to acquire state");
+                err
+            })
+            .unwrap_or_default();
         for entry in batch.iter_mut() {
             match entry {
                 Ok(BatchEntry::Call(req)) => {
@@ -173,8 +194,14 @@ where
                 Err(_) => continue,
             }
         }
-        self.update_release(&key, state, token).ok();
+        self.update_release(&key, state, token)
+            .map_err(|err| {
+                tracing::error!(%err, "Failed to update release");
+                err
+            })
+            .ok(); // only save the final state, skipping intermediate states.
 
+        // underlying service handler
         self.service.batch(batch)
     }
 
