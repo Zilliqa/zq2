@@ -309,7 +309,9 @@ pub mod deposit_v7 {
     pub static CONSTRUCTOR: Lazy<Constructor> =
         Lazy::new(|| CONTRACT.abi.constructor().unwrap().clone());
     pub static REINITIALIZE: Lazy<Function> =
-        Lazy::new(|| CONTRACT.abi.function("reinitialize").unwrap().clone());
+        Lazy::new(|| CONTRACT.abi.functions_by_name("reinitialize").unwrap()[0].clone());
+    pub static REINITIALIZE_2: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.functions_by_name("reinitialize").unwrap()[1].clone());
     pub static UPGRADE_TO_AND_CALL: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("upgradeToAndCall").unwrap().clone());
     pub static VERSION: Lazy<Function> =
