@@ -12,6 +12,7 @@ use revm::{
 };
 use revm_context::JournalTr;
 use revm_inspector::JournalExt;
+use revm_precompile::PrecompileError;
 use scilla_parser::{
     ast::nodes::{
         NodeAddressType, NodeByteStr, NodeMetaIdentifier, NodeScillaType, NodeTypeMapKey,
@@ -208,18 +209,21 @@ fn get_indices(
     }
 }
 
-pub struct ScillaRead;
-
-#[track_caller]
-fn oog<T>() -> Result<T, String> {
-    let location = std::panic::Location::caller();
-    let msg = "scilla_call out of gas";
-    trace!(%location, msg);
-    Err(msg.to_owned())
+pub enum PrecompileErrors {
+    Error(PrecompileError),
+    Fatal { msg: String },
 }
 
 #[track_caller]
-fn err<T>(message: impl Into<String>) -> Result<T, String> {
+fn oog<T>() -> Result<T, PrecompileErrors> {
+    let location = std::panic::Location::caller();
+    let msg = "scilla_call out of gas";
+    trace!(%location, msg);
+    Err(PrecompileErrors::Error(PrecompileError::OutOfGas))
+}
+
+#[track_caller]
+fn err<T>(message: impl Into<String>) -> Result<T, PrecompileErrors> {
     let location = std::panic::Location::caller();
     let message = message.into();
     trace!(%location, message, "scilla_call failed");
@@ -227,23 +231,27 @@ fn err<T>(message: impl Into<String>) -> Result<T, String> {
 }
 
 #[track_caller]
-fn err_inner(message: impl Into<String>) -> String {
+fn err_inner(message: impl Into<String>) -> PrecompileErrors {
     let location = std::panic::Location::caller();
     let message = message.into();
     trace!(%location, message, "scilla_call failed");
-    message
+    PrecompileErrors::Error(PrecompileError::Other(message))
 }
 
 #[track_caller]
-fn fatal<T>(message: &'static str) -> Result<T, String> {
+fn fatal<T>(message: &'static str) -> Result<T, PrecompileErrors> {
     let location = std::panic::Location::caller();
     trace!(%location, message, "scilla_call failed");
-    Err(message.to_owned())
+    Err(PrecompileErrors::Fatal {
+        msg: message.to_string(),
+    })
 }
 
 // ZQ1 suggests revisiting these costs in the future.
 const BASE_COST: u64 = 15;
 const PER_BYTE_COST: u64 = 3;
+
+pub struct ScillaRead;
 
 impl ContextPrecompile for ScillaRead {
     fn call(
@@ -254,71 +262,103 @@ impl ContextPrecompile for ScillaRead {
         _is_static: bool,
         gas_limit: u64,
     ) -> std::result::Result<Option<InterpreterResult>, String> {
-        let Ok(input_len) = u64::try_from(input.input().len()) else {
-            return err("input too long");
-        };
-
-        let mut gas_tracker = Gas::new(gas_limit);
-        let required_gas = input_len * PER_BYTE_COST + BASE_COST;
-        if !gas_tracker.record_cost(required_gas) {
-            return oog();
+        let result = scilla_read(ctx, input, gas_limit);
+        match result {
+            Ok(Some(result)) => Ok(Some(result)),
+            Ok(None) => Ok(None),
+            Err(err) => match err {
+                PrecompileErrors::Error(err) => Err(err.to_string()),
+                PrecompileErrors::Fatal { msg } => Err(msg),
+            },
         }
+    }
+}
 
-        let raw_input = input.input().bytes(ctx);
+fn scilla_read(
+    ctx: &mut ZQ2EvmContext,
+    input: &InputsImpl,
+    gas_limit: u64,
+) -> std::result::Result<Option<InterpreterResult>, PrecompileErrors> {
+    let Ok(input_len) = u64::try_from(input.input().len()) else {
+        return err("input too long");
+    };
 
-        let mut decoder = Decoder::new(&raw_input);
+    let mut gas_tracker = Gas::new(gas_limit);
+    let required_gas = input_len * PER_BYTE_COST + BASE_COST;
+    if !gas_tracker.record_cost(required_gas) {
+        return oog();
+    }
 
-        let address =
-            Address::detokenize(decoder.decode().map_err(|_| err_inner("invalid address"))?);
-        let field = String::detokenize(decoder.decode().map_err(|_| err_inner("invalid field"))?);
+    let raw_input = input.input().bytes(ctx);
 
-        let account = match ctx.db_mut().load_account(address) {
-            Ok(account) => account,
-            Err(e) => {
-                tracing::error!(?e, "state access failed");
-                return fatal("state access failed");
-            }
-        };
-        let Code::Scilla {
-            ref types,
-            ref init_data,
-            ..
-        } = account.account.code
-        else {
-            return err(format!("{address} is not a scilla contract"));
-        };
+    let mut decoder = Decoder::new(&raw_input);
 
-        let (ty, init_data_value) = match (
-            init_data.iter().find(|p| p.name == field),
-            types.get(&field),
-        ) {
-            // Note that if a field exists in both the `init_data` and mutable fields, we ignore the `init_data` and
-            // read from the field. This behaviour matches the semantics of Scilla and specification in ZIP-21.
-            (_, Some((ty, _))) => (ty, None),
-            (Some(v), None) => (&v.ty, Some(v.value.clone())),
-            (None, None) => {
-                return err(format!("variable {field} does not exist in contract"));
-            }
-        };
+    let address = Address::detokenize(decoder.decode().map_err(|_| err_inner("invalid address"))?);
+    let field = String::detokenize(decoder.decode().map_err(|_| err_inner("invalid field"))?);
 
-        let mut errors = vec![];
-        let Ok(parsed) = ScillaTypeParser::new().parse(&mut errors, Lexer::new(ty)) else {
-            return fatal("failed to parse scilla type");
-        };
+    let account = match ctx.db_mut().load_account(address) {
+        Ok(account) => account,
+        Err(e) => {
+            tracing::error!(?e, "state access failed");
+            return fatal("state access failed");
+        }
+    };
+    let Code::Scilla {
+        ref types,
+        ref init_data,
+        ..
+    } = account.account.code
+    else {
+        return err(format!("{address} is not a scilla contract"));
+    };
 
-        let Some(ty) = parsed.node.to_scilla_type() else {
-            return err(format!("unsupported scilla type: {ty}"));
-        };
+    let (ty, init_data_value) = match (
+        init_data.iter().find(|p| p.name == field),
+        types.get(&field),
+    ) {
+        // Note that if a field exists in both the `init_data` and mutable fields, we ignore the `init_data` and
+        // read from the field. This behaviour matches the semantics of Scilla and specification in ZIP-21.
+        (_, Some((ty, _))) => (ty, None),
+        (Some(v), None) => (&v.ty, Some(v.value.clone())),
+        (None, None) => {
+            return err(format!("variable {field} does not exist in contract"));
+        }
+    };
 
-        let mut indices = vec![];
-        let Ok(ty) = get_indices(ty, &mut decoder, &mut indices) else {
-            return err("failed to read indices");
-        };
+    let mut errors = vec![];
+    let Ok(parsed) = ScillaTypeParser::new().parse(&mut errors, Lexer::new(ty)) else {
+        return fatal("failed to parse scilla type");
+    };
 
-        macro_rules! encoder {
-            ($ty:ty) => {{
-                if let Some(value) = init_data_value {
-                    let Ok(value) = serde_json::from_value::<String>(value) else {
+    let Some(ty) = parsed.node.to_scilla_type() else {
+        return err(format!("unsupported scilla type: {ty}"));
+    };
+
+    let mut indices = vec![];
+    let Ok(ty) = get_indices(ty, &mut decoder, &mut indices) else {
+        return err("failed to read indices");
+    };
+
+    macro_rules! encoder {
+        ($ty:ty) => {{
+            if let Some(value) = init_data_value {
+                let Ok(value) = serde_json::from_value::<String>(value) else {
+                    return fatal("failed to parse raw value");
+                };
+                let Ok(value) = value.parse::<$ty>() else {
+                    return fatal("failed to parse value");
+                };
+                value.abi_encode()
+            } else {
+                let Ok(value) = ctx
+                    .journal_mut()
+                    .db_mut()
+                    .load_storage(address, &field, &indices)
+                else {
+                    return fatal("failed to read value");
+                };
+                if let Some(value) = value {
+                    let Ok(value) = serde_json::from_slice::<String>(&value) else {
                         return fatal("failed to parse raw value");
                     };
                     let Ok(value) = value.parse::<$ty>() else {
@@ -326,71 +366,54 @@ impl ContextPrecompile for ScillaRead {
                     };
                     value.abi_encode()
                 } else {
-                    let Ok(value) = ctx
-                        .journal_mut()
-                        .db_mut()
-                        .load_storage(address, &field, &indices)
-                    else {
-                        return fatal("failed to read value");
-                    };
-                    if let Some(value) = value {
-                        let Ok(value) = serde_json::from_slice::<String>(&value) else {
-                            return fatal("failed to parse raw value");
-                        };
-                        let Ok(value) = value.parse::<$ty>() else {
-                            return fatal("failed to parse value");
-                        };
-                        value.abi_encode()
-                    } else {
-                        vec![]
-                    }
+                    vec![]
                 }
-            }};
-        }
+            }
+        }};
+    }
 
-        let value = match ty {
-            ScillaType::ByStr20 => encoder!(Address),
-            ScillaType::Int32 => encoder!(i32),
-            ScillaType::Int64 => encoder!(i64),
-            ScillaType::Int128 => encoder!(i128),
-            ScillaType::Int256 => encoder!(I256),
-            ScillaType::Uint32 => encoder!(u32),
-            ScillaType::Uint64 => encoder!(u64),
-            ScillaType::Uint128 => encoder!(u128),
-            ScillaType::Uint256 => encoder!(U256),
-            ScillaType::String => {
-                if let Some(value) = init_data_value {
-                    let Ok(value) = serde_json::from_value::<String>(value) else {
+    let value = match ty {
+        ScillaType::ByStr20 => encoder!(Address),
+        ScillaType::Int32 => encoder!(i32),
+        ScillaType::Int64 => encoder!(i64),
+        ScillaType::Int128 => encoder!(i128),
+        ScillaType::Int256 => encoder!(I256),
+        ScillaType::Uint32 => encoder!(u32),
+        ScillaType::Uint64 => encoder!(u64),
+        ScillaType::Uint128 => encoder!(u128),
+        ScillaType::Uint256 => encoder!(U256),
+        ScillaType::String => {
+            if let Some(value) = init_data_value {
+                let Ok(value) = serde_json::from_value::<String>(value) else {
+                    return fatal("failed to parse raw value");
+                };
+                value.abi_encode()
+            } else {
+                let Ok(value) = ctx
+                    .journal_mut()
+                    .db_mut()
+                    .load_storage(address, &field, &indices)
+                else {
+                    return fatal("failed to read value");
+                };
+                if let Some(value) = value {
+                    let Ok(value) = serde_json::from_slice::<String>(value) else {
                         return fatal("failed to parse raw value");
                     };
                     value.abi_encode()
                 } else {
-                    let Ok(value) = ctx
-                        .journal_mut()
-                        .db_mut()
-                        .load_storage(address, &field, &indices)
-                    else {
-                        return fatal("failed to read value");
-                    };
-                    if let Some(value) = value {
-                        let Ok(value) = serde_json::from_slice::<String>(value) else {
-                            return fatal("failed to parse raw value");
-                        };
-                        value.abi_encode()
-                    } else {
-                        vec![]
-                    }
+                    vec![]
                 }
             }
-            ScillaType::Map(_, _) => unreachable!("map will not be returned from `get_indices`"),
-        };
+        }
+        ScillaType::Map(_, _) => unreachable!("map will not be returned from `get_indices`"),
+    };
 
-        Ok(Some(InterpreterResult::new(
-            InstructionResult::default(),
-            value.into(),
-            gas_tracker,
-        )))
-    }
+    Ok(Some(InterpreterResult::new(
+        InstructionResult::default(),
+        value.into(),
+        gas_tracker,
+    )))
 }
 
 pub struct ScillaCall;
@@ -429,10 +452,21 @@ impl ContextPrecompile for ScillaCall {
         };
 
         match outcome {
-            Ok(Some(output)) => {
-                result.output = output.output;
+            Ok(res) => {
+                if let Some(res) = res {
+                    result.output = res.output;
+                }
             }
-            _ => result.result = InstructionResult::PrecompileError,
+            Err(PrecompileErrors::Error(e)) => {
+                result.result = if e.is_oog() {
+                    InstructionResult::OutOfGas
+                } else {
+                    InstructionResult::PrecompileError
+                }
+            }
+            Err(PrecompileErrors::Fatal { msg }) => {
+                return Err(msg);
+            }
         }
 
         if ctx
@@ -460,7 +494,7 @@ fn scilla_call_precompile(
     gas_tracker: &mut Gas,
     ctx: &mut ZQ2EvmContext,
     gas_exempt: bool,
-) -> std::result::Result<Option<InterpreterResult>, String> {
+) -> std::result::Result<Option<InterpreterResult>, PrecompileErrors> {
     let Ok(input_len) = u64::try_from(input.input.len()) else {
         return err("input too long");
     };
