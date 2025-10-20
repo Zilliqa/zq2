@@ -18,7 +18,7 @@ impl RpcCreditRate {
         // default = 500
         let default = credit_list
             .get("default")
-            .map(|v| *v)
+            .copied()
             .unwrap_or(DEFAULT_CREDIT);
 
         let credits = DashMap::with_capacity(credit_list.len());
