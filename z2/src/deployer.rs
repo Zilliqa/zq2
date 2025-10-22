@@ -440,7 +440,11 @@ pub async fn run_deposit(config_file: &str, node_selection: bool) -> Result<()> 
     Ok(())
 }
 
-pub async fn run_deposit_top_up(config_file: &str, node_selection: bool, amount: u8) -> Result<()> {
+pub async fn run_deposit_top_up(
+    config_file: &str,
+    node_selection: bool,
+    amount: u64,
+) -> Result<()> {
     let config = NetworkConfig::from_file(config_file).await?;
     let chain = ChainInstance::new(config.clone()).await?;
     let mut validators = chain.nodes().await?;
@@ -510,7 +514,7 @@ pub async fn run_deposit_top_up(config_file: &str, node_selection: bool, amount:
     Ok(())
 }
 
-pub async fn run_unstake(config_file: &str, node_selection: bool, amount: u8) -> Result<()> {
+pub async fn run_unstake(config_file: &str, node_selection: bool, amount: u64) -> Result<()> {
     let config = NetworkConfig::from_file(config_file).await?;
     let chain = ChainInstance::new(config.clone()).await?;
     let mut validators = chain.nodes().await?;
