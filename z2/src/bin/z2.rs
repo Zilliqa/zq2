@@ -176,7 +176,7 @@ pub struct DeployerStakingArgs {
     select: bool,
     /// Specify the amount in ZILs
     #[clap(long)]
-    amount: u8,
+    amount: u64,
 }
 
 #[derive(Args, Debug)]
@@ -525,7 +525,7 @@ struct DepositTopUpStruct {
     public_key: String,
     /// Specify the stake amount in ZILs you want provide
     #[clap(long, short)]
-    amount: u8,
+    amount: u64,
 }
 
 #[derive(Args, Debug)]
@@ -541,7 +541,7 @@ struct UnstakeStruct {
     public_key: String,
     /// Specify the amount in ZILs you want to unstake
     #[clap(long, short)]
-    amount: u8,
+    amount: u64,
 }
 
 #[derive(Args, Debug)]
