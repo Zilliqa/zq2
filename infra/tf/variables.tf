@@ -354,3 +354,10 @@ variable "performance_tests_service_account" {
   type        = string
   default     = "sa-gha-testing-001@prj-p-devops-services-tvwmrf63.iam.gserviceaccount.com"
 }
+
+variable "enable_redis" {
+  description = "(Optional) Enable the Redis instance."
+  type        = bool
+  default     = false
+  nullable    = false
+}
