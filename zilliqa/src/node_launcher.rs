@@ -8,6 +8,7 @@ use anyhow::{Result, anyhow};
 use arc_swap::ArcSwap;
 use http::{Method, header};
 use jsonrpsee::{
+    client_transport::ws::Url,
     server::{ServerConfig, middleware::http::ProxyGetRequestLayer},
     ws_client::RpcServiceBuilder,
 };
@@ -104,7 +105,7 @@ impl NodeLauncher {
         request_responses_sender: UnboundedSender<(ResponseChannel, ExternalMessage)>,
         peer_num: Arc<AtomicUsize>,
         swarm_peers: Arc<ArcSwap<Vec<PeerId>>>,
-        redis_address: Option<url::Url>,
+        redis_address: Option<Url>,
     ) -> Result<(Self, NodeInputChannels, Arc<SyncPeers>)> {
         /// Helper to create a (sender, receiver) pair for a channel.
         fn sender_receiver<T>() -> (UnboundedSender<T>, UnboundedReceiverStream<T>) {
