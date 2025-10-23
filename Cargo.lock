@@ -11037,7 +11037,6 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
- "url",
  "vergen-git2",
  "zilliqa",
  "zilliqa-macros",

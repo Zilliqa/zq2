@@ -10,6 +10,7 @@ use anyhow::{Result, anyhow};
 use arc_swap::ArcSwap;
 use cfg_if::cfg_if;
 use itertools::Itertools;
+use jsonrpsee::client_transport::ws::Url;
 use libp2p::{
     PeerId, StreamProtocol, Swarm, autonat,
     futures::StreamExt,
@@ -242,7 +243,7 @@ impl P2pNode {
     pub async fn add_shard_node(
         &mut self,
         config: NodeConfig,
-        redis_address: Option<url::Url>,
+        redis_address: Option<Url>,
     ) -> Result<()> {
         let shard_id = config.eth_chain_id;
         if self.shard_nodes.contains_key(&shard_id) {

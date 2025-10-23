@@ -1,10 +1,10 @@
 use std::time::{Duration, UNIX_EPOCH};
 
 use anyhow::Result;
+use jsonrpsee::client_transport::ws::Url;
 use r2d2::Pool;
 use rand::{RngCore, thread_rng};
 use redis::{Client, Commands};
-use url::Url;
 
 use crate::credits::RateState;
 
