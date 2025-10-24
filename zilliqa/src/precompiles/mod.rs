@@ -82,7 +82,15 @@ impl PrecompileProvider<ZQ2EvmContext> for ZQ2PrecompileProvider {
         // Include our custom precompile address along with standard ones
         let mut addresses = vec![];
         addresses.extend(self.inner.warm_addresses());
-        addresses.extend(CUSTOM_PRECOMPILES.iter().map(|(addr, _)| addr));
+
+        const SKIP_WARM_ADDRESSES: [Address; 2] = [PENALTY_ADDRESS, SCILLA_CALL_ADDRESS];
+
+        addresses.extend(
+            CUSTOM_PRECOMPILES
+                .iter()
+                .filter(|(addr, _)| !SKIP_WARM_ADDRESSES.contains(addr))
+                .map(|(addr, _)| addr),
+        );
         Box::new(addresses.into_iter())
     }
 
@@ -129,6 +137,9 @@ pub enum CustomPrecompile {
     Penalty(Penalty),
 }
 
+const SCILLA_CALL_ADDRESS: Address = address!("0x000000000000000000000000000000005a494c53");
+const PENALTY_ADDRESS: Address = address!("0x000000000000000000000000000000005a494c82");
+
 const CUSTOM_PRECOMPILES: [(Address, CustomPrecompile); 5] = [
     (
         //Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x80"),
@@ -147,12 +158,12 @@ const CUSTOM_PRECOMPILES: [(Address, CustomPrecompile); 5] = [
     ),
     (
         //Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x53"),
-        address!("0x000000000000000000000000000000005a494c53"),
+        SCILLA_CALL_ADDRESS,
         CustomPrecompile::ScillaCall(ScillaCall),
     ),
     (
         //Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x82")
-        address!("0x000000000000000000000000000000005a494c82"),
+        PENALTY_ADDRESS,
         CustomPrecompile::Penalty(Penalty),
     ),
 ];
