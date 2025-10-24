@@ -226,7 +226,7 @@ pub async fn run_deployer_deposit(config_file: &str, node_selection: bool) -> Re
 pub async fn run_deployer_deposit_top_up(
     config_file: &str,
     node_selection: bool,
-    amount: u8,
+    amount: u64,
 ) -> Result<()> {
     println!("🦆 Running deposit-top-up for {config_file} .. ");
     deployer::run_deposit_top_up(config_file, node_selection, amount).await?;
@@ -236,7 +236,7 @@ pub async fn run_deployer_deposit_top_up(
 pub async fn run_deployer_unstake(
     config_file: &str,
     node_selection: bool,
-    amount: u8,
+    amount: u64,
 ) -> Result<()> {
     println!("🦆 Running unstake for {config_file} .. ");
     deployer::run_unstake(config_file, node_selection, amount).await?;

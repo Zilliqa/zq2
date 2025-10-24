@@ -111,7 +111,7 @@ impl SignerClient {
         Ok(())
     }
 
-    pub async fn deposit_top_up(&self, bls_public_key: &NodePublicKey, amount: u8) -> Result<()> {
+    pub async fn deposit_top_up(&self, bls_public_key: &NodePublicKey, amount: u64) -> Result<()> {
         println!("DepositTopUp: adding {amount} $ZIL stake");
 
         let client = self.get_signer().await?;
@@ -141,7 +141,7 @@ impl SignerClient {
         Ok(())
     }
 
-    pub async fn unstake(&self, bls_public_key: &NodePublicKey, amount: u8) -> Result<()> {
+    pub async fn unstake(&self, bls_public_key: &NodePublicKey, amount: u64) -> Result<()> {
         println!("Unstake: removing {amount} $ZIL");
 
         let client = self.get_signer().await?;
