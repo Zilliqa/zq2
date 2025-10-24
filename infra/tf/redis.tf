@@ -40,3 +40,54 @@ module "redis" {
     rdb_snapshot_period = "ONE_HOUR"
   }
 }
+
+# ----------------------------
+# 3. Create Secret Manager secret for Redis endpoint
+# ----------------------------
+resource "google_secret_manager_secret" "redis_endpoint" {
+  count = var.enable_redis ? 1 : 0
+
+  secret_id = "${var.chain_name}-redis-endpoint"
+
+  replication {
+    auto {}
+  }
+
+  depends_on = [module.redis]
+}
+
+resource "google_secret_manager_secret_version" "redis_endpoint" {
+  count = var.enable_redis ? 1 : 0
+
+  secret = google_secret_manager_secret.redis_endpoint[0].id
+  secret_data = "rediss://:${module.redis[0].auth_string}@${module.redis[0].host}:${module.redis[0].port}/?ssl_cert_reqs=none"
+
+  depends_on = [google_secret_manager_secret.redis_endpoint]
+}
+
+# ----------------------------
+# 4. Grant access to Redis secret for all service accounts
+# ----------------------------
+resource "google_secret_manager_secret_iam_binding" "redis_endpoint_access" {
+  count = var.enable_redis ? 1 : 0
+
+  secret_id = google_secret_manager_secret.redis_endpoint[0].secret_id
+  role      = "roles/secretmanager.secretAccessor"
+
+  members = concat(
+    flatten([
+      [for name, instance in module.bootstraps.instances : "serviceAccount:${instance.service_account}"],
+      [for name, instance in module.validators.instances : "serviceAccount:${instance.service_account}"],
+      [for name, instance in module.apis.instances : "serviceAccount:${instance.service_account}"],
+      [for name, instance in module.checkpoints.instances : "serviceAccount:${instance.service_account}"],
+      [for name, instance in module.persistences.instances : "serviceAccount:${instance.service_account}"]
+    ]),
+    flatten([
+      for private_api in module.private_apis : [
+        for name, instance in private_api.instances : "serviceAccount:${instance.service_account}"
+      ]
+    ])
+  )
+
+  depends_on = [google_secret_manager_secret.redis_endpoint]
+}
