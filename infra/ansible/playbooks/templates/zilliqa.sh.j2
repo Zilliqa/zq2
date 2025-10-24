@@ -21,6 +21,7 @@ start() {
         -e RUST_LOG='{{ log_level }}' \
         -e OTEL_METRIC_EXPORT_INTERVAL=60000 \
         -e RUST_BACKTRACE=1 \
+        -e REDIS_ENDPOINT='{{ redis_endpoint }}' \
         --restart=unless-stopped \
         ${ZQ2_IMAGE} ${SCILLA_SERVER_PORT} "${PRIVATE_KEY}" --log-json
     unset PRIVATE_KEY
