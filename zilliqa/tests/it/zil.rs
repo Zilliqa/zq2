@@ -93,6 +93,13 @@ enum ToAddr {
     StringVal(String),
 }
 
+fn get_random_address(network: &mut Network) -> Address {
+    let mut rng_guard = network.rng.lock().unwrap();
+    let mut addr_bytes = [0u8; 20];
+    rand::RngCore::fill_bytes(&mut *rng_guard, &mut addr_bytes);
+    Address::from_slice(&addr_bytes)
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn issue_create_transaction(
     wallet: &Wallet,
@@ -1307,7 +1314,9 @@ async fn mutate_evm_then_read_from_scilla(mut network: Network) {
     let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
     let evm_contract_address = receipt.contract_address.unwrap();
 
-    let recipient = Address::random_with(network.rng.lock().unwrap().deref_mut());
+    // Generate a random Address
+    let recipient = get_random_address(&mut network);
+
     debug!(%recipient);
 
     let function = abi.function("sendEtherThenCallScilla").unwrap();
@@ -1418,7 +1427,7 @@ async fn interop_send_funds_from_scilla(mut network: Network) {
     let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
     let evm_contract_address = receipt.contract_address.unwrap();
 
-    let recipient = Address::random_with(network.rng.lock().unwrap().deref_mut());
+    let recipient = get_random_address(&mut network);
     debug!(%recipient);
 
     let function = abi.function("callScillaOneArg").unwrap();
@@ -1565,6 +1574,13 @@ async fn call_scilla_precompile_with_value(mut network: Network) {
     let receipt = network.run_until_receipt(&wallet, tx_hash, 100).await;
     assert_eq!(receipt.status.unwrap().as_u64(), 1);
 
+    // Scilla contract balance received the value
+    let scilla_contract_zero_balance = wallet
+        .get_balance(scilla_contract_address, None)
+        .await
+        .unwrap();
+    assert_eq!(scilla_contract_zero_balance.as_u128(), value_to_send);
+
     // Evm contract balance modified by sent amount
     let evm_contract_zero_balance = wallet
         .get_balance(evm_contract_address, None)
@@ -1574,13 +1590,6 @@ async fn call_scilla_precompile_with_value(mut network: Network) {
         evm_contract_zero_balance.as_u128(),
         evm_contract_value - value_to_send
     );
-
-    // Scilla contract balance received the value
-    let scilla_contract_zero_balance = wallet
-        .get_balance(scilla_contract_address, None)
-        .await
-        .unwrap();
-    assert_eq!(scilla_contract_zero_balance.as_u128(), value_to_send);
 }
 
 #[zilliqa_macros::test(restrict_concurrency)]
@@ -4558,7 +4567,7 @@ async fn failed_zil_transfers_proper_fee(mut network: Network) {
     let gas_price: u128 = u128::from_str(&gas_price_str).unwrap();
     let gas_limit: ScillaGas = EvmGas(21000).into();
 
-    let destination = Address::random_with(network.rng.lock().unwrap().deref_mut());
+    let destination = get_random_address(&mut network);
 
     let amount_to_transfer = initial_balance;
 
