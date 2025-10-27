@@ -46,7 +46,7 @@ pub struct Config {
 }
 
 pub fn slow_rpc_queries_handlers_count_default() -> usize {
-    1
+    4 // half the CPU cores
 }
 
 #[derive(Debug, Clone)]
