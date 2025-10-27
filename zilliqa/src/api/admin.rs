@@ -11,14 +11,18 @@ use serde::{Deserialize, Serialize};
 
 use super::types::{admin::VotesReceivedReturnee, eth::QuorumCertificate, hex};
 use crate::{
-    api::{to_hex::ToHex, types::admin::VoteCount},
+    api::{
+        HandlerType, disabled_err, format_panic_as_error, into_rpc_error, make_panic_hook,
+        rpc_base_attributes, to_hex::ToHex, types::admin::VoteCount,
+    },
     cfg::EnabledApi,
-    checkpoint::load_ckpt_history,
-    consensus::{BlockVotes, NewViewVote, Validator},
+    checkpoint::{load_ckpt_blocks, load_ckpt_history},
+    consensus::{BlockVotes, Consensus, NewViewVote, Validator},
     constants::{LAG_BEHIND_CURRENT_VIEW, MISSED_VIEW_WINDOW},
     crypto::NodePublicKey,
     message::{BitArray, BlockHeader},
     node::Node,
+    precompiles::ViewHistory,
 };
 
 pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc<Node>> {
@@ -26,17 +30,17 @@ pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc
         node,
         enabled_apis,
         [
-            ("admin_consensusInfo", consensus_info),
-            ("admin_generateCheckpoint", checkpoint),
-            ("admin_blockRange", admin_block_range),
-            ("admin_forceView", force_view),
-            ("admin_getPeers", get_peers),
-            ("admin_votesReceived", votes_received),
-            ("admin_clearMempool", clear_mempool),
-            ("admin_getLeaders", get_leaders),
-            ("admin_syncing", syncing),
-            ("admin_missedViews", missed_views),
-            ("admin_importViewHistory", import_history),
+            ("admin_consensusInfo", consensus_info, HandlerType::Fast),
+            ("admin_generateCheckpoint", checkpoint, HandlerType::Fast),
+            ("admin_blockRange", admin_block_range, HandlerType::Fast),
+            ("admin_forceView", force_view, HandlerType::Fast),
+            ("admin_getPeers", get_peers, HandlerType::Fast),
+            ("admin_votesReceived", votes_received, HandlerType::Fast),
+            ("admin_clearMempool", clear_mempool, HandlerType::Fast),
+            ("admin_getLeaders", get_leaders, HandlerType::Slow),
+            ("admin_syncing", syncing, HandlerType::Fast),
+            ("admin_missedViews", missed_views, HandlerType::Fast),
+            ("admin_importViewHistory", import_history, HandlerType::Slow),
         ]
     )
 }
@@ -72,11 +76,24 @@ fn missed_views(params: Params, node: &Arc<Node>) -> Result<NodeMissedViews> {
     let mut params = params.sequence();
     let current_view: u64 = params.next::<U64>()?.to::<u64>();
     let consensus = node.consensus.read();
-    let history = &consensus.state().view_history;
+    let (history, finalized_view) = if current_view < consensus.state().view_history.min_view
+        && consensus.state().ckpt_view_history.is_some()
+        && consensus.state().ckpt_finalized_view.is_some()
+    {
+        (
+            consensus.state().ckpt_view_history.as_ref().unwrap(),
+            consensus.state().ckpt_finalized_view.unwrap(),
+        )
+    } else {
+        (
+            &consensus.state().view_history,
+            consensus.get_finalized_view()?,
+        )
+    };
     let min_view = history.min_view;
     if min_view > 1
         && current_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW) < min_view + MISSED_VIEW_WINDOW
-        || current_view > node.consensus.read().get_finalized_view()? + LAG_BEHIND_CURRENT_VIEW + 1
+        || current_view > finalized_view + LAG_BEHIND_CURRENT_VIEW + 1
     {
         return Err(anyhow!("Missed view history not available"));
     }
@@ -99,10 +116,94 @@ fn missed_views(params: Params, node: &Arc<Node>) -> Result<NodeMissedViews> {
     })
 }
 
+pub fn merge_history(
+    consensus: &mut Consensus,
+    imported_history: &mut ViewHistory,
+    ckpt_view: u64,
+) -> Result<()> {
+    let finalized_view = consensus.get_finalized_view()?;
+    let max_missed_view_age = consensus.config.max_missed_view_age;
+    let db = consensus.db.clone();
+    let history = &mut consensus.state_mut().view_history;
+    {
+        tracing::info!(
+            history = display(&history),
+            "~~~~~~~~~~> initial consensus state"
+        );
+    }
+    let first_existing = history.min_view;
+    let mut last_imported = ckpt_view;
+
+    // make sure there is no gap between the existing and the imported history
+    if first_existing > last_imported {
+        return Err(anyhow!(
+            "Gap between imported and existing history detected"
+        ));
+    }
+    // trim the imported missed view history
+    imported_history.prune_history(finalized_view, max_missed_view_age)?;
+    {
+        tracing::info!(
+            history = display(&imported_history),
+            "~~~~~~~~~~> trimmed imported from checkpoint"
+        );
+    }
+    // skip the overlapping missed views present in both histories
+    loop {
+        if let Some((view, _)) = imported_history.missed_views.back() {
+            last_imported = *view
+        } else {
+            // the node's view history now starts before the remaining imported history
+            return Ok(());
+        }
+        if last_imported < first_existing {
+            break;
+        }
+        imported_history.missed_views.pop_back();
+    }
+
+    {
+        tracing::info!(
+            history = display(&imported_history),
+            "~~~~~~~~~~> non-overlapping imported from checkpoint"
+        );
+    }
+    let imported_missed_views = &imported_history.missed_views;
+    // merge the two missed view histories and stor&e the delta in the db
+    imported_missed_views
+        .iter()
+        .rev()
+        .for_each(|(view, leader)| {
+            let _ = db.extend_view_history(*view, leader.as_bytes());
+            history.missed_views.push_front((*view, *leader));
+        });
+    // update min_view in consensus state and in the db
+    history.min_view = imported_history.min_view;
+    db.set_min_view_of_view_history(history.min_view)?;
+    {
+        tracing::info!(
+            history = display(&history),
+            "~~~~~~~~~~> merged consensus state"
+        );
+    }
+    Ok(())
+}
+
 fn import_history(params: Params, node: &Arc<Node>) -> Result<()> {
     let mut params = params.sequence();
     let param: &str = params.next::<&str>()?;
     let path = std::path::Path::new(param);
+    let (block, _, _) = load_ckpt_blocks(path)?;
+    {
+        if node
+            .consensus
+            .read()
+            .state_at(block.number() + 1)?
+            .is_none()
+        {
+            return Err(anyhow!("Importing missed views requires executed blocks"));
+        }
+    }
     let mut imported_history = load_ckpt_history(path)?;
     {
         tracing::info!(
@@ -111,75 +212,7 @@ fn import_history(params: Params, node: &Arc<Node>) -> Result<()> {
         );
     }
     let mut consensus = node.consensus.write();
-    let history = &mut consensus.state_mut().view_history;
-    {
-        tracing::info!(
-            history = display(&history),
-            "~~~~~~~~~~> initial consensus state"
-        );
-    }
-    let first = {
-        match history.missed_views.front() {
-            None => 0,
-            Some((view, _)) => *view,
-        }
-    };
-    let mut last_imported = {
-        match imported_history.missed_views.back() {
-            None => 0,
-            Some((view, _)) => *view,
-        }
-    };
-    // make sure there is no gap between the existing and the imported history
-    if first > last_imported {
-        return Err(anyhow!(
-            "Gap between imported and existing history detected"
-        ));
-    }
-    let finalized_view = node.consensus.read().get_finalized_view()?;
-    // trim the imported missed view history
-    imported_history.prune_history(finalized_view, node.config.max_missed_view_age)?;
-    {
-        tracing::info!(
-            history = display(&imported_history),
-            "~~~~~~~~~~> trimmed imported from checkpoint"
-        );
-    }
-    // skip the overlapping missed views present in both histories
-    while last_imported >= first {
-        imported_history.missed_views.pop_back();
-        if let Some((view, _)) = imported_history.missed_views.back() {
-            last_imported = *view
-        } else {
-            // the node's missed view history starts before the imported one
-            return Ok(());
-        }
-    }
-    {
-        tracing::info!(
-            history = display(&imported_history),
-            "~~~~~~~~~~> non-overlapping imported from checkpoint"
-        );
-    }
-    let imported_missed_views = &imported_history.missed_views;
-    // merge the two missed view histories and store the delta in the db
-    imported_missed_views
-        .iter()
-        .rev()
-        .for_each(|(view, leader)| {
-            let _ = node.db.extend_view_history(*view, leader.as_bytes());
-            history.missed_views.push_front((*view, *leader));
-        });
-    // update min_view in consensus state and in the db
-    history.min_view = imported_history.min_view;
-    node.db.set_min_view_of_view_history(history.min_view)?;
-    {
-        tracing::info!(
-            history = display(&history),
-            "~~~~~~~~~~> merged consensus state"
-        );
-    }
-    Ok(())
+    merge_history(&mut consensus, &mut imported_history, block.view())
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -350,16 +383,29 @@ fn get_leaders(params: Params, node: &Arc<Node>) -> Result<Vec<(u64, Validator)>
     let mut params = params.sequence();
     let mut view = params.next::<U64>()?.to::<u64>();
     let count = params.next::<U64>()?.to::<usize>().min(100);
-
     let mut leaders = vec![];
 
-    let head_block = {
-        let consensus = node.consensus.read();
-        consensus.head_block()
+    // find the parent block whose state must be used for the leader selection
+    let parent_block = if view > node.consensus.read().get_view()? {
+        node.consensus.read().head_block()
+    } else {
+        let lowest = node.consensus.read().get_lowest_block_view_number();
+        let mut parent_view = view.saturating_sub(1);
+        // there won't be too many missing views before we find a parent block due to the
+        // exponential backoff unless we don't store any blocks older than the requested view
+        loop {
+            if parent_view < lowest {
+                return Ok(leaders);
+            }
+            match node.consensus.read().get_block_by_view(parent_view)? {
+                Some(parent_block) => break parent_block,
+                None => parent_view = parent_view.saturating_sub(1),
+            }
+        }
     };
 
     while leaders.len() <= count {
-        if let Some(leader) = node.consensus.read().leader_at_block(&head_block, view) {
+        if let Some(leader) = node.consensus.read().leader_at_block(&parent_block, view) {
             leaders.push((view, leader));
         } else {
             break; // missed view history not available

@@ -10,6 +10,7 @@ use jsonrpsee::{RpcModule, types::Params};
 use serde_json::{Value, json};
 
 use super::{
+    HandlerType,
     eth::{
         get_transaction_inner, get_transaction_receipt_inner_slow,
         old_get_block_transaction_receipts_inner,
@@ -17,7 +18,10 @@ use super::{
     types::ots::{self, Operation, TraceEntry},
 };
 use crate::{
-    api::to_hex::ToHex,
+    api::{
+        disabled_err, format_panic_as_error, into_rpc_error, make_panic_hook, rpc_base_attributes,
+        to_hex::ToHex,
+    },
     cfg::EnabledApi,
     crypto::Hash,
     inspector::{self, CreatorInspector, OtterscanOperationInspector, OtterscanTraceInspector},
@@ -30,21 +34,54 @@ pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc
         node,
         enabled_apis,
         [
-            ("ots_getApiLevel", get_otterscan_api_level),
-            ("ots_getBlockDetails", get_block_details),
-            ("ots_getBlockDetailsByHash", get_block_details_by_hash),
-            ("ots_getBlockTransactions", get_block_transactions),
-            ("ots_getContractCreator", get_contract_creator),
-            ("ots_getInternalOperations", get_internal_operations),
+            (
+                "ots_getApiLevel",
+                get_otterscan_api_level,
+                HandlerType::Fast
+            ),
+            ("ots_getBlockDetails", get_block_details, HandlerType::Fast),
+            (
+                "ots_getBlockDetailsByHash",
+                get_block_details_by_hash,
+                HandlerType::Fast
+            ),
+            (
+                "ots_getBlockTransactions",
+                get_block_transactions,
+                HandlerType::Slow
+            ),
+            (
+                "ots_getContractCreator",
+                get_contract_creator,
+                HandlerType::Slow
+            ),
+            (
+                "ots_getInternalOperations",
+                get_internal_operations,
+                HandlerType::Slow
+            ),
             (
                 "ots_getTransactionBySenderAndNonce",
-                get_transaction_by_sender_and_nonce
+                get_transaction_by_sender_and_nonce,
+                HandlerType::Slow
             ),
-            ("ots_getTransactionError", get_transaction_error),
-            ("ots_hasCode", has_code),
-            ("ots_searchTransactionsAfter", search_transactions_after),
-            ("ots_searchTransactionsBefore", search_transactions_before),
-            ("ots_traceTransaction", trace_transaction),
+            (
+                "ots_getTransactionError",
+                get_transaction_error,
+                HandlerType::Slow
+            ),
+            ("ots_hasCode", has_code, HandlerType::Fast),
+            (
+                "ots_searchTransactionsAfter",
+                search_transactions_after,
+                HandlerType::Slow
+            ),
+            (
+                "ots_searchTransactionsBefore",
+                search_transactions_before,
+                HandlerType::Slow
+            ),
+            ("ots_traceTransaction", trace_transaction, HandlerType::Slow),
         ],
     )
 }

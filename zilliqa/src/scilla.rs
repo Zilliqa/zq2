@@ -221,7 +221,7 @@ pub struct Scilla {
 
 impl Scilla {
     const MAX_ATTEMPTS: u8 = 3; // effective time is up to MAX_ATTEMPTS * REQ_TIMEOUT.
-    const REQ_TIMEOUT: Duration = Duration::from_secs(120); // effective time should be kept below gossip/request timeouts.
+    const REQ_TIMEOUT: Duration = Duration::from_secs(600); // effective time should be kept below gossip/request timeouts.
 
     /// Create a new Scilla interpreter. This involves spawning two threads:
     /// 1. The client thread, responsible for communicating with the server.
@@ -382,7 +382,7 @@ impl Scilla {
                 .is_library(init.is_library()?)
                 .build()?;
 
-            tracing::debug!(%attempt,"Create attempt");
+            tracing::debug!(number=%current_block, %sender, %attempt,"Create attempt");
             let (response, state) = self.state_server.lock().unwrap().active_call(
                 sender,
                 pending_state,
@@ -398,7 +398,7 @@ impl Scilla {
                 Ok(r) => break (r, state),
                 Err(ClientError::Call(e)) => break (serde_json::from_str(e.message())?, state),
                 Err(ClientError::RequestTimeout) if attempt < Self::MAX_ATTEMPTS => {
-                    tracing::warn!(%attempt, "Create retry");
+                    tracing::warn!(number=%current_block, %sender, %attempt, "Create retry");
                     attempt += 1;
                 }
                 Err(e) => {
@@ -459,7 +459,7 @@ impl Scilla {
                 .pplit(true)
                 .build()?;
 
-            tracing::debug!(%attempt,"Invoke attempt");
+            tracing::debug!(number=%current_block, %contract, %attempt,"Invoke attempt");
             let (response, state) = self.state_server.lock().unwrap().active_call(
                 contract,
                 pending_state,
@@ -475,7 +475,7 @@ impl Scilla {
                 Ok(r) => break (r, state),
                 Err(ClientError::Call(e)) => break (serde_json::from_str(e.message())?, state),
                 Err(ClientError::RequestTimeout) if attempt < Self::MAX_ATTEMPTS => {
-                    tracing::warn!(%attempt, "Invoke retry");
+                    tracing::warn!(number=%current_block, %contract, %attempt, "Invoke retry");
                     attempt += 1;
                 }
                 Err(e) => return Err(anyhow!("{e:?}")),

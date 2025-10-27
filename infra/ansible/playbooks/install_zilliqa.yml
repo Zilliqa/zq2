@@ -115,6 +115,16 @@
         zq2_private_key: "{{ retrieved_private_key.stdout }}"
       when: not enable_kms
 
+    - name: Retrieve Redis endpoint
+      shell: |
+        gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ chain_name }}-redis-endpoint" 2>/dev/null || echo ""
+      register: retrieved_redis_endpoint
+      failed_when: false
+
+    - name: Set fact with Redis endpoint
+      set_fact:
+        redis_endpoint: "{{ retrieved_redis_endpoint.stdout | default('') }}"
+
     - name: Create Zilliqa node script
       template:
         src: templates/zilliqa.sh.j2
@@ -123,6 +133,7 @@
       vars:
         zq2_version: "{{ zq2_version }}"
         zq2_private_key: "{{ zq2_private_key }}"
+        redis_endpoint: "{{ redis_endpoint }}"
       notify:
         - Restart Zilliqa service
     
