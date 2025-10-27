@@ -126,8 +126,7 @@ impl eth_trie::DB for TrieStorage {
 
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, Self::Error> {
         // L1 - in-memory cache
-        // does not mark the entry as MRU, but allows concurrent cache reads;
-        if let Some(cached) = self.cache.read().peek(key) {
+        if let Some(cached) = self.cache.write().get(key) {
             return Ok(Some(cached.to_vec()));
         }
 

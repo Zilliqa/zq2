@@ -449,6 +449,7 @@ pub fn save_ckpt(
         .compression_method(zip::CompressionMethod::Zstd);
 
     let mut zipwriter = zip::ZipWriter::new(zipfile);
+    zipwriter.set_flush_on_finish_file(true);
 
     // write history.json
     zipwriter.start_file("history.bincode", options)?;
@@ -474,7 +475,8 @@ pub fn save_ckpt(
     // iterate over accounts and save the accounts to the checkpoint file.
     // do not save intermediate state trie values.
     let state_trie = EthTrie::new(trie_storage.clone()).at_root(parent.state_root_hash().into());
-    for (key, serialised_account) in state_trie.iter().flatten() {
+    for kv in state_trie.iter() {
+        let (key, serialised_account) = kv?;
         if account_count % 10000 == 0 {
             tracing::debug!(account=%account_count, record=%record_count, "Saved");
         }
@@ -489,7 +491,8 @@ pub fn save_ckpt(
         let count = account_trie.iter().count();
         bincode::serde::encode_into_std_write(count, &mut zipwriter, BIN_CONFIG)?;
 
-        for (storage_key, storage_val) in account_trie.iter().flatten() {
+        for skv in account_trie.iter() {
+            let (storage_key, storage_val) = skv?;
             bincode::encode_into_std_write(&storage_key, &mut zipwriter, BIN_CONFIG)?;
             bincode::encode_into_std_write(&storage_val, &mut zipwriter, BIN_CONFIG)?;
             record_count += 1;

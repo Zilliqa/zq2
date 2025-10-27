@@ -466,11 +466,26 @@ impl P2pNode {
                         InternalMessage::LaunchLink(_) | InternalMessage::IntershardCall(_) => {
                             self.send_to(&Self::shard_id_to_topic(destination, None).hash(), |c| c.local_messages.send((source, message)))?;
                         }
+                        // Blocking call to generate a checkpoint file.
+                        // This will have the unintended side-effect of blocking message handling. So, intentionally disconnect-and-reconnect to avoid filling buffers.
                         InternalMessage::ExportBlockCheckpoint(block, transactions, parent, trie_storage, view_history, path) => {
-                            // Exporting the checkpoint is a CPU-intensive task, so we spawn it on a separate thread.
-                            self.task_threads.spawn_blocking( move  || {
-                                db::checkpoint_block_with_state(&block, &transactions, &parent, trie_storage, source, view_history, path)
-                            });
+                            // forcibly disconnect all peers
+                            let peers = self.swarm.connected_peers().cloned().collect_vec();
+                            tracing::info!(len=%peers.len(),"Disconnecting");
+                            for peer in peers {
+                                self.swarm.disconnect_peer_id(peer).ok();
+                            }
+                            // cut the checkpoint
+                            tracing::info!(number=%block.number(), "Checkpointing");
+                            db::checkpoint_block_with_state(&block, &transactions, &parent, trie_storage, source, view_history, path)?;
+                            // redial and reconnect
+                            tracing::info!("Reconnecting");
+                            for (peer, address) in &self.config.bootstrap_address.0 {
+                                if self.swarm.local_peer_id() != peer {
+                                    self.swarm.dial(address.clone())?;
+                                }
+                            }
+                            // node should re-sync after checkpointing.
                         }
                         InternalMessage::SubscribeToGossipSubTopic(topic) => {
                             debug!("subscribing to topic {:?}", topic);
