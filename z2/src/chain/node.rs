@@ -814,6 +814,9 @@ impl ChainNode {
                 .collect::<Vec<_>>(),
         )?;
 
+        let credit_rates = include_str!("../../resources/rpc_rates.toml");
+
+        ctx.insert("credit_rates", &credit_rates);
         ctx.insert(
             "bootstrap_address",
             &serde_json::to_string_pretty(&bootstrap_address)?,

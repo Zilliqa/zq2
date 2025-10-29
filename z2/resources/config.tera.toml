@@ -77,3 +77,7 @@ consensus.forks = [
 file = "{{ checkpoint_file }}"
 hash = "{{ checkpoint_hash }}"
 {%- endif %}
+
+{%- if role == "api" %}
+{{ credit_rates }}
+{%- endif %}
