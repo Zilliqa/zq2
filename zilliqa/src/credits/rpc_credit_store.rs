@@ -52,7 +52,7 @@ impl RpcCreditStore {
 
     // Only deletes the lock if the token matches.
     pub fn release(&self, key: &str, token: u64) -> Result<()> {
-        tracing::debug!("RELEASE {key}");
+        tracing::trace!("RELEASE {key}");
         let Some(pool) = self.pool.as_ref() else {
             return Err(anyhow::anyhow!("Redis pool missing"));
         };
@@ -72,7 +72,7 @@ impl RpcCreditStore {
     // Waits until the lock is acquired.
     // Returns the token used to release the lock.
     pub fn acquire(&self, key: &str) -> Result<u64> {
-        tracing::debug!("ACQUIRE {key}");
+        tracing::trace!("ACQUIRE {key}");
         let Some(pool) = self.pool.as_ref() else {
             return Err(anyhow::anyhow!("Redis pool missing"));
         };
@@ -105,7 +105,7 @@ impl RpcCreditStore {
 
     // Returns the stored user state, or default state if non exists.
     pub fn get_user_state(&self, key: &str) -> Result<RateState> {
-        tracing::debug!("GET {key}");
+        tracing::trace!("GET {key}");
         let Some(pool) = self.pool.as_ref() else {
             return Err(anyhow::anyhow!("Redis pool missing"));
         };
@@ -123,7 +123,7 @@ impl RpcCreditStore {
 
     // Update the user state, or create a new one if it doesn't exist.
     pub fn update_user_state(&self, key: &str, state: &RateState) -> Result<()> {
-        tracing::debug!(?state, "SET {key}");
+        tracing::trace!(?state, "SET {key}");
         let Some(pool) = self.pool.as_ref() else {
             return Err(anyhow::anyhow!("Redis pool missing"));
         };
