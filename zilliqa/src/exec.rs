@@ -1687,7 +1687,7 @@ impl PendingState {
 
             *current_value = if let Some(cached) = current_cached {
                 cached.clone()
-            } else if disk_indices_len == 0 && self.fork.check_minimum_gas_price {
+            } else if disk_indices_len == 0 && self.fork.scilla_empty_maps_are_encoded_correctly {
                 // Map is empty and has no entries represented in the storage (disk indices are empty)
                 StorageValue::complete_map()
             } else {
