@@ -128,11 +128,11 @@ impl Chain {
                     reinitialise_params: Some(ReinitialiseParams::default()),
                 }),
                 deposit_v6: Some(ContractUpgradeConfig {
-                    height: 11998800,
+                    height: 13514400,
                     reinitialise_params: None,
                 }),
                 deposit_v7: Some(ContractUpgradeConfig {
-                    height: 11998800,
+                    height: 13514400,
                     reinitialise_params: Some(ReinitialiseParams {
                         withdrawal_period: 461680,
                     }), // https://github.com/Zilliqa/zq2/pull/3221
@@ -305,8 +305,8 @@ impl Chain {
                 json!({ "at_height": 7000000, "inject_access_list": true, "use_max_gas_priority_fee": true}),
                 // estimated: 2025-09-15T12.00.00Z
                 json!({ "at_height": 10153271, "failed_zil_transfers_to_eoa_proper_fee_deduction": true}),
-                // estimated: 2025-10-22T19.00.00Z
-                json!({ "at_height": 11998800, "validator_jailing": true}),
+                // estimated: 2025-11-17T07:18:28Z
+                json!({ "at_height": 13514400, "validator_jailing": true}),
             ]),
             _ => None,
         }
