@@ -41,7 +41,7 @@ use crate::{
     evm::{SPEC_ID, ZQ2Evm, ZQ2EvmContext, new_zq2_evm_ctx},
     inspector::{self, ScillaInspector, TouchedAddressInspector},
     message::{Block, BlockHeader},
-    precompiles::ViewHistory,
+    precompiles::{PENALTY_ADDRESS, SCILLA_CALL_ADDRESS, ViewHistory},
     scilla::{self, ParamValue, Scilla, split_storage_key, storage_key},
     state::{Account, Code, ContractInit, ExternalLibrary, State, contract_addr},
     time::SystemTime,
@@ -657,6 +657,17 @@ impl State {
                 evm.transact(tx)?
             }
         };
+
+        let ResultAndState { result, state } = result_and_state;
+
+        // Don't apply state delta to SCILLA CALL AND PENALTY precompiles as in previous versions of revm they were called by custom handler
+        let state = state
+            .into_iter()
+            .filter(|(addr, _)| *addr != SCILLA_CALL_ADDRESS && *addr != PENALTY_ADDRESS)
+            .collect();
+
+        let result_and_state = ResultAndState { result, state };
+
         if enable_inspector {
             let touched_address = &evm.0.ctx.chain.touched_address_inspector.touched;
             let inspector = &mut evm.0.inspector;
