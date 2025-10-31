@@ -715,6 +715,7 @@ pub struct Fork {
     pub use_max_gas_priority_fee: bool,
     pub failed_zil_transfers_to_eoa_proper_fee_deduction: bool,
     pub validator_jailing: bool,
+    pub scilla_empty_maps_are_encoded_correctly: bool,
 }
 
 pub enum ForkName {
@@ -853,6 +854,8 @@ pub struct ForkDelta {
     pub failed_zil_transfers_to_eoa_proper_fee_deduction: Option<bool>,
     /// if true, apply jailing during leader selection
     pub validator_jailing: Option<bool>,
+    /// if true, empty scilla maps having no presence in state are encoded as empty maps, not empty values
+    pub scilla_empty_maps_are_encoded_correctly: Option<bool>,
 }
 
 impl Fork {
@@ -955,6 +958,9 @@ impl Fork {
                 .failed_zil_transfers_to_eoa_proper_fee_deduction
                 .unwrap_or(self.failed_zil_transfers_to_eoa_proper_fee_deduction),
             validator_jailing: delta.validator_jailing.unwrap_or(self.validator_jailing),
+            scilla_empty_maps_are_encoded_correctly: delta
+                .scilla_empty_maps_are_encoded_correctly
+                .unwrap_or(self.scilla_empty_maps_are_encoded_correctly),
         }
     }
 }
@@ -1056,6 +1062,7 @@ pub fn genesis_fork_default() -> Fork {
         use_max_gas_priority_fee: true,
         failed_zil_transfers_to_eoa_proper_fee_deduction: true,
         validator_jailing: true,
+        scilla_empty_maps_are_encoded_correctly: true,
     }
 }
 
@@ -1223,6 +1230,7 @@ mod tests {
                 use_max_gas_priority_fee: None,
                 failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                 validator_jailing: None,
+                scilla_empty_maps_are_encoded_correctly: None,
             }],
             ..Default::default()
         };
@@ -1279,6 +1287,7 @@ mod tests {
                     use_max_gas_priority_fee: None,
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                     validator_jailing: Some(false),
+                    scilla_empty_maps_are_encoded_correctly: Some(false),
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1315,6 +1324,7 @@ mod tests {
                     use_max_gas_priority_fee: None,
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                     validator_jailing: None,
+                    scilla_empty_maps_are_encoded_correctly: None,
                 },
             ],
             ..Default::default()
@@ -1388,6 +1398,7 @@ mod tests {
                     use_max_gas_priority_fee: None,
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                     validator_jailing: None,
+                    scilla_empty_maps_are_encoded_correctly: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1424,6 +1435,7 @@ mod tests {
                     use_max_gas_priority_fee: None,
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                     validator_jailing: None,
+                    scilla_empty_maps_are_encoded_correctly: None,
                 },
             ],
             ..Default::default()
@@ -1485,6 +1497,7 @@ mod tests {
                 use_max_gas_priority_fee: true,
                 failed_zil_transfers_to_eoa_proper_fee_deduction: true,
                 validator_jailing: true,
+                scilla_empty_maps_are_encoded_correctly: true,
             },
             forks: vec![],
             ..Default::default()
@@ -1534,6 +1547,7 @@ mod tests {
                     use_max_gas_priority_fee: None,
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                     validator_jailing: None,
+                    scilla_empty_maps_are_encoded_correctly: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1570,6 +1584,7 @@ mod tests {
                     use_max_gas_priority_fee: None,
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                     validator_jailing: None,
+                    scilla_empty_maps_are_encoded_correctly: None,
                 },
             ],
             ..Default::default()
