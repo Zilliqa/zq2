@@ -122,6 +122,7 @@ impl P2pNode {
                 noise::Config::new,
                 yamux::Config::default,
             )?
+            .with_quic()
             .with_dns()?
             .with_behaviour(|key_pair| {
                 Ok(Behaviour {
