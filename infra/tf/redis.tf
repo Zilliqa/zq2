@@ -35,6 +35,7 @@ module "redis" {
   region             = var.region
   authorized_network = local.network_name
   connect_mode       = "PRIVATE_SERVICE_ACCESS"
+  transit_encryption_mode = "DISABLED"
   persistence_config = {
     persistence_mode = "RDB"
     rdb_snapshot_period = "ONE_HOUR"
