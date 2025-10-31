@@ -8,17 +8,53 @@ use jsonrpsee::{
     },
     types::{ErrorObject, Request},
 };
+use tower::Layer;
 
-/// Based on https://github.com/paritytech/jsonrpsee/blob/master/examples/examples/rpc_middleware_rate_limiting.rs
-///
 use crate::credits::{RateQuota, RateState, RpcCreditRate, RpcCreditStore, RpcHeaderExt};
 
 const RPC_ERROR_CODE: i32 = -32000;
 const RPC_ERROR_MESSAGE: &str = "RPC_RATE_LIMIT";
 
+/// Credit limit layer for JSON-RPC requests.
+#[derive(Debug, Clone)]
+pub struct RpcLimitLayer {
+    credit_store: Arc<RpcCreditStore>,
+    credit_rate: RpcCreditRate,
+    default_quota: Option<RateQuota>,
+}
+
+impl RpcLimitLayer {
+    pub fn new(
+        credit_store: Arc<RpcCreditStore>,
+        credit_rate: RpcCreditRate,
+        default_quota: Option<RateQuota>,
+    ) -> Self {
+        Self {
+            credit_store,
+            credit_rate,
+            default_quota,
+        }
+    }
+}
+
+impl<S> Layer<S> for RpcLimitLayer {
+    type Service = RpcCreditLimit<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        RpcCreditLimit::new(
+            inner,
+            self.credit_store.clone(),
+            self.credit_rate.clone(),
+            self.default_quota,
+        )
+    }
+}
+
+/// Based on https://github.com/paritytech/jsonrpsee/blob/master/examples/examples/rpc_middleware_rate_limiting.rs
+
 #[derive(Clone)]
 pub struct RpcCreditLimit<S> {
-    service: S,
+    inner: S,
     default_quota: RateQuota,
     credit_store: Arc<RpcCreditStore>,
     credit_rate: RpcCreditRate,
@@ -26,16 +62,16 @@ pub struct RpcCreditLimit<S> {
 
 impl<S> RpcCreditLimit<S> {
     pub fn new(
-        service: S,
+        inner: S,
         credit_store: Arc<RpcCreditStore>,
         credit_rate: RpcCreditRate,
         default_quota: Option<RateQuota>,
     ) -> Self {
         Self {
-            service,
+            inner,
             // default rate-limit is unlimited
             default_quota: default_quota.unwrap_or_default(),
-            credit_store: credit_store.clone(),
+            credit_store,
             credit_rate,
         }
     }
@@ -151,7 +187,7 @@ where
         }
 
         // underlying service handler
-        ResponseFuture::future(self.service.call(req))
+        ResponseFuture::future(self.inner.call(req))
     }
 
     // Batch calls
@@ -202,7 +238,7 @@ where
             .ok(); // only save the final state, skipping intermediate states.
 
         // underlying service handler
-        self.service.batch(batch)
+        self.inner.batch(batch)
     }
 
     // Notifications
@@ -212,6 +248,6 @@ where
     ) -> impl Future<Output = Self::NotificationResponse> + Send + 'a {
         // TODO: implement notification rate-limits
         // ResponseFuture::ready(MethodResponse::notification())
-        ResponseFuture::future(self.service.notification(n))
+        ResponseFuture::future(self.inner.notification(n))
     }
 }
