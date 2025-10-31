@@ -33,7 +33,7 @@ use tracing::*;
 use crate::{
     api::{self, subscription_id_provider::EthIdProvider},
     cfg::NodeConfig,
-    credits::{RpcCreditLimit, RpcCreditRate, RpcCreditStore, RpcExtensionLayer},
+    credits::{RpcCreditRate, RpcCreditStore, RpcExtensionLayer, RpcLimitLayer},
     crypto::SecretKey,
     message::{ExternalMessage, InternalMessage},
     node::{self, OutgoingMessageFailure},
@@ -149,9 +149,9 @@ impl NodeLauncher {
                 .allow_origin(Any)
                 .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION, header::ACCEPT]); // We inject a [CorsLayer] to ensure web browsers can call our API directly.
             let health = ProxyGetRequestLayer::new([("/health", "health_check")])?;
-            let rpc_exts = RpcExtensionLayer::new();
             let http_middleware = tower::ServiceBuilder::new()
-                .layer(rpc_exts)
+                // turn on if quota is set
+                .option_layer(api_server.default_quota.map(|_| RpcExtensionLayer::new()))
                 .layer(health)
                 .layer(cors);
 
@@ -159,14 +159,13 @@ impl NodeLauncher {
             let credit_rate = credit_rate.clone();
             let credit_store = credit_store.clone();
             let default_quota = api_server.default_quota;
-            let rpc_middleware = RpcServiceBuilder::new().layer_fn(move |service| {
-                RpcCreditLimit::new(
-                    service,
-                    credit_store.clone(),
-                    credit_rate.clone(),
-                    default_quota,
-                )
-            });
+            let rpc_middleware = RpcServiceBuilder::new()
+                // turn on if quota is set
+                .option_layer(
+                    api_server
+                        .default_quota
+                        .map(|_| RpcLimitLayer::new(credit_store, credit_rate, default_quota)),
+                );
 
             // Construct the JSON-RPC API server.
             let server = jsonrpsee::server::ServerBuilder::new()
