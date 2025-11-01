@@ -1211,7 +1211,7 @@ mod tests {
 
     use alloy::{
         consensus::TxLegacy,
-        primitives::{Address, Bytes, PrimitiveSignature, TxKind, U256},
+        primitives::{Address, Bytes, Signature, TxKind, U256},
     };
     use anyhow::Result;
     use itertools::Itertools;
@@ -1238,7 +1238,7 @@ mod tests {
                 value: U256::ZERO,
                 input: Bytes::new(),
             },
-            sig: PrimitiveSignature::new(U256::from(1), U256::from(1), false),
+            sig: Signature::new(U256::from(1), U256::from(1), false),
         };
         let cbor_size = cbor4ii::serde::to_vec(Vec::with_capacity(4096), &tx)
             .map(|b| b.len())
@@ -1663,7 +1663,7 @@ mod tests {
                     value: U256::ZERO,
                     input: Bytes::new(),
                 },
-                sig: PrimitiveSignature::new(U256::from(1), U256::from(1), false),
+                sig: Signature::new(U256::from(1), U256::from(1), false),
             },
             signer: from_addr,
             hash: Hash::builder()

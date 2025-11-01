@@ -353,7 +353,7 @@ pub fn load_ckpt_state(
             // compute the root trie for this account
             let root_hash = account_trie.root_hash()?;
             ensure!(
-                root_hash == account_root,
+                *root_hash == *account_root,
                 "Account storage root {root_hash} mismatch",
             );
 

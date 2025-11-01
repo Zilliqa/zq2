@@ -679,7 +679,7 @@ impl Forks {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Fork {
     pub at_height: u64,
     pub executable_blocks: bool,
