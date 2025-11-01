@@ -1,10 +1,11 @@
-use std::{ops::Deref, str::FromStr, time::Duration};
+use std::{collections::HashMap, ops::Deref, str::FromStr, time::Duration};
 
 use alloy::{
     primitives::{Address, address},
     rlp::Encodable,
 };
 use anyhow::{Result, anyhow};
+use jsonrpsee::client_transport::ws::Url;
 use libp2p::{Multiaddr, PeerId};
 use rand::{Rng, distributions::Alphanumeric};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
@@ -12,6 +13,7 @@ use serde_json::json;
 
 use crate::{
     constants::MISSED_VIEW_WINDOW,
+    credits::RateQuota,
     crypto::{Hash, NodePublicKey},
     transaction::EvmGas,
 };
@@ -43,6 +45,9 @@ pub struct Config {
     pub otlp_collector_endpoint: Option<String>,
     #[serde(default = "slow_rpc_queries_handlers_count_default")]
     pub slow_rpc_queries_handlers_count: usize,
+    /// Redis-related configuration
+    #[serde(default)]
+    pub redis_address: Option<Url>,
 }
 
 pub fn slow_rpc_queries_handlers_count_default() -> usize {
@@ -120,6 +125,8 @@ pub struct ApiServer {
     pub port: u16,
     /// RPC APIs to enable.
     pub enabled_apis: Vec<EnabledApi>,
+    #[serde(default)]
+    pub default_quota: Option<RateQuota>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -250,6 +257,9 @@ pub struct NodeConfig {
     #[serde(default = "disable_get_full_state_for_contracts_default")]
     /// Disabled state queries for the following contracts
     pub disable_get_full_state_for_contracts: Vec<Address>,
+    #[serde(default)]
+    /// Rate list for each RPC method
+    pub credit_rates: HashMap<String, u64>,
 }
 
 impl Default for NodeConfig {
@@ -272,6 +282,7 @@ impl Default for NodeConfig {
             max_rpc_response_size: max_rpc_response_size_default(),
             max_missed_view_age: max_missed_view_age_default(),
             disable_get_full_state_for_contracts: disable_get_full_state_for_contracts_default(),
+            credit_rates: HashMap::new(),
         }
     }
 }

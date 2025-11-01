@@ -512,6 +512,7 @@ impl Setup {
                 p2p_port: 0,
                 external_address: None,
                 network: String::from("localhost"),
+                redis_address: None,
                 slow_rpc_queries_handlers_count: slow_rpc_queries_handlers_count_default(),
             };
             // @todo should pass this in!
@@ -520,7 +521,9 @@ impl Setup {
                 api_servers: vec![ApiServer {
                     port,
                     enabled_apis: api::all_enabled(),
+                    default_quota: None,
                 }],
+                credit_rates: HashMap::new(),
                 allowed_timestamp_skew: allowed_timestamp_skew_default(),
                 data_dir: None,
                 state_cache_size: state_cache_size_default(),
