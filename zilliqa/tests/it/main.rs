@@ -9,10 +9,7 @@ use ethers::{
 use primitive_types::{H160, U256};
 use serde_json::{Value, value::RawValue};
 use zilliqa::{
-    cfg::{
-        DbConfig, disable_get_full_state_for_contracts_default, max_missed_view_age_default,
-        new_view_broadcast_interval_default,
-    },
+    cfg::{ApiLimits, DbConfig, max_missed_view_age_default, new_view_broadcast_interval_default},
     contracts,
     crypto::NodePublicKey,
     db::BlockFilter,
@@ -439,7 +436,7 @@ impl Network {
             enable_ots_indices: true,
             max_rpc_response_size: max_rpc_response_size_default(),
             max_missed_view_age: max_missed_view_age_default(),
-            disable_get_full_state_for_contracts: disable_get_full_state_for_contracts_default(),
+            api_limits: ApiLimits::default(),
         };
 
         let (nodes, external_receivers, local_receivers, request_response_receivers): (
@@ -617,7 +614,7 @@ impl Network {
             enable_ots_indices: true,
             max_rpc_response_size: max_rpc_response_size_default(),
             max_missed_view_age: max_missed_view_age_default(),
-            disable_get_full_state_for_contracts: disable_get_full_state_for_contracts_default(),
+            api_limits: ApiLimits::default(),
         };
 
         let secret_key = options.secret_key_or_random(self.rng.clone());
