@@ -662,7 +662,7 @@ fn get_smart_contract_state(params: Params, node: &Arc<Node>) -> Result<Value> {
             .ok_or_else(|| anyhow!("Unable to get finalized block!"))?;
 
         let state = node.get_state(&block)?;
-        (state, node.config.state_rpc_limit)
+        (state, node.config.api_limits.state_rpc_limit)
     };
     if !state.has_account(address)? {
         return Err(anyhow!(
@@ -1508,12 +1508,12 @@ fn get_smart_contract_sub_state(params: Params, node: &Arc<Node>) -> Result<Valu
     let requested_indices: Vec<String> = seq.next()?;
 
     let (state, node_rpc_limit) = {
-        let state_rpc_limit = node.config.state_rpc_limit;
+        let state_rpc_limit = node.config.api_limits.state_rpc_limit;
 
-        if requested_indices.len() > node.config.state_rpc_limit {
+        if requested_indices.len() > node.config.api_limits.state_rpc_limit {
             return Err(anyhow!(
                 "Requested indices exceed the limit of {}",
-                node.config.state_rpc_limit
+                node.config.api_limits.state_rpc_limit
             ));
         }
 

@@ -130,6 +130,10 @@ impl NodeLauncher {
         )?;
 
         let node = Arc::new(node);
+        println!(
+            "Chetan ############### max_rpc_response_size ############ :{}",
+            config.api_limits.max_rpc_response_size
+        );
 
         for api_server in &config.api_servers {
             let rpc_module = api::rpc_module(Arc::clone(&node), &api_server.enabled_apis);
@@ -142,7 +146,7 @@ impl NodeLauncher {
             let server = jsonrpsee::server::ServerBuilder::new()
                 .set_config(
                     ServerConfig::builder()
-                        .max_response_body_size(config.max_rpc_response_size)
+                        .max_response_body_size(config.api_limits.max_rpc_response_size)
                         .set_id_provider(EthIdProvider)
                         .build(),
                 )

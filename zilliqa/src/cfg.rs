@@ -130,8 +130,21 @@ pub struct ApiLimits {
 
     #[serde(default)]
     pub disable_get_full_state_for_contracts: Vec<Address>,
+
+    #[serde(default = "state_rpc_limit_default")]
+    pub state_rpc_limit: usize,
+
+    #[serde(default = "max_rpc_response_size_default")]
+    pub max_rpc_response_size: u32,
 }
 
+fn state_rpc_limit_default() -> usize {
+    i64::MAX as usize
+}
+
+fn max_rpc_response_size_default() -> u32 {
+    10 * 1024 * 1024
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DbConfig {
@@ -234,9 +247,6 @@ pub struct NodeConfig {
     /// The maximum number of blocks we will send to another node in a single message.
     #[serde(default = "block_request_limit_default")]
     pub block_request_limit: usize,
-    /// The maximum number of key value pairs allowed to be returned within the response of the `GetSmartContractState` RPC. Defaults to no limit.
-    #[serde(default = "state_rpc_limit_default")]
-    pub state_rpc_limit: usize,
     /// When a block request to a peer fails, do not send another request to this peer for this amount of time.
     /// Defaults to 10 seconds.
     #[serde(default = "failed_request_sleep_duration_default")]
@@ -244,9 +254,6 @@ pub struct NodeConfig {
     /// Enable additional indices used by some Otterscan APIs. Enabling this will use more disk space and block processing will take longer.
     #[serde(default)]
     pub enable_ots_indices: bool,
-    /// Maximum allowed RPC response size
-    #[serde(default = "max_rpc_response_size_default")]
-    pub max_rpc_response_size: u32,
     /// Sync configuration
     #[serde(default)]
     pub sync: SyncConfig,
@@ -275,10 +282,8 @@ impl Default for NodeConfig {
             block_request_limit: block_request_limit_default(),
             sync: SyncConfig::default(),
             db: DbConfig::default(),
-            state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: false,
-            max_rpc_response_size: max_rpc_response_size_default(),
             max_missed_view_age: max_missed_view_age_default(),
             api_limits: ApiLimits::default(),
         }
@@ -389,15 +394,6 @@ pub fn max_blocks_in_flight_default() -> usize {
 
 pub fn block_request_batch_size_default() -> usize {
     100
-}
-
-pub fn max_rpc_response_size_default() -> u32 {
-    10 * 1024 * 1024 // 10 MB
-}
-
-pub fn state_rpc_limit_default() -> usize {
-    // isize maximum because toml serialisation supports i64 integers
-    isize::MAX as usize
 }
 
 pub fn failed_request_sleep_duration_default() -> Duration {
