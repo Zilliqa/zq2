@@ -677,7 +677,7 @@ impl ChainNode {
                 return Err(anyhow!("{} not found in keys config", n.name()));
             };
 
-            let endpoint = format!("/dns/bootstrap-{idx}.{subdomain}/udp/3333/quic-v1/");
+            let endpoint = format!("/dns/bootstrap-{idx}.{subdomain}/udp/3333/quic-v1");
             bootstrap_addresses.push((endpoint, (public_key, peer_id)));
         }
 
@@ -758,7 +758,7 @@ impl ChainNode {
         } else {
             serde_json::to_value((
                 bootstrap_addresses[0].1.1.clone(),
-                format!("/dns/bootstrap.{subdomain}/udp/3333/quic-v1/"),
+                format!("/dns/bootstrap.{subdomain}/udp/3333/quic-v1"),
             ))?
         };
 
