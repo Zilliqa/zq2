@@ -18,8 +18,8 @@ api_limits.disable_get_full_state_for_contracts = [
 ]
 
 # Set `state_rpc_limit` to enable the limit (internally treated as usize::MAX).
-# api_limits.state_rpc_limit = 0
-api_limits.max_rpc_response_size = 10 * 1024 * 1024
+# api_limits.state_rpc_limit = xxxxxx
+api_limits.max_rpc_response_size = 10485760
 
 consensus.genesis_accounts = [ ["0xa50581ea4c4cec6b53262ca16b5b003d34c820be", "100_000_000_000_000_000_000" ] ]
 consensus.genesis_deposits = []
