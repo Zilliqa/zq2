@@ -355,7 +355,7 @@ fn get_balance(params: Params, node: &Arc<Node>) -> Result<String> {
 
 pub fn brt_to_eth_receipts(
     btr: crate::db::BlockAndReceiptsAndTransactions,
-) -> Vec<eth::TransactionReceipt> {
+) -> Vec<TransactionReceipt> {
     let block = btr.block;
 
     let base_receipts = btr.receipts;
@@ -410,8 +410,8 @@ pub fn brt_to_eth_receipts(
         let s = transaction.tx.sig_s();
         let transaction = transaction.tx.clone().into_transaction();
 
-        let receipt = eth::TransactionReceipt {
-            transaction_hash: (receipt_retrieved.tx_hash).into(),
+        let receipt = TransactionReceipt {
+            transaction_hash: receipt_retrieved.tx_hash.into(),
             transaction_index: transaction_index as u64,
             block_hash: block.hash().into(),
             block_number: block.number(),
@@ -439,7 +439,7 @@ pub fn brt_to_eth_receipts(
 pub fn old_get_block_transaction_receipts_inner(
     db: Arc<Db>,
     block: &Block,
-) -> Result<Vec<eth::TransactionReceipt>> {
+) -> Result<Vec<TransactionReceipt>> {
     let mut log_index = 0;
     let mut receipts = Vec::new();
 
@@ -501,8 +501,8 @@ pub fn old_get_block_transaction_receipts_inner(
         let s = verified_transaction.tx.sig_s();
         let transaction = verified_transaction.tx.into_transaction();
 
-        let receipt = eth::TransactionReceipt {
-            transaction_hash: (receipt_retrieved.tx_hash).into(),
+        let receipt = TransactionReceipt {
+            transaction_hash: receipt_retrieved.tx_hash.into(),
             transaction_index: transaction_index as u64,
             block_hash: block.hash().into(),
             block_number: block.number(),
@@ -532,7 +532,7 @@ pub fn get_transaction_receipt_inner_slow(
     node: &Node,
     block_id: impl Into<BlockId>,
     txn_hash: Hash,
-) -> Result<Option<eth::TransactionReceipt>> {
+) -> Result<Option<TransactionReceipt>> {
     let (db, block) = {
         let Some(block) = node.get_block(block_id)? else {
             return Err(anyhow!("Block not found"));
@@ -900,10 +900,7 @@ pub(super) fn get_transaction_inner(
     Ok(Some(eth::Transaction::new(tx, block)))
 }
 
-fn get_transaction_receipt(
-    params: Params,
-    node: &Arc<Node>,
-) -> Result<Option<eth::TransactionReceipt>> {
+fn get_transaction_receipt(params: Params, node: &Arc<Node>) -> Result<Option<TransactionReceipt>> {
     let hash: B256 = params.one()?;
     let hash: Hash = hash.into();
     let block_hash = match node.get_transaction_receipt(hash)? {
