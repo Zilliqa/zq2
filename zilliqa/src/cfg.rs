@@ -119,7 +119,7 @@ pub struct ApiServer {
     pub enabled_apis: Vec<EnabledApi>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ApiLimits {
     #[serde(default)]
@@ -136,6 +136,18 @@ pub struct ApiLimits {
 
     #[serde(default = "max_rpc_response_size_default")]
     pub max_rpc_response_size: u32,
+}
+
+impl Default for ApiLimits {
+    fn default() -> Self {
+        Self {
+            max_blocks_to_fetch: None,
+            max_txns_in_block_to_fetch: None,
+            disable_get_full_state_for_contracts: Vec::new(),
+            state_rpc_limit: state_rpc_limit_default(),
+            max_rpc_response_size: max_rpc_response_size_default(),
+        }
+    }
 }
 
 fn state_rpc_limit_default() -> usize {
