@@ -96,7 +96,6 @@ pub struct NodeInputChannels {
 }
 
 impl NodeLauncher {
-    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         secret_key: SecretKey,
         config: NodeConfig,
@@ -105,7 +104,6 @@ impl NodeLauncher {
         request_responses_sender: UnboundedSender<(ResponseChannel, ExternalMessage)>,
         peer_num: Arc<AtomicUsize>,
         swarm_peers: Arc<ArcSwap<Vec<PeerId>>>,
-        redis_address: Option<Url>,
     ) -> Result<(Self, NodeInputChannels, Arc<SyncPeers>)> {
         /// Helper to create a (sender, receiver) pair for a channel.
         fn sender_receiver<T>() -> (UnboundedSender<T>, UnboundedReceiverStream<T>) {
@@ -134,6 +132,9 @@ impl NodeLauncher {
             sync_peers.clone(),
             swarm_peers.clone(),
         )?;
+
+        let redis_address =
+            std::env::var("REDIS_ENDPOINT").map_or_else(|_| None, |uri| Url::parse(&uri).ok());
 
         let node = Arc::new(node);
         let credit_store = Arc::new(RpcCreditStore::new(redis_address.clone()));

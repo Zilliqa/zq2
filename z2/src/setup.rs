@@ -512,7 +512,6 @@ impl Setup {
                 p2p_port: 0,
                 external_address: None,
                 network: String::from("localhost"),
-                redis_address: None,
                 slow_rpc_queries_handlers_count: slow_rpc_queries_handlers_count_default(),
             };
             // @todo should pass this in!

@@ -18,7 +18,7 @@ The error response is a standard JSON-RPC response with the following structure:
 ## Redis Server
 
 The credit-store uses Redis as the state storage.
-The `redis_address` field in the configuration file is used to specify the Redis server connection details e.g. `redis://user:pass@localhost:6379`.
+The `REDIS_ENDPOINT` environment string is used to specify the Redis server connection details e.g. `redis://user:pass@localhost:6379`.
 If no Redis server is available or specified, the feature is disabled.
 
 ## Default Policy

@@ -5,7 +5,6 @@ use alloy::{
     rlp::Encodable,
 };
 use anyhow::{Result, anyhow};
-use jsonrpsee::client_transport::ws::Url;
 use libp2p::{Multiaddr, PeerId};
 use rand::{Rng, distributions::Alphanumeric};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
@@ -45,9 +44,6 @@ pub struct Config {
     pub otlp_collector_endpoint: Option<String>,
     #[serde(default = "slow_rpc_queries_handlers_count_default")]
     pub slow_rpc_queries_handlers_count: usize,
-    /// Redis-related configuration
-    #[serde(default)]
-    pub redis_address: Option<Url>,
 }
 
 pub fn slow_rpc_queries_handlers_count_default() -> usize {

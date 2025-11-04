@@ -95,11 +95,8 @@ async fn app(args: Args, config: Config) -> Result<()> {
 
     let mut node = P2pNode::new(args.secret_key, config.clone())?;
 
-    node.add_shard_node(
-        config.nodes.first().unwrap().clone(),
-        config.redis_address.clone(),
-    )
-    .await?;
+    node.add_shard_node(config.nodes.first().unwrap().clone())
+        .await?;
 
     node.start().await
 }
