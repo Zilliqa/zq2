@@ -23,13 +23,11 @@ struct Args {
 
 /// The cli argument overrides the SECRET_KEY environment variable.
 fn secret_key_from_cli_or_env(secret_key: &str) -> Result<SecretKey> {
-    if !secret_key.is_empty() {
-        // if passed on CLI
-        SecretKey::from_hex(secret_key)
-    } else {
-        // if defined in environment variable
+    if secret_key.is_empty() {
         std::env::var("SECRET_KEY")
             .map_or_else(|e| Err(anyhow!(e.to_string())), |k| SecretKey::from_hex(&k))
+    } else {
+        SecretKey::from_hex(secret_key)
     }
 }
 
