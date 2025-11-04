@@ -13,12 +13,24 @@ use zilliqa::{cfg::Config, crypto::SecretKey, p2p_node::P2pNode};
 
 #[derive(Parser, Debug)]
 struct Args {
-    #[arg(value_parser = SecretKey::from_hex)]
+    #[arg(value_parser = secret_key_from_cli_or_env, required = false, default_value = "")]
     secret_key: SecretKey,
     #[clap(long, short, default_values = ["config.toml"])]
     config_file: Vec<PathBuf>,
     #[clap(long, default_value = "false")]
     log_json: bool,
+}
+
+/// The cli argument overrides the SECRET_KEY environment variable.
+fn secret_key_from_cli_or_env(secret_key: &str) -> Result<SecretKey> {
+    if !secret_key.is_empty() {
+        // if passed on CLI
+        SecretKey::from_hex(secret_key)
+    } else {
+        // if defined in environment variable
+        std::env::var("SECRET_KEY")
+            .map_or_else(|e| Err(anyhow!(e.to_string())), |k| SecretKey::from_hex(&k))
+    }
 }
 
 async fn app(args: Args, config: Config) -> Result<()> {
