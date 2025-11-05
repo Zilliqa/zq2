@@ -22,7 +22,7 @@ use revm_inspector::{InspectEvm, Inspector, InspectorEvmTr, InspectorHandler};
 
 use crate::{
     exec::{DatabaseError, ExternalContext, PendingState},
-    precompiles::ZQ2PrecompileProvider,
+    precompiles::{PENALTY_ADDRESS, SCILLA_CALL_ADDRESS, ZQ2PrecompileProvider},
 };
 
 pub(crate) const SPEC_ID: SpecId = SpecId::SHANGHAI;
@@ -113,22 +113,25 @@ impl<I> EvmTr for ZQ2Evm<I> {
     > {
         // Reserve enough space to store the caller.
         let current_depth = self.0.journaled_state.depth;
-        let caller_depth = self.0.chain.callers.len();
+        let caller_depth = self.0.chain.call_stack.len();
         self.0
             .chain
-            .callers
+            .call_stack
             .reserve((current_depth + 1).saturating_sub(caller_depth));
-        for _ in self.0.chain.callers.len()..(self.0.journaled_state.depth + 1) {
-            self.0.chain.callers.push(Address::ZERO);
+        for _ in self.0.chain.call_stack.len()..(self.0.journaled_state.depth + 1) {
+            self.0
+                .chain
+                .call_stack
+                .push((Address::ZERO, Address::ZERO, Address::ZERO));
         }
 
-        let caller = match &frame_input.frame_input {
-            FrameInput::Empty => Address::ZERO,
-            FrameInput::Call(call) => call.caller,
-            FrameInput::Create(create) => create.caller,
+        let (caller, target, bytecode_addr) = match &frame_input.frame_input {
+            FrameInput::Empty => (Address::ZERO, Address::ZERO, Address::ZERO),
+            FrameInput::Call(call) => (call.caller, call.target_address, call.bytecode_address),
+            FrameInput::Create(create) => (create.caller, Address::ZERO, Address::ZERO),
         };
         let depth = self.0.journaled_state.depth;
-        self.0.chain.callers[depth] = caller;
+        self.0.chain.call_stack[depth] = (caller, target, bytecode_addr);
 
         self.0.frame_init(frame_input)
     }
@@ -149,10 +152,19 @@ impl<I> EvmTr for ZQ2Evm<I> {
         Option<<Self::Frame as FrameTr>::FrameResult>,
         ContextError<<<Self::Context as ContextTr>::Db as Database>::Error>,
     > {
-        // Don't account evm failure for entry frame
+        let is_checked_address = {
+            if let Some((_, target, bytecode_addr)) = self.0.chain.call_stack.last() {
+                const CHECKED_ADDRESSES: [Address; 2] = [SCILLA_CALL_ADDRESS, PENALTY_ADDRESS];
+                CHECKED_ADDRESSES.contains(target) || CHECKED_ADDRESSES.contains(bytecode_addr)
+            } else {
+                false
+            }
+        };
+
+        // Check if it was custom precompile
         if (frame_result.interpreter_result().is_error()
             || frame_result.interpreter_result().is_revert())
-            && self.0.frame_stack.index().unwrap_or_default() != 0
+            && (self.0.frame_stack.index().unwrap_or_default() != 0 || is_checked_address)
         {
             self.0.chain.has_evm_failed = true;
         }

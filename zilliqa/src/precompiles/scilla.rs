@@ -582,7 +582,8 @@ fn scilla_call_precompile(
     let sender = if keep_origin {
         if ctx.chain.fork.call_mode_1_sets_caller_to_parent_caller {
             // Use the caller of the parent call-stack.
-            ctx.chain.callers[depth - 2]
+            let (caller, ..) = ctx.chain.call_stack[depth - 2];
+            caller
         } else {
             // Use the original transaction signer.
             ctx.tx.caller
