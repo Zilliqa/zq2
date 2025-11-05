@@ -3,24 +3,13 @@ p2p_port = 3333
 
 bootstrap_address = [
   "12D3KooWLQ9Uu31ZVn2wMwt5HgunwHYRh4V12cLuTa9qqyFKxkqS",
-  "/dns/bootstrap.zq2-mainnet.zilliqa.com/tcp/3333"
+  "/dns/bootstrap.zq2-mainnet.zilliqa.com/udp/3333/quic-v1"
 ]
 
 [[nodes]]
 eth_chain_id = 32769
 allowed_timestamp_skew = { secs = 60, nanos = 0 }
 data_dir = "/data"
-api_limits.max_blocks_to_fetch = 50
-api_limits.max_txns_in_block_to_fetch = 50
-api_limits.disable_get_full_state_for_contracts = [
-  "0x54d10Ee86cd2C3258b23FDb78782F70e84966683",
-  "0xa7c67d49c82c7dc1b73d231640b2e4d0661d37c1",
-]
-
-# Set `state_rpc_limit` to enable the limit (internally treated as usize::MAX).
-# api_limits.state_rpc_limit = xxxxxx
-api_limits.max_rpc_response_size = 10485760
-
 consensus.genesis_accounts = [ ["0xa50581ea4c4cec6b53262ca16b5b003d34c820be", "100_000_000_000_000_000_000" ] ]
 consensus.genesis_deposits = []
 

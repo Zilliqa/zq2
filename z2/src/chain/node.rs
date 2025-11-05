@@ -748,6 +748,29 @@ impl ChainNode {
         ctx.insert("network", &self.chain.name());
         ctx.insert("eth_chain_id", &eth_chain_id);
 
+        // Only add API limits if this is an API node
+        if matches!(self.role, NodeRole::Api | NodeRole::PrivateApi) {
+            let api_limits = if self.chain.name() == "zq2-mainnet" {
+                serde_json::json!({
+                    "max_blocks_to_fetch": 50,
+                    "max_txns_in_block_to_fetch": 50,
+                    "disable_get_full_state_for_contracts": [
+                        "0x54d10Ee86cd2C3258b23FDb78782F70e84966683",
+                        "0xa7c67d49c82c7dc1b73d231640b2e4d0661d37c1"
+                    ],
+                    "max_rpc_response_size": 10_485_760
+                })
+            } else {
+                serde_json::json!({
+                    "disable_get_full_state_for_contracts": []
+                })
+            };
+
+            let toml_api_limits: toml::Value = serde_json::from_value(api_limits)?;
+            let toml_string = toml::to_string_pretty(&toml_api_limits)?;
+            ctx.insert("api_limits", &toml_string);
+        }
+
         let bootstrap_address = if bootstrap_addresses.len() > 1 {
             serde_json::to_value(
                 bootstrap_addresses
