@@ -691,7 +691,6 @@ impl State {
         {
             let ext_ctx = &ctx_with_handler.chain;
             if evm_exec_failure_causes_scilla_precompile_to_fail
-                && result_and_state.result.is_success()
                 && ext_ctx.has_evm_failed
                 && ext_ctx.has_called_scilla_precompile
                 && extra_opts.exec_type == ExecType::Transact

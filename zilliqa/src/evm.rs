@@ -149,8 +149,10 @@ impl<I> EvmTr for ZQ2Evm<I> {
         Option<<Self::Frame as FrameTr>::FrameResult>,
         ContextError<<<Self::Context as ContextTr>::Db as Database>::Error>,
     > {
-        if frame_result.interpreter_result().is_error()
-            || frame_result.interpreter_result().is_revert()
+        // Don't account evm failure for entry frame
+        if (frame_result.interpreter_result().is_error()
+            || frame_result.interpreter_result().is_revert())
+            && self.0.frame_stack.index().unwrap_or_default() != 0
         {
             self.0.chain.has_evm_failed = true;
         }
