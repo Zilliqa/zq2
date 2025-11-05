@@ -243,12 +243,21 @@ module "api_security_policies" {
       }
     },
     {
-      for rule_name, rule_config in var.api.allow_ip_ranges : rule_name => {
-        action        = "allow"
-        priority      = rule_config.priority
-        description   = rule_config.description
-        src_ip_ranges = rule_config.src_ip_ranges
-      }
+      for rule_name, rule_config in var.api.allow_ip_ranges : rule_name => merge(
+        {
+          action        = rule_config.action
+          priority      = rule_config.priority
+          description   = rule_config.description
+          src_ip_ranges = rule_config.src_ip_ranges
+        }, rule_config.action == "throttle" ? {
+          rate_limit_options = {
+            enforce_on_key                       = "IP"
+            exceed_action                        = "deny(429)"
+            rate_limit_http_request_count        = rule_config.rate_limit_count
+            rate_limit_http_request_interval_sec = 60
+          }
+        } : {}
+      )
     }
   )
 
@@ -268,12 +277,20 @@ module "api_security_policies" {
       }
     },
     {
-      for rule_name, rule_config in var.api.allow_custom_rules : rule_name => {
-        action      = "allow"
-        priority    = rule_config.priority
-        description = rule_config.description
-        expression  = rule_config.expression
-      }
+      for rule_name, rule_config in var.api.allow_custom_rules : rule_name => merge(
+        {
+          action      = rule_config.action
+          priority    = rule_config.priority
+          description = rule_config.description
+          expression  = rule_config.expression
+        }, rule_config.action == "throttle" ? {
+        rate_limit_options = {
+          enforce_on_key                       = "IP"
+          exceed_action                        = "deny(429)"
+          rate_limit_http_request_count        = rule_config.rate_limit_count
+          rate_limit_http_request_interval_sec = 60
+        }
+      } : {})
     }
   )
 }
