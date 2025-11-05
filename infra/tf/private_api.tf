@@ -16,12 +16,13 @@ locals {
       ]
     ]) :
     item.instance.name => {
-      idx         = item.idx
-      zone        = item.zone
-      instance    = item.instance
-      config      = var.private_api[item.idx]
-      dns_name    = var.private_api[item.idx].dns_names[item.num]
-      external_ip = item.external_ip
+      idx                     = item.idx
+      zone                    = item.zone
+      instance                = item.instance
+      config                  = var.private_api[item.idx]
+      dns_name                = var.private_api[item.idx].dns_names[item.num]
+      alternative_ssl_domains = var.private_api[item.idx].alternative_ssl_domains.default
+      external_ip             = item.external_ip
     }
   }
 }
@@ -144,7 +145,10 @@ resource "google_compute_managed_ssl_certificate" "private_api" {
   name = each.key
 
   managed {
-    domains = ["${each.value.dns_name}.${var.subdomain}"]
+    domains = concat(
+      ["${each.value.dns_name}.${var.subdomain}"],
+      each.value.alternative_ssl_domains
+    )
   }
 }
 

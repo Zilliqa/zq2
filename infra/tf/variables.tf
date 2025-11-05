@@ -251,6 +251,9 @@ variable "private_api" {
     detach_load_balancer   = optional(bool, false)
     firewall_source_ranges = optional(list(string), [])
     dns_names              = optional(list(string), [])
+    alternative_ssl_domains = optional(object({
+      default = optional(list(string), [])
+    }), {})
     nodes = optional(list(object({
       count  = number
       region = optional(string)
