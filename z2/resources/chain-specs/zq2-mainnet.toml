@@ -3,7 +3,7 @@ p2p_port = 3333
 
 bootstrap_address = [
   "12D3KooWLQ9Uu31ZVn2wMwt5HgunwHYRh4V12cLuTa9qqyFKxkqS",
-  "/dns/bootstrap.zq2-mainnet.zilliqa.com/tcp/3333"
+  "/dns/bootstrap.zq2-mainnet.zilliqa.com/udp/3333/quic-v1"
 ]
 
 [[nodes]]
