@@ -750,7 +750,7 @@ impl ChainNode {
 
         // Only add API limits if this is an API node
         if matches!(self.role, NodeRole::Api) {
-            let api_limits = if self.chain.name() == "zq2-mainnet" {
+            let api_limits = if matches!(self.chain.chain()?, Chain::Zq2Mainnet) {
                 serde_json::json!({
                     "max_blocks_to_fetch": 50,
                     "max_txns_in_block_to_fetch": 50,
