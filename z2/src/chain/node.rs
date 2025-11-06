@@ -749,7 +749,7 @@ impl ChainNode {
         ctx.insert("eth_chain_id", &eth_chain_id);
 
         // Only add API limits if this is an API node
-        if matches!(self.role, NodeRole::Api | NodeRole::PrivateApi) {
+        if matches!(self.role, NodeRole::Api) {
             let api_limits = if self.chain.name() == "zq2-mainnet" {
                 serde_json::json!({
                     "max_blocks_to_fetch": 50,
