@@ -122,6 +122,7 @@ impl P2pNode {
                 noise::Config::new,
                 yamux::Config::default,
             )?
+            .with_quic()
             .with_dns()?
             .with_behaviour(|key_pair| {
                 Ok(Behaviour {
@@ -286,12 +287,20 @@ impl P2pNode {
     }
 
     pub async fn start(&mut self) -> Result<()> {
+        // Listen on both TCP/UDP interfaces
         self.swarm.listen_on(
             Multiaddr::empty()
                 .with(Protocol::Ip4(std::net::Ipv4Addr::UNSPECIFIED))
                 .with(Protocol::Tcp(self.config.p2p_port)),
         )?;
+        self.swarm.listen_on(
+            Multiaddr::empty()
+                .with(Protocol::Ip4(std::net::Ipv4Addr::UNSPECIFIED))
+                .with(Protocol::Udp(self.config.p2p_port))
+                .with(Protocol::QuicV1),
+        )?;
 
+        // Configured external address
         if let Some(external_address) = &self.config.external_address {
             self.swarm.add_external_address(external_address.clone());
         }

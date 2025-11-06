@@ -79,14 +79,18 @@ variable "api" {
       os_images = optional(map(string), {})
     })), [])
     allow_ip_ranges = optional(map(object({
-      priority      = number
-      description   = string
-      src_ip_ranges = list(string)
+      priority         = number
+      description      = string
+      src_ip_ranges    = list(string)
+      action           = optional(string, "throttle")
+      rate_limit_count = optional(number, 30000)
     })), {})
     allow_custom_rules = optional(map(object({
-      priority    = number
-      description = string
-      expression  = string
+      priority         = number
+      description      = string
+      expression       = string
+      action           = optional(string, "throttle")
+      rate_limit_count = optional(number, 30000)
     })), {})
   })
   default = {}
@@ -251,6 +255,9 @@ variable "private_api" {
     detach_load_balancer   = optional(bool, false)
     firewall_source_ranges = optional(list(string), [])
     dns_names              = optional(list(string), [])
+    alternative_ssl_domains = optional(object({
+      default = optional(list(string), [])
+    }), {})
     nodes = optional(list(object({
       count  = number
       region = optional(string)

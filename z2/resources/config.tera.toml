@@ -77,3 +77,8 @@ consensus.forks = [
 file = "{{ checkpoint_file }}"
 hash = "{{ checkpoint_hash }}"
 {%- endif %}
+
+{%- if api_limits is defined %}
+[nodes.api_limits]
+{{ api_limits | safe }}
+{%- endif %}

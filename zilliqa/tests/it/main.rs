@@ -9,10 +9,7 @@ use ethers::{
 use primitive_types::{H160, U256};
 use serde_json::{Value, value::RawValue};
 use zilliqa::{
-    cfg::{
-        DbConfig, disable_get_full_state_for_contracts_default, max_missed_view_age_default,
-        new_view_broadcast_interval_default,
-    },
+    cfg::{ApiLimits, DbConfig, max_missed_view_age_default, new_view_broadcast_interval_default},
     contracts,
     crypto::NodePublicKey,
     db::BlockFilter,
@@ -86,8 +83,8 @@ use zilliqa::{
         allowed_timestamp_skew_default, block_request_batch_size_default,
         block_request_limit_default, consensus_timeout_default, eth_chain_id_default,
         failed_request_sleep_duration_default, genesis_fork_default, max_blocks_in_flight_default,
-        max_rpc_response_size_default, scilla_ext_libs_path_default, state_cache_size_default,
-        state_rpc_limit_default, total_native_token_supply_default, u64_max,
+        scilla_ext_libs_path_default, state_cache_size_default, total_native_token_supply_default,
+        u64_max,
     },
     crypto::{SecretKey, TransactionPublicKey},
     db,
@@ -434,12 +431,10 @@ impl Network {
             block_request_limit: block_request_limit_default(),
             sync: SyncConfig::default(),
             db: DbConfig::default(),
-            state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: true,
-            max_rpc_response_size: max_rpc_response_size_default(),
             max_missed_view_age: max_missed_view_age_default(),
-            disable_get_full_state_for_contracts: disable_get_full_state_for_contracts_default(),
+            api_limits: ApiLimits::default(),
         };
 
         let (nodes, external_receivers, local_receivers, request_response_receivers): (
@@ -612,12 +607,10 @@ impl Network {
                 ignore_passive: false,
             },
             db: DbConfig::default(),
-            state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: true,
-            max_rpc_response_size: max_rpc_response_size_default(),
             max_missed_view_age: max_missed_view_age_default(),
-            disable_get_full_state_for_contracts: disable_get_full_state_for_contracts_default(),
+            api_limits: ApiLimits::default(),
         };
 
         let secret_key = options.secret_key_or_random(self.rng.clone());
