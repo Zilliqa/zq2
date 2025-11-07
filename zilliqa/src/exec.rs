@@ -440,7 +440,7 @@ pub struct ExternalContext {
     pub enforce_transaction_failure: bool,
     /// The caller of each call in the call-stack. This is needed because the `scilla_call` precompile needs to peek
     /// into the call-stack. This will always be non-empty and the first entry will be the transaction signer.
-    pub call_stack: Vec<(Address, Address, Address)>,
+    pub callers: Vec<Address>,
     pub has_evm_failed: bool,
     pub has_called_scilla_precompile: bool,
     pub finalized_view: u64,
@@ -566,11 +566,7 @@ impl State {
             touched_address_inspector: TouchedAddressInspector::default(),
             fork: fork.clone(),
             enforce_transaction_failure: false,
-            call_stack: vec![(
-                from_addr,
-                to_addr.unwrap_or_default(),
-                to_addr.unwrap_or_default(),
-            )],
+            callers: vec![from_addr],
             has_evm_failed: false,
             has_called_scilla_precompile: false,
             finalized_view,
@@ -831,6 +827,8 @@ impl State {
 
         info!(?hash, from = ?from_addr, to = ?txn.to_addr(), ?txn, "executing txn");
 
+        info!("State root before: {:?}", self.root_hash()?);
+
         let blessed = BLESSED_TRANSACTIONS.iter().any(|elem| elem.hash == hash);
 
         if let Transaction::Zilliqa(txn) = txn {
@@ -902,6 +900,8 @@ impl State {
             } else {
                 self.apply_delta_scilla(&scilla_state, current_block.number)?;
             }
+
+            info!("State root after: {:?}", self.root_hash()?);
 
             Ok(TransactionApplyResult::Evm(ResultAndState {
                 result,
