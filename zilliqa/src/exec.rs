@@ -827,8 +827,6 @@ impl State {
 
         info!(?hash, from = ?from_addr, to = ?txn.to_addr(), ?txn, "executing txn");
 
-        info!("State root before: {:?}", self.root_hash()?);
-
         let blessed = BLESSED_TRANSACTIONS.iter().any(|elem| elem.hash == hash);
 
         if let Transaction::Zilliqa(txn) = txn {
@@ -900,8 +898,6 @@ impl State {
             } else {
                 self.apply_delta_scilla(&scilla_state, current_block.number)?;
             }
-
-            info!("State root after: {:?}", self.root_hash()?);
 
             Ok(TransactionApplyResult::Evm(ResultAndState {
                 result,

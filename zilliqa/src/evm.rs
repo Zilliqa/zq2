@@ -9,7 +9,7 @@ use revm::{
     },
     handler::{
         EthFrame, EvmTr, FrameInitOrResult, FrameTr, Handler, ItemOrResult, MainnetHandler,
-        PrecompileProvider, instructions::EthInstructions,
+        PrecompileProvider, evm::ContextDbError, instructions::EthInstructions,
     },
     interpreter::{FrameInput, interpreter::EthInterpreter},
     primitives::{Address, hardfork::SpecId},
@@ -149,14 +149,24 @@ impl<I> EvmTr for ZQ2Evm<I> {
         Option<<Self::Frame as FrameTr>::FrameResult>,
         ContextError<<<Self::Context as ContextTr>::Db as Database>::Error>,
     > {
-        // Don't account evm failure for entry frame
-        if (frame_result.interpreter_result().is_error()
-            || frame_result.interpreter_result().is_revert())
-            && self.0.frame_stack.index().unwrap_or_default() != 0
+        if self.0.frame_stack.get().is_finished() {
+            self.0.frame_stack.pop();
+        }
+        if self.0.frame_stack.index().is_none() {
+            return Ok(Some(frame_result));
+        }
+
+        if frame_result.interpreter_result().is_error()
+            || frame_result.interpreter_result().is_revert()
         {
             self.0.chain.has_evm_failed = true;
         }
-        self.0.frame_return_result(frame_result)
+
+        self.0
+            .frame_stack
+            .get()
+            .return_result::<_, ContextDbError<Self::Context>>(&mut self.0.ctx, frame_result)?;
+        Ok(None)
     }
 }
 
