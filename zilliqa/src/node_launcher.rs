@@ -172,7 +172,7 @@ impl NodeLauncher {
             let server = jsonrpsee::server::ServerBuilder::new()
                 .set_config(
                     ServerConfig::builder()
-                        .max_response_body_size(config.max_rpc_response_size)
+                        .max_response_body_size(config.api_limits.max_rpc_response_size)
                         .set_id_provider(EthIdProvider)
                         .build(),
                 )

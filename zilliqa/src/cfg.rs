@@ -1,9 +1,6 @@
 use std::{collections::HashMap, ops::Deref, str::FromStr, time::Duration};
 
-use alloy::{
-    primitives::{Address, address},
-    rlp::Encodable,
-};
+use alloy::{primitives::Address, rlp::Encodable};
 use anyhow::{Result, anyhow};
 use libp2p::{Multiaddr, PeerId};
 use rand::{Rng, distributions::Alphanumeric};
@@ -127,6 +124,44 @@ pub struct ApiServer {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct ApiLimits {
+    #[serde(default)]
+    pub max_blocks_to_fetch: Option<u64>,
+
+    #[serde(default)]
+    pub max_txns_in_block_to_fetch: Option<u64>,
+
+    #[serde(default)]
+    pub disable_get_full_state_for_contracts: Vec<Address>,
+
+    #[serde(default = "state_rpc_limit_default")]
+    pub state_rpc_limit: usize,
+
+    #[serde(default = "max_rpc_response_size_default")]
+    pub max_rpc_response_size: u32,
+}
+
+impl Default for ApiLimits {
+    fn default() -> Self {
+        Self {
+            max_blocks_to_fetch: None,
+            max_txns_in_block_to_fetch: None,
+            disable_get_full_state_for_contracts: Vec::new(),
+            state_rpc_limit: state_rpc_limit_default(),
+            max_rpc_response_size: max_rpc_response_size_default(),
+        }
+    }
+}
+
+fn state_rpc_limit_default() -> usize {
+    i64::MAX as usize
+}
+
+fn max_rpc_response_size_default() -> u32 {
+    10 * 1024 * 1024
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DbConfig {
     /// SQLite per-connection cache; default 8_192 i.e. 256MB
     #[serde(default = "sql_cache_size_default")]
@@ -227,9 +262,6 @@ pub struct NodeConfig {
     /// The maximum number of blocks we will send to another node in a single message.
     #[serde(default = "block_request_limit_default")]
     pub block_request_limit: usize,
-    /// The maximum number of key value pairs allowed to be returned within the response of the `GetSmartContractState` RPC. Defaults to no limit.
-    #[serde(default = "state_rpc_limit_default")]
-    pub state_rpc_limit: usize,
     /// When a block request to a peer fails, do not send another request to this peer for this amount of time.
     /// Defaults to 10 seconds.
     #[serde(default = "failed_request_sleep_duration_default")]
@@ -237,9 +269,6 @@ pub struct NodeConfig {
     /// Enable additional indices used by some Otterscan APIs. Enabling this will use more disk space and block processing will take longer.
     #[serde(default)]
     pub enable_ots_indices: bool,
-    /// Maximum allowed RPC response size
-    #[serde(default = "max_rpc_response_size_default")]
-    pub max_rpc_response_size: u32,
     /// Sync configuration
     #[serde(default)]
     pub sync: SyncConfig,
@@ -250,12 +279,11 @@ pub struct NodeConfig {
     /// The default is sufficient to compute the leaders of the next views, but does not allow the node to compute leaders of past views.
     #[serde(default = "max_missed_view_age_default")]
     pub max_missed_view_age: u64,
-    #[serde(default = "disable_get_full_state_for_contracts_default")]
-    /// Disabled state queries for the following contracts
-    pub disable_get_full_state_for_contracts: Vec<Address>,
     #[serde(default)]
     /// Rate list for each RPC method
     pub credit_rates: HashMap<String, u64>,
+    #[serde(default)]
+    pub api_limits: ApiLimits,
 }
 
 impl Default for NodeConfig {
@@ -272,13 +300,11 @@ impl Default for NodeConfig {
             block_request_limit: block_request_limit_default(),
             sync: SyncConfig::default(),
             db: DbConfig::default(),
-            state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: false,
-            max_rpc_response_size: max_rpc_response_size_default(),
             max_missed_view_age: max_missed_view_age_default(),
-            disable_get_full_state_for_contracts: disable_get_full_state_for_contracts_default(),
             credit_rates: HashMap::new(),
+            api_limits: ApiLimits::default(),
         }
     }
 }
@@ -389,28 +415,12 @@ pub fn block_request_batch_size_default() -> usize {
     100
 }
 
-pub fn max_rpc_response_size_default() -> u32 {
-    10 * 1024 * 1024 // 10 MB
-}
-
-pub fn state_rpc_limit_default() -> usize {
-    // isize maximum because toml serialisation supports i64 integers
-    isize::MAX as usize
-}
-
 pub fn failed_request_sleep_duration_default() -> Duration {
     Duration::from_secs(10)
 }
 
 pub fn max_missed_view_age_default() -> u64 {
     MISSED_VIEW_WINDOW
-}
-
-pub fn disable_get_full_state_for_contracts_default() -> Vec<Address> {
-    vec![
-        address!("54d10Ee86cd2C3258b23FDb78782F70e84966683"),
-        address!("a7c67d49c82c7dc1b73d231640b2e4d0661d37c1"),
-    ]
 }
 
 /// Wrapper for [u128] that (de)serializes with a string. `serde_toml` does not support `u128`s.
@@ -722,6 +732,7 @@ pub struct Fork {
     pub use_max_gas_priority_fee: bool,
     pub failed_zil_transfers_to_eoa_proper_fee_deduction: bool,
     pub validator_jailing: bool,
+    pub scilla_empty_maps_are_encoded_correctly: bool,
 }
 
 pub enum ForkName {
@@ -860,6 +871,8 @@ pub struct ForkDelta {
     pub failed_zil_transfers_to_eoa_proper_fee_deduction: Option<bool>,
     /// if true, apply jailing during leader selection
     pub validator_jailing: Option<bool>,
+    /// if true, empty scilla maps having no presence in state are encoded as empty maps, not empty values
+    pub scilla_empty_maps_are_encoded_correctly: Option<bool>,
 }
 
 impl Fork {
@@ -962,6 +975,9 @@ impl Fork {
                 .failed_zil_transfers_to_eoa_proper_fee_deduction
                 .unwrap_or(self.failed_zil_transfers_to_eoa_proper_fee_deduction),
             validator_jailing: delta.validator_jailing.unwrap_or(self.validator_jailing),
+            scilla_empty_maps_are_encoded_correctly: delta
+                .scilla_empty_maps_are_encoded_correctly
+                .unwrap_or(self.scilla_empty_maps_are_encoded_correctly),
         }
     }
 }
@@ -1063,6 +1079,7 @@ pub fn genesis_fork_default() -> Fork {
         use_max_gas_priority_fee: true,
         failed_zil_transfers_to_eoa_proper_fee_deduction: true,
         validator_jailing: true,
+        scilla_empty_maps_are_encoded_correctly: true,
     }
 }
 
@@ -1230,6 +1247,7 @@ mod tests {
                 use_max_gas_priority_fee: None,
                 failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                 validator_jailing: None,
+                scilla_empty_maps_are_encoded_correctly: None,
             }],
             ..Default::default()
         };
@@ -1286,6 +1304,7 @@ mod tests {
                     use_max_gas_priority_fee: None,
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                     validator_jailing: Some(false),
+                    scilla_empty_maps_are_encoded_correctly: Some(false),
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1322,6 +1341,7 @@ mod tests {
                     use_max_gas_priority_fee: None,
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                     validator_jailing: None,
+                    scilla_empty_maps_are_encoded_correctly: None,
                 },
             ],
             ..Default::default()
@@ -1395,6 +1415,7 @@ mod tests {
                     use_max_gas_priority_fee: None,
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                     validator_jailing: None,
+                    scilla_empty_maps_are_encoded_correctly: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1431,6 +1452,7 @@ mod tests {
                     use_max_gas_priority_fee: None,
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                     validator_jailing: None,
+                    scilla_empty_maps_are_encoded_correctly: None,
                 },
             ],
             ..Default::default()
@@ -1492,6 +1514,7 @@ mod tests {
                 use_max_gas_priority_fee: true,
                 failed_zil_transfers_to_eoa_proper_fee_deduction: true,
                 validator_jailing: true,
+                scilla_empty_maps_are_encoded_correctly: true,
             },
             forks: vec![],
             ..Default::default()
@@ -1541,6 +1564,7 @@ mod tests {
                     use_max_gas_priority_fee: None,
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                     validator_jailing: None,
+                    scilla_empty_maps_are_encoded_correctly: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1577,6 +1601,7 @@ mod tests {
                     use_max_gas_priority_fee: None,
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                     validator_jailing: None,
+                    scilla_empty_maps_are_encoded_correctly: None,
                 },
             ],
             ..Default::default()
