@@ -1,4 +1,4 @@
-use std::{ops::Deref, str::FromStr, time::Duration};
+use std::{collections::HashMap, ops::Deref, str::FromStr, time::Duration};
 
 use alloy::{primitives::Address, rlp::Encodable};
 use anyhow::{Result, anyhow};
@@ -9,6 +9,7 @@ use serde_json::json;
 
 use crate::{
     constants::MISSED_VIEW_WINDOW,
+    credits::RateQuota,
     crypto::{Hash, NodePublicKey},
     transaction::EvmGas,
 };
@@ -117,6 +118,8 @@ pub struct ApiServer {
     pub port: u16,
     /// RPC APIs to enable.
     pub enabled_apis: Vec<EnabledApi>,
+    #[serde(default)]
+    pub default_quota: Option<RateQuota>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -277,6 +280,9 @@ pub struct NodeConfig {
     #[serde(default = "max_missed_view_age_default")]
     pub max_missed_view_age: u64,
     #[serde(default)]
+    /// Rate list for each RPC method
+    pub credit_rates: HashMap<String, u64>,
+    #[serde(default)]
     pub api_limits: ApiLimits,
 }
 
@@ -297,6 +303,7 @@ impl Default for NodeConfig {
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: false,
             max_missed_view_age: max_missed_view_age_default(),
+            credit_rates: HashMap::new(),
             api_limits: ApiLimits::default(),
         }
     }

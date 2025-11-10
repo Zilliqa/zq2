@@ -366,8 +366,26 @@ fn hex_string_to_u8_20(hex_str: &str) -> Result<[u8; 20], &'static str> {
 pub async fn get_chain_spec_config(chain_name: &str) -> Result<Value> {
     let spec_config = Chain::get_toml_contents(chain_name)?;
 
-    let config: Value =
-        toml::from_str(spec_config).map_err(|_| anyhow!("Unable to parse TOML".to_string()))?;
+    let mut config: Value = toml::from_str(spec_config)
+        .map_err(|_| anyhow!("Unable to parse {chain_name} TOML".to_string()))?;
+
+    // append default credit-rates
+    let rates_str = include_str!("../resources/rpc_rates.toml");
+    let rates: Value = toml::from_str(rates_str)
+        .map_err(|_| anyhow!("Unable to parse rpc_rates.toml".to_string()))?;
+    for node in config
+        .get_mut("nodes")
+        .unwrap()
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+    {
+        node.as_table_mut().unwrap().insert(
+            "credit_rates".to_string(),
+            rates.get("credit_rates").unwrap().clone(),
+        );
+    }
+
     Ok(config)
 }
 

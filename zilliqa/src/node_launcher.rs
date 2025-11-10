@@ -7,7 +7,11 @@ use std::{
 use anyhow::{Result, anyhow};
 use arc_swap::ArcSwap;
 use http::{Method, header};
-use jsonrpsee::server::ServerConfig;
+use jsonrpsee::{
+    client_transport::ws::Url,
+    server::{ServerConfig, middleware::http::ProxyGetRequestLayer},
+    ws_client::RpcServiceBuilder,
+};
 use libp2p::{PeerId, futures::StreamExt};
 use node::Node;
 use opentelemetry::KeyValue;
@@ -29,8 +33,8 @@ use tracing::*;
 use crate::{
     api::{self, subscription_id_provider::EthIdProvider},
     cfg::NodeConfig,
+    credits::{RpcCreditRate, RpcCreditStore, RpcExtensionLayer, RpcLimitLayer},
     crypto::SecretKey,
-    health::HealthLayer,
     message::{ExternalMessage, InternalMessage},
     node::{self, OutgoingMessageFailure},
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
@@ -129,15 +133,42 @@ impl NodeLauncher {
             swarm_peers.clone(),
         )?;
 
+        let redis_address =
+            std::env::var("REDIS_ENDPOINT").map_or_else(|_| None, |uri| Url::parse(&uri).ok());
+
         let node = Arc::new(node);
+        let credit_store = Arc::new(RpcCreditStore::new(redis_address.clone()));
+        let credit_rate = RpcCreditRate::new(config.credit_rates.clone());
+
         for api_server in &config.api_servers {
+            // Collect all enabled modules
             let rpc_module = api::rpc_module(Arc::clone(&node), &api_server.enabled_apis);
-            // Construct the JSON-RPC API server. We inject a [CorsLayer] to ensure web browsers can call our API directly.
+
+            // HTTP middleware
             let cors = CorsLayer::new()
                 .allow_methods(Method::POST)
                 .allow_origin(Any)
-                .allow_headers([header::CONTENT_TYPE]);
-            let middleware = tower::ServiceBuilder::new().layer(HealthLayer).layer(cors);
+                .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION, header::ACCEPT]); // We inject a [CorsLayer] to ensure web browsers can call our API directly.
+            let health = ProxyGetRequestLayer::new([("/health", "health_check")])?;
+            let http_middleware = tower::ServiceBuilder::new()
+                // turn on if quota is set
+                .option_layer(api_server.default_quota.map(|_| RpcExtensionLayer::new()))
+                .layer(health)
+                .layer(cors);
+
+            // RPC middleware
+            let credit_rate = credit_rate.clone();
+            let credit_store = credit_store.clone();
+            let default_quota = api_server.default_quota;
+            let rpc_middleware = RpcServiceBuilder::new()
+                // turn on if quota is set
+                .option_layer(
+                    api_server
+                        .default_quota
+                        .map(|_| RpcLimitLayer::new(credit_store, credit_rate, default_quota)),
+                );
+
+            // Construct the JSON-RPC API server.
             let server = jsonrpsee::server::ServerBuilder::new()
                 .set_config(
                     ServerConfig::builder()
@@ -145,10 +176,12 @@ impl NodeLauncher {
                         .set_id_provider(EthIdProvider)
                         .build(),
                 )
-                .set_http_middleware(middleware)
+                .set_http_middleware(http_middleware)
+                .set_rpc_middleware(rpc_middleware)
                 .build((Ipv4Addr::UNSPECIFIED, api_server.port))
                 .await;
 
+            // Start the JSON-RPC server.
             match server {
                 Ok(server) => {
                     let port = server.local_addr()?.port();

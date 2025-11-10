@@ -422,7 +422,9 @@ impl Network {
             api_servers: vec![ApiServer {
                 port: 4201,
                 enabled_apis: api::all_enabled(),
+                default_quota: None,
             }],
+            credit_rates: HashMap::new(),
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             data_dir: None,
             state_cache_size: state_cache_size_default(),
@@ -560,7 +562,9 @@ impl Network {
             api_servers: vec![ApiServer {
                 port: 4201,
                 enabled_apis: api::all_enabled(),
+                default_quota: None,
             }],
+            credit_rates: HashMap::new(),
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             data_dir: None,
             state_cache_size: state_cache_size_default(),
