@@ -85,7 +85,7 @@ async fn main() -> Result<()> {
 
     let path = PathBuf::from(args.output.clone());
     let now = Instant::now();
-    println!("WRITE {}", args.output);
+    println!("WRITE {} -> {}", dbpath.display(), args.output);
     zilliqa::checkpoint::save_ckpt(
         path.as_path(),
         Arc::new(db.state_trie()?),

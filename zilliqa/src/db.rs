@@ -323,9 +323,16 @@ impl Db {
             tempfile::tempdir()?.path().join("state.rocksdb")
         };
 
-        let cache = Cache::new_lru_cache(config.rocksdb_cache_size);
         let mut block_opts = BlockBasedOptions::default();
-        block_opts.set_block_cache(&cache);
+        // reduce disk and memory usage - https://github.com/facebook/rocksdb/wiki/RocksDB-Bloom-Filter#ribbon-filter
+        block_opts.set_ribbon_filter(10.0);
+
+        let cache = Cache::new_lru_cache(config.rocksdb_cache_size);
+        if config.rocksdb_cache_size == 0 {
+            block_opts.disable_cache();
+        } else {
+            block_opts.set_block_cache(&cache);
+        }
 
         let mut rdb_opts = Options::default();
         rdb_opts.create_if_missing(true);
