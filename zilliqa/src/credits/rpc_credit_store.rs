@@ -18,11 +18,15 @@ pub struct RpcCreditStore {
 impl RpcCreditStore {
     const REDIS_BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
     // URI e.g. "redis://[<username>][:<password>@]<hostname>[:port][/[<db>][?protocol=<protocol>]]"
-    pub fn new(uri: Option<Url>) -> Self {
+    pub fn new() -> Self {
         // spin up redis connection pool
         let num_workers = tokio::runtime::Handle::try_current()
             .map(|h| h.metrics().num_workers().max(4))
             .unwrap_or(4);
+
+        // Use REDIS_ENDPOINT value to configure redis connection pool.
+        let uri =
+            std::env::var("REDIS_ENDPOINT").map_or_else(|_| None, |uri| Url::parse(&uri).ok());
         let pool = uri.as_ref().and_then(|url| {
             Pool::builder()
                 .max_size(2 * num_workers as u32)
@@ -155,6 +159,6 @@ impl RpcCreditStore {
 
 impl Default for RpcCreditStore {
     fn default() -> Self {
-        Self::new(None)
+        Self::new()
     }
 }

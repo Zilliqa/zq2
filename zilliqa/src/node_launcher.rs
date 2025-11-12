@@ -8,7 +8,6 @@ use anyhow::{Result, anyhow};
 use arc_swap::ArcSwap;
 use http::{Method, header};
 use jsonrpsee::{
-    client_transport::ws::Url,
     server::{ServerConfig, middleware::http::ProxyGetRequestLayer},
     ws_client::RpcServiceBuilder,
 };
@@ -133,11 +132,8 @@ impl NodeLauncher {
             swarm_peers.clone(),
         )?;
 
-        let redis_address =
-            std::env::var("REDIS_ENDPOINT").map_or_else(|_| None, |uri| Url::parse(&uri).ok());
-
         let node = Arc::new(node);
-        let credit_store = Arc::new(RpcCreditStore::new(redis_address.clone()));
+        let credit_store = Arc::new(RpcCreditStore::new());
         let credit_rate = RpcCreditRate::new(config.credit_rates.clone());
 
         for api_server in &config.api_servers {
