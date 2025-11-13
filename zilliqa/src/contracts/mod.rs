@@ -270,6 +270,8 @@ pub mod deposit_v6 {
         Lazy::new(|| CONTRACT.abi.function("depositTopup").unwrap().clone());
     pub static UNSTAKE: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("unstake").unwrap().clone());
+    pub static WITHDRAW: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("withdraw").unwrap().clone());
     pub static CURRENT_EPOCH: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("currentEpoch").unwrap().clone());
     pub static GET_STAKE: Lazy<Function> =
@@ -330,6 +332,8 @@ pub mod deposit_v7 {
         Lazy::new(|| CONTRACT.abi.function("depositTopup").unwrap().clone());
     pub static UNSTAKE: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("unstake").unwrap().clone());
+    pub static WITHDRAW: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("withdraw").unwrap().clone());
     pub static CURRENT_EPOCH: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("currentEpoch").unwrap().clone());
     pub static GET_STAKE: Lazy<Function> =
