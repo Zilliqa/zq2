@@ -180,7 +180,7 @@ impl SignerClient {
         let tx = TransactionRequest::new()
             .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
             .data(
-                contracts::deposit_v4::UNSTAKE
+                contracts::deposit_v4::WITHDRAW
                     .encode_input(&[
                         Token::Bytes(bls_public_key.as_bytes()),
                         Token::Uint((count as u128).into()),
