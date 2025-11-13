@@ -11,6 +11,7 @@ use anyhow::{Ok, Result, anyhow};
 use clap::ValueEnum;
 use cliclack::MultiProgress;
 use colored::Colorize;
+use itertools::Itertools;
 use rand::Rng;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -794,6 +795,20 @@ impl ChainNode {
             let toml_api_limits: toml::Value = serde_json::from_value(api_limits)?;
             let toml_string = toml::to_string_pretty(&toml_api_limits)?;
             ctx.insert("api_limits", &toml_string);
+
+            let credit_rates_str = include_str!("../../resources/rpc_rates.toml");
+            let credit_rates: Value = toml::from_str(credit_rates_str)
+                .map_err(|_| anyhow!("Unable to parse rpc_rates.toml".to_string()))?;
+            let credit_rates_toml = credit_rates
+                .get("credit_rates")
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .iter()
+                .map(|(k, v)| format!("{k}={v}"))
+                .collect_vec()
+                .join("\n");
+            ctx.insert("credit_rates", &credit_rates_toml);
         }
 
         let bootstrap_address = if bootstrap_addresses.len() > 1 {
@@ -837,9 +852,6 @@ impl ChainNode {
                 .collect::<Vec<_>>(),
         )?;
 
-        let credit_rates = include_str!("../../resources/rpc_rates.toml");
-
-        ctx.insert("credit_rates", &credit_rates);
         ctx.insert(
             "bootstrap_address",
             &serde_json::to_string_pretty(&bootstrap_address)?,

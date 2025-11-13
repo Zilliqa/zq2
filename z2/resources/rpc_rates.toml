@@ -1,6 +1,6 @@
 # RPC Rate Limits Configuration
 # Values represent empirical estimates and derived limits for various RPC endpoints
-[nodes.credit_rates]
+[credit_rates]
 CreateTransaction = 80
 GetContractAddressFromTransactionID = 250
 GetBlockchainInfo = 500
