@@ -175,14 +175,21 @@ pub struct DbConfig {
     /// RocksDB block cache size, in bytes.
     #[serde(default = "rocksdb_cache_size_default")]
     pub rocksdb_cache_size: usize,
+    /// RocksDB periodic compaction seconds.
+    #[serde(default = "rocksdb_compaction_period_default")]
+    pub rocksdb_compaction_period: u64,
+}
+
+fn rocksdb_compaction_period_default() -> u64 {
+    86_400 * 7 // weekly expiry
 }
 
 fn rocksdb_cache_size_default() -> usize {
-    256 * 1024 * 1024
+    1024 * 1024 * 1024 // 1GB default
 }
 
 fn sql_cache_size_default() -> usize {
-    8_192
+    4_096 // 128MB default
 }
 
 fn sql_auto_checkpoint_default() -> usize {
@@ -196,6 +203,7 @@ impl Default for DbConfig {
             auto_checkpoint: sql_auto_checkpoint_default(),
             state_sync: false,
             rocksdb_cache_size: rocksdb_cache_size_default(),
+            rocksdb_compaction_period: rocksdb_compaction_period_default(),
         }
     }
 }
