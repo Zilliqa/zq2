@@ -326,6 +326,9 @@ impl Db {
         let mut block_opts = BlockBasedOptions::default();
         // reduce disk and memory usage - https://github.com/facebook/rocksdb/wiki/RocksDB-Bloom-Filter#ribbon-filter
         block_opts.set_ribbon_filter(10.0);
+        // reduce cache eviction for index/filter blocks
+        block_opts.set_cache_index_and_filter_blocks(true);
+        block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
 
         let cache = Cache::new_lru_cache(config.rocksdb_cache_size);
         if config.rocksdb_cache_size == 0 {
@@ -337,6 +340,8 @@ impl Db {
         let mut rdb_opts = Options::default();
         rdb_opts.create_if_missing(true);
         rdb_opts.set_block_based_table_factory(&block_opts);
+        // https://github.com/facebook/rocksdb/wiki/Leveled-Compaction#level_compaction_dynamic_level_bytes-is-true-recommended-default-since-version-84
+        rdb_opts.set_level_compaction_dynamic_level_bytes(true);
 
         // Should be safe in single-threaded mode
         // https://docs.rs/rocksdb/latest/rocksdb/type.DB.html#limited-performance-implication-for-single-threaded-mode
