@@ -33,7 +33,6 @@ do_checkpoints=true
 consensus.blocks_per_epoch=3600
 consensus.epochs_per_checkpoint=24
 # Reduce cache sizes, to prevent OOM.
-state_cache_size = 536870912
 db.conn_cache_size = 128
 {%- endif %}
 
