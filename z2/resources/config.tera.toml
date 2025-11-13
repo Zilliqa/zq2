@@ -78,8 +78,9 @@ file = "{{ checkpoint_file }}"
 hash = "{{ checkpoint_hash }}"
 {%- endif %}
 
-{%- if role == "api" %}
-{{ credit_rates }}
+{%- if credit_rates is defined %}
+[nodes.credit_rates]
+{{ credit_rates | safe }}
 {%- endif %}
 
 {%- if api_limits is defined %}
