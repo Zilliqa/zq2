@@ -1,11 +1,11 @@
 use std::{
     net::IpAddr,
     pin::Pin,
-    str::FromStr,
     task::{Context, Poll},
 };
 
 use anyhow::Result;
+use dashmap::DashSet;
 use futures::{FutureExt, TryFutureExt};
 use http::header::AUTHORIZATION;
 use jsonrpsee::{
@@ -19,11 +19,18 @@ const X_FORWARDED_FOR: &str = "x-forwarded-for";
 
 /// Adds some extra data to the request
 #[derive(Debug, Clone, Default)]
-pub struct RpcExtensionLayer {}
+pub struct RpcExtensionLayer {
+    allow_ips: DashSet<IpAddr>,
+}
 
 impl RpcExtensionLayer {
     pub fn new() -> Self {
-        Self::default()
+        // allowed list of IP addresses to bypass RPC limits.
+        let allow_ips = std::env::var("ALLOWED_IPS").map_or_else(
+            |_| DashSet::new(), // empty list
+            |csv| DashSet::from_iter(csv.split(',').filter_map(|ip| ip.trim().parse().ok())),
+        );
+        Self { allow_ips }
     }
 }
 
@@ -31,7 +38,10 @@ impl<S> Layer<S> for RpcExtensionLayer {
     type Service = RpcExtensionHeader<S>;
 
     fn layer(&self, inner: S) -> Self::Service {
-        RpcExtensionHeader { inner }
+        RpcExtensionHeader {
+            inner,
+            allow_ips: self.allow_ips.clone(),
+        }
     }
 }
 
@@ -40,6 +50,7 @@ impl<S> Layer<S> for RpcExtensionLayer {
 #[derive(Debug, Clone)]
 pub struct RpcExtensionHeader<S> {
     inner: S,
+    allow_ips: DashSet<IpAddr>,
 }
 
 impl<S> Service<HttpRequest> for RpcExtensionHeader<S>
@@ -66,9 +77,10 @@ where
             .get(X_FORWARDED_FOR)
             .and_then(|val| val.to_str().ok())
             .and_then(|list| list.split(',').rev().nth(1)) // https://cloud.google.com/load-balancing/docs/https#x-forwarded-for_header
-            .and_then(|first| IpAddr::from_str(first.trim()).ok());
+            .and_then(|first| first.trim().parse().ok())
+            .filter(|ip| !self.allow_ips.contains(ip));
 
-        // add the remote-user
+        // TODO: user-based quotas
         let remote_user = req
             .headers()
             .get(AUTHORIZATION)
