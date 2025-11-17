@@ -262,30 +262,50 @@ impl ContextPrecompile for ScillaRead {
         _is_static: bool,
         gas_limit: u64,
     ) -> std::result::Result<Option<InterpreterResult>, String> {
-        let result = scilla_read(ctx, input, gas_limit);
-        match result {
-            Ok(Some(result)) => Ok(Some(result)),
-            Ok(None) => Ok(None),
-            Err(err) => match err {
-                PrecompileErrors::Error(err) => Err(err.to_string()),
-                PrecompileErrors::Fatal { msg } => Err(msg),
-            },
+        let gas = Gas::new(gas_limit);
+
+        let outcome = scilla_read(input, gas.limit(), ctx);
+
+        let mut result = InterpreterResult {
+            result: InstructionResult::Return,
+            gas,
+            output: Bytes::new(),
+        };
+
+        match outcome {
+            Ok(output) => {
+                if result.gas.record_cost(output.gas_used) {
+                    result.result = InstructionResult::Return;
+                    result.output = output.bytes;
+                } else {
+                    result.result = InstructionResult::PrecompileOOG;
+                }
+            }
+            Err(PrecompileErrors::Error(e)) => {
+                result.result = if e.is_oog() {
+                    InstructionResult::PrecompileOOG
+                } else {
+                    InstructionResult::PrecompileError
+                };
+            }
+            Err(PrecompileErrors::Fatal { msg }) => return Err(msg),
         }
+
+        Ok(Some(result))
     }
 }
 
 fn scilla_read(
-    ctx: &mut ZQ2EvmContext,
     input: &InputsImpl,
     gas_limit: u64,
-) -> std::result::Result<Option<InterpreterResult>, PrecompileErrors> {
+    ctx: &mut ZQ2EvmContext,
+) -> std::result::Result<PrecompileOutput, PrecompileErrors> {
     let Ok(input_len) = u64::try_from(input.input().len()) else {
         return err("input too long");
     };
 
-    let mut gas_tracker = Gas::new(gas_limit);
     let required_gas = input_len * PER_BYTE_COST + BASE_COST;
-    if !gas_tracker.record_cost(required_gas) {
+    if gas_limit < required_gas {
         return oog();
     }
 
@@ -409,11 +429,10 @@ fn scilla_read(
         ScillaType::Map(_, _) => unreachable!("map will not be returned from `get_indices`"),
     };
 
-    Ok(Some(InterpreterResult::new(
-        InstructionResult::default(),
+    Ok(PrecompileOutput::new(
+        required_gas,
         value.into(),
-        gas_tracker,
-    )))
+    ))
 }
 
 pub struct ScillaCall;
