@@ -429,10 +429,7 @@ fn scilla_read(
         ScillaType::Map(_, _) => unreachable!("map will not be returned from `get_indices`"),
     };
 
-    Ok(PrecompileOutput::new(
-        required_gas,
-        value.into(),
-    ))
+    Ok(PrecompileOutput::new(required_gas, value.into()))
 }
 
 pub struct ScillaCall;

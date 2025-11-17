@@ -3,9 +3,10 @@ use std::{
     fmt::{self, Display, Formatter},
 };
 
-use alloy::primitives::Address;
+use alloy::primitives::{Address, Bytes};
 use ethabi::{ParamType, Token, decode, encode, short_signature};
 use revm::interpreter::{Gas, InputsImpl, InstructionResult, InterpreterResult};
+use revm_precompile::{PrecompileError, PrecompileOutput};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error};
 
@@ -13,7 +14,7 @@ use crate::{
     constants::{LAG_BEHIND_CURRENT_VIEW, MISSED_VIEW_THRESHOLD, MISSED_VIEW_WINDOW},
     crypto::NodePublicKey,
     evm::ZQ2EvmContext,
-    precompiles::ContextPrecompile,
+    precompiles::{ContextPrecompile, scilla::PrecompileErrors},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -149,120 +150,169 @@ impl ContextPrecompile for Penalty {
         _is_static: bool,
         gas_limit: u64,
     ) -> anyhow::Result<Option<InterpreterResult>, String> {
-        let mut gas_tracker = Gas::new(gas_limit);
-        //TODO(#3080): check the gas limit and adjust how much gas the precompile should use
-        //info!(gas_limit, "~~~> precompile called with");
-        //if gas_limit < 10_000u64 {
-        //    return Err(PrecompileErrors::Error(PrecompileError::OutOfGas));
-        //}
+        let gas = Gas::new(gas_limit);
 
-        if !gas_tracker.record_cost(10_000u64) {
-            return Err("Precompile out of gas".into());
-        }
-        if input.input.len() < 4 {
-            return Err("Provided input must be at least 4-byte long".into());
-        }
-        let sig = short_signature("jailed", &[ParamType::Bytes, ParamType::Uint(256)]);
-        let raw_input = input.input.bytes(ctx);
-        if raw_input[..4] != sig {
-            return Err("Unable to find handler with given selector".into());
-        }
-        let Ok(decoded) = decode(&[ParamType::Bytes, ParamType::Uint(256)], &raw_input[4..]) else {
-            return Err("ABI input decoding error!".into());
-        };
-        let leader = decoded
-            .first()
-            .ok_or("Can't decode leader".to_string())?
-            .to_owned()
-            .into_bytes()
-            .ok_or("Can't decode leader".to_string())?;
-        let view = decoded
-            .last()
-            .ok_or("Can't decode view".to_string())?
-            .to_owned()
-            .into_uint()
-            .ok_or("Can't decode view".to_string())?;
-        // if the current block is beyond the jailing fork activation height when calling the precompile
-        // jailing will be applied regardless of whether the view was before or after the fork activation
-        if !ctx.chain.fork.validator_jailing {
-            let output = encode(&[Token::Bool(false)]);
+        let outcome = call_penalty(input, gas.limit(), ctx);
 
-            return Ok(Some(InterpreterResult::new(
-                InstructionResult::default(),
-                output.into(),
-                gas_tracker,
-            )));
-        }
-        if view.as_u64() > LAG_BEHIND_CURRENT_VIEW
-            && view.as_u64() - LAG_BEHIND_CURRENT_VIEW >= ctx.chain.finalized_view
-        {
-            error!(
-                ?view,
-                finalized = ctx.chain.finalized_view,
-                "~~~~~~~~~~> required missed view history not finalized"
-            );
-            return Err("Required missed view history not finalized".into());
-        }
-        let min_view = ctx.chain.view_history.min_view;
-        // fail if the missed view history does not reach back far enough in the past or
-        // the queried view is too far in the future based on the currently finalized view
-        if min_view > 1
-            && view.as_u64().saturating_sub(LAG_BEHIND_CURRENT_VIEW) < min_view + MISSED_VIEW_WINDOW
-            || view.as_u64() > ctx.chain.finalized_view + LAG_BEHIND_CURRENT_VIEW + 1
-        {
-            debug!(
-                ?view,
-                min = min_view,
-                finalized = ctx.chain.finalized_view,
-                "~~~~~~~~~~> missed view history not available"
-            );
-            return Err("Missed view history not available".into());
-        }
-        let deque = &ctx.chain.view_history.missed_views;
-        // binary search to find the relevant missed views in O(log(n))
-        let (first_slice, second_slice) = deque.as_slices();
-        let search_slice = |slice: &[(u64, NodePublicKey)], target: u64| {
-            slice.binary_search_by_key(&target, |&(key, _)| key)
+        let mut result = InterpreterResult {
+            result: InstructionResult::Return,
+            gas,
+            output: Bytes::new(),
         };
-        let to = view.as_u64().saturating_sub(LAG_BEHIND_CURRENT_VIEW);
-        let from = to.saturating_sub(MISSED_VIEW_WINDOW);
-        let (first_start_idx, first_end_idx) = (
-            search_slice(first_slice, from).unwrap_or_else(|i| i),
-            search_slice(first_slice, to).unwrap_or_else(|i| i),
-        );
-        let first_range = &first_slice[first_start_idx..first_end_idx];
-        // filter the missed views that had the same leader as the selected one
-        let filter = |(key, value): &(u64, NodePublicKey)| {
-            if let Ok(decoded) = NodePublicKey::from_bytes(leader.as_slice()) {
-                if decoded == *value {
-                    return Some(*key);
+
+        match outcome {
+            Ok(output) => {
+                if result.gas.record_cost(output.gas_used) {
+                    result.result = InstructionResult::Return;
+                    result.output = output.bytes;
+                } else {
+                    result.result = InstructionResult::PrecompileOOG;
                 }
-                None
-            } else {
-                None
             }
-        };
-        let missed = if second_slice.is_empty() {
-            first_range.iter().filter_map(filter).count()
-        } else {
-            let (second_start_idx, second_end_idx) = (
-                search_slice(second_slice, from).unwrap_or_else(|i| i),
-                search_slice(second_slice, to).unwrap_or_else(|i| i),
-            );
-            let second_range = &second_slice[second_start_idx..second_end_idx];
-            first_range
-                .iter()
-                .chain(second_range.iter())
-                .filter_map(filter)
-                .count()
-        };
-        let jailed = missed >= MISSED_VIEW_THRESHOLD;
-        let output = encode(&[Token::Bool(jailed)]);
+            Err(PrecompileErrors::Error(e)) => {
+                result.result = if e.is_oog() {
+                    InstructionResult::PrecompileOOG
+                } else {
+                    InstructionResult::PrecompileError
+                };
+            }
+            Err(PrecompileErrors::Fatal { msg }) => return Err(msg),
+        }
 
-        Ok(Some(InterpreterResult::new(
-            InstructionResult::default(),
-            output.into(),
-            gas_tracker,
-        )))
+        Ok(Some(result))
     }
+}
+
+fn call_penalty(
+    input: &InputsImpl,
+    gas_limit: u64,
+    ctx: &mut ZQ2EvmContext,
+) -> Result<PrecompileOutput, PrecompileErrors> {
+    //TODO(#3080): check the gas limit and adjust how much gas the precompile should use
+    //info!(gas_limit, "~~~> precompile called with");
+    //if gas_limit < 10_000u64 {
+    //    return Err(PrecompileErrors::Error(PrecompileError::OutOfGas));
+    //}
+    const REQUIRED_GAS: u64 = 10_000;
+
+    if gas_limit < REQUIRED_GAS {
+        return Err(PrecompileErrors::Error(PrecompileError::Other(
+            "Precompile out of gas".into(),
+        )));
+    }
+    if input.input.len() < 4 {
+        return Err(PrecompileErrors::Error(PrecompileError::Other(
+            "Provided input must be at least 4-byte long".into(),
+        )));
+    }
+    let sig = short_signature("jailed", &[ParamType::Bytes, ParamType::Uint(256)]);
+    let raw_input = input.input.bytes(ctx);
+    if raw_input[..4] != sig {
+        return Err(PrecompileErrors::Error(PrecompileError::Other(
+            "Unable to find handler with given selector".into(),
+        )));
+    }
+    let Ok(decoded) = decode(&[ParamType::Bytes, ParamType::Uint(256)], &raw_input[4..]) else {
+        return Err(PrecompileErrors::Error(PrecompileError::Other(
+            "ABI input decoding error!".into(),
+        )));
+    };
+    let leader = decoded
+        .first()
+        .ok_or(PrecompileErrors::Error(PrecompileError::Other(
+            "Can't decode leader".to_string(),
+        )))?
+        .to_owned()
+        .into_bytes()
+        .ok_or(PrecompileErrors::Error(PrecompileError::Other(
+            "Can't decode leader".to_string(),
+        )))?;
+    let view = decoded
+        .last()
+        .ok_or(PrecompileErrors::Error(PrecompileError::Other(
+            "Can't decode view".to_string(),
+        )))?
+        .to_owned()
+        .into_uint()
+        .ok_or(PrecompileErrors::Error(PrecompileError::Other(
+            "Can't decode view".to_string(),
+        )))?;
+    // if the current block is beyond the jailing fork activation height when calling the precompile
+    // jailing will be applied regardless of whether the view was before or after the fork activation
+    if !ctx.chain.fork.validator_jailing {
+        let output = encode(&[Token::Bool(false)]);
+
+        return Ok(PrecompileOutput::new(REQUIRED_GAS, output.into()));
+    }
+    if view.as_u64() > LAG_BEHIND_CURRENT_VIEW
+        && view.as_u64() - LAG_BEHIND_CURRENT_VIEW >= ctx.chain.finalized_view
+    {
+        error!(
+            ?view,
+            finalized = ctx.chain.finalized_view,
+            "~~~~~~~~~~> required missed view history not finalized"
+        );
+        return Err(PrecompileErrors::Error(PrecompileError::Other(
+            "Required missed view history not finalized".into(),
+        )));
+    }
+    let min_view = ctx.chain.view_history.min_view;
+    // fail if the missed view history does not reach back far enough in the past or
+    // the queried view is too far in the future based on the currently finalized view
+    if min_view > 1
+        && view.as_u64().saturating_sub(LAG_BEHIND_CURRENT_VIEW) < min_view + MISSED_VIEW_WINDOW
+        || view.as_u64() > ctx.chain.finalized_view + LAG_BEHIND_CURRENT_VIEW + 1
+    {
+        debug!(
+            ?view,
+            min = min_view,
+            finalized = ctx.chain.finalized_view,
+            "~~~~~~~~~~> missed view history not available"
+        );
+        return Err(PrecompileErrors::Error(PrecompileError::Other(
+            "Missed view history not available".into(),
+        )));
+    }
+    let deque = &ctx.chain.view_history.missed_views;
+    // binary search to find the relevant missed views in O(log(n))
+    let (first_slice, second_slice) = deque.as_slices();
+    let search_slice = |slice: &[(u64, NodePublicKey)], target: u64| {
+        slice.binary_search_by_key(&target, |&(key, _)| key)
+    };
+    let to = view.as_u64().saturating_sub(LAG_BEHIND_CURRENT_VIEW);
+    let from = to.saturating_sub(MISSED_VIEW_WINDOW);
+    let (first_start_idx, first_end_idx) = (
+        search_slice(first_slice, from).unwrap_or_else(|i| i),
+        search_slice(first_slice, to).unwrap_or_else(|i| i),
+    );
+    let first_range = &first_slice[first_start_idx..first_end_idx];
+    // filter the missed views that had the same leader as the selected one
+    let filter = |(key, value): &(u64, NodePublicKey)| {
+        if let Ok(decoded) = NodePublicKey::from_bytes(leader.as_slice()) {
+            if decoded == *value {
+                return Some(*key);
+            }
+            None
+        } else {
+            None
+        }
+    };
+    let missed = if second_slice.is_empty() {
+        first_range.iter().filter_map(filter).count()
+    } else {
+        let (second_start_idx, second_end_idx) = (
+            search_slice(second_slice, from).unwrap_or_else(|i| i),
+            search_slice(second_slice, to).unwrap_or_else(|i| i),
+        );
+        let second_range = &second_slice[second_start_idx..second_end_idx];
+        first_range
+            .iter()
+            .chain(second_range.iter())
+            .filter_map(filter)
+            .count()
+    };
+    let jailed = missed >= MISSED_VIEW_THRESHOLD;
+    let output = encode(&[Token::Bool(jailed)]);
+
+    Ok(PrecompileOutput::new(REQUIRED_GAS, output.into()))
 }
