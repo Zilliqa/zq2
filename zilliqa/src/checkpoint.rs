@@ -474,7 +474,8 @@ pub fn save_ckpt(
     // iterate over accounts and save the accounts to the checkpoint file.
     // do not save intermediate state trie values.
     let state_trie = EthTrie::new(trie_storage.clone()).at_root(parent.state_root_hash().into());
-    for (key, serialised_account) in state_trie.iter().flatten() {
+    for akv in state_trie.iter() {
+        let (key, serialised_account) = akv?;
         if account_count % 10000 == 0 {
             tracing::debug!(account=%account_count, record=%record_count, "Saved");
         }
@@ -490,7 +491,8 @@ pub fn save_ckpt(
         let mut count = 0;
         // write to spooled file, avoiding OOM.
         let mut spool = tempfile::spooled_tempfile(1024 * 1024);
-        for (storage_key, storage_val) in account_trie.iter().flatten() {
+        for skv in account_trie.iter() {
+            let (storage_key, storage_val) = skv?;
             bincode::encode_into_std_write(&storage_key, &mut spool, BIN_CONFIG)?;
             bincode::encode_into_std_write(&storage_val, &mut spool, BIN_CONFIG)?;
             count += 1;
