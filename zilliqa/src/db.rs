@@ -328,7 +328,12 @@ impl Db {
         block_opts.set_ribbon_filter(10.0);
         // reduce cache eviction for index/filter blocks
         block_opts.set_cache_index_and_filter_blocks(true);
-        block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
+        // block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
+        block_opts.set_pin_top_level_index_and_filter(true);
+        // employ partitioned-index/filters
+        block_opts.set_partition_filters(true);
+        block_opts.set_index_type(rocksdb::BlockBasedIndexType::TwoLevelIndexSearch);
+        block_opts.set_metadata_block_size(1 << 12);
         // reduce block wastage
         // Percentiles: P50: 414.93 P75: 497.53 P99: 576.82 P99.9: 579.79 P99.99: 12678.76
         block_opts.set_block_size(1 << 10); // 1KB covers > 99.9% of data (4KB - default)
