@@ -10,8 +10,13 @@ use eth_trie::{DB, EthTrie, MemoryDB, Trie};
 use lz4::Decoder;
 
 use crate::{
-    crypto::Hash, db::Db, message::Block, precompiles::ViewHistory, state::Account,
-    transaction::SignedTransaction, trie_storage::TrieStorage,
+    crypto::Hash,
+    db::Db,
+    message::Block,
+    precompiles::ViewHistory,
+    state::Account,
+    transaction::SignedTransaction,
+    trie_storage::{ReadOnlyTrie, TrieStorage},
 };
 
 pub const CHECKPOINT_HEADER_BYTES: [u8; 8] = *b"ZILCHKPT";
@@ -417,7 +422,7 @@ pub fn load_ckpt(
 
 pub fn save_ckpt(
     path: &Path,
-    trie_storage: Arc<TrieStorage>,
+    trie_storage: Arc<ReadOnlyTrie>,
     block: &Block,
     transactions: &Vec<SignedTransaction>,
     parent: &Block,

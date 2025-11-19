@@ -1,11 +1,11 @@
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 use anyhow::Result;
 use lru_mem::LruCache;
 use parking_lot::RwLock;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rocksdb::WriteBatchWithTransaction;
+use rocksdb::WriteBatch;
 use rusqlite::OptionalExtension;
 
 use crate::{cfg::Forks, crypto::Hash};
@@ -31,6 +31,10 @@ impl TrieStorage {
         Self { pool, cache, kvdb }
     }
 
+    pub fn read_only(&self) -> ReadOnlyTrie {
+        ReadOnlyTrie::new(self.kvdb.path()).expect("DB must exist")
+    }
+
     pub fn write_batch(&self, keys: Vec<Vec<u8>>, values: Vec<Vec<u8>>) -> Result<()> {
         if keys.is_empty() {
             return Ok(());
@@ -38,7 +42,7 @@ impl TrieStorage {
 
         anyhow::ensure!(keys.len() == values.len(), "Keys != Values");
 
-        let mut batch = WriteBatchWithTransaction::<false>::default();
+        let mut batch = WriteBatch::default();
         let mut cache = self.cache.write();
         for (key, value) in keys.into_iter().zip(values.into_iter()) {
             batch.put(key.as_slice(), value.as_slice());
@@ -188,6 +192,52 @@ impl eth_trie::DB for TrieStorage {
 
     fn remove_batch(&self, _: &[Vec<u8>]) -> Result<(), Self::Error> {
         // we keep old state to function as an archive node, therefore no-op
+        Ok(())
+    }
+}
+
+/// ReadOnlyTrie is a read-only eth_trie::DB, used for checkpoint generation.
+#[derive(Debug, Clone)]
+pub struct ReadOnlyTrie {
+    kvdb: Arc<rocksdb::DB>,
+}
+
+impl ReadOnlyTrie {
+    pub fn new(path: &Path) -> Result<Self> {
+        let kvdb = rocksdb::DB::open_for_read_only(&rocksdb::Options::default(), path, false)?;
+        Ok(Self {
+            kvdb: Arc::new(kvdb),
+        })
+    }
+}
+
+impl eth_trie::DB for ReadOnlyTrie {
+    type Error = eth_trie::TrieError;
+
+    #[inline]
+    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, Self::Error> {
+        self.kvdb
+            .get(key)
+            .map_err(|e| eth_trie::TrieError::DB(e.to_string()))
+    }
+    #[inline]
+    fn insert(&self, _key: &[u8], _value: Vec<u8>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    #[inline]
+    fn insert_batch(&self, _keys: Vec<Vec<u8>>, _values: Vec<Vec<u8>>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    #[inline]
+    fn flush(&self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    #[inline]
+    fn remove(&self, _key: &[u8]) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    #[inline]
+    fn remove_batch(&self, _keys: &[Vec<u8>]) -> Result<(), Self::Error> {
         Ok(())
     }
 }
