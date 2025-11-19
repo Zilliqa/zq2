@@ -18,7 +18,7 @@ use crate::{
     precompiles::ViewHistory,
     time::SystemTime,
     transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
-    trie_storage::TrieStorage,
+    trie_storage::ReadOnlyTrie,
 };
 
 /// The maximum number of validators in the consensus committee. This is passed to the deposit contract and we expect
@@ -385,7 +385,7 @@ pub enum InternalMessage {
         Box<Block>,
         Vec<SignedTransaction>,
         Box<Block>,
-        TrieStorage,
+        ReadOnlyTrie,
         ViewHistory,
         Box<Path>,
     ),
