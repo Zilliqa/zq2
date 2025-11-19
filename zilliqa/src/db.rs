@@ -33,7 +33,7 @@ use crate::{
     precompiles::ViewHistory,
     time::SystemTime,
     transaction::{EvmGas, Log, SignedTransaction, TransactionReceipt, VerifiedTransaction},
-    trie_storage::TrieStorage,
+    trie_storage::{ReadOnlyTrie, TrieStorage},
 };
 
 const MAX_KEYS_IN_SINGLE_QUERY: usize = 32765;
@@ -316,29 +316,19 @@ impl Db {
         let connection = pool.get()?;
         Self::ensure_schema(&connection)?;
 
-        // RocksDB
-        let rdb_path = if let Some(s) = path.clone() {
-            s.join("state.rocksdb")
-        } else {
-            tempfile::tempdir()?.path().join("state.rocksdb")
-        };
-
+        // RocksDB configuration
         let mut block_opts = BlockBasedOptions::default();
         // reduce disk and memory usage - https://github.com/facebook/rocksdb/wiki/RocksDB-Bloom-Filter#ribbon-filter
         block_opts.set_ribbon_filter(10.0);
-        // reduce cache eviction for index/filter blocks
+        // cache index/filter blocks
         block_opts.set_cache_index_and_filter_blocks(true);
-        // block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
-        block_opts.set_pin_top_level_index_and_filter(true);
         // employ partitioned-index/filters
         block_opts.set_partition_filters(true);
         block_opts.set_index_type(rocksdb::BlockBasedIndexType::TwoLevelIndexSearch);
         block_opts.set_metadata_block_size(1 << 12);
-        // reduce block wastage
         // Percentiles: P50: 414.93 P75: 497.53 P99: 576.82 P99.9: 579.79 P99.99: 12678.76
-        block_opts.set_block_size(1 << 10); // 1KB covers > 99.9% of data (4KB - default)
-        // reduce memory wastage with JeMalloc
-        block_opts.set_optimize_filters_for_memory(true);
+        block_opts.set_block_size(1 << 10); // 1KB covers > 99.9% of data
+        block_opts.set_optimize_filters_for_memory(true); // reduce memory wastage with JeMalloc
 
         let cache = Cache::new_lru_cache(config.rocksdb_cache_size);
         if config.rocksdb_cache_size == 0 {
@@ -356,6 +346,10 @@ impl Db {
 
         // Should be safe in single-threaded mode
         // https://docs.rs/rocksdb/latest/rocksdb/type.DB.html#limited-performance-implication-for-single-threaded-mode
+        let rdb_path = path.as_ref().map_or_else(
+            || tempfile::tempdir().unwrap().path().join("state.rocksdb"),
+            |p| p.join("state.rocksdb"),
+        );
         let rdb = DBWithThreadMode::<SingleThreaded>::open(&rdb_opts, rdb_path)?;
 
         tracing::info!(
@@ -1657,7 +1651,7 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
     block: &Block,
     transactions: &Vec<SignedTransaction>,
     parent: &Block,
-    state_trie_storage: TrieStorage,
+    state_trie_storage: ReadOnlyTrie,
     shard_id: u64,
     view_history: ViewHistory,
     output_dir: P,
@@ -1834,7 +1828,7 @@ mod tests {
             &checkpoint_block,
             &checkpoint_transactions,
             &checkpoint_parent,
-            db.state_trie().unwrap(),
+            db.state_trie().unwrap().read_only(),
             SHARD_ID,
             view_history,
             &checkpoint_path,
