@@ -11,6 +11,7 @@ use anyhow::{Ok, Result, anyhow};
 use clap::ValueEnum;
 use cliclack::MultiProgress;
 use colored::Colorize;
+use itertools::Itertools;
 use rand::Rng;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -677,7 +678,7 @@ impl ChainNode {
                 return Err(anyhow!("{} not found in keys config", n.name()));
             };
 
-            let endpoint = format!("/dns/bootstrap-{idx}.{subdomain}/tcp/3333");
+            let endpoint = format!("/dns/bootstrap-{idx}.{subdomain}/udp/3333/quic-v1");
             bootstrap_addresses.push((endpoint, (public_key, peer_id)));
         }
 
@@ -700,14 +701,22 @@ impl ChainNode {
         let eth_chain_id = self.eth_chain_id.to_string();
         let contract_upgrades = self.chain()?.get_contract_upgrades_block_heights();
         // 4201 is the publically exposed port - We don't expose everything there.
-        let public_api = if self.role == NodeRole::Api || self.role == NodeRole::PrivateApi {
-            // Enable all APIs, except `admin_` for API nodes.
+        let public_api = if self.role == NodeRole::Api {
+            // Enable all APIs, except `admin_` for API nodes; with default quota
             json!({
+                // arbitrarily chosen
+                "default_quota": {
+                    "balance": 4_000,
+                    "period": 1,
+                },
                 "port": 4201,
                 "enabled_apis": [
                     "erigon",
                     "eth",
                     "net",
+                    "txpool",
+                    "web3",
+                    "zilliqa",
                     {
                         "namespace": "ots",
                         // Enable all APIs except `ots_getContractCreator` until #2381 is resolved.
@@ -725,16 +734,33 @@ impl ChainNode {
                             "traceTransaction",
                         ],
                     },
+                ]
+            })
+        } else if self.role == NodeRole::PrivateApi {
+            // Enable all APIs, except `admin_` for API nodes; with no quota
+            json!({
+                "port": 4201,
+                "enabled_apis": [
+                    "erigon",
+                    "eth",
+                    "net",
+                    "ots",
                     "txpool",
                     "web3",
                     "zilliqa",
                 ]
             })
         } else {
-            // Only enable `eth_blockNumber` for other nodes.
-            json!({"port": 4201, "enabled_apis": [ { "namespace": "eth", "apis": ["blockNumber"] } ] })
+            // Only enable `eth_blockNumber` for other nodes; with default quota
+            json!({
+                "default_quota": {
+                    "balance": 500,
+                    "period": 1,
+                },
+                "port": 4201,
+                "enabled_apis": [ { "namespace": "eth", "apis": ["blockNumber"] } ] })
         };
-        // 4202 is not exposed, so enable everything for local debugging.
+        // 4202 is not exposed, so enable everything for local debugging; with no quota
         let private_api = json!({ "port": 4202, "enabled_apis": ["admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] });
         let api_servers = json!([public_api, private_api]);
 
@@ -748,6 +774,43 @@ impl ChainNode {
         ctx.insert("network", &self.chain.name());
         ctx.insert("eth_chain_id", &eth_chain_id);
 
+        // Only add API limits if this is an API node
+        if matches!(self.role, NodeRole::Api) {
+            let api_limits = if matches!(self.chain.chain()?, Chain::Zq2Mainnet) {
+                serde_json::json!({
+                    "max_blocks_to_fetch": 50,
+                    "max_txns_in_block_to_fetch": 50,
+                    "disable_get_full_state_for_contracts": [
+                        "0x54d10Ee86cd2C3258b23FDb78782F70e84966683",
+                        "0xa7c67d49c82c7dc1b73d231640b2e4d0661d37c1"
+                    ],
+                    "max_rpc_response_size": 10_485_760
+                })
+            } else {
+                serde_json::json!({
+                    "disable_get_full_state_for_contracts": []
+                })
+            };
+
+            let toml_api_limits: toml::Value = serde_json::from_value(api_limits)?;
+            let toml_string = toml::to_string_pretty(&toml_api_limits)?;
+            ctx.insert("api_limits", &toml_string);
+
+            let credit_rates_str = include_str!("../../resources/rpc_rates.toml");
+            let credit_rates: Value = toml::from_str(credit_rates_str)
+                .map_err(|_| anyhow!("Unable to parse rpc_rates.toml".to_string()))?;
+            let credit_rates_toml = credit_rates
+                .get("credit_rates")
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .iter()
+                .map(|(k, v)| format!("{k}={v}"))
+                .collect_vec()
+                .join("\n");
+            ctx.insert("credit_rates", &credit_rates_toml);
+        }
+
         let bootstrap_address = if bootstrap_addresses.len() > 1 {
             serde_json::to_value(
                 bootstrap_addresses
@@ -758,7 +821,7 @@ impl ChainNode {
         } else {
             serde_json::to_value((
                 bootstrap_addresses[0].1.1.clone(),
-                format!("/dns/bootstrap.{subdomain}/tcp/3333"),
+                format!("/dns/bootstrap.{subdomain}/udp/3333/quic-v1"),
             ))?
         };
 

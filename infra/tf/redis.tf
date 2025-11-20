@@ -61,7 +61,7 @@ resource "google_secret_manager_secret_version" "redis_endpoint" {
   count = var.enable_redis ? 1 : 0
 
   secret = google_secret_manager_secret.redis_endpoint[0].id
-  secret_data = "rediss://:${module.redis[0].auth_string}@${module.redis[0].host}:${module.redis[0].port}/?ssl_cert_reqs=none"
+  secret_data = "redis://:${module.redis[0].auth_string}@${module.redis[0].host}:${module.redis[0].port}/?ssl_cert_reqs=none"
 
   depends_on = [google_secret_manager_secret.redis_endpoint]
 }

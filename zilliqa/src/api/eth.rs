@@ -678,12 +678,13 @@ pub fn get_eth_block(
     let block_gas_limit = block.gas_limit();
     let mut result = eth::Block::from_block(&block, miner.unwrap_or_default(), block_gas_limit);
 
-    const MAX_TXNS_IN_BLOCK_TO_FETCH: usize = 50;
-    if full && block.transactions.len() > MAX_TXNS_IN_BLOCK_TO_FETCH {
-        return Err(anyhow!(
-            "Block has too many transactions to fetch. Max: {MAX_TXNS_IN_BLOCK_TO_FETCH}, got: {}",
-            block.transactions.len()
-        ));
+    if let Some(max_txns) = node.config.api_limits.max_txns_in_block_to_fetch {
+        if full && block.transactions.len() as u64 > max_txns {
+            return Err(anyhow!(
+                "Block has too many transactions to fetch. Max: {max_txns}, got: {}",
+                block.transactions.len()
+            ));
+        }
     }
 
     if full {
@@ -767,9 +768,10 @@ fn get_logs_inner(params: &alloy::rpc::types::Filter, node: &Arc<Node>) -> Resul
                 return Err(anyhow!("`from` is greater than `to` ({from} > {to})"));
             }
 
-            const MAX_BLOCKS_TO_FETCH: u64 = 50;
-            if to - from > MAX_BLOCKS_TO_FETCH {
-                return Err(anyhow!("Range of blocks exceeds {MAX_BLOCKS_TO_FETCH}"));
+            if let Some(max_blocks) = node.config.api_limits.max_blocks_to_fetch {
+                if to - from > max_blocks {
+                    return Err(anyhow!("Range of blocks exceeds {max_blocks}"));
+                }
             }
 
             let db = node.db.clone();

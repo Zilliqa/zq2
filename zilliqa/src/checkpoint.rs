@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{BufReader, Read},
+    io::{BufReader, Read, Seek, Write},
     path::Path,
     sync::Arc,
 };
@@ -474,7 +474,8 @@ pub fn save_ckpt(
     // iterate over accounts and save the accounts to the checkpoint file.
     // do not save intermediate state trie values.
     let state_trie = EthTrie::new(trie_storage.clone()).at_root(parent.state_root_hash().into());
-    for (key, serialised_account) in state_trie.iter().flatten() {
+    for akv in state_trie.iter() {
+        let (key, serialised_account) = akv?;
         if account_count % 10000 == 0 {
             tracing::debug!(account=%account_count, record=%record_count, "Saved");
         }
@@ -483,17 +484,28 @@ pub fn save_ckpt(
         bincode::encode_into_std_write(&serialised_account, &mut zipwriter, BIN_CONFIG)?;
 
         // iterate over account storage keys, and save them to the checkpoint file.
+        // use a single-pass strategy to reduce disk I/O and memory usage.
         let account_root = Account::try_from(serialised_account.as_slice())?.storage_root;
         let account_trie = EthTrie::new(trie_storage.clone()).at_root(account_root);
 
-        let count = account_trie.iter().count();
-        bincode::serde::encode_into_std_write(count, &mut zipwriter, BIN_CONFIG)?;
-
-        for (storage_key, storage_val) in account_trie.iter().flatten() {
-            bincode::encode_into_std_write(&storage_key, &mut zipwriter, BIN_CONFIG)?;
-            bincode::encode_into_std_write(&storage_val, &mut zipwriter, BIN_CONFIG)?;
-            record_count += 1;
+        let mut count = 0;
+        // write to spooled file, avoiding OOM.
+        let mut spool = tempfile::spooled_tempfile(1024 * 1024);
+        for skv in account_trie.iter() {
+            let (storage_key, storage_val) = skv?;
+            bincode::encode_into_std_write(&storage_key, &mut spool, BIN_CONFIG)?;
+            bincode::encode_into_std_write(&storage_val, &mut spool, BIN_CONFIG)?;
+            count += 1;
         }
+        spool.flush()?; // flush data to spool
+
+        // copy account storage contents to zipfile
+        spool.rewind()?; // reset spool for reading
+        bincode::serde::encode_into_std_write(count, &mut zipwriter, BIN_CONFIG)?;
+        std::io::copy(&mut spool, &mut zipwriter)?; // copy to zipwriter
+
+        // increment counters
+        record_count += count;
         account_count += 1;
     }
 

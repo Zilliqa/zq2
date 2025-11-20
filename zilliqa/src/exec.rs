@@ -1690,6 +1690,8 @@ impl PendingState {
             let mut current_value = &mut map;
             let mut current_cached = cached;
 
+            let disk_indices_len = disk_indices.len();
+
             for index in disk_indices {
                 if let Some(c) = current_cached {
                     match c {
@@ -1717,6 +1719,9 @@ impl PendingState {
 
             *current_value = if let Some(cached) = current_cached {
                 cached.clone()
+            } else if disk_indices_len == 0 && self.fork.scilla_empty_maps_are_encoded_correctly {
+                // Map is empty and has no entries represented in the storage (disk indices are empty)
+                StorageValue::complete_map()
             } else {
                 StorageValue::Value(Some(v.into()))
             };

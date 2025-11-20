@@ -858,7 +858,7 @@ async fn main() -> Result<()> {
                         "Provide a configuration file. [--config-file] mandatory argument"
                     )
                 })?;
-                let role = arg.role.clone().unwrap_or(chain::node::NodeRole::Validator);
+                let role = arg.role.clone().unwrap_or(chain::node::NodeRole::Bootstrap);
                 plumbing::run_deployer_get_config_file(&config_file, role, arg.out.as_deref())
                     .await
                     .map_err(|err| {
