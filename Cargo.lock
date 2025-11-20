@@ -2339,7 +2339,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "18e4fdb82bd54a12e42fb58a800dcae6b9e13982238ce2296dc3570b92148e1f"
 dependencies = [
  "data-encoding",
- "syn 1.0.109",
+ "syn 2.0.108",
 ]
 
 [[package]]
@@ -4542,9 +4542,9 @@ dependencies = [
 
 [[package]]
 name = "indicatif"
-version = "0.18.2"
+version = "0.18.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ade6dfcba0dfb62ad59e59e7241ec8912af34fd29e0e743e3db992bd278e8b65"
+checksum = "9375e112e4b463ec1b1c6c011953545c65a30164fbab5b581df32b3abf0dcb88"
 dependencies = [
  "console 0.16.0",
  "portable-atomic",
@@ -10838,7 +10838,7 @@ dependencies = [
  "ethers",
  "futures",
  "hex",
- "indicatif 0.18.2",
+ "indicatif 0.18.3",
  "itertools 0.14.0",
  "k256",
  "libp2p",
@@ -11002,7 +11002,7 @@ dependencies = [
  "hex",
  "http 1.3.1",
  "hyper 1.7.0",
- "indicatif 0.18.2",
+ "indicatif 0.18.3",
  "itertools 0.14.0",
  "jsonrpsee 0.26.0",
  "k256",
