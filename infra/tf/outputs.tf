@@ -56,5 +56,5 @@ output "instances_map" {
 
 output "instances_apps" {
   description = "Map of app instances from the apps module"
-  value = module.apps.instances
+  value       = module.apps.instances
 }

@@ -106,7 +106,7 @@ resource "google_compute_backend_service" "health" {
 
 resource "google_compute_url_map" "api_http_redirect" {
   name = "${var.chain_name}-api-http-redirect"
-  
+
   default_url_redirect {
     https_redirect         = true
     redirect_response_code = "MOVED_PERMANENTLY_DEFAULT"
@@ -249,7 +249,7 @@ module "api_security_policies" {
           priority      = rule_config.priority
           description   = rule_config.description
           src_ip_ranges = rule_config.src_ip_ranges
-        }, rule_config.action == "throttle" ? {
+          }, rule_config.action == "throttle" ? {
           rate_limit_options = {
             enforce_on_key                       = "IP"
             exceed_action                        = "deny(429)"
@@ -283,13 +283,13 @@ module "api_security_policies" {
           priority    = rule_config.priority
           description = rule_config.description
           expression  = rule_config.expression
-        }, rule_config.action == "throttle" ? {
-        rate_limit_options = {
-          enforce_on_key                       = "IP"
-          exceed_action                        = "deny(429)"
-          rate_limit_http_request_count        = rule_config.rate_limit_count
-          rate_limit_http_request_interval_sec = 60
-        }
+          }, rule_config.action == "throttle" ? {
+          rate_limit_options = {
+            enforce_on_key                       = "IP"
+            exceed_action                        = "deny(429)"
+            rate_limit_http_request_count        = rule_config.rate_limit_count
+            rate_limit_http_request_interval_sec = 60
+          }
       } : {})
     }
   )
