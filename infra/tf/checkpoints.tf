@@ -80,8 +80,8 @@ resource "google_storage_bucket_iam_binding" "checkpoint_bucket_admins" {
   bucket = google_storage_bucket.checkpoint.name
   role   = "roles/storage.objectAdmin"
   members = [
-    for name, instance in module.checkpoints.instances : 
-      "serviceAccount:${instance.service_account}"
+    for name, instance in module.checkpoints.instances :
+    "serviceAccount:${instance.service_account}"
   ]
 }
 
@@ -112,7 +112,7 @@ resource "google_compute_backend_bucket" "checkpoint" {
 
 resource "google_compute_url_map" "checkpoint_http_redirect" {
   name = "${var.chain_name}-checkpoint-http-redirect"
-  
+
   default_url_redirect {
     https_redirect         = true
     redirect_response_code = "MOVED_PERMANENTLY_DEFAULT"

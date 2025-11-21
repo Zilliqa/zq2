@@ -39,7 +39,7 @@ resource "google_compute_instance" "this" {
   for_each = local.instances_map
 
   name                      = each.value.resource_name
-  machine_type              = var.config.instance_type
+  machine_type              = each.value.instance_type
   allow_stopping_for_update = true
   zone                      = each.value.zone
 

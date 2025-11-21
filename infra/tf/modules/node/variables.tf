@@ -17,11 +17,12 @@ variable "config" {
     provisioning_model   = optional(string, "STANDARD")
     generate_external_ip = optional(bool, false)
     nodes = list(object({
-      count  = number
-      region = optional(string)
-      zone   = optional(string)
+      count     = number
+      region    = optional(string)
+      zone      = optional(string)
       os_images = optional(map(string), {})
     }))
+    instance_type_override = optional(map(string), {})
   })
   default = {
     nodes : [
