@@ -204,7 +204,11 @@ pub struct ReadOnlyTrie {
 
 impl ReadOnlyTrie {
     pub fn new(path: &Path) -> Result<Self> {
-        let kvdb = rocksdb::DB::open_for_read_only(&rocksdb::Options::default(), path, false)?;
+        let mut opts = rocksdb::Options::default();
+        opts.set_use_direct_reads(true); // caching is useless
+        opts.set_use_adaptive_mutex(true); // reduce context switching
+        opts.set_paranoid_checks(true); // ensure data integrity
+        let kvdb = rocksdb::DB::open_for_read_only(&opts, path, false)?;
         Ok(Self {
             kvdb: Arc::new(kvdb),
         })
