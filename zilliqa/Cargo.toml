@@ -26,7 +26,7 @@ anyhow = { version = "1.0.100", features = ["backtrace"] }
 vergen-git2 = { version = "1.0.2", features = [] }
 
 [dependencies]
-alloy = { version = "0.12.4", default-features = false, features = [
+alloy = { version = "0.12.6", default-features = false, features = [
     "consensus",
     "eips",
     "json-abi",
@@ -69,7 +69,7 @@ paste = "1.0.15"
 prost = "0.14.1"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
-revm = { version = "19.6.0", features = [
+revm = { version = "20.0.0", features = [
     "optional_eip3607",
     "optional_no_base_fee",
 ] }
@@ -123,7 +123,7 @@ arc-swap = "1.7.1"
 redis = { version = "0.32.7", features = ["keep-alive", "r2d2", "tcp_nodelay"], default-features = false }
 
 [dev-dependencies]
-alloy = { version = "0.12.4", default-features = false, features = [
+alloy = { version = "0.12.6", default-features = false, features = [
     "network",
     "rand",
     "signers",
