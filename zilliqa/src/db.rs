@@ -323,18 +323,18 @@ impl Db {
         // Percentiles: P50: 414.93 P75: 497.53 P99: 576.82 P99.9: 579.79 P99.99: 12678.76
         block_opts.set_block_size(1 << 10); // 1KB covers > 99.9% of data
         block_opts.set_optimize_filters_for_memory(true); // reduce memory wastage with JeMalloc
+        // Mitigate OOM
+        block_opts.set_cache_index_and_filter_blocks(true); // place index/filters inside cache, instead of heap
 
         let cache = Cache::new_lru_cache(config.rocksdb_cache_size);
-        if config.rocksdb_cache_size == 0 {
-            block_opts.disable_cache();
-        } else {
-            block_opts.set_block_cache(&cache);
-        }
+        block_opts.set_block_cache(&cache);
 
         let mut rdb_opts = Options::default();
         rdb_opts.create_if_missing(true);
         rdb_opts.set_block_based_table_factory(&block_opts);
         rdb_opts.set_periodic_compaction_seconds(config.rocksdb_compaction_period);
+        // Mitigate OOM
+        rdb_opts.set_max_open_files(config.rocksdb_max_open_files.into()); // prevent opening too many files at a time
 
         // Should be safe in single-threaded mode
         // https://docs.rs/rocksdb/latest/rocksdb/type.DB.html#limited-performance-implication-for-single-threaded-mode
