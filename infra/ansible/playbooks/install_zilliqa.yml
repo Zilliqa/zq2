@@ -125,6 +125,22 @@
       set_fact:
         redis_endpoint: "{{ retrieved_redis_endpoint.stdout | default('') }}"
 
+    - name: Retrieve Rate Limit secret
+      shell: |
+        gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ chain_name }}-rate-limit-bypass" 2>/dev/null || echo ""
+      register: retrieved_rate_limit_secret
+      failed_when: false
+
+    - name: Parse Rate Limit JSON if present
+      set_fact:
+        rate_limit_parsed: "{{ retrieved_rate_limit_secret.stdout | default('{}') | from_json }}"
+      when: retrieved_rate_limit_secret.stdout | length > 0
+
+    - name: Set fact with Rate Limit IPs and Keys
+      set_fact:
+        rate_limit_ips: "{{ rate_limit_parsed.ips | default([]) | join(',') }}"
+        rate_limit_keys: "{{ rate_limit_parsed.api_keys | default([]) | join(',') }}"
+
     - name: Create Zilliqa node script
       template:
         src: templates/zilliqa.sh.j2
@@ -134,6 +150,8 @@
         zq2_version: "{{ zq2_version }}"
         zq2_private_key: "{{ zq2_private_key }}"
         redis_endpoint: "{{ redis_endpoint }}"
+        allowed_ips: "{{ rate_limit_ips }}"
+        allowed_keys: "{{ rate_limit_keys }}"
       notify:
         - Restart Zilliqa service
     

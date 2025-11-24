@@ -3,6 +3,7 @@
 import subprocess
 import os
 import base64
+import json
 import requests
 import sys
 from urllib.parse import urlparse
@@ -85,6 +86,34 @@ else:
 
 REDIS_ENDPOINT_CMD = '$(gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ chain_name }}-redis-endpoint" 2>/dev/null || echo "")'
 
+# Execute the gcloud command to get rate limit configuration
+def get_rate_limit_config():
+    try:
+        cmd = ['gcloud', 'secrets', 'versions', 'access', 'latest', 
+               '--project', PROJECT_ID, 
+               '--secret', '{{ chain_name }}-rate-limit-bypass']
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0 and result.stdout.strip():
+            return json.loads(result.stdout.strip())
+    except (subprocess.CalledProcessError, json.JSONDecodeError, Exception):
+        pass
+    return {}
+
+rate_limit_config = get_rate_limit_config()
+RATE_LIMIT_IPS = ",".join(rate_limit_config.get("ips", []))
+RATE_LIMIT_API_KEYS = ",".join(rate_limit_config.get("api_keys", []))
+
+def build_rate_limit_env_vars():
+    """Build docker -e flags for rate limit env vars only if they are defined and non-empty"""
+    env_vars = []
+    if RATE_LIMIT_IPS and RATE_LIMIT_IPS.strip():
+        env_vars.append(f"-e ALLOWED_IPS={RATE_LIMIT_IPS}")
+    if RATE_LIMIT_API_KEYS and RATE_LIMIT_API_KEYS.strip():
+        env_vars.append(f"-e ALLOWED_KEYS={RATE_LIMIT_API_KEYS}")
+    if env_vars:
+        return " ".join(env_vars)
+    return ""
+
 ZQ2_SCRIPT="""#!/bin/bash
 echo yes | gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
 
@@ -100,6 +129,7 @@ start() {
         -e RUST_LOG='""" + LOG_LEVEL + """' -e OTEL_METRIC_EXPORT_INTERVAL=60000 -e RUST_BACKTRACE=1 \
         -e REDIS_ENDPOINT=""" + REDIS_ENDPOINT_CMD + """ \
         -e SECRET_KEY=""" + PRIVATE_KEY_CMD + """ \
+        """ + build_rate_limit_env_vars() + """ \
         --restart=unless-stopped \
     """ + mount_checkpoint_file() + """ ${ZQ2_IMAGE} """ + SCILLA_SERVER_PORT + """ --log-json
 }
