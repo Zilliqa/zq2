@@ -9,7 +9,7 @@ jobs:
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: bencherdev/bencher@main
       - name: Archive closed PR branch
         continue-on-error: true # This will fail if the branch did not exist in bencher. This is fine.

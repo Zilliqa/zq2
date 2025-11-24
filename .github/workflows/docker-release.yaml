@@ -22,7 +22,7 @@ jobs:
       GCP_REGISTRY: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public
     steps:
     - name: 'Checkout scm'
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
       with:
         fetch-depth: 0
     - name: "Configure GCP Credentials"
@@ -68,7 +68,7 @@ jobs:
         GCP_REGISTRY: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-private
       steps:
       - name: 'Checkout scm'
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - name: Get tag version - private image
