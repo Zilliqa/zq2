@@ -277,6 +277,22 @@ module "api_security_policies" {
       }
     },
     {
+      for rule_name, rule_config in var.api.allow_api_keys : rule_name => merge(
+        {
+          action      = rule_config.action
+          priority    = rule_config.priority
+          description = rule_config.description
+          expression  = "has(request.headers['rate-limit-key']) && request.headers['rate-limit-key'] == '${rule_config.api_key}'"
+          }, rule_config.action == "throttle" ? {
+          rate_limit_options = {
+            enforce_on_key                       = "IP"
+            exceed_action                        = "deny(429)"
+            rate_limit_http_request_count        = rule_config.rate_limit_count
+            rate_limit_http_request_interval_sec = 60
+          }
+      } : {})
+    },
+    {
       for rule_name, rule_config in var.api.allow_custom_rules : rule_name => merge(
         {
           action      = rule_config.action
@@ -312,4 +328,44 @@ module "health_security_policies" {
       src_ip_ranges = [local.monitoring_ip_range]
     }
   }
+}
+
+################################################################################
+# SECRET MANAGER - Rate Limit Bypass IPs and API Keys
+################################################################################
+
+# Extract all IPs from allow_ip_ranges
+locals {
+  bypass_ips = distinct(flatten([
+    for rule_name, rule_config in var.api.allow_ip_ranges : rule_config.src_ip_ranges
+  ]))
+
+  # Extract API keys from allow_custom_rules expressions
+  # Pattern: "has(request.headers['rate-limit-key']) && request.headers['rate-limit-key'] == 'HEX_STRING'"
+  bypass_api_keys = distinct(flatten([
+    for rule_name, rule_config in var.api.allow_api_keys : rule_config.api_key
+  ]))
+
+  # Create JSON structure for the secret
+  rate_limit_bypass_data = jsonencode({
+    ips      = local.bypass_ips
+    api_keys = local.bypass_api_keys
+  })
+}
+
+resource "google_secret_manager_secret" "rate_limit_bypass" {
+  secret_id = "${var.chain_name}-rate-limit-bypass"
+
+  replication {
+    auto {}
+  }
+
+  depends_on = [google_project_service.secret_manager]
+}
+
+resource "google_secret_manager_secret_version" "rate_limit_bypass" {
+  secret      = google_secret_manager_secret.rate_limit_bypass.id
+  secret_data = local.rate_limit_bypass_data
+
+  depends_on = [google_secret_manager_secret.rate_limit_bypass]
 }
