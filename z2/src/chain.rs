@@ -180,6 +180,7 @@ impl Chain {
                 "use_max_gas_priority_fee": false,
                 "failed_zil_transfers_to_eoa_proper_fee_deduction": false,
                 "validator_jailing": false,
+                "scilla_empty_maps_are_encoded_correctly": false,
             })),
             Chain::Zq2Mainnet => Some(json!({
                 "at_height": 0,
@@ -216,6 +217,7 @@ impl Chain {
                 "use_max_gas_priority_fee": false,
                 "failed_zil_transfers_to_eoa_proper_fee_deduction": false,
                 "validator_jailing": false,
+                "scilla_empty_maps_are_encoded_correctly": false,
             })),
             _ => None,
         }
@@ -263,6 +265,8 @@ impl Chain {
                 json!({ "at_height": 12998790, "failed_zil_transfers_to_eoa_proper_fee_deduction": true}),
                 // estimated: 2025-09-19T12.00.00Z
                 json!({ "at_height": 14997600, "validator_jailing": true}),
+                // estimated: arbitrary high block number no reachable before next fork
+                json!({ "at_height": 20000000, "scilla_empty_maps_are_encoded_correctly": true}),
             ]),
             Chain::Zq2Mainnet => Some(vec![
                 json!({ "at_height": 4770088, "executable_blocks": true }),
@@ -307,6 +311,8 @@ impl Chain {
                 json!({ "at_height": 10153271, "failed_zil_transfers_to_eoa_proper_fee_deduction": true}),
                 // estimated: 2025-11-17T07:18:28Z
                 json!({ "at_height": 13514400, "validator_jailing": true}),
+                // estimated: arbitrary high block number no reachable before next fork
+                json!({ "at_height": 99999999, "scilla_empty_maps_are_encoded_correctly": true}),
             ]),
             _ => None,
         }
