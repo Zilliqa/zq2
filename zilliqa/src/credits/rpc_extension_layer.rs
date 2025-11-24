@@ -16,11 +16,13 @@ use serde::Serialize;
 use tower::{Layer, Service};
 
 const X_FORWARDED_FOR: &str = "x-forwarded-for";
+const RATE_LIMIT_KEY: &str = "rate-limit-key";
 
 /// Adds some extra data to the request
 #[derive(Debug, Clone, Default)]
 pub struct RpcExtensionLayer {
     allow_ips: DashSet<IpAddr>,
+    allow_keys: DashSet<String>,
 }
 
 impl RpcExtensionLayer {
@@ -30,7 +32,14 @@ impl RpcExtensionLayer {
             |_| DashSet::new(), // empty list
             |csv| DashSet::from_iter(csv.split(',').filter_map(|ip| ip.trim().parse().ok())),
         );
-        Self { allow_ips }
+        let allow_keys = std::env::var("ALLOWED_KEYS").map_or_else(
+            |_| DashSet::new(), // empty list
+            |csv| DashSet::from_iter(csv.split(',').filter_map(|key| key.trim().parse().ok())),
+        );
+        Self {
+            allow_ips,
+            allow_keys,
+        }
     }
 }
 
@@ -41,6 +50,7 @@ impl<S> Layer<S> for RpcExtensionLayer {
         RpcExtensionHeader {
             inner,
             allow_ips: self.allow_ips.clone(),
+            allow_keys: self.allow_keys.clone(),
         }
     }
 }
@@ -51,6 +61,7 @@ impl<S> Layer<S> for RpcExtensionLayer {
 pub struct RpcExtensionHeader<S> {
     inner: S,
     allow_ips: DashSet<IpAddr>,
+    allow_keys: DashSet<String>,
 }
 
 impl<S> Service<HttpRequest> for RpcExtensionHeader<S>
@@ -80,6 +91,13 @@ where
             .and_then(|first| first.trim().parse().ok())
             .filter(|ip| !self.allow_ips.contains(ip));
 
+        let remote_key = req
+            .headers()
+            .get(RATE_LIMIT_KEY)
+            .and_then(|val| val.to_str().ok())
+            .map(|key| key.to_string())
+            .filter(|key| self.allow_keys.contains(key));
+
         // TODO: user-based quotas
         let remote_user = req
             .headers()
@@ -91,6 +109,7 @@ where
         req.extensions_mut().insert(RpcHeaderExt {
             remote_ip,
             remote_user,
+            remote_key,
         });
 
         self.inner.call(req).map_err(Into::into).boxed()
@@ -102,13 +121,5 @@ where
 pub struct RpcHeaderExt {
     pub remote_ip: Option<IpAddr>,
     pub remote_user: Option<String>,
-}
-
-impl RpcHeaderExt {
-    pub fn new(remote_ip: IpAddr, remote_user: String) -> Self {
-        Self {
-            remote_ip: Some(remote_ip),
-            remote_user: Some(remote_user),
-        }
-    }
+    pub remote_key: Option<String>,
 }
