@@ -87,6 +87,13 @@ variable "api" {
       action           = optional(string, "throttle")
       rate_limit_count = optional(number, 30000)
     })), {})
+    allow_api_keys = optional(map(object({
+      priority         = number
+      description      = string
+      api_key          = string
+      action           = optional(string, "throttle")
+      rate_limit_count = optional(number, 30000)
+    })), {})
     allow_custom_rules = optional(map(object({
       priority         = number
       description      = string
