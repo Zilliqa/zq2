@@ -1,6 +1,6 @@
+use alloy::primitives::Address;
 use anyhow::Result;
 use libp2p::PeerId;
-use revm::primitives::Address;
 use serde::Deserialize;
 use zilliqa::crypto::{NodePublicKey, SecretKey};
 

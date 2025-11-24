@@ -1837,3 +1837,33 @@ async fn get_block_by_number(mut network: Network) {
     assert!(block["timestamp"].as_str().unwrap().starts_with("0x"));
     assert!(u64::from_str_radix(&block["size"].as_str().unwrap()[2..], 16).unwrap() > 0);
 }
+
+#[zilliqa_macros::test]
+async fn read_byte_array_length(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let (hash, abi) = deploy_contract(
+        "tests/it/contracts/BytesArray.sol",
+        "BytesArrayContract",
+        0u128,
+        &wallet,
+        &mut network,
+    )
+    .await;
+
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+
+    let function = abi.function("getLength").unwrap();
+    let call_tx = TransactionRequest::new()
+        .to(receipt.contract_address.unwrap())
+        .data(function.encode_input(&[]).unwrap());
+
+    // Query the current block number with an `eth_call`.
+    let response = wallet.call(&call_tx.clone().into(), None).await.unwrap();
+    let length = function.decode_output(&response).unwrap()[0]
+        .clone()
+        .into_uint()
+        .unwrap()
+        .as_u64();
+    assert_eq!(length, 0);
+}

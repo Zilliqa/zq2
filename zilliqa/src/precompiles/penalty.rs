@@ -1,28 +1,20 @@
 use std::{
     collections::VecDeque,
     fmt::{self, Display, Formatter},
-    sync::Arc,
 };
 
+use alloy::primitives::{Address, Bytes};
 use ethabi::{ParamType, Token, decode, encode, short_signature};
-use revm::{
-    FrameOrResult, InnerEvmContext,
-    handler::register::EvmHandler,
-    interpreter::{CallInputs, Gas, InstructionResult, InterpreterResult},
-    precompile::PrecompileError,
-    primitives::{
-        Address, Bytes, EVMError, PrecompileErrors, PrecompileOutput, PrecompileResult,
-        alloy_primitives::private::alloy_rlp::Encodable,
-    },
-};
+use revm::interpreter::{Gas, InputsImpl, InstructionResult, InterpreterResult};
+use revm_precompile::{PrecompileError, PrecompileOutput};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error};
 
 use crate::{
     constants::{LAG_BEHIND_CURRENT_VIEW, MISSED_VIEW_THRESHOLD, MISSED_VIEW_WINDOW},
     crypto::NodePublicKey,
-    exec::{ExternalContext, PendingState},
-    inspector::ScillaInspector,
+    evm::ZQ2EvmContext,
+    precompiles::{ContextPrecompile, scilla::PrecompileErrors},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -147,128 +139,20 @@ impl Display for ViewHistory {
     }
 }
 
-pub fn dispatch<I: ScillaInspector>(
-    input: &CallInputs,
-    _gas_limit: u64,
-    _context: &mut InnerEvmContext<PendingState>,
-    external_context: &mut ExternalContext<I>,
-) -> PrecompileResult {
-    //TODO(jailing): check the gas limit and adjust how much gas the precompile should use
-    //info!(gas_limit, "~~~> precompile called with");
-    //if gas_limit < 10_000u64 {
-    //    return Err(PrecompileErrors::Error(PrecompileError::OutOfGas));
-    //}
-    if input.input.length() < 4 {
-        return Err(
-            PrecompileError::Other("Provided input must be at least 4-byte long".into()).into(),
-        );
-    }
-    let sig = short_signature("jailed", &[ParamType::Bytes, ParamType::Uint(256)]);
-    if input.input[..4] != sig {
-        return Err(PrecompileError::Other(
-            "Unable to find handler with given selector".to_string(),
-        )
-        .into());
-    }
-    let Ok(decoded) = decode(&[ParamType::Bytes, ParamType::Uint(256)], &input.input[4..]) else {
-        return Err(PrecompileError::Other("ABI input decoding error!".into()).into());
-    };
-    let leader = decoded.first().unwrap().to_owned().into_bytes().unwrap();
-    let view = decoded.last().unwrap().to_owned().into_uint().unwrap();
-    // if the current block is beyond the jailing fork activation height when calling the precompile
-    // jailing will be applied regardless of whether the view was before or after the fork activation
-    if !external_context.fork.validator_jailing {
-        //debug!(?view, "==========> jailing not activated yet");
-        let output = encode(&[Token::Bool(false)]);
-        return Ok(PrecompileOutput::new(10_000u64, output.into()));
-    }
-    if view.as_u64() > LAG_BEHIND_CURRENT_VIEW
-        && view.as_u64() - LAG_BEHIND_CURRENT_VIEW >= external_context.finalized_view
-    {
-        error!(
-            ?view,
-            finalized = external_context.finalized_view,
-            "~~~~~~~~~~> required missed view history not finalized"
-        );
-        return Err(
-            PrecompileError::Other("Required missed view history not finalized".into()).into(),
-        );
-    }
-    let min_view = external_context.view_history.min_view;
-    // fail if the missed view history does not reach back far enough in the past or
-    // the queried view is too far in the future based on the currently finalized view
-    if min_view > 1
-        && view.as_u64().saturating_sub(LAG_BEHIND_CURRENT_VIEW) < min_view + MISSED_VIEW_WINDOW
-        || view.as_u64() > external_context.finalized_view + LAG_BEHIND_CURRENT_VIEW + 1
-    {
-        debug!(
-            ?view,
-            min = min_view,
-            finalized = external_context.finalized_view,
-            "~~~~~~~~~~> missed view history not available"
-        );
-        return Err(PrecompileError::Other("Missed view history not available".into()).into());
-    }
-    let deque = &external_context.view_history.missed_views;
-    // binary search to find the relevant missed views in O(log(n))
-    let (first_slice, second_slice) = deque.as_slices();
-    let search_slice = |slice: &[(u64, NodePublicKey)], target: u64| {
-        slice.binary_search_by_key(&target, |&(key, _)| key)
-    };
-    let to = view.as_u64().saturating_sub(LAG_BEHIND_CURRENT_VIEW);
-    let from = to.saturating_sub(MISSED_VIEW_WINDOW);
-    let (first_start_idx, first_end_idx) = (
-        search_slice(first_slice, from).unwrap_or_else(|i| i),
-        search_slice(first_slice, to).unwrap_or_else(|i| i),
-    );
-    let first_range = &first_slice[first_start_idx..first_end_idx];
-    // filter the missed views that had the same leader as the selected one
-    let filter = |(key, value): &(u64, NodePublicKey)| {
-        if value == &NodePublicKey::from_bytes(leader.as_slice()).unwrap() {
-            Some(*key)
-        } else {
-            None
-        }
-    };
-    let missed = if second_slice.is_empty() {
-        first_range.iter().filter_map(filter).count()
-    } else {
-        let (second_start_idx, second_end_idx) = (
-            search_slice(second_slice, from).unwrap_or_else(|i| i),
-            search_slice(second_slice, to).unwrap_or_else(|i| i),
-        );
-        let second_range = &second_slice[second_start_idx..second_end_idx];
-        first_range
-            .iter()
-            .chain(second_range.iter())
-            .filter_map(filter)
-            .count()
-    };
-    let jailed = missed >= MISSED_VIEW_THRESHOLD;
-    /*trace!(
-        jailed,
-        missed,
-        ?view,
-        min_view,
-        id = &leader[..3],
-        "==========> leader"
-    );*/
-    let output = encode(&[Token::Bool(jailed)]);
-    Ok(PrecompileOutput::new(10_000u64, output.into()))
-}
+pub struct Penalty;
 
-pub fn penalty_handle_register<I: ScillaInspector>(
-    handler: &mut EvmHandler<'_, ExternalContext<I>, PendingState>,
-) {
-    let prev_handle = handler.execution.call.clone();
-    handler.execution.call = Arc::new(move |ctx, inputs| {
-        if inputs.bytecode_address != Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x82") {
-            return prev_handle(ctx, inputs);
-        }
+impl ContextPrecompile for Penalty {
+    fn call(
+        &self,
+        ctx: &mut ZQ2EvmContext,
+        _dest: Address,
+        input: &InputsImpl,
+        _is_static: bool,
+        gas_limit: u64,
+    ) -> anyhow::Result<Option<InterpreterResult>, String> {
+        let gas = Gas::new(gas_limit);
 
-        let gas = Gas::new(inputs.gas_limit);
-
-        let outcome = dispatch(&inputs, gas.limit(), &mut ctx.evm.inner, &mut ctx.external);
+        let outcome = call_penalty(input, gas.limit(), ctx);
 
         let mut result = InterpreterResult {
             result: InstructionResult::Return,
@@ -292,12 +176,143 @@ pub fn penalty_handle_register<I: ScillaInspector>(
                     InstructionResult::PrecompileError
                 };
             }
-            Err(PrecompileErrors::Fatal { msg }) => return Err(EVMError::Precompile(msg)),
+            Err(PrecompileErrors::Fatal { msg }) => return Err(msg),
         }
 
-        Ok(FrameOrResult::new_call_result(
-            result,
-            inputs.return_memory_offset.clone(),
-        ))
-    });
+        Ok(Some(result))
+    }
+}
+
+fn call_penalty(
+    input: &InputsImpl,
+    gas_limit: u64,
+    ctx: &mut ZQ2EvmContext,
+) -> Result<PrecompileOutput, PrecompileErrors> {
+    //TODO(#3080): check the gas limit and adjust how much gas the precompile should use
+    //info!(gas_limit, "~~~> precompile called with");
+    //if gas_limit < 10_000u64 {
+    //    return Err(PrecompileErrors::Error(PrecompileError::OutOfGas));
+    //}
+    const REQUIRED_GAS: u64 = 10_000;
+
+    if gas_limit < REQUIRED_GAS {
+        return Err(PrecompileErrors::Error(PrecompileError::Other(
+            "Precompile out of gas".into(),
+        )));
+    }
+    if input.input.len() < 4 {
+        return Err(PrecompileErrors::Error(PrecompileError::Other(
+            "Provided input must be at least 4-byte long".into(),
+        )));
+    }
+    let sig = short_signature("jailed", &[ParamType::Bytes, ParamType::Uint(256)]);
+    let raw_input = input.input.bytes(ctx);
+    if raw_input[..4] != sig {
+        return Err(PrecompileErrors::Error(PrecompileError::Other(
+            "Unable to find handler with given selector".into(),
+        )));
+    }
+    let Ok(decoded) = decode(&[ParamType::Bytes, ParamType::Uint(256)], &raw_input[4..]) else {
+        return Err(PrecompileErrors::Error(PrecompileError::Other(
+            "ABI input decoding error!".into(),
+        )));
+    };
+    let leader = decoded
+        .first()
+        .ok_or(PrecompileErrors::Error(PrecompileError::Other(
+            "Can't decode leader".to_string(),
+        )))?
+        .to_owned()
+        .into_bytes()
+        .ok_or(PrecompileErrors::Error(PrecompileError::Other(
+            "Can't decode leader".to_string(),
+        )))?;
+    let view = decoded
+        .last()
+        .ok_or(PrecompileErrors::Error(PrecompileError::Other(
+            "Can't decode view".to_string(),
+        )))?
+        .to_owned()
+        .into_uint()
+        .ok_or(PrecompileErrors::Error(PrecompileError::Other(
+            "Can't decode view".to_string(),
+        )))?;
+    // if the current block is beyond the jailing fork activation height when calling the precompile
+    // jailing will be applied regardless of whether the view was before or after the fork activation
+    if !ctx.chain.fork.validator_jailing {
+        let output = encode(&[Token::Bool(false)]);
+
+        return Ok(PrecompileOutput::new(REQUIRED_GAS, output.into()));
+    }
+    if view.as_u64() > LAG_BEHIND_CURRENT_VIEW
+        && view.as_u64() - LAG_BEHIND_CURRENT_VIEW >= ctx.chain.finalized_view
+    {
+        error!(
+            ?view,
+            finalized = ctx.chain.finalized_view,
+            "~~~~~~~~~~> required missed view history not finalized"
+        );
+        return Err(PrecompileErrors::Error(PrecompileError::Other(
+            "Required missed view history not finalized".into(),
+        )));
+    }
+    let min_view = ctx.chain.view_history.min_view;
+    // fail if the missed view history does not reach back far enough in the past or
+    // the queried view is too far in the future based on the currently finalized view
+    if min_view > 1
+        && view.as_u64().saturating_sub(LAG_BEHIND_CURRENT_VIEW) < min_view + MISSED_VIEW_WINDOW
+        || view.as_u64() > ctx.chain.finalized_view + LAG_BEHIND_CURRENT_VIEW + 1
+    {
+        debug!(
+            ?view,
+            min = min_view,
+            finalized = ctx.chain.finalized_view,
+            "~~~~~~~~~~> missed view history not available"
+        );
+        return Err(PrecompileErrors::Error(PrecompileError::Other(
+            "Missed view history not available".into(),
+        )));
+    }
+    let deque = &ctx.chain.view_history.missed_views;
+    // binary search to find the relevant missed views in O(log(n))
+    let (first_slice, second_slice) = deque.as_slices();
+    let search_slice = |slice: &[(u64, NodePublicKey)], target: u64| {
+        slice.binary_search_by_key(&target, |&(key, _)| key)
+    };
+    let to = view.as_u64().saturating_sub(LAG_BEHIND_CURRENT_VIEW);
+    let from = to.saturating_sub(MISSED_VIEW_WINDOW);
+    let (first_start_idx, first_end_idx) = (
+        search_slice(first_slice, from).unwrap_or_else(|i| i),
+        search_slice(first_slice, to).unwrap_or_else(|i| i),
+    );
+    let first_range = &first_slice[first_start_idx..first_end_idx];
+    // filter the missed views that had the same leader as the selected one
+    let filter = |(key, value): &(u64, NodePublicKey)| {
+        if let Ok(decoded) = NodePublicKey::from_bytes(leader.as_slice()) {
+            if decoded == *value {
+                return Some(*key);
+            }
+            None
+        } else {
+            None
+        }
+    };
+    let missed = if second_slice.is_empty() {
+        first_range.iter().filter_map(filter).count()
+    } else {
+        let (second_start_idx, second_end_idx) = (
+            search_slice(second_slice, from).unwrap_or_else(|i| i),
+            search_slice(second_slice, to).unwrap_or_else(|i| i),
+        );
+        let second_range = &second_slice[second_start_idx..second_end_idx];
+        first_range
+            .iter()
+            .chain(second_range.iter())
+            .filter_map(filter)
+            .count()
+    };
+    let jailed = missed >= MISSED_VIEW_THRESHOLD;
+    let output = encode(&[Token::Bool(jailed)]);
+
+    Ok(PrecompileOutput::new(REQUIRED_GAS, output.into()))
 }

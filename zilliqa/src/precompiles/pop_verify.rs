@@ -1,15 +1,12 @@
+use alloy::primitives::Address;
 use blsful::Bls12381G2Impl;
 use ethabi::{ParamType, Token, decode, encode, short_signature};
 use revm::{
-    ContextStatefulPrecompile, InnerEvmContext,
+    interpreter::{Gas, InputsImpl, InstructionResult, InterpreterResult},
     precompile::PrecompileError,
-    primitives::{
-        Bytes, PrecompileErrors, PrecompileOutput, PrecompileResult,
-        alloy_primitives::private::alloy_rlp::Encodable,
-    },
 };
 
-use crate::exec::PendingState;
+use crate::{evm::ZQ2EvmContext, precompiles::ContextPrecompile};
 
 pub struct PopVerify;
 
@@ -19,55 +16,56 @@ impl PopVerify {
     fn pop_verify(
         input: &[u8],
         gas_limit: u64,
-        _context: &mut InnerEvmContext<PendingState>,
-    ) -> PrecompileResult {
-        if gas_limit < Self::POP_VERIFY_GAS_PRICE {
-            return Err(PrecompileErrors::Error(PrecompileError::OutOfGas));
+        _: &mut ZQ2EvmContext,
+    ) -> Result<Option<InterpreterResult>, String> {
+        let mut gas_tracker = Gas::new(gas_limit);
+
+        if !gas_tracker.record_cost(Self::POP_VERIFY_GAS_PRICE) {
+            return Err(PrecompileError::OutOfGas.to_string());
         }
 
         let Ok(decoded) = decode(&[ParamType::Bytes, ParamType::Bytes], input) else {
-            return Err(PrecompileError::Other("ABI input decoding error!".into()).into());
+            return Err("ABI input decoding error!".into());
         };
         if decoded.len() != 2 {
             // expected 2 arguments
-            return Err(PrecompileError::Other("ABI inputs missing".into()).into());
+            return Err("ABI inputs missing".into());
         };
 
         let Ok(pop) = blsful::ProofOfPossession::<Bls12381G2Impl>::try_from(
             decoded[0].to_owned().into_bytes().unwrap(),
         ) else {
-            return Err(PrecompileError::Other("ABI signature invalid".into()).into());
+            return Err("ABI signature invalid".into());
         };
 
         let Ok(pk) = blsful::PublicKey::<Bls12381G2Impl>::try_from(
             decoded[1].to_owned().into_bytes().unwrap(),
         ) else {
-            return Err(PrecompileError::Other("ABI pubkey invalid".into()).into());
+            return Err("ABI pubkey invalid".into());
         };
 
         let result = pop.verify(pk).is_ok();
 
-        // FIXME: Gas?
         let output = encode(&[Token::Bool(result)]);
-        Ok(PrecompileOutput::new(
-            Self::POP_VERIFY_GAS_PRICE,
+        Ok(Some(InterpreterResult::new(
+            InstructionResult::default(),
             output.into(),
-        ))
+            gas_tracker,
+        )))
     }
 }
 
-impl ContextStatefulPrecompile<PendingState> for PopVerify {
+impl ContextPrecompile for PopVerify {
     fn call(
         &self,
-        input: &Bytes,
-        gas_price: u64,
-        context: &mut InnerEvmContext<PendingState>,
-    ) -> PrecompileResult {
-        if input.length() < 4 {
-            return Err(PrecompileError::Other(
-                "Provided input must be at least 4-byte long".into(),
-            )
-            .into());
+        ctx: &mut ZQ2EvmContext,
+        _dest: Address,
+        input: &InputsImpl,
+        _is_static: bool,
+        gas_limit: u64,
+    ) -> Result<Option<InterpreterResult>, String> {
+        if input.input.len() < 4 {
+            return Err("Provided input must be at least 4-byte long".into());
         }
 
         let dispatch_table: [([u8; 4], _); 1] = [(
@@ -75,16 +73,14 @@ impl ContextStatefulPrecompile<PendingState> for PopVerify {
             Self::pop_verify,
         )];
 
+        let raw_input = input.input.bytes(ctx);
         let Some(handler) = dispatch_table
             .iter()
-            .find(|&predicate| predicate.0 == input[..4])
+            .find(|&predicate| predicate.0 == raw_input[..4])
         else {
-            return Err(PrecompileError::Other(
-                "Unable to find handler with given selector".to_string(),
-            )
-            .into());
+            return Err("Unable to find handler with given selector".into());
         };
 
-        handler.1(&input[4..], gas_price, context)
+        handler.1(&raw_input[4..], gas_limit, ctx)
     }
 }

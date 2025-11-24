@@ -11,6 +11,7 @@ pub mod crypto;
 mod data_access;
 pub mod db;
 mod error;
+mod evm;
 pub mod exec;
 pub mod inspector;
 pub mod message;

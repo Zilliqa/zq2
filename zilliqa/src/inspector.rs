@@ -2,11 +2,11 @@ use std::collections::HashSet;
 
 use alloy::primitives::{Address, U256};
 use revm::{
-    Database, EvmContext, Inspector,
-    inspectors::NoOpInspector,
+    Inspector,
+    context_interface::{ContextTr, CreateScheme, JournalTr},
     interpreter::{CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome},
-    primitives::CreateScheme,
 };
+use revm_inspector::NoOpInspector;
 use revm_inspectors::tracing::{
     FourByteInspector, MuxInspector, TracingInspector, js::JsInspector,
 };
@@ -65,25 +65,19 @@ pub struct TouchedAddressInspector {
     pub touched: HashSet<Address>,
 }
 
-impl<DB: Database> Inspector<DB> for TouchedAddressInspector {
-    fn call(&mut self, _: &mut EvmContext<DB>, inputs: &mut CallInputs) -> Option<CallOutcome> {
+impl<CTX: ContextTr> Inspector<CTX> for TouchedAddressInspector {
+    fn call(&mut self, _: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
         self.touched.insert(inputs.caller);
         self.touched.insert(inputs.bytecode_address);
         self.touched.insert(inputs.target_address);
         None
     }
 
-    fn create_end(
-        &mut self,
-        _: &mut EvmContext<DB>,
-        inputs: &CreateInputs,
-        outcome: CreateOutcome,
-    ) -> CreateOutcome {
+    fn create_end(&mut self, _: &mut CTX, inputs: &CreateInputs, outcome: &mut CreateOutcome) {
         self.touched.insert(inputs.caller);
         if let Some(address) = outcome.address {
             self.touched.insert(address);
         }
-        outcome
     }
 
     fn selfdestruct(&mut self, contract: Address, target: Address, _: U256) {
@@ -128,19 +122,13 @@ impl CreatorInspector {
     }
 }
 
-impl<DB: Database> Inspector<DB> for CreatorInspector {
-    fn create_end(
-        &mut self,
-        _: &mut EvmContext<DB>,
-        inputs: &CreateInputs,
-        outcome: CreateOutcome,
-    ) -> CreateOutcome {
+impl<CTX> Inspector<CTX> for CreatorInspector {
+    fn create_end(&mut self, _: &mut CTX, inputs: &CreateInputs, outcome: &mut CreateOutcome) {
         if let Some(address) = outcome.address {
             if address == self.contract {
                 self.creator = Some(inputs.caller);
             }
         }
-        outcome
     }
 }
 
@@ -163,46 +151,41 @@ impl OtterscanTraceInspector {
     }
 }
 
-impl<DB: Database> Inspector<DB> for OtterscanTraceInspector {
-    fn call(
-        &mut self,
-        context: &mut EvmContext<DB>,
-        inputs: &mut CallInputs,
-    ) -> Option<CallOutcome> {
+impl<CTX: ContextTr> Inspector<CTX> for OtterscanTraceInspector {
+    fn call(&mut self, context: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
         let ty = match inputs.scheme {
             CallScheme::Call => TraceEntryType::Call,
             CallScheme::CallCode => TraceEntryType::CallCode,
             CallScheme::DelegateCall => TraceEntryType::DelegateCall,
             CallScheme::StaticCall => TraceEntryType::StaticCall,
-            CallScheme::ExtCall => TraceEntryType::ExtCall,
-            CallScheme::ExtStaticCall => TraceEntryType::ExtStaticCall,
-            CallScheme::ExtDelegateCall => TraceEntryType::ExtDelegateCall,
         };
         self.entries.push(TraceEntry {
             ty,
-            depth: context.journaled_state.depth(),
+            depth: context.journal().depth().try_into().unwrap_or_default(),
             from: inputs.caller,
             to: inputs.target_address,
             value: inputs.transfer_value().map(|v| v.to()),
-            input: inputs.input.to_vec(),
+            input: inputs.input.bytes(context).to_vec(),
         });
 
         None
     }
 
-    fn create(
-        &mut self,
-        context: &mut EvmContext<DB>,
-        inputs: &mut CreateInputs,
-    ) -> Option<CreateOutcome> {
+    fn create(&mut self, context: &mut CTX, inputs: &mut CreateInputs) -> Option<CreateOutcome> {
         let ty = match inputs.scheme {
             CreateScheme::Create => TraceEntryType::Create,
             CreateScheme::Create2 { .. } => TraceEntryType::Create2,
+            _ => TraceEntryType::Create,
         };
-        let nonce = context.journaled_state.account(inputs.caller).info.nonce;
+        let nonce = context
+            .journal_mut()
+            .load_account(inputs.caller)
+            .unwrap()
+            .info
+            .nonce;
         self.entries.push(TraceEntry {
             ty,
-            depth: context.journaled_state.depth(),
+            depth: context.journal().depth().try_into().unwrap_or_default(),
             from: inputs.caller,
             to: inputs.created_address(nonce),
             value: Some(inputs.value.to()),
@@ -226,17 +209,6 @@ impl<DB: Database> Inspector<DB> for OtterscanTraceInspector {
 }
 
 impl ScillaInspector for OtterscanTraceInspector {
-    fn call(&mut self, from: Address, to: Address, amount: u128, depth: u64) {
-        self.entries.push(TraceEntry {
-            ty: TraceEntryType::Call,
-            depth,
-            from,
-            to,
-            value: Some(amount),
-            input: vec![],
-        })
-    }
-
     fn create(&mut self, creator: Address, contract_address: Address, amount: u128) {
         self.entries.push(TraceEntry {
             ty: TraceEntryType::Create,
@@ -249,6 +221,17 @@ impl ScillaInspector for OtterscanTraceInspector {
     }
 
     fn transfer(&mut self, from: Address, to: Address, amount: u128, depth: u64) {
+        self.entries.push(TraceEntry {
+            ty: TraceEntryType::Call,
+            depth,
+            from,
+            to,
+            value: Some(amount),
+            input: vec![],
+        })
+    }
+
+    fn call(&mut self, from: Address, to: Address, amount: u128, depth: u64) {
         self.entries.push(TraceEntry {
             ty: TraceEntryType::Call,
             depth,
@@ -273,13 +256,9 @@ impl OtterscanOperationInspector {
     }
 }
 
-impl<DB: Database> Inspector<DB> for OtterscanOperationInspector {
-    fn call(
-        &mut self,
-        context: &mut EvmContext<DB>,
-        inputs: &mut CallInputs,
-    ) -> Option<CallOutcome> {
-        if context.journaled_state.depth() != 0 && inputs.transfers_value() {
+impl<CTX: ContextTr> Inspector<CTX> for OtterscanOperationInspector {
+    fn call(&mut self, context: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
+        if context.journal().depth() != 0 && inputs.transfers_value() {
             self.entries.push(Operation {
                 ty: OperationType::Transfer,
                 from: inputs.caller,
@@ -291,17 +270,19 @@ impl<DB: Database> Inspector<DB> for OtterscanOperationInspector {
         None
     }
 
-    fn create(
-        &mut self,
-        context: &mut EvmContext<DB>,
-        inputs: &mut CreateInputs,
-    ) -> Option<CreateOutcome> {
-        if context.journaled_state.depth() != 0 {
+    fn create(&mut self, context: &mut CTX, inputs: &mut CreateInputs) -> Option<CreateOutcome> {
+        if context.journal().depth() != 0 {
             let ty = match inputs.scheme {
                 CreateScheme::Create => OperationType::Create,
                 CreateScheme::Create2 { .. } => OperationType::Create2,
+                _ => OperationType::Create,
             };
-            let nonce = context.journaled_state.account(inputs.caller).info.nonce;
+            let nonce = context
+                .journal_mut()
+                .load_account(inputs.caller)
+                .unwrap()
+                .info
+                .nonce;
             self.entries.push(Operation {
                 ty,
                 from: inputs.caller,
@@ -324,7 +305,7 @@ impl<DB: Database> Inspector<DB> for OtterscanOperationInspector {
 }
 
 impl ScillaInspector for OtterscanOperationInspector {
-    fn call(&mut self, from: Address, to: Address, amount: u128, depth: u64) {
+    fn transfer(&mut self, from: Address, to: Address, amount: u128, depth: u64) {
         if depth != 0 && amount != 0 {
             self.entries.push(Operation {
                 ty: OperationType::Transfer,
@@ -335,7 +316,7 @@ impl ScillaInspector for OtterscanOperationInspector {
         }
     }
 
-    fn transfer(&mut self, from: Address, to: Address, amount: u128, depth: u64) {
+    fn call(&mut self, from: Address, to: Address, amount: u128, depth: u64) {
         if depth != 0 && amount != 0 {
             self.entries.push(Operation {
                 ty: OperationType::Transfer,
