@@ -159,8 +159,15 @@ where
             .get::<RpcHeaderExt>()
             .expect("RpcHeaderExt must be present");
 
-        // identify by IP
-        let key = ext.remote_ip.map(|ip| ip.to_string()).unwrap_or_default();
+        if ext.remote_key.is_some() || ext.remote_ip.is_none() {
+            // Bypass by KEY/IP
+            tracing::debug!(ip=?ext.remote_ip, key=?ext.remote_key, "RPC bypass");
+            return ResponseFuture::future(self.inner.call(req));
+        };
+        let key = ext
+            .remote_ip
+            .map(|ip| ip.to_string())
+            .expect("remote_ip must be Some(ip)");
 
         // compute credits **before** executing the request.
         // this simplifies the error handling and ensures that the credit is always deducted.
@@ -200,8 +207,15 @@ where
             .get::<RpcHeaderExt>()
             .expect("RpcHeaderExt must be present");
 
-        // identify by IP
-        let key = ext.remote_ip.map(|ip| ip.to_string()).unwrap_or_default();
+        if ext.remote_key.is_some() || ext.remote_ip.is_none() {
+            // Bypass by KEY/IP
+            tracing::debug!(ip=?ext.remote_ip, key=?ext.remote_key, "RPC bypass");
+            return self.inner.batch(batch);
+        };
+        let key = ext
+            .remote_ip
+            .map(|ip| ip.to_string())
+            .expect("remote_ip must be Some(ip)");
 
         // due to the way limits are applied, call ordering is irrelevant.
         // compute the credit budget and immediately mutate/fail any that are denied.
