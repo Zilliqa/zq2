@@ -88,7 +88,7 @@ async fn main() -> Result<()> {
     println!("WRITE {} -> {}", dbpath.display(), args.output);
     zilliqa::checkpoint::save_ckpt(
         path.as_path(),
-        Arc::new(db.state_trie()?.read_only()),
+        Arc::new(db.state_trie()?),
         &block,
         &transactions,
         &parent,
