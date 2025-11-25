@@ -33,7 +33,7 @@ use crate::{
     precompiles::ViewHistory,
     time::SystemTime,
     transaction::{EvmGas, Log, SignedTransaction, TransactionReceipt, VerifiedTransaction},
-    trie_storage::{ReadOnlyTrie, TrieStorage},
+    trie_storage::TrieStorage,
 };
 
 const MAX_KEYS_IN_SINGLE_QUERY: usize = 32765;
@@ -1643,7 +1643,7 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
     block: &Block,
     transactions: &Vec<SignedTransaction>,
     parent: &Block,
-    state_trie_storage: ReadOnlyTrie,
+    state_trie_storage: TrieStorage,
     shard_id: u64,
     view_history: ViewHistory,
     output_dir: P,
@@ -1820,7 +1820,7 @@ mod tests {
             &checkpoint_block,
             &checkpoint_transactions,
             &checkpoint_parent,
-            db.state_trie().unwrap().read_only(),
+            db.state_trie().unwrap(),
             SHARD_ID,
             view_history,
             &checkpoint_path,

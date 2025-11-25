@@ -1,4 +1,4 @@
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 
 use anyhow::Result;
 use lru_mem::LruCache;
@@ -29,10 +29,6 @@ impl TrieStorage {
         kvdb: Arc<rocksdb::DB>,
     ) -> Self {
         Self { pool, cache, kvdb }
-    }
-
-    pub fn read_only(&self) -> ReadOnlyTrie {
-        ReadOnlyTrie::new(self.kvdb.path()).expect("DB must exist")
     }
 
     pub fn write_batch(&self, keys: Vec<Vec<u8>>, values: Vec<Vec<u8>>) -> Result<()> {
@@ -192,56 +188,6 @@ impl eth_trie::DB for TrieStorage {
 
     fn remove_batch(&self, _: &[Vec<u8>]) -> Result<(), Self::Error> {
         // we keep old state to function as an archive node, therefore no-op
-        Ok(())
-    }
-}
-
-/// ReadOnlyTrie is a read-only eth_trie::DB, used for checkpoint generation.
-#[derive(Debug, Clone)]
-pub struct ReadOnlyTrie {
-    kvdb: Arc<rocksdb::DB>,
-}
-
-impl ReadOnlyTrie {
-    pub fn new(path: &Path) -> Result<Self> {
-        let mut opts = rocksdb::Options::default();
-        opts.set_use_direct_reads(true); // caching is useless
-        opts.set_use_adaptive_mutex(true); // reduce context switching
-        opts.set_paranoid_checks(true); // ensure data integrity
-        let kvdb = rocksdb::DB::open_for_read_only(&opts, path, false)?;
-        Ok(Self {
-            kvdb: Arc::new(kvdb),
-        })
-    }
-}
-
-impl eth_trie::DB for ReadOnlyTrie {
-    type Error = eth_trie::TrieError;
-
-    #[inline]
-    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, Self::Error> {
-        self.kvdb
-            .get(key)
-            .map_err(|e| eth_trie::TrieError::DB(e.to_string()))
-    }
-    #[inline]
-    fn insert(&self, _key: &[u8], _value: Vec<u8>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-    #[inline]
-    fn insert_batch(&self, _keys: Vec<Vec<u8>>, _values: Vec<Vec<u8>>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-    #[inline]
-    fn flush(&self) -> Result<(), Self::Error> {
-        Ok(())
-    }
-    #[inline]
-    fn remove(&self, _key: &[u8]) -> Result<(), Self::Error> {
-        Ok(())
-    }
-    #[inline]
-    fn remove_batch(&self, _keys: &[Vec<u8>]) -> Result<(), Self::Error> {
         Ok(())
     }
 }

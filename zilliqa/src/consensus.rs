@@ -2441,7 +2441,7 @@ impl Consensus {
                         Box::new(block),
                         transactions,
                         Box::new(parent),
-                        self.db.state_trie()?.read_only(),
+                        self.db.state_trie()?,
                         self.state.view_history.clone(),
                         checkpoint_path,
                     ),
@@ -2501,7 +2501,7 @@ impl Consensus {
                 Box::new(block),
                 transactions,
                 Box::new(parent),
-                self.db.state_trie()?.read_only(),
+                self.db.state_trie()?,
                 view_history,
                 checkpoint_dir,
             ))?;
