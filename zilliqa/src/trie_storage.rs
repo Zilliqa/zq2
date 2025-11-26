@@ -10,6 +10,9 @@ use rusqlite::OptionalExtension;
 
 use crate::{cfg::Forks, crypto::Hash};
 
+// Percentiles: P50: 414.93 P75: 497.53 P99: 576.82 P99.9: 579.79 P99.99: 12678.76
+pub const BLOCK_SIZE: usize = 1 << 12;
+
 /// Special storage keys
 const ROCKSDB_MIGRATE_AT: &str = "migrate_at";
 const ROCKSDB_CUTOVER_AT: &str = "cutover_at";
