@@ -152,9 +152,3 @@ zilliqa-macros = { path = "../zilliqa-macros" }
 [[bench]]
 name = "it"
 harness = false
-
-[profile.release]
-debug = true
-
-[build]
-rustflags = ["-C", "force-frame-pointers=yes"]
