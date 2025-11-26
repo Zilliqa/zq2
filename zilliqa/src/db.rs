@@ -331,6 +331,7 @@ impl Db {
 
         let mut rdb_opts = Options::default();
         rdb_opts.create_if_missing(true);
+        rdb_opts.set_optimize_filters_for_hits(true);
         rdb_opts.set_block_based_table_factory(&block_opts);
         rdb_opts.set_periodic_compaction_seconds(config.rocksdb_compaction_period);
         // Mitigate OOM
