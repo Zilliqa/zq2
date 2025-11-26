@@ -33,7 +33,7 @@ use crate::{
     precompiles::ViewHistory,
     time::SystemTime,
     transaction::{EvmGas, Log, SignedTransaction, TransactionReceipt, VerifiedTransaction},
-    trie_storage::TrieStorage,
+    trie_storage::{BLOCK_SIZE, TrieStorage},
 };
 
 const MAX_KEYS_IN_SINGLE_QUERY: usize = 32765;
@@ -320,18 +320,22 @@ impl Db {
         let mut block_opts = BlockBasedOptions::default();
         // reduce disk and memory usage - https://github.com/facebook/rocksdb/wiki/RocksDB-Bloom-Filter#ribbon-filter
         block_opts.set_ribbon_filter(10.0);
-        // Percentiles: P50: 414.93 P75: 497.53 P99: 576.82 P99.9: 579.79 P99.99: 12678.76
-        block_opts.set_block_size(1 << 10); // 1KB covers > 99.9% of data
+        block_opts.set_block_size(BLOCK_SIZE);
         block_opts.set_optimize_filters_for_memory(true); // reduce memory wastage with JeMalloc
         // Mitigate OOM
         block_opts.set_cache_index_and_filter_blocks(true); // place index/filters inside cache, instead of heap
+        // Improve cache utilisation
+        block_opts.set_pin_top_level_index_and_filter(true);
+        block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
+        block_opts.set_partition_filters(true);
+        block_opts.set_index_type(rocksdb::BlockBasedIndexType::TwoLevelIndexSearch);
+        block_opts.set_metadata_block_size(BLOCK_SIZE);
 
-        let cache = Cache::new_lru_cache(config.rocksdb_cache_size);
+        let cache = Cache::new_hyper_clock_cache(config.rocksdb_cache_size, BLOCK_SIZE); // set this to the block size
         block_opts.set_block_cache(&cache);
 
         let mut rdb_opts = Options::default();
         rdb_opts.create_if_missing(true);
-        rdb_opts.set_optimize_filters_for_hits(true);
         rdb_opts.set_block_based_table_factory(&block_opts);
         rdb_opts.set_periodic_compaction_seconds(config.rocksdb_compaction_period);
         // Mitigate OOM
