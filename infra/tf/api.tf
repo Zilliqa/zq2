@@ -369,3 +369,25 @@ resource "google_secret_manager_secret_version" "rate_limit_bypass" {
 
   depends_on = [google_secret_manager_secret.rate_limit_bypass]
 }
+
+resource "google_secret_manager_secret_iam_binding" "rate_limit_bypass_endpoint_access" {
+  secret_id = google_secret_manager_secret.rate_limit_bypass.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+
+  members = concat(
+    flatten([
+      [for name, instance in module.bootstraps.instances : "serviceAccount:${instance.service_account}"],
+      [for name, instance in module.validators.instances : "serviceAccount:${instance.service_account}"],
+      [for name, instance in module.apis.instances : "serviceAccount:${instance.service_account}"],
+      [for name, instance in module.checkpoints.instances : "serviceAccount:${instance.service_account}"],
+      [for name, instance in module.persistences.instances : "serviceAccount:${instance.service_account}"]
+    ]),
+    flatten([
+      for private_api in module.private_apis : [
+        for name, instance in private_api.instances : "serviceAccount:${instance.service_account}"
+      ]
+    ])
+  )
+
+  depends_on = [google_secret_manager_secret.rate_limit_bypass]
+}

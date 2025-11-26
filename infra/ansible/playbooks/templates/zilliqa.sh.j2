@@ -21,6 +21,12 @@ start() {
         -e OTEL_METRIC_EXPORT_INTERVAL=60000 \
         -e RUST_BACKTRACE=1 \
         -e REDIS_ENDPOINT={{ redis_endpoint }} \
+{% if allowed_ips is defined and allowed_ips %}
+        -e ALLOWED_IPS={{ allowed_ips }} \
+{% endif %}
+{% if allowed_keys is defined and allowed_keys %}
+        -e ALLOWED_KEYS={{ allowed_keys }} \
+{% endif %}
         -e SECRET_KEY={{ zq2_private_key }} \
         --restart=unless-stopped \
         ${ZQ2_IMAGE} ${SCILLA_SERVER_PORT} --log-json
