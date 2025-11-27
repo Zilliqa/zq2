@@ -32,8 +32,6 @@ consensus.new_view_broadcast_interval = { secs = {{ new_view_broadcast_interval 
 do_checkpoints=true
 consensus.blocks_per_epoch=3600
 consensus.epochs_per_checkpoint=24
-# Reduce cache sizes, to prevent OOM.
-db.conn_cache_size = 128
 {%- endif %}
 
 {%- if role == "validator" %}
@@ -47,9 +45,19 @@ max_missed_view_age = 1000000000000
 max_missed_view_age = 1000000000000
 {%- endif %}
 {%- if role == "persistence" %}
+# Tuned parameters
+db.conn_cache_size = 128
+state_cache_size = 1073741824
+db.rocksdb_cache_size = 4294967296
+db.rocksdb_compaction_period = 86400
 max_missed_view_age = 1000000000000
 {%- endif %}
 {%- if role == "checkpoint" %}
+# Tuned parameters
+db.conn_cache_size = 128
+state_cache_size = 1073741824
+db.rocksdb_cache_size = 4294967296
+db.rocksdb_compaction_period = 86400
 max_missed_view_age = 1000000000000
 {%- endif %}
 
