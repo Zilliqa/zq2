@@ -181,15 +181,18 @@ pub struct DbConfig {
     pub rocksdb_compaction_period: u64,
     /// RocksDB max open files.
     #[serde(default = "rocksdb_max_open_files_default")]
-    pub rocksdb_max_open_files: u16,
+    pub rocksdb_max_open_files: i32,
+    /// RocksDB cache index/filters
+    #[serde(default)]
+    pub rocksdb_cache_index_filters: bool,
 }
 
-fn rocksdb_max_open_files_default() -> u16 {
-    1024 * 4 // the more the merrier
+fn rocksdb_max_open_files_default() -> i32 {
+    -1 // unlimited
 }
 
 fn rocksdb_compaction_period_default() -> u64 {
-    86_400 * 7 // weekly expiry
+    u64::MAX - 1 // rocksdb default
 }
 
 fn rocksdb_cache_size_default() -> usize {
@@ -213,6 +216,7 @@ impl Default for DbConfig {
             rocksdb_cache_size: rocksdb_cache_size_default(),
             rocksdb_compaction_period: rocksdb_compaction_period_default(),
             rocksdb_max_open_files: rocksdb_max_open_files_default(),
+            rocksdb_cache_index_filters: false,
         }
     }
 }
@@ -366,16 +370,6 @@ impl NodeConfig {
         anyhow::ensure!(
             self.max_missed_view_age >= MISSED_VIEW_WINDOW,
             "max_missed_view_age must be at least {MISSED_VIEW_WINDOW}"
-        );
-        // some cache is useful ~ 32MB is the default
-        anyhow::ensure!(
-            self.db.rocksdb_cache_size >= 32 * 1024 * 1024,
-            "RocksDB cache size must be at least 32MB"
-        );
-        // some compaction is useful ~ 30 days is the default
-        anyhow::ensure!(
-            self.db.rocksdb_compaction_period <= 30 * 86_400,
-            "RocksDB compaction period must be at least 86400 seconds"
         );
         Ok(())
     }
