@@ -323,7 +323,7 @@ impl Db {
         block_opts.set_block_size(BLOCK_SIZE);
         block_opts.set_optimize_filters_for_memory(true); // reduce memory wastage with JeMalloc
         // Mitigate OOM
-        block_opts.set_cache_index_and_filter_blocks(true); // place index/filters inside cache, instead of heap
+        block_opts.set_cache_index_and_filter_blocks(config.rocksdb_cache_index_filters); // place index/filters inside cache, instead of heap
         // Improve cache utilisation
         block_opts.set_pin_top_level_index_and_filter(true);
         block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
@@ -339,7 +339,7 @@ impl Db {
         rdb_opts.set_block_based_table_factory(&block_opts);
         rdb_opts.set_periodic_compaction_seconds(config.rocksdb_compaction_period);
         // Mitigate OOM
-        rdb_opts.set_max_open_files(config.rocksdb_max_open_files.into()); // prevent opening too many files at a time
+        rdb_opts.set_max_open_files(config.rocksdb_max_open_files); // prevent opening too many files at a time
 
         // Should be safe in single-threaded mode
         // https://docs.rs/rocksdb/latest/rocksdb/type.DB.html#limited-performance-implication-for-single-threaded-mode
