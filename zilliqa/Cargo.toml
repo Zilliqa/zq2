@@ -26,7 +26,7 @@ anyhow = { version = "1.0.100", features = ["backtrace"] }
 vergen-git2 = { version = "1.0.2", features = [] }
 
 [dependencies]
-alloy = { version = "1.0.36", default-features = false, features = [
+alloy = { version = "1.0.41", default-features = false, features = [
     "consensus",
     "eips",
     "json-abi",
@@ -73,10 +73,10 @@ revm = { version = "29.0.0", features = [
     "optional_eip3607",
     "optional_no_base_fee",
 ] }
-revm-inspectors = { version = "0.29.0", features = ["js-tracer"] }
+revm-inspectors = { version = "0.30.1", features = ["js-tracer"] }
 revm-precompile = "27.0.0"
 revm-inspector = "10.0.0"
-revm-context = "9.0.2"
+revm-context = "9.1.0"
 
 rusqlite = { version = "0.37.0", features = ["bundled", "trace"] }
 serde = { version = "1.0.219", features = ["derive", "rc"] }
@@ -127,7 +127,7 @@ arc-swap = "1.7.1"
 redis = { version = "0.32.7", features = ["keep-alive", "r2d2", "tcp_nodelay"], default-features = false }
 
 [dev-dependencies]
-alloy = { version = "1.0.36", default-features = false, features = [
+alloy = { version = "1.0.41", default-features = false, features = [
     "network",
     "rand",
     "signers",
