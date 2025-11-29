@@ -1873,9 +1873,9 @@ dependencies = [
 
 [[package]]
 name = "cbor4ii"
-version = "1.2.0"
+version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b28d2802395e3bccd95cc4ae984bff7444b6c1f5981da46a41360c42a2c7e2d9"
+checksum = "54b020ae6f11ce2d1b5821189d40769036b06c20fe5368802e4816bc441878b1"
 dependencies = [
  "serde",
 ]
@@ -2592,7 +2592,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "18e4fdb82bd54a12e42fb58a800dcae6b9e13982238ce2296dc3570b92148e1f"
 dependencies = [
  "data-encoding",
- "syn 1.0.109",
+ "syn 2.0.110",
 ]
 
 [[package]]
@@ -2821,7 +2821,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.0",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -9630,7 +9630,7 @@ dependencies = [
  "getrandom 0.3.2",
  "once_cell",
  "rustix 1.0.2",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -11532,7 +11532,7 @@ dependencies = [
  "bitvec",
  "blsful",
  "bytes",
- "cbor4ii 1.2.0",
+ "cbor4ii 1.2.1",
  "cfg-if",
  "clap",
  "criterion",
