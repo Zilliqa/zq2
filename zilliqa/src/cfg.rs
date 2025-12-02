@@ -11,6 +11,7 @@ use crate::{
     constants::MISSED_VIEW_WINDOW,
     credits::RateQuota,
     crypto::{Hash, NodePublicKey},
+    sync::MIN_PRUNE_INTERVAL,
     transaction::EvmGas,
 };
 
@@ -178,10 +179,20 @@ pub struct DbConfig {
     /// RocksDB periodic compaction seconds.
     #[serde(default = "rocksdb_compaction_period_default")]
     pub rocksdb_compaction_period: u64,
+    /// RocksDB max open files.
+    #[serde(default = "rocksdb_max_open_files_default")]
+    pub rocksdb_max_open_files: i32,
+    /// RocksDB cache index/filters
+    #[serde(default)]
+    pub rocksdb_cache_index_filters: bool,
+}
+
+fn rocksdb_max_open_files_default() -> i32 {
+    -1 // unlimited
 }
 
 fn rocksdb_compaction_period_default() -> u64 {
-    86_400 * 7 // weekly expiry
+    u64::MAX - 1 // rocksdb default
 }
 
 fn rocksdb_cache_size_default() -> usize {
@@ -204,6 +215,8 @@ impl Default for DbConfig {
             state_sync: false,
             rocksdb_cache_size: rocksdb_cache_size_default(),
             rocksdb_compaction_period: rocksdb_compaction_period_default(),
+            rocksdb_max_open_files: rocksdb_max_open_files_default(),
+            rocksdb_cache_index_filters: false,
         }
     }
 }
@@ -333,33 +346,31 @@ impl NodeConfig {
                 }
             }
         }
-        if self.sync.base_height != u64_max() && self.sync.prune_interval != u64_max() {
-            return Err(anyhow!(
-                "base_height and prune_interval cannot be set at the same time"
-            ));
-        }
 
+        anyhow::ensure!(
+            self.sync.base_height == u64_max() || self.sync.prune_interval == u64_max(),
+            "base_height and prune_interval cannot be set at the same time"
+        );
         // when set, >> 15 to avoid pruning forks; > 256 to be EVM-safe; arbitrarily picked.
-        if self.sync.prune_interval < crate::sync::MIN_PRUNE_INTERVAL {
-            return Err(anyhow!(
-                "prune_interval must be at least {}",
-                crate::sync::MIN_PRUNE_INTERVAL
-            ));
-        }
-        // 100 is a reasonable minimum for a node to be useful.
-        if self.sync.block_request_batch_size < 10 {
-            return Err(anyhow!("block_request_batch_size must be at least 10"));
-        }
+        anyhow::ensure!(
+            self.sync.prune_interval >= MIN_PRUNE_INTERVAL,
+            "prune_interval must be at least {MIN_PRUNE_INTERVAL}",
+        );
+        // 10 is a reasonable minimum for a node to be useful.
+        anyhow::ensure!(
+            self.sync.block_request_batch_size >= 10,
+            "block_request_batch_size must be at least 10"
+        );
         // 1000 would saturate a typical node.
-        if self.sync.max_blocks_in_flight > 1000 {
-            return Err(anyhow!("max_blocks_in_flight must be at most 1000"));
-        }
+        anyhow::ensure!(
+            self.sync.max_blocks_in_flight <= 1000,
+            "max_blocks_in_flight must be at most 1000"
+        );
         // the minimum required for the next leader selection
-        if self.max_missed_view_age < MISSED_VIEW_WINDOW {
-            return Err(anyhow!(
-                "max_missed_view_age must be at least {MISSED_VIEW_WINDOW}",
-            ));
-        }
+        anyhow::ensure!(
+            self.max_missed_view_age >= MISSED_VIEW_WINDOW,
+            "max_missed_view_age must be at least {MISSED_VIEW_WINDOW}"
+        );
         Ok(())
     }
 }

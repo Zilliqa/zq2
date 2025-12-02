@@ -2509,7 +2509,7 @@ impl Consensus {
                 Box::new(block),
                 transactions,
                 Box::new(parent),
-                self.db.state_trie()?.clone(),
+                self.db.state_trie()?,
                 view_history,
                 checkpoint_dir,
             ))?;
