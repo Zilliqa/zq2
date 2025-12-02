@@ -7,7 +7,7 @@ use std::{
     fs, mem,
     num::NonZeroU128,
     path::Path,
-    sync::MutexGuard,
+    sync::{Arc, MutexGuard},
 };
 
 use alloy::primitives::{Address, Bytes, U256, address, hex};
@@ -16,6 +16,7 @@ use eth_trie::{EthTrie, Trie};
 use ethabi::Token;
 use jsonrpsee::types::ErrorObjectOwned;
 use libp2p::PeerId;
+use parking_lot::RwLock;
 use revm::{
     Database, DatabaseRef, Inspector,
     context::{
@@ -444,7 +445,7 @@ pub struct ExternalContext {
     pub has_evm_failed: bool,
     pub has_called_scilla_precompile: bool,
     pub finalized_view: u64,
-    pub view_history: ViewHistory,
+    pub view_history: Arc<RwLock<ViewHistory>>,
 }
 
 pub enum BaseFeeAndNonceCheck {
@@ -551,7 +552,8 @@ impl State {
         //let fork = self.forks.get(current_block.number).clone();
         // if the view number is lower than min view of the node's missed view history and
         // state-sync is going on, use the checkpoint's history instead of the node's history
-        let (view_history, finalized_view) = if current_block.view < self.view_history.min_view
+        let (view_history, finalized_view) = if current_block.view
+            < self.view_history.read().min_view
             && self.ckpt_view_history.is_some()
             && self.ckpt_finalized_view.is_some()
         {

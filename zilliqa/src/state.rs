@@ -57,9 +57,9 @@ pub struct State {
     pub chain_id: ChainId,
     pub forks: Forks,
     pub finalized_view: u64,
-    pub view_history: ViewHistory,
+    pub view_history: Arc<RwLock<ViewHistory>>,
     pub ckpt_finalized_view: Option<u64>,
-    pub ckpt_view_history: Option<ViewHistory>,
+    pub ckpt_view_history: Option<Arc<RwLock<ViewHistory>>>,
 }
 
 impl State {
@@ -80,7 +80,7 @@ impl State {
             chain_id: ChainId::new(config.eth_chain_id),
             forks: consensus_config.get_forks()?,
             finalized_view: 0,
-            view_history: ViewHistory::new(),
+            view_history: Arc::new(RwLock::new(ViewHistory::new())),
             ckpt_finalized_view: None,
             ckpt_view_history: None,
         })

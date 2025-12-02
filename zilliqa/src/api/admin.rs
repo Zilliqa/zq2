@@ -76,28 +76,28 @@ fn missed_views(params: Params, node: &Arc<Node>) -> Result<NodeMissedViews> {
     let mut params = params.sequence();
     let current_view: u64 = params.next::<U64>()?.to::<u64>();
     let consensus = node.consensus.read();
-    let (history, finalized_view) = if current_view < consensus.state().view_history.min_view
+    let (history, finalized_view) = if current_view < consensus.state().view_history.read().min_view
         && consensus.state().ckpt_view_history.is_some()
         && consensus.state().ckpt_finalized_view.is_some()
     {
         (
-            consensus.state().ckpt_view_history.as_ref().unwrap(),
+            consensus.state().ckpt_view_history.clone().unwrap(),
             consensus.state().ckpt_finalized_view.unwrap(),
         )
     } else {
         (
-            &consensus.state().view_history,
+            consensus.state().view_history.clone(),
             consensus.get_finalized_view()?,
         )
     };
-    let min_view = history.min_view;
+    let min_view = history.read().min_view;
     if min_view > 1
         && current_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW) < min_view + MISSED_VIEW_WINDOW
         || current_view > finalized_view + LAG_BEHIND_CURRENT_VIEW + 1
     {
         return Err(anyhow!("Missed view history not available"));
     }
-    let missed_views = &history.missed_views;
+    let missed_views = &history.read().missed_views;
     let missed_map = missed_views
         .iter()
         .filter(|&(view, _)| {
@@ -124,14 +124,15 @@ pub fn merge_history(
     let finalized_view = consensus.get_finalized_view()?;
     let max_missed_view_age = consensus.config.max_missed_view_age;
     let db = consensus.db.clone();
-    let history = &mut consensus.state_mut().view_history;
-    {
+    let history = consensus.state().view_history.clone();
+    let first_existing = {
+        let history_guard = history.read();
         tracing::info!(
-            history = display(&history),
+            history = display(&*history_guard),
             "~~~~~~~~~~> initial consensus state"
         );
-    }
-    let first_existing = history.min_view;
+        history_guard.min_view
+    };
     let mut last_imported = ckpt_view;
 
     // make sure there is no gap between the existing and the imported history
@@ -142,12 +143,10 @@ pub fn merge_history(
     }
     // trim the imported missed view history
     imported_history.prune_history(finalized_view, max_missed_view_age)?;
-    {
-        tracing::info!(
-            history = display(&imported_history),
-            "~~~~~~~~~~> trimmed imported from checkpoint"
-        );
-    }
+    tracing::info!(
+        history = display(&imported_history),
+        "~~~~~~~~~~> trimmed imported from checkpoint"
+    );
     // skip the overlapping missed views present in both histories
     loop {
         if let Some((view, _)) = imported_history.missed_views.back() {
@@ -162,30 +161,27 @@ pub fn merge_history(
         imported_history.missed_views.pop_back();
     }
 
-    {
-        tracing::info!(
-            history = display(&imported_history),
-            "~~~~~~~~~~> non-overlapping imported from checkpoint"
-        );
-    }
+    tracing::info!(
+        history = display(&imported_history),
+        "~~~~~~~~~~> non-overlapping imported from checkpoint"
+    );
     let imported_missed_views = &imported_history.missed_views;
-    // merge the two missed view histories and stor&e the delta in the db
+    // merge the two missed view histories and store the delta in the db
+    let mut history_guard = history.write();
     imported_missed_views
         .iter()
         .rev()
         .for_each(|(view, leader)| {
             let _ = db.extend_view_history(*view, leader.as_bytes());
-            history.missed_views.push_front((*view, *leader));
+            history_guard.missed_views.push_front((*view, *leader));
         });
     // update min_view in consensus state and in the db
-    history.min_view = imported_history.min_view;
-    db.set_min_view_of_view_history(history.min_view)?;
-    {
-        tracing::info!(
-            history = display(&history),
-            "~~~~~~~~~~> merged consensus state"
-        );
-    }
+    history_guard.min_view = imported_history.min_view;
+    db.set_min_view_of_view_history(history_guard.min_view)?;
+    tracing::info!(
+        history = display(&*history_guard),
+        "~~~~~~~~~~> merged consensus state"
+    );
     Ok(())
 }
 

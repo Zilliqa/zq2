@@ -256,7 +256,7 @@ fn call_penalty(
             "Required missed view history not finalized".into(),
         )));
     }
-    let min_view = ctx.chain.view_history.min_view;
+    let min_view = ctx.chain.view_history.read().min_view;
     // fail if the missed view history does not reach back far enough in the past or
     // the queried view is too far in the future based on the currently finalized view
     if min_view > 1
@@ -273,7 +273,7 @@ fn call_penalty(
             "Missed view history not available".into(),
         )));
     }
-    let deque = &ctx.chain.view_history.missed_views;
+    let deque = &ctx.chain.view_history.read().missed_views;
     // binary search to find the relevant missed views in O(log(n))
     let (first_slice, second_slice) = deque.as_slices();
     let search_slice = |slice: &[(u64, NodePublicKey)], target: u64| {
