@@ -1,6 +1,6 @@
 use std::{
     cell::LazyCell,
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, VecDeque},
     error::Error,
     fmt::Display,
     ops::RangeInclusive,
@@ -304,7 +304,7 @@ impl Consensus {
                     history = display(&view_history),
                     "~~~~~~~~~~> found in checkpoint"
                 );
-                state.view_history = view_history;
+                *state.view_history.write() = view_history;
                 (Some(block), Some(transactions), Some(parent))
             } else {
                 (None, None, None)
@@ -436,7 +436,7 @@ impl Consensus {
         info!(
             view = start_view,
             finalized = finalized_view,
-            history = display(&consensus.state.view_history),
+            history = display(&*consensus.state.view_history.read()),
             "~~~~~~~~~~> loaded from checkpoint in"
         );
 
@@ -478,49 +478,53 @@ impl Consensus {
             // the already started state syncing will be resumed, otherwise
             // it will be (re)started from the checkpoint specified
             if state_sync && ckpt_block.is_some() {
-                consensus.state.ckpt_view_history = Some(consensus.state.view_history.new_at(
+                let new_history = consensus.state.view_history.read().new_at(
                     finalized_view,
                     finalized_view,
                     max_missed_view_age,
-                ));
+                );
+                consensus.state.ckpt_view_history = Some(Arc::new(RwLock::new(new_history)));
                 consensus.state.ckpt_finalized_view = Some(ckpt_block.as_ref().unwrap().view());
                 // also persist the checkpoint's view history in the db otherwise
                 // we won't be able to resume state syncing if the node is restarted
-                let ckpt_view_history = consensus.state.ckpt_view_history.clone().unwrap();
+                let ckpt_view_history_guard =
+                    consensus.state.ckpt_view_history.as_ref().unwrap().read();
                 consensus
                     .db
-                    .set_min_view_of_ckpt_view_history(ckpt_view_history.min_view)?;
-                for (view, leader) in ckpt_view_history.missed_views {
+                    .set_min_view_of_ckpt_view_history(ckpt_view_history_guard.min_view)?;
+                for (view, leader) in ckpt_view_history_guard.missed_views.iter() {
                     consensus
                         .db
-                        .extend_ckpt_view_history(view, leader.as_bytes())?;
+                        .extend_ckpt_view_history(*view, leader.as_bytes())?;
                 }
             }
             {
                 // store the imported missed views in the consensus state
-                consensus.state.view_history.missed_views.clear();
-                consensus
-                    .state
-                    .view_history
+                let mut history_guard = consensus.state.view_history.write();
+                history_guard.missed_views.clear();
+                history_guard
                     .missed_views
                     .extend(imported_missed_views.iter());
                 // update the imported min_view in the consensus state
-                consensus.state.view_history.min_view = imported_min_view;
+                history_guard.min_view = imported_min_view;
             }
             info!(
                 view = start_view,
                 finalized = finalized_view,
-                history = display(&consensus.state.view_history),
+                history = display(&*consensus.state.view_history.read()),
                 "~~~~~~~~~~> imported from db in"
             );
         } else {
             // store the missed views loaded from the checkpoint in the db
-            for (view, leader) in consensus.state.view_history.missed_views.iter() {
-                // that were not found in the db
-                if *view < imported_min_view {
-                    consensus.db.extend_view_history(*view, leader.as_bytes())?;
-                } else {
-                    break;
+            {
+                let history_guard = consensus.state.view_history.read();
+                for (view, leader) in history_guard.missed_views.iter() {
+                    // that were not found in the db
+                    if *view < imported_min_view {
+                        consensus.db.extend_view_history(*view, leader.as_bytes())?;
+                    } else {
+                        break;
+                    }
                 }
             }
             let earliest = consensus
@@ -530,14 +534,16 @@ impl Consensus {
                 .find_height_fork_first_activated(ForkName::ExecutableBlocks)
                 .unwrap_or_default();
             info!(earliest, "~~~~~~~~~~>");
-            consensus.state.view_history.min_view =
-                consensus.state.view_history.min_view.max(
+            {
+                let mut history_guard = consensus.state.view_history.write();
+                history_guard.min_view = history_guard.min_view.max(
                     earliest.saturating_sub(max_missed_view_age + LAG_BEHIND_CURRENT_VIEW + 1),
                 );
-            // update the min_view loaded from the checkpoint in the db
-            consensus
-                .db
-                .set_min_view_of_view_history(consensus.state.view_history.min_view)?;
+                // update the min_view loaded from the checkpoint in the db
+                consensus
+                    .db
+                    .set_min_view_of_view_history(history_guard.min_view)?;
+            }
         }
 
         // If we started from a checkpoint
@@ -2328,7 +2334,7 @@ impl Consensus {
 
         let mut current = block.clone();
         let finalized_view = self.get_finalized_view()?;
-        let mut new_missed_views: Vec<(u64, NodePublicKey)> = Vec::new();
+        let mut new_missed_views = VecDeque::new();
         while current.view() > finalized_view {
             let parent = self.get_block(&current.parent_hash())?.ok_or_else(|| {
                 anyhow!(format!("missing block parent {}", &current.parent_hash()))
@@ -2348,32 +2354,33 @@ impl Consensus {
                             "~~~~~~~~~~> skipping reorged"
                         );
                     } else {
-                        new_missed_views.push((view, leader));
+                        new_missed_views.push_front((view, leader)); // ensure new_missed_views in ascending order
                     }
                 }
             }
             current = parent;
         }
         let max_missed_view_age = self.config.max_missed_view_age;
-        let extended = self.state.view_history.append_history(&new_missed_views)?;
-        let min_view = self.state.view_history.min_view;
-        let pruned = self
-            .state
-            .view_history
-            .prune_history(block.view(), max_missed_view_age)?;
-        if min_view != self.state.view_history.min_view {
-            self.db
-                .set_min_view_of_view_history(self.state.view_history.min_view)?;
-        }
-        // the following code is only for logging and can be commented out
-        if extended || pruned {
-            trace!(
-                view = self.get_view()?,
-                finalized = block.view(),
-                history = display(&self.state.view_history),
-                "~~~~~~~~~~> current"
-            );
-        }
+        let (extended, pruned, min_view) = {
+            let mut history_guard = self.state.view_history.write();
+            let extended = history_guard.append_history(&mut new_missed_views)?;
+            let min_view = history_guard.min_view;
+            let pruned = history_guard.prune_history(block.view(), max_missed_view_age)?;
+            if min_view != history_guard.min_view {
+                self.db
+                    .set_min_view_of_view_history(history_guard.min_view)?;
+            }
+            // the following code is only for logging and can be commented out
+            if extended || pruned {
+                trace!(
+                    view = self.get_view()?,
+                    finalized = block.view(),
+                    history = display(&*history_guard),
+                    "~~~~~~~~~~> current"
+                );
+            }
+            (extended, pruned, min_view)
+        };
         //TODO(jailing): do not update the db on every finalization to avoid impact on block times
         if extended {
             for (view, leader) in new_missed_views.iter().rev() {
@@ -2442,8 +2449,8 @@ impl Consensus {
                         Box::new(block),
                         transactions,
                         Box::new(parent),
-                        self.db.state_trie()?,
-                        self.state.view_history.clone(),
+                        self.db.state_trie()?.clone(),
+                        self.state.view_history.read().clone(),
                         checkpoint_path,
                     ),
                 )?;
@@ -2489,6 +2496,7 @@ impl Consensus {
         let view_history =
             self.state
                 .view_history
+                .read()
                 .new_at(parent.view(), block.view(), missed_view_age);
         info!(
             view = self.get_view()?,
@@ -3701,9 +3709,15 @@ impl Consensus {
                 min_view: self.db.get_min_view_of_ckpt_view_history().unwrap(),
                 missed_views,
             };
-            self.state.ckpt_view_history = Some(ckpt_view_history);
+            self.state.ckpt_view_history = Some(Arc::new(RwLock::new(ckpt_view_history)));
         }
-        let ckpt_min_view = self.state.ckpt_view_history.as_ref().unwrap().min_view;
+        let ckpt_min_view = self
+            .state
+            .ckpt_view_history
+            .as_ref()
+            .unwrap()
+            .read()
+            .min_view;
         self.state.ckpt_finalized_view = Some(brt_view);
         if ckpt_min_view > 1
             && brt_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW) < ckpt_min_view + MISSED_VIEW_WINDOW
@@ -3741,20 +3755,17 @@ impl Consensus {
                 number: migrate_at - 1,
                 ..Default::default()
             };
+            let mut history = VecDeque::new();
             for view in parent_view + 1..block.view() {
                 if let Ok(leader) = state_at.leader(view, header) {
-                    if view == parent_view + 1 {
-                        /*trace!(
-                            view,
-                            id = &leader.as_bytes()[..3],
-                            "~~~~~~~~~~> skipping reorged"
-                        );*/
-                    } else {
+                    if view != parent_view + 1 {
+                        history.push_back((view, leader));
                         self.state
                             .ckpt_view_history
-                            .as_mut()
+                            .as_ref()
                             .expect("Checkpoint view history missing")
-                            .append_history(&[(view, leader)])?;
+                            .write()
+                            .append_history(&mut history)?;
                         self.db.extend_ckpt_view_history(view, leader.as_bytes())?;
                         // TODO(jailing): collect them in a vector and call append_history only once
                     }
@@ -3790,11 +3801,12 @@ impl Consensus {
         // we reach the beginning of the node's missed view history
         loop {
             // find the next missed view
-            while self.get_block_by_view(view)?.is_some() && self.state.view_history.min_view > view
+            while self.get_block_by_view(view)?.is_some()
+                && self.state.view_history.read().min_view > view
             {
                 view += 1;
             }
-            if self.state.view_history.min_view <= view {
+            if self.state.view_history.read().min_view <= view {
                 break;
             }
             // the parent view was the one before we found a missed view in the loop above
@@ -3810,14 +3822,18 @@ impl Consensus {
             // skip the first missed view in a row as its block must have been reorged
             view += 1;
             // but add all subsequent missed views to the history
-            while self.get_block_by_view(view)?.is_none() && self.state.view_history.min_view > view
+            let mut history = VecDeque::new();
+            while self.get_block_by_view(view)?.is_none()
+                && self.state.view_history.read().min_view > view
             {
                 if let Ok(leader) = state_at.leader(view, header) {
+                    history.push_back((view, leader));
                     self.state
                         .ckpt_view_history
-                        .as_mut()
+                        .as_ref()
                         .expect("Checkpoint view history missing")
-                        .append_history(&[(view, leader)])?;
+                        .write()
+                        .append_history(&mut history)?;
                     self.db.extend_ckpt_view_history(view, leader.as_bytes())?;
                     // TODO(jailing): collect them in a vector and call append_history only once
                 }
@@ -3825,18 +3841,18 @@ impl Consensus {
             }
         }
         info!(
-            view_history = %self.state.view_history,
+            view_history = %*self.state.view_history.read(),
             last_ckpt_view = view, "History imported from the checkpoint can be merged"
         );
-        merge_history(
-            self,
-            &mut self
-                .state
-                .ckpt_view_history
-                .clone()
-                .expect("Checkpoint view history missing"),
-            view,
-        )?;
+        // Clone the checkpoint history to avoid borrow conflict with merge_history
+        let mut ckpt_history = self
+            .state
+            .ckpt_view_history
+            .as_ref()
+            .expect("Checkpoint view history missing")
+            .read()
+            .clone();
+        merge_history(self, &mut ckpt_history, view)?;
         self.state.ckpt_view_history = None;
         self.state.ckpt_finalized_view = None;
         self.db.reset_ckpt_view_history()?;

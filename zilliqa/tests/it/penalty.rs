@@ -34,7 +34,8 @@ async fn jailed_node_must_not_propose_blocks(mut network: Network) {
                 let node_1 = &n.get_node(1);
                 let current_view = node_1.get_current_view().unwrap();
                 let consensus = node_1.consensus.read();
-                let missed_views = &consensus.state().view_history.missed_views;
+                let view_history = consensus.state().view_history.read();
+                let missed_views = &view_history.missed_views;
                 let missed_map = missed_views
                     .iter()
                     .filter(|&(view, _)| {
@@ -74,7 +75,8 @@ async fn jailed_node_must_not_propose_blocks(mut network: Network) {
                 let node_1 = &n.get_node(1);
                 if let Ok(Some(current_block)) = node_1.get_block(BlockId::latest()) {
                     let consensus = node_1.consensus.read();
-                    let missed_views = &consensus.state().view_history.missed_views;
+                    let view_history = consensus.state().view_history.read();
+                    let missed_views = &view_history.missed_views;
                     let missed_map = missed_views
                         .iter()
                         .filter(|&(view, _)| {
@@ -141,7 +143,8 @@ async fn jailed_node_must_not_cause_timeouts(mut network: Network) {
                 let node_1 = &n.get_node(1);
                 let current_view = node_1.get_current_view().unwrap();
                 let consensus = node_1.consensus.read();
-                let missed_views = &consensus.state().view_history.missed_views;
+                let view_history = consensus.state().view_history.read();
+                let missed_views = &view_history.missed_views;
                 let missed_map = missed_views
                     .iter()
                     .filter(|&(view, _)| {
@@ -206,7 +209,8 @@ async fn jailed_node_must_not_cause_timeouts(mut network: Network) {
                 let node_1 = &n.get_node(1);
                 if let Ok(Some(current_block)) = node_1.get_block(BlockId::latest()) {
                     let consensus = node_1.consensus.read();
-                    let missed_views = &consensus.state().view_history.missed_views;
+                    let view_history = consensus.state().view_history.read();
+                    let missed_views = &view_history.missed_views;
                     let missed_map = missed_views
                         .iter()
                         .filter(|&(view, _)| {

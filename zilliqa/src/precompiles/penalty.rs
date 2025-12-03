@@ -44,14 +44,20 @@ impl ViewHistory {
         max_missed_view_age: u64,
     ) -> ViewHistory {
         let min_view = parent_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW + max_missed_view_age);
-        let mut deque = VecDeque::new();
-        let source = &self.missed_views;
-        //TODO(jailing): use binary search to find the range to be copied
-        for (view, leader) in source.iter() {
-            if *view >= min_view && *view < block_view {
-                deque.push_back((*view, *leader));
-            }
-        }
+        // Find the range of elements within [min_view, block_view)
+        let start_idx = self
+            .missed_views
+            .partition_point(|(view, _)| *view < min_view);
+        let end_idx = self
+            .missed_views
+            .partition_point(|(view, _)| *view < block_view);
+
+        // Copy the elements in that range into the deque
+        let deque = self
+            .missed_views
+            .range(start_idx..end_idx)
+            .copied()
+            .collect();
         ViewHistory {
             missed_views: deque,
             min_view,
@@ -60,40 +66,29 @@ impl ViewHistory {
 
     pub fn append_history(
         &mut self,
-        new_missed_views: &[(u64, NodePublicKey)],
+        new_missed_views: &mut VecDeque<(u64, NodePublicKey)>,
     ) -> anyhow::Result<bool> {
-        // new_missed_views are in descending order
-        for (view, leader) in new_missed_views.iter().rev() {
-            /*trace::trace!(
-                view,
-                id = &leader.as_bytes()[..3],
-                "++++++++++> adding missed"
-            );*/
-            self.missed_views.push_back((*view, *leader));
+        if !new_missed_views.is_empty() && !self.missed_views.is_empty() {
+            anyhow::ensure!(
+                new_missed_views.front().unwrap().0 > self.missed_views.back().unwrap().0,
+                "Appending older missed_views"
+            );
         }
-        //TODO(jailing): replace the above loop with the line below once logging is not needed anymore
-        //deque.extend(new_missed_views.iter().rev());
-        Ok(!new_missed_views.is_empty())
+        let len = self.missed_views.len();
+        self.missed_views.append(new_missed_views); // new_missed_views are in ascending order
+        Ok(len < self.missed_views.len())
     }
 
     pub fn prune_history(&mut self, view: u64, max_missed_view_age: u64) -> anyhow::Result<bool> {
-        // self.min_view must not be decreased
         let len = self.missed_views.len();
+        // self.min_view must not be decreased
         self.min_view = self
             .min_view
             .max(view.saturating_sub(LAG_BEHIND_CURRENT_VIEW + max_missed_view_age));
-        while let Some((view, _leader)) = self.missed_views.front() {
-            if *view < self.min_view {
-                /*trace::trace!(
-                    view,
-                    id = &leader.as_bytes()[..3],
-                    "----------> deleting missed"
-                );*/
-                self.missed_views.pop_front();
-            } else {
-                break; // keys are monotonic
-            }
-        }
+        let split = self
+            .missed_views
+            .partition_point(|(v, _)| *v < self.min_view); // use binary search, instead of linear
+        self.missed_views.drain(..split);
         Ok(self.missed_views.len() < len)
     }
 }
@@ -256,7 +251,7 @@ fn call_penalty(
             "Required missed view history not finalized".into(),
         )));
     }
-    let min_view = ctx.chain.view_history.min_view;
+    let min_view = ctx.chain.view_history.read().min_view;
     // fail if the missed view history does not reach back far enough in the past or
     // the queried view is too far in the future based on the currently finalized view
     if min_view > 1
@@ -273,7 +268,7 @@ fn call_penalty(
             "Missed view history not available".into(),
         )));
     }
-    let deque = &ctx.chain.view_history.missed_views;
+    let deque = &ctx.chain.view_history.read().missed_views;
     // binary search to find the relevant missed views in O(log(n))
     let (first_slice, second_slice) = deque.as_slices();
     let search_slice = |slice: &[(u64, NodePublicKey)], target: u64| {
