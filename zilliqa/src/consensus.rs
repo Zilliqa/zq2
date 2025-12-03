@@ -1,6 +1,6 @@
 use std::{
     cell::LazyCell,
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, VecDeque},
     error::Error,
     fmt::Display,
     ops::RangeInclusive,
@@ -2334,7 +2334,7 @@ impl Consensus {
 
         let mut current = block.clone();
         let finalized_view = self.get_finalized_view()?;
-        let mut new_missed_views: Vec<(u64, NodePublicKey)> = Vec::new();
+        let mut new_missed_views = VecDeque::new();
         while current.view() > finalized_view {
             let parent = self.get_block(&current.parent_hash())?.ok_or_else(|| {
                 anyhow!(format!("missing block parent {}", &current.parent_hash()))
@@ -2354,7 +2354,7 @@ impl Consensus {
                             "~~~~~~~~~~> skipping reorged"
                         );
                     } else {
-                        new_missed_views.push((view, leader));
+                        new_missed_views.push_front((view, leader)); // ensure new_missed_views in ascending order
                     }
                 }
             }
@@ -2363,7 +2363,7 @@ impl Consensus {
         let max_missed_view_age = self.config.max_missed_view_age;
         let (extended, pruned, min_view) = {
             let mut history_guard = self.state.view_history.write();
-            let extended = history_guard.append_history(&new_missed_views)?;
+            let extended = history_guard.append_history(&mut new_missed_views)?;
             let min_view = history_guard.min_view;
             let pruned = history_guard.prune_history(block.view(), max_missed_view_age)?;
             if min_view != history_guard.min_view {
@@ -3755,21 +3755,17 @@ impl Consensus {
                 number: migrate_at - 1,
                 ..Default::default()
             };
+            let mut history = VecDeque::new();
             for view in parent_view + 1..block.view() {
                 if let Ok(leader) = state_at.leader(view, header) {
-                    if view == parent_view + 1 {
-                        /*trace!(
-                            view,
-                            id = &leader.as_bytes()[..3],
-                            "~~~~~~~~~~> skipping reorged"
-                        );*/
-                    } else {
+                    if view != parent_view + 1 {
+                        history.push_back((view, leader));
                         self.state
                             .ckpt_view_history
                             .as_ref()
                             .expect("Checkpoint view history missing")
                             .write()
-                            .append_history(&[(view, leader)])?;
+                            .append_history(&mut history)?;
                         self.db.extend_ckpt_view_history(view, leader.as_bytes())?;
                         // TODO(jailing): collect them in a vector and call append_history only once
                     }
@@ -3826,16 +3822,18 @@ impl Consensus {
             // skip the first missed view in a row as its block must have been reorged
             view += 1;
             // but add all subsequent missed views to the history
+            let mut history = VecDeque::new();
             while self.get_block_by_view(view)?.is_none()
                 && self.state.view_history.read().min_view > view
             {
                 if let Ok(leader) = state_at.leader(view, header) {
+                    history.push_back((view, leader));
                     self.state
                         .ckpt_view_history
                         .as_ref()
                         .expect("Checkpoint view history missing")
                         .write()
-                        .append_history(&[(view, leader)])?;
+                        .append_history(&mut history)?;
                     self.db.extend_ckpt_view_history(view, leader.as_bytes())?;
                     // TODO(jailing): collect them in a vector and call append_history only once
                 }
