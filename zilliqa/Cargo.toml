@@ -97,7 +97,7 @@ tokio = { version = "1.48.0", features = [
 tokio-stream = "0.1.17"
 toml = "0.9.5"
 tower = "0.5.2"
-tower-http = { version = "0.6.6", features = ["cors"] }
+tower-http = { version = "0.6.7", features = ["cors"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter", "json"] }
 cbor4ii = { version = "1.2.0", features = ["serde1"] }
