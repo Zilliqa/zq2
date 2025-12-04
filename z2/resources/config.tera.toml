@@ -45,21 +45,10 @@ max_missed_view_age = 1000000000000
 max_missed_view_age = 1000000000000
 {%- endif %}
 {%- if role == "persistence" %}
-# Tuned parameters
-state_cache_size = 0
-db.conn_cache_size = 128
-db.rocksdb_cache_size = 1073741824
-db.rocksdb_cache_index_filters = false
-db.rocksdb_max_open_files = 1024
 max_missed_view_age = 1000000000000
 {%- endif %}
 {%- if role == "checkpoint" %}
-# Tuned parameters
-state_cache_size = 0
-db.conn_cache_size = 128
-db.rocksdb_cache_size = 4294967296
 db.rocksdb_cache_index_filters = true
-db.rocksdb_max_open_files = 4096
 max_missed_view_age = 1000000000000
 {%- endif %}
 
