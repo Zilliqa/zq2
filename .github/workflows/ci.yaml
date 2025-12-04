@@ -60,14 +60,14 @@ jobs:
         run: rustup toolchain install nightly
       - uses: Swatinem/rust-cache@v2
       - name: Build
-        run: cargo build --all-targets --all-features
+        run: cargo build --release --all-targets --all-features
       - name: Clippy
         run: cargo clippy --all --all-targets --all-features -- -D warnings
       # Run `cargo fmt` with nightly, because we use 'unstable' rustfmt features.
       - name: rustfmt
         run: cargo +nightly fmt --all --check
       - name: Test
-        run: cargo test --tests --examples --bins --all-features
+        run: cargo test --release --tests --examples --bins --all-features
       - name: Verify working directory is clean
         run: git diff --exit-code
   e2e_test:
