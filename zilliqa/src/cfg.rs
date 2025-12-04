@@ -1,4 +1,9 @@
-use std::{collections::HashMap, ops::Deref, str::FromStr, time::Duration};
+use std::{
+    collections::HashMap,
+    ops::{Deref, Div},
+    str::FromStr,
+    time::Duration,
+};
 
 use alloy::{primitives::Address, rlp::Encodable};
 use anyhow::{Result, anyhow};
@@ -45,7 +50,9 @@ pub struct Config {
 }
 
 pub fn slow_rpc_queries_handlers_count_default() -> usize {
-    4 // half the CPU cores
+    // half the workers; or 1
+    let num_workers = crate::tokio_worker_count();
+    num_workers.div(2).max(1)
 }
 
 #[derive(Debug, Clone)]
@@ -183,24 +190,28 @@ pub struct DbConfig {
     #[serde(default = "rocksdb_max_open_files_default")]
     pub rocksdb_max_open_files: i32,
     /// RocksDB cache index/filters
-    #[serde(default)]
+    #[serde(default = "rocksdb_cache_index_filters_default")]
     pub rocksdb_cache_index_filters: bool,
 }
 
+fn rocksdb_cache_index_filters_default() -> bool {
+    false // true: mitigate OOM; false: better performance.
+}
+
 fn rocksdb_max_open_files_default() -> i32 {
-    -1 // unlimited
+    -1 // Set max_open_files to -1 to always keep all files open, which avoids expensive table cache calls.
 }
 
 fn rocksdb_compaction_period_default() -> u64 {
-    u64::MAX - 1 // rocksdb default
+    u64::MAX - 1 // allow rocksdb to decide
 }
 
 fn rocksdb_cache_size_default() -> usize {
-    1024 * 1024 * 1024 // 1GB default
+    1024 * 1024 * 1024 // 1GB is enough for normal nodes
 }
 
 fn sql_cache_size_default() -> usize {
-    4_096 // 128MB default
+    256 // 32KB * 256 = 8MB (SQLite default)
 }
 
 fn sql_auto_checkpoint_default() -> usize {
@@ -216,7 +227,7 @@ impl Default for DbConfig {
             rocksdb_cache_size: rocksdb_cache_size_default(),
             rocksdb_compaction_period: rocksdb_compaction_period_default(),
             rocksdb_max_open_files: rocksdb_max_open_files_default(),
-            rocksdb_cache_index_filters: false,
+            rocksdb_cache_index_filters: rocksdb_cache_index_filters_default(),
         }
     }
 }
@@ -415,7 +426,7 @@ pub fn allowed_timestamp_skew_default() -> Duration {
 }
 
 pub fn state_cache_size_default() -> usize {
-    1024 * 1024 * 1024 // 1 GB
+    usize::MIN // no longer used
 }
 
 pub fn eth_chain_id_default() -> u64 {
