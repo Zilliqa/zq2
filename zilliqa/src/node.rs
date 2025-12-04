@@ -214,7 +214,6 @@ impl Node {
         let db = Arc::new(Db::new(
             config.data_dir.as_ref(),
             config.eth_chain_id,
-            config.state_cache_size,
             executable_blocks_height,
             config.db.clone(),
         )?);
