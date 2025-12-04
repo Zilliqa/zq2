@@ -703,7 +703,7 @@ mod tests {
 
     #[test]
     fn deposit_contract_updateability() {
-        let db = Db::new::<PathBuf>(None, 0, 0, None, crate::cfg::DbConfig::default()).unwrap();
+        let db = Db::new::<PathBuf>(None, 0, None, crate::cfg::DbConfig::default()).unwrap();
         let db = Arc::new(db);
         let config = NodeConfig::default();
 
