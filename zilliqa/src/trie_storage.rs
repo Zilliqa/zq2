@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use lru_mem::LruCache;
-use parking_lot::RwLock;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rocksdb::WriteBatch;
@@ -21,21 +19,12 @@ const ROCKSDB_CUTOVER_AT: &str = "cutover_at";
 #[derive(Debug, Clone)]
 pub struct TrieStorage {
     pool: Arc<Pool<SqliteConnectionManager>>,
-    _cache: Arc<RwLock<LruCache<Vec<u8>, Vec<u8>>>>,
     kvdb: Arc<rocksdb::DB>,
 }
 
 impl TrieStorage {
-    pub fn new(
-        pool: Arc<Pool<SqliteConnectionManager>>,
-        cache: Arc<RwLock<LruCache<Vec<u8>, Vec<u8>>>>,
-        kvdb: Arc<rocksdb::DB>,
-    ) -> Self {
-        Self {
-            pool,
-            _cache: cache,
-            kvdb,
-        }
+    pub fn new(pool: Arc<Pool<SqliteConnectionManager>>, kvdb: Arc<rocksdb::DB>) -> Self {
+        Self { pool, kvdb }
     }
 
     pub fn write_batch(&self, keys: Vec<Vec<u8>>, values: Vec<Vec<u8>>) -> Result<()> {

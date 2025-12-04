@@ -13,8 +13,6 @@ use alloy::primitives::Address;
 use anyhow::{Context, Result, anyhow};
 #[allow(unused_imports)]
 use eth_trie::{DB, EthTrie, MemoryDB, Trie};
-use lru_mem::LruCache;
-use parking_lot::RwLock;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rocksdb::{BlockBasedOptions, Cache, DBWithThreadMode, Options, SingleThreaded};
@@ -247,7 +245,6 @@ const CURRENT_DB_VERSION: &str = "1";
 #[derive(Debug)]
 pub struct Db {
     pool: Arc<Pool<SqliteConnectionManager>>,
-    state_cache: Arc<RwLock<LruCache<Vec<u8>, Vec<u8>>>>,
     kvdb: Arc<rocksdb::DB>,
     path: Option<Box<Path>>,
     /// The block height at which ZQ2 blocks begin.
@@ -261,7 +258,6 @@ impl Db {
     pub fn new<P>(
         data_dir: Option<P>,
         shard_id: u64,
-        state_cache_size: usize,
         executable_blocks_height: Option<u64>,
         config: DbConfig,
     ) -> Result<Self>
@@ -323,7 +319,7 @@ impl Db {
         block_opts.set_block_size(BLOCK_SIZE);
         block_opts.set_optimize_filters_for_memory(true); // reduce memory wastage with JeMalloc
         // Mitigate OOM
-        block_opts.set_cache_index_and_filter_blocks(config.rocksdb_cache_index_filters); // place index/filters inside cache, instead of heap
+        block_opts.set_cache_index_and_filter_blocks(config.rocksdb_cache_index_filters);
         // Improve cache utilisation
         block_opts.set_pin_top_level_index_and_filter(true);
         block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
@@ -357,7 +353,6 @@ impl Db {
 
         Ok(Db {
             pool: Arc::new(pool),
-            state_cache: Arc::new(RwLock::new(LruCache::new(state_cache_size))),
             path,
             executable_blocks_height,
             kvdb: Arc::new(rdb),
@@ -800,11 +795,7 @@ impl Db {
     }
 
     pub fn state_trie(&self) -> Result<TrieStorage> {
-        Ok(TrieStorage::new(
-            self.pool.clone(),
-            self.state_cache.clone(),
-            self.kvdb.clone(),
-        ))
+        Ok(TrieStorage::new(self.pool.clone(), self.kvdb.clone()))
     }
 
     pub fn with_sqlite_tx(&self, operations: impl FnOnce(&Connection) -> Result<()>) -> Result<()> {
@@ -1693,7 +1684,7 @@ mod tests {
     fn query_planner_stability_guarantee() {
         let base_path = tempdir().unwrap();
         let base_path = base_path.path();
-        let db = Db::new(Some(base_path), 0, 1024, None, DbConfig::default()).unwrap();
+        let db = Db::new(Some(base_path), 0, None, DbConfig::default()).unwrap();
 
         let sql = db.pool.get().unwrap();
 
@@ -1761,7 +1752,7 @@ mod tests {
     fn checkpoint_export_import() {
         let base_path = tempdir().unwrap();
         let base_path = base_path.path();
-        let db = Db::new(Some(base_path), 0, 1024, None, DbConfig::default()).unwrap();
+        let db = Db::new(Some(base_path), 0, None, DbConfig::default()).unwrap();
 
         // Seed db with data
         let mut rng = ChaCha8Rng::seed_from_u64(0);
