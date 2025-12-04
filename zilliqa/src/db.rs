@@ -298,14 +298,9 @@ impl Db {
             None => (SqliteConnectionManager::memory(), None),
         };
 
-        let num_workers = tokio::runtime::Handle::try_current()
-            .map(|h| h.metrics().num_workers().max(4))
-            .unwrap_or(4);
-
         // Build connection pool
-        let builder = Pool::builder()
-            .min_idle(Some(1))
-            .max_size(2 * num_workers as u32); // more than enough connections
+        let num_workers = crate::tokio_worker_count().max(4) as u32;
+        let builder = Pool::builder().min_idle(Some(1)).max_size(num_workers * 2); // more than enough connections
         debug!("SQLite {builder:?}");
 
         let pool = builder.build(manager)?;
