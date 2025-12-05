@@ -110,7 +110,7 @@ impl RangeMap {
     }
 
     /// Iterate over all the values in this RangeMap
-    pub fn iter_values(&self) -> ItemIterator {
+    pub fn iter_values(&self) -> ItemIterator<'_> {
         ItemIterator::new(self)
     }
 
@@ -315,15 +315,15 @@ impl RangeMap {
         //  - advances remain by one, or
         //  - breaks remain into a smaller range than it was before.
         while let Some(next_self) = &current_self_iter {
-            if let Some(val) = limit {
-                if intersection.ranges.len() >= val {
-                    // Too many things in diff now - we're done. Append the rest of self and return.
-                    while let Some(n) = &current_self_iter {
-                        diff.with_range(n);
-                        current_self_iter = self_iter.next().cloned();
-                    }
-                    break;
+            if let Some(val) = limit
+                && intersection.ranges.len() >= val
+            {
+                // Too many things in diff now - we're done. Append the rest of self and return.
+                while let Some(n) = &current_self_iter {
+                    diff.with_range(n);
+                    current_self_iter = self_iter.next().cloned();
                 }
+                break;
             }
             if let Some(current_remove) = &current_remove_iter {
                 // Things in self which are too small to remove - these will always

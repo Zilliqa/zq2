@@ -21,25 +21,18 @@ test = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-alloy = { version = "1.0.41", default-features = false, features = [
-    "consensus",
-    "eips",
-    "rlp",
-    "serde",
-    "signer-local",
-] }
+alloy = { version = "1.1.2", features = ["consensus", "provider-ws", "rlp", "serde", "signer-local"] }
 anyhow = "1.0.100"
 arc-swap = "1.7.1"
 base64 = "0.22.1"
 bitvec = "1.0.1"
 clap = { version = "4.5.53", features = ["derive"] }
 clap-verbosity-flag = "3.0.4"
-cliclack = "0.3.6"
+cliclack = "0.3.7"
 colored = "3.0.0"
 env_logger = "0.11.8"
 eth_trie = { git = "https://github.com/Zilliqa/eth-trie.rs.git", branch = "zilliqa-revm" }
 ethabi = "18.0.0"
-ethers = { version = "2.0.14", features = ["ws"] }
 futures = "0.3.31"
 hex = "0.4.3"
 indicatif = "0.18.3"

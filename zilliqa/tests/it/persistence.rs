@@ -1,8 +1,7 @@
 use std::{fs, ops::DerefMut};
 
-use alloy::eips::BlockId;
+use alloy::{eips::BlockId, rpc::types::TransactionRequest};
 use ethabi::Token;
-use ethers::{providers::Middleware, types::TransactionRequest};
 use k256::ecdsa::SigningKey;
 use primitive_types::H160;
 use rand::Rng;

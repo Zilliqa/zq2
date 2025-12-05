@@ -124,10 +124,10 @@ impl CreatorInspector {
 
 impl<CTX> Inspector<CTX> for CreatorInspector {
     fn create_end(&mut self, _: &mut CTX, inputs: &CreateInputs, outcome: &mut CreateOutcome) {
-        if let Some(address) = outcome.address {
-            if address == self.contract {
-                self.creator = Some(inputs.caller);
-            }
+        if let Some(address) = outcome.address
+            && address == self.contract
+        {
+            self.creator = Some(inputs.caller);
         }
     }
 }

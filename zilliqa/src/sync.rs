@@ -1071,14 +1071,14 @@ impl Sync {
         info!(%from, number = %brt.block.number(), "BlockRequest : received");
 
         // send cached response
-        if let Some(prop) = self.cache_probe_response.as_ref() {
-            if prop.hash() == brt.block.hash() {
-                return Ok(ExternalMessage::BlockResponse(BlockResponse {
-                    proposals: vec![prop.clone()],
-                    from_view: u64::MAX,
-                    availability: None,
-                }));
-            }
+        if let Some(prop) = self.cache_probe_response.as_ref()
+            && prop.hash() == brt.block.hash()
+        {
+            return Ok(ExternalMessage::BlockResponse(BlockResponse {
+                proposals: vec![prop.clone()],
+                from_view: u64::MAX,
+                availability: None,
+            }));
         };
 
         // Construct the proposal

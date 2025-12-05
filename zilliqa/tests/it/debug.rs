@@ -1,11 +1,8 @@
 use alloy::{
     primitives::{B256, Uint},
-    rpc::types::trace::geth::TraceResult,
+    rpc::types::{TransactionRequest, trace::geth::TraceResult},
 };
-use ethers::{
-    providers::Middleware,
-    types::{H160, TransactionRequest},
-};
+use primitive_types::H160;
 
 use crate::Network;
 
