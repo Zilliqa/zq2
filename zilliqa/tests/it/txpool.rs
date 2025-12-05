@@ -1,4 +1,4 @@
-use ethers::{core::types::TransactionRequest, providers::Middleware};
+use alloy::rpc::types::TransactionRequest;
 use primitive_types::H160;
 use serde_json::Value;
 

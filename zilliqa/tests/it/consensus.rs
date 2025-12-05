@@ -1,12 +1,10 @@
 use std::collections::HashSet;
 
-use alloy::eips::BlockId;
-use ethers::{
-    providers::Middleware,
-    types::{
-        Eip1559TransactionRequest, Eip2930TransactionRequest, TransactionRequest, U64,
-        transaction::{eip2718::TypedTransaction, eip2930::AccessList},
-    },
+use alloy::{
+    consensus::{TxEip1559, TxEip2930, TypedTransaction},
+    eips::{BlockId, eip2930::AccessList},
+    primitives::U64,
+    rpc::types::TransactionRequest,
 };
 use primitive_types::{H160, H256, U256};
 use tracing::*;
@@ -344,7 +342,7 @@ async fn gas_fees_should_be_transferred_to_zero_account(mut network: Network) {
     network.run_until_block(&wallet, 1.into(), 50).await;
     let tx_legacy: TypedTransaction = TransactionRequest::pay(wallet.address(), 10).into();
     let gas_price = network.get_node(0).get_gas_price();
-    let tx_eip1559: TypedTransaction = Eip1559TransactionRequest {
+    let tx_eip1559: TypedTransaction = TxEip1559 {
         to: Some(wallet.address().into()),
         value: Some(10.into()),
         max_fee_per_gas: Some(gas_price.into()),
@@ -352,10 +350,11 @@ async fn gas_fees_should_be_transferred_to_zero_account(mut network: Network) {
         ..Default::default()
     }
     .into();
-    let tx_eip2930: TypedTransaction = Eip2930TransactionRequest::new(
-        TransactionRequest::pay(wallet.address(), 10),
-        AccessList(vec![]),
-    )
+    let tx_temp: TransactionRequest = TransactionRequest::pay(wallet.address(), 10);
+    let tx_eip2930: TypedTransaction = TxEip2930 {
+        access_list: AccessList::default(),
+        ..tx_temp
+    }
     .into();
 
     for tx_request in [tx_legacy, tx_eip1559, tx_eip2930] {

@@ -1,4 +1,3 @@
-use ethers::providers::Middleware;
 use serde_json::Value;
 
 use crate::Network;

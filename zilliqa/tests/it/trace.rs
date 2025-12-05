@@ -1,10 +1,10 @@
 use std::str::FromStr;
 
-use alloy::{primitives::B256, rpc::types::trace::parity::TraceResults};
-use ethers::{
-    providers::Middleware,
-    types::{H160, TransactionRequest},
+use alloy::{
+    primitives::B256,
+    rpc::types::{TransactionRequest, trace::parity::TraceResults},
 };
+use primitive_types::H160;
 use serde_json::Value;
 
 use crate::Network;

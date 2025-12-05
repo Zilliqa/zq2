@@ -1,4 +1,4 @@
-use ethers::{providers::Middleware, types::TransactionRequest};
+use alloy::rpc::types::TransactionRequest;
 use fs_extra::file::CopyOptions;
 use tracing::info;
 use zilliqa::{cfg::Checkpoint, crypto::Hash};
