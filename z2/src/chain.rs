@@ -101,6 +101,10 @@ impl Chain {
                     height: 0,
                     reinitialise_params: None,
                 }),
+                deposit_v8: Some(ContractUpgradeConfig {
+                    height: 0,
+                    reinitialise_params: None,
+                }),
             },
             Self::Zq2Testnet => ContractUpgrades {
                 deposit_v3: None,
@@ -119,6 +123,12 @@ impl Chain {
                         withdrawal_period: 461680,
                     }), // https://github.com/Zilliqa/zq2/pull/3221
                 }),
+                deposit_v8: Some(ContractUpgradeConfig {
+                    height: 99999999,
+                    reinitialise_params: Some(ReinitialiseParams {
+                        withdrawal_period: 461680,
+                    }),
+                }),
             },
             Self::Zq2Mainnet => ContractUpgrades {
                 deposit_v3: None,
@@ -136,6 +146,12 @@ impl Chain {
                     reinitialise_params: Some(ReinitialiseParams {
                         withdrawal_period: 461680,
                     }), // https://github.com/Zilliqa/zq2/pull/3221
+                }),
+                deposit_v8: Some(ContractUpgradeConfig {
+                    height: 99999999,
+                    reinitialise_params: Some(ReinitialiseParams {
+                        withdrawal_period: 461680,
+                    }),
                 }),
             },
             _ => ContractUpgrades::default(),
@@ -181,6 +197,7 @@ impl Chain {
                 "failed_zil_transfers_to_eoa_proper_fee_deduction": false,
                 "validator_jailing": false,
                 "scilla_empty_maps_are_encoded_correctly": false,
+                "randao_support": false,
             })),
             Chain::Zq2Mainnet => Some(json!({
                 "at_height": 0,
@@ -218,6 +235,7 @@ impl Chain {
                 "failed_zil_transfers_to_eoa_proper_fee_deduction": false,
                 "validator_jailing": false,
                 "scilla_empty_maps_are_encoded_correctly": false,
+                "randao_support": false,
             })),
             _ => None,
         }
@@ -267,6 +285,8 @@ impl Chain {
                 json!({ "at_height": 14997600, "validator_jailing": true}),
                 // estimated: arbitrary high block number no reachable before next fork
                 json!({ "at_height": 99999999, "scilla_empty_maps_are_encoded_correctly": true}),
+                // estimated: arbitrary high block number no reachable before next fork
+                json!({ "at_height": 99999999, "randao_support": true}),
             ]),
             Chain::Zq2Mainnet => Some(vec![
                 json!({ "at_height": 4770088, "executable_blocks": true }),
@@ -313,6 +333,8 @@ impl Chain {
                 json!({ "at_height": 13514400, "validator_jailing": true}),
                 // estimated: arbitrary high block number no reachable before next fork
                 json!({ "at_height": 99999999, "scilla_empty_maps_are_encoded_correctly": true}),
+                // estimated: arbitrary high block number no reachable before next fork
+                json!({ "at_height": 99999999, "randao_support": true}),
             ]),
             _ => None,
         }

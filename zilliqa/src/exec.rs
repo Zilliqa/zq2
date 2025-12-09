@@ -64,6 +64,7 @@ pub struct ExtraOpts {
     pub(crate) disable_eip3607: bool,
     pub(crate) exec_type: ExecType,
     pub(crate) tx_type: TransactionType,
+    pub(crate) randao_mix_hash: Hash,
 }
 
 type ScillaResultAndState = (ScillaResult, HashMap<Address, PendingAccount>);
@@ -482,6 +483,7 @@ impl State {
                 disable_eip3607: false,
                 exec_type: ExecType::Transact,
                 tx_type: TransactionType::Legacy,
+                randao_mix_hash: Hash::ZERO,
             },
         )?;
 
@@ -544,9 +546,6 @@ impl State {
         base_fee_and_nonce_check: BaseFeeAndNonceCheck,
         extra_opts: ExtraOpts,
     ) -> Result<(ResultAndState, HashMap<Address, PendingAccount>)> {
-        let mut padded_view_number = [0u8; 32];
-        padded_view_number[24..].copy_from_slice(&current_block.view.to_be_bytes());
-
         let fork = self.forks.get(current_block.number);
         //let fork = self.forks.get(current_block.number).clone();
         // if the view number is lower than min view of the node's missed view history and
@@ -626,7 +625,7 @@ impl State {
                 gas_limit: self.block_gas_limit.0,
                 basefee: self.gas_price.try_into()?,
                 difficulty: U256::from(1),
-                prevrandao: Some(Hash::builder().with(padded_view_number).finalize().into()),
+                prevrandao: Some(extra_opts.randao_mix_hash.into()),
                 blob_excess_gas_and_price: None,
                 beneficiary: Default::default(),
             });
@@ -818,6 +817,7 @@ impl State {
         &mut self,
         txn: VerifiedTransaction,
         current_block: BlockHeader,
+        randao_mix_hash: Hash,
         inspector: I,
         enable_inspector: bool,
     ) -> Result<TransactionApplyResult> {
@@ -882,6 +882,7 @@ impl State {
                     disable_eip3607: false,
                     exec_type: ExecType::Transact,
                     tx_type: txn.revm_transaction_type(),
+                    randao_mix_hash,
                 },
             )?;
 
@@ -1078,8 +1079,15 @@ impl State {
             .map_or(Ok(0), |v| Ok(v.as_u128()))
     }
 
-    pub fn leader(&self, view: u64, current_block: BlockHeader) -> Result<NodePublicKey> {
-        let data = contracts::deposit::LEADER_AT_VIEW.encode_input(&[Token::Uint(view.into())])?;
+    pub fn leader(&self, view: u64, current_block: BlockHeader, fork: &Fork) -> Result<NodePublicKey> {
+        let data =  {
+            if fork.randao_support {
+                contracts::deposit::LEADER_AT_VIEW.encode_input(&[Token::Uint(view.into())])?
+            }
+            else {
+                contracts::deposit::LEADER_AT_VIEW_WITH_RANDAO.encode_input(&[])?
+            }
+        };
 
         let result = self.call_contract(
             Address::ZERO,
@@ -1092,8 +1100,7 @@ impl State {
 
         NodePublicKey::from_bytes(
             &contracts::deposit::LEADER_AT_VIEW
-                .decode_output(&leader)
-                .unwrap()[0]
+                .decode_output(&leader)?[0]
                 .clone()
                 .into_bytes()
                 .unwrap(),
@@ -1383,6 +1390,7 @@ impl State {
                 disable_eip3607: true,
                 exec_type: ExecType::Call,
                 tx_type: TransactionType::Legacy,
+                randao_mix_hash: Hash::ZERO,
             },
         )?;
 
@@ -1417,6 +1425,7 @@ impl State {
                 disable_eip3607: false,
                 exec_type: ExecType::Transact,
                 tx_type: TransactionType::Legacy,
+                randao_mix_hash: Hash::ZERO,
             },
         )?;
         self.apply_delta_evm(&state, current_block.number)?;

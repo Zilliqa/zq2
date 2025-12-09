@@ -524,6 +524,18 @@ impl Db {
             )?;
         }
 
+        if version < 7 {
+            connection.execute_batch(
+                "
+                BEGIN;
+                INSERT INTO schema_version VALUES (7);
+                ALTER TABLE blocks ADD COLUMN randao_reveal BLOB;
+                ALTER TABLE blocks ADD COLUMN mix_hash BLOB;
+                COMMIT;
+            ",
+            )?;
+        }
+
         Ok(())
     }
 
@@ -549,7 +561,6 @@ impl Db {
                 format!("UPDATE ckpt_view_history SET view = {LARGE_OFFSET} WHERE leader IS NULL")
                     .as_str(),
             )?
-            //.execute(rusqlite::params![view, leader])?;
             .execute([])?;
         Ok(())
     }
@@ -558,7 +569,6 @@ impl Db {
         self.pool
             .get()?
             .prepare_cached("INSERT INTO ckpt_view_history (view, leader) VALUES (?1, ?2)")?
-            //.execute(rusqlite::params![view, leader])?;
             .execute((view, leader))?;
         Ok(())
     }
@@ -1264,7 +1274,7 @@ impl Db {
 
     pub fn get_blocks_by_height(&self, height: u64) -> Result<Vec<Block>> {
         let rows = self.pool.get()?
-            .prepare_cached("SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE height = ?1")?
+            .prepare_cached("SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg, randao_reveal, mix_hash FROM blocks WHERE height = ?1")?
             .query_map([height], |row| Ok(Block {
                 header: BlockHeader {
                     hash: row.get(0)?,
@@ -1278,6 +1288,8 @@ impl Db {
                     timestamp: row.get::<_, SystemTimeSqlable>(8)?.into(),
                     gas_used: row.get(9)?,
                     gas_limit: row.get(10)?,
+                    randao_reveal: row.get(12)?,
+                    mix_hash: row.get(13)?,
                 },
                 agg: row.get(11)?,
                 transactions: vec![],
@@ -1297,7 +1309,7 @@ impl Db {
             "SELECT
                 block_hash, view, height, qc, signature,
                 state_root_hash, transactions_root_hash, receipts_root_hash,
-                timestamp, gas_used, gas_limit, agg
+                timestamp, gas_used, gas_limit, agg, randao_reveal, mix_hash
              FROM blocks
              WHERE height BETWEEN ?1 AND ?2
              ORDER BY height ASC",
@@ -1318,6 +1330,8 @@ impl Db {
                         timestamp: row.get::<_, SystemTimeSqlable>(8)?.into(),
                         gas_used: row.get(9)?,
                         gas_limit: row.get(10)?,
+                        randao_reveal: row.get(12)?,
+                        mix_hash: row.get(13)?,
                     },
                     agg: row.get(11)?,
                     transactions: vec![],
@@ -1343,6 +1357,8 @@ impl Db {
                     timestamp: row.get::<_, SystemTimeSqlable>(8)?.into(),
                     gas_used: row.get(9)?,
                     gas_limit: row.get(10)?,
+                    randao_reveal: row.get(12)?,
+                    mix_hash: row.get(13)?,
                 },
                 agg: row.get(11)?,
                 transactions: vec![],
@@ -1352,38 +1368,38 @@ impl Db {
         Ok(match filter {
             BlockFilter::Hash(hash) => {
                 self.pool.get()?.prepare_cached(concat!(
-                    "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
+                    "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg, randao_reveal, mix_hash FROM blocks ",
                     "WHERE block_hash = ?1"
                 ),)?.query_row([hash], make_block).optional()?
             }
             BlockFilter::View(view) => {
                 self.pool.get()?.prepare_cached(concat!(
-                    "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
+                    "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg, randao_reveal, mix_hash FROM blocks ",
                     "WHERE view = ?1"
                 ),)?.query_row([view], make_block).optional()?
             }
             BlockFilter::Height(height) => {
                 self.pool.get()?.prepare_cached(concat!(
-                    "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
+                    "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg, randao_reveal, mix_hash FROM blocks ",
                     "WHERE height = ?1 AND is_canonical = TRUE"
                 ),)?.query_row([height], make_block).optional()?
             }
             // Compound SQL queries below, due to - https://github.com/Zilliqa/zq2/issues/2629
             BlockFilter::MaxCanonicalByHeight => {
                 self.pool.get()?.prepare_cached(concat!(
-                    "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
+                    "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg, randao_reveal, mix_hash FROM blocks ",
                     "WHERE is_canonical = true AND height = (SELECT MAX(height) FROM blocks WHERE is_canonical = TRUE)"
                 ),)?.query_row([], make_block).optional()?
             }
             BlockFilter::MaxHeight => {
                 self.pool.get()?.prepare_cached(concat!(
-                    "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
+                    "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg, randao_reveal, mix_hash FROM blocks ",
                     "WHERE height = (SELECT MAX(height) FROM blocks) LIMIT 1"
                 ),)?.query_row([], make_block).optional()?
             }
             BlockFilter::Finalized => {
                 if let Some(result) = self.pool.get()?.prepare_cached(concat!(
-                    "SELECT block_hash, blocks.view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
+                    "SELECT block_hash, blocks.view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg, randao_reveal, mix_hash FROM blocks ",
                     "INNER JOIN tip_info ON blocks.view = tip_info.finalized_view"
                 ),)?.query_row([], make_block).optional()? {
                     Some(result)
@@ -1394,7 +1410,7 @@ impl Db {
             BlockFilter::HighQC => {
                 if let Some(high_qc) = self.get_high_qc()?{
                     self.pool.get()?.prepare_cached(concat!(
-                        "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
+                        "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg, randao_reveal, mix_hash FROM blocks ",
                         "WHERE block_hash = ?1"
                     ),)?.query_row([high_qc.block_hash], make_block).optional()?
                 }else {
@@ -1726,12 +1742,12 @@ mod tests {
             "SELECT data FROM transactions WHERE tx_hash = ?1",
             "SELECT r.block_hash FROM receipts r INNER JOIN blocks b ON r.block_hash = b.block_hash WHERE r.tx_hash = ?1 AND b.is_canonical = TRUE",
             "SELECT tx_hash FROM receipts WHERE block_hash = ?1",
-            "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE height = ?1",
+            "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg, randao_reveal, mix_hash FROM blocks WHERE height = ?1",
             "SELECT 1 FROM blocks WHERE is_canonical = TRUE AND block_hash = ?1",
             "SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE tx_hash = ?1",
             "SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1 ORDER BY tx_index",
-            "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE is_canonical = true AND height = (SELECT MAX(height) FROM blocks WHERE is_canonical = TRUE)",
-            "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE height = (SELECT MAX(height) FROM blocks) LIMIT 1",
+            "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg, randao_reveal, mix_hash FROM blocks WHERE is_canonical = true AND height = (SELECT MAX(height) FROM blocks WHERE is_canonical = TRUE)",
+            "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg, randao_reveal, mix_hash FROM blocks WHERE height = (SELECT MAX(height) FROM blocks) LIMIT 1",
             "SELECT data, transactions.tx_hash FROM transactions INNER JOIN receipts ON transactions.tx_hash = receipts.tx_hash WHERE receipts.block_hash = ?1 ORDER BY receipts.tx_index ASC",
             "SELECT state_root_hash FROM blocks WHERE is_canonical = TRUE AND height = ?1",
             "SELECT view FROM view_history WHERE leader IS NULL LIMIT 1",
@@ -1816,6 +1832,8 @@ mod tests {
             SystemTime::now(),
             EvmGas(0),
             EvmGas(0),
+            Some(BlsSignature::identity()),
+            Some(EMPTY_ROOT_HASH.into()),
         );
 
         let view_history: ViewHistory = ViewHistory::default();

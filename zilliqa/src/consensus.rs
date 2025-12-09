@@ -1157,13 +1157,14 @@ impl Consensus {
         state: &mut State,
         txn: VerifiedTransaction,
         current_block: BlockHeader,
+        randao_mix_hash: Hash,
         inspector: I,
         enable_inspector: bool,
     ) -> Result<Option<TransactionApplyResult>> {
         let hash = txn.hash;
 
         let result =
-            state.apply_transaction(txn.clone(), current_block, inspector, enable_inspector);
+            state.apply_transaction(txn.clone(), current_block, randao_mix_hash, inspector, enable_inspector);
         let result = match result {
             Ok(r) => r,
             Err(error) => {
@@ -1463,6 +1464,8 @@ impl Consensus {
             proposal.header.timestamp, // set block timestamp to **start** point of assembly.
             proposal.header.gas_used,
             proposal.header.gas_limit,
+            proposal.header.randao_reveal,
+            proposal.header.mix_hash,
         );
         self.receipts_cache
             .lock()
@@ -1541,6 +1544,11 @@ impl Consensus {
         let mut transactions_trie: EthTrie<MemoryDB> = EthTrie::new(Arc::new(MemoryDB::new(true)));
         let applied_txs = Vec::<VerifiedTransaction>::new();
 
+        let randao_reveal =
+            Block::compute_randao_reveal(&self.secret_key, executed_block_header.view);
+
+        let mix_hash = Block::compute_randao_mix(parent.header, randao_reveal);
+
         // Generate the early proposal
         // Some critical parts are dummy/missing:
         // a. Majority QC is missing
@@ -1559,6 +1567,8 @@ impl Consensus {
             executed_block_header.timestamp,
             EvmGas(0),
             executed_block_header.gas_limit,
+            Some(randao_reveal),
+            Some(mix_hash),
         );
 
         let mut early_proposal = self.early_proposal.write();
@@ -1581,6 +1591,10 @@ impl Consensus {
         let mut state = self.state.clone();
 
         let proposal = early_proposal.as_ref().unwrap().0.clone();
+
+        let parent = self.get_block(&proposal.parent_hash())?.ok_or_else(|| anyhow!("missing parent block"))?;
+
+        let prev_randa_mix = parent.header.mix_hash.unwrap_or(Hash::ZERO);
 
         // Use state root hash of current early proposal
         state.set_to_root(proposal.state_root_hash().into());
@@ -1625,6 +1639,7 @@ impl Consensus {
                 &mut state,
                 tx.clone(),
                 proposal.header,
+                prev_randa_mix,
                 &mut inspector,
                 self.config.enable_ots_indices,
             )?;
@@ -2340,7 +2355,8 @@ impl Consensus {
                 ..Default::default()
             };
             for view in (parent.view() + 1..current.view()).rev() {
-                if let Ok(leader) = state_at.leader(view, block_header) {
+                let fork = self.state.forks.get(block_header.number);
+                if let Ok(leader) = state_at.leader(view, block_header, fork) {
                     if view == parent.view() + 1 {
                         trace!(
                             view,
@@ -2652,6 +2668,28 @@ impl Consensus {
             return Err(anyhow!(
                 "invalid block, does not extend from finalized block"
             ));
+        }
+
+        let randao_supported = self.state.forks.get(block.number()).randao_support;
+
+        if randao_supported {
+            let randao_reveal = block
+                .header
+                .randao_reveal
+                .ok_or(anyhow!("Missing randao reveal in received proposal!"))?;
+            let view_as_bytes = block.header.view.to_be_bytes();
+            proposer.public_key.verify(&view_as_bytes, randao_reveal)?;
+
+            let mix_hash = Block::compute_randao_mix(parent.header, randao_reveal);
+
+            let block_mix_hash = block
+                .header
+                .mix_hash
+                .ok_or(anyhow!("Missing mix hash in received proposal!"))?;
+
+            if mix_hash != block_mix_hash {
+                return Err(anyhow!("Invalid randao mix!"));
+            }
         }
         Ok(())
     }
@@ -2989,7 +3027,8 @@ impl Consensus {
             number: block.header.number + 1,
             ..Default::default()
         };
-        let Ok(public_key) = state.leader(view, executed_block) else {
+        let fork = state.forks.get(executed_block.number);
+        let Ok(public_key) = state.leader(view, executed_block, fork) else {
             return None;
         };
 
@@ -3304,6 +3343,9 @@ impl Consensus {
             .join(",");
 
         let mut touched_addresses = vec![];
+
+        let prev_randao_mix_hash = parent.header.mix_hash.unwrap_or(Hash::ZERO);
+
         for (tx_index, txn) in verified_txns.iter().enumerate() {
             self.new_transaction(txn.clone(), true)?;
             let tx_hash = txn.hash;
@@ -3312,6 +3354,7 @@ impl Consensus {
                 &mut self.state,
                 txn.clone(),
                 block.header,
+                prev_randao_mix_hash,
                 &mut inspector,
                 self.config.enable_ots_indices,
             )?
@@ -3742,7 +3785,8 @@ impl Consensus {
                 ..Default::default()
             };
             for view in parent_view + 1..block.view() {
-                if let Ok(leader) = state_at.leader(view, header) {
+                let fork = self.state.forks.get(header.number);
+                if let Ok(leader) = state_at.leader(view, header, fork) {
                     if view == parent_view + 1 {
                         /*trace!(
                             view,
@@ -3809,10 +3853,12 @@ impl Consensus {
             };
             // skip the first missed view in a row as its block must have been reorged
             view += 1;
+
+            let fork = self.state.forks.get(header.number);
             // but add all subsequent missed views to the history
             while self.get_block_by_view(view)?.is_none() && self.state.view_history.min_view > view
             {
-                if let Ok(leader) = state_at.leader(view, header) {
+                if let Ok(leader) = state_at.leader(view, header, fork) {
                     self.state
                         .ckpt_view_history
                         .as_mut()
