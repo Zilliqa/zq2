@@ -304,15 +304,17 @@ fn estimate_gas(params: Params, node: &Arc<Node>) -> Result<String> {
     let block_number: BlockNumberOrTag = params.optional_next()?.unwrap_or_default();
     expect_end_of_params(&mut params, 1, 2)?;
 
-    let (block, state) = {
+    let (block, parent, state) = {
         let block = node
             .get_block(block_number)?
             .ok_or_else(|| anyhow!("missing block: {block_number}"))?;
+        let parent = node.get_block(block.parent_hash())?.ok_or_else(|| anyhow!("missing parent block"))?;
+
         let state = node.get_state(&block)?;
         if state.is_empty() {
             return Err(anyhow!("State required to execute request does not exist"));
         }
-        (block, state)
+        (block, parent, state)
     };
 
     let return_value = state.estimate_gas(
@@ -329,6 +331,7 @@ fn estimate_gas(params: Params, node: &Arc<Node>) -> Result<String> {
             tx_type: call_params.transaction_type.unwrap_or_default().into(),
             disable_eip3607: true,
             exec_type: Estimate,
+            randao_mix_hash: parent.header.mix_hash.unwrap_or(Hash::ZERO)
         },
     )?;
 
