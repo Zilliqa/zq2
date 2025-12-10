@@ -1,7 +1,10 @@
-use ethers::{providers::Middleware, types::TransactionRequest};
+use alloy::{
+    primitives::{Address, U256},
+    providers::Provider as _,
+    rpc::types::TransactionRequest,
+};
 use fs_extra::file::CopyOptions;
-use tracing::info;
-use zilliqa::{cfg::Checkpoint, crypto::Hash};
+use zilliqa::{cfg::Checkpoint, crypto::Hash, sync::MIN_PRUNE_INTERVAL};
 
 use crate::{Network, NewNodeOptions};
 
@@ -10,18 +13,21 @@ use crate::{Network, NewNodeOptions};
 async fn prune_interval(mut network: Network) {
     network.run_until_block_finalized(5, 100).await.unwrap();
 
-    info!("Adding pruned node.");
+    tracing::info!("Adding pruned node. {}", MIN_PRUNE_INTERVAL);
     let index = network.add_node_with_options(crate::NewNodeOptions {
-        prune_interval: Some(20),
+        prune_interval: Some(MIN_PRUNE_INTERVAL),
         ..Default::default()
     });
     network.run_until_synced(index).await;
 
-    network.run_until_block_finalized(25, 1000).await.unwrap();
+    network
+        .run_until_block_finalized(MIN_PRUNE_INTERVAL + 5, 1000)
+        .await
+        .unwrap();
 
     let range = network.node_at(index).db.available_range().unwrap();
-    info!("Pruned range: {range:?}");
-    assert_eq!(range.count(), 20);
+    tracing::info!("Pruned range: {range:?}");
+    assert_eq!(range.count() as u64, MIN_PRUNE_INTERVAL);
 }
 
 #[zilliqa_macros::test(do_checkpoints)]
@@ -29,8 +35,12 @@ async fn base_height(mut network: Network) {
     // Populate network with transactions
     let wallet = network.genesis_wallet().await;
     network.run_until_block_finalized(5, 200).await.unwrap();
-    wallet
-        .send_transaction(TransactionRequest::pay(wallet.address(), 10), None)
+    let _ = wallet
+        .send_transaction(
+            TransactionRequest::default()
+                .to(Address::random())
+                .value(U256::from(10)),
+        )
         .await
         .unwrap()
         .tx_hash();
@@ -51,7 +61,7 @@ async fn base_height(mut network: Network) {
         .join("10");
 
     // Create new node and pass it one of those checkpoint files
-    let checkpoint_hash = wallet.get_block(10).await.unwrap().unwrap().hash.unwrap();
+    let checkpoint_hash = wallet.get_block(10.into()).await.unwrap().unwrap().hash();
     let new_node_idx = network.add_node_with_options(NewNodeOptions {
         checkpoint: Some(Checkpoint {
             file: checkpoint_path.to_str().unwrap().to_string(),
@@ -64,7 +74,7 @@ async fn base_height(mut network: Network) {
     // Confirm wallet and new_node_wallet have the same block and state
     let new_node_wallet = network.wallet_of_node(new_node_idx).await;
     let latest_block_number = new_node_wallet.get_block_number().await.unwrap();
-    assert_eq!(latest_block_number, 10.into());
+    assert_eq!(latest_block_number, 10);
 
     // check the new node catches up and keeps up with block production
     network.run_until_synced(new_node_idx).await;
@@ -86,8 +96,12 @@ async fn state_sync(mut network: Network) {
     // Populate network with transactions
     let wallet = network.genesis_wallet().await;
     network.run_until_block_finalized(5, 200).await.unwrap();
-    wallet
-        .send_transaction(TransactionRequest::pay(wallet.address(), 10), None)
+    let _ = wallet
+        .send_transaction(
+            TransactionRequest::default()
+                .to(Address::random())
+                .value(U256::from(10)),
+        )
         .await
         .unwrap()
         .tx_hash();
@@ -129,7 +143,7 @@ async fn state_sync(mut network: Network) {
     );
 
     // Restart chosen node with checkpoint file
-    let checkpoint_hash = wallet.get_block(10).await.unwrap().unwrap().hash.unwrap();
+    let checkpoint_hash = wallet.get_block(10.into()).await.unwrap().unwrap().hash();
     network.restart_node_with_options(
         idx,
         NewNodeOptions {

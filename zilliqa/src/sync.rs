@@ -2015,7 +2015,7 @@ impl SyncSegments {
 
 // FIXME: Find a better way to do this, other than checking for debug/release build.
 // For the purpose of testing, we need a smaller prune interval to ensure that the test cases run faster.
-#[cfg(debug_assertions)]
+#[cfg(feature = "fake_time")]
 pub const MIN_PRUNE_INTERVAL: u64 = 10;
-#[cfg(not(debug_assertions))]
+#[cfg(not(feature = "fake_time"))]
 pub const MIN_PRUNE_INTERVAL: u64 = 300;

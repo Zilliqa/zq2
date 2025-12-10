@@ -753,9 +753,9 @@ impl Consensus {
             if (milliseconds_since_last_view_change
                 > self.config.consensus.consensus_timeout.as_millis() as u64)
                 && !self.config.consensus.new_view_broadcast_interval.is_zero()
-                && (Duration::from_millis(milliseconds_since_last_view_change).as_secs()
-                    % self.config.consensus.new_view_broadcast_interval.as_secs())
-                    == 0
+                && (Duration::from_millis(milliseconds_since_last_view_change)
+                    .as_secs()
+                    .is_multiple_of(self.config.consensus.new_view_broadcast_interval.as_secs()))
             {
                 match self.network_message_cache.clone() {
                     Some((_, ExternalMessage::NewView(new_view))) => {
@@ -2705,7 +2705,7 @@ impl Consensus {
     }
 
     fn block_is_first_in_epoch(&self, number: u64) -> bool {
-        number % self.config.consensus.blocks_per_epoch == 0
+        number.is_multiple_of(self.config.consensus.blocks_per_epoch)
     }
 
     fn epoch_number(&self, block_number: u64) -> u64 {
@@ -2714,7 +2714,7 @@ impl Consensus {
     }
 
     fn epoch_is_checkpoint(&self, epoch_number: u64) -> bool {
-        epoch_number % self.config.consensus.epochs_per_checkpoint == 0
+        epoch_number.is_multiple_of(self.config.consensus.epochs_per_checkpoint)
     }
 
     fn vote_from_block(&self, block: &Block) -> Vote {

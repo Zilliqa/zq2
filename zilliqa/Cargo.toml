@@ -116,7 +116,8 @@ redis = { version = "0.32.7", features = ["keep-alive", "r2d2", "tcp_nodelay"], 
 alloy = { version = "1.1.2", default-features = false, features = ["consensus", "dyn-abi", "eips", "json-abi", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types"] }
 
 [dev-dependencies]
-alloy = { version = "1.1.2", features = ["network", "provider-ws", "providers", "rand", "signer-local", "signers"], default-features = false }
+# alloy = { version = "1.1.2", features = ["network", "provider-ws", "providers", "rand", "signer-local", "signers"], default-features = false }
+alloy = { version = "1.1.2", features = ["json-rpc", "pubsub"] }
 async-trait = "0.1.88"
 criterion = "0.5.1"
 fs_extra = "1.3.0"
