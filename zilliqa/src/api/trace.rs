@@ -95,7 +95,8 @@ fn trace_block(params: Params, node: &Arc<Node>) -> Result<Vec<TraceResults>> {
         let pre_state = PendingState::new(state.try_clone()?, fork.clone());
 
         // Apply the transaction
-        let result = state.apply_transaction(txn, block.header, randao_mix_hash, &mut inspector, true)?;
+        let result =
+            state.apply_transaction(txn, block.header, randao_mix_hash, &mut inspector, true)?;
 
         // Build trace results
         if let TransactionApplyResult::Evm(result, ..) = result {
@@ -230,7 +231,13 @@ fn trace_filter(params: Params, node: &Arc<Node>) -> Result<Vec<TraceResults>> {
             let mut inspector = TracingInspector::new(config);
             let pending_state = PendingState::new(state.try_clone()?, fork.clone());
 
-            let result = state.apply_transaction(txn, block.header, randao_mix_hash, &mut inspector, true)?;
+            let result = state.apply_transaction(
+                txn,
+                block.header,
+                randao_mix_hash,
+                &mut inspector,
+                true,
+            )?;
 
             // Only include EVM transaction traces
             if let TransactionApplyResult::Evm(result, ..) = result {

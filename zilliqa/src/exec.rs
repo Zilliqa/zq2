@@ -1081,12 +1081,16 @@ impl State {
             .map_or(Ok(0), |v| Ok(v.as_u128()))
     }
 
-    pub fn leader(&self, view: u64, current_block: BlockHeader, fork: &Fork) -> Result<NodePublicKey> {
-        let data =  {
+    pub fn leader(
+        &self,
+        view: u64,
+        current_block: BlockHeader,
+        fork: &Fork,
+    ) -> Result<NodePublicKey> {
+        let data = {
             if fork.randao_support {
                 contracts::deposit::LEADER_AT_VIEW.encode_input(&[Token::Uint(view.into())])?
-            }
-            else {
+            } else {
                 contracts::deposit::LEADER_AT_VIEW_WITH_RANDAO.encode_input(&[])?
             }
         };
@@ -1101,8 +1105,7 @@ impl State {
         let leader = ensure_success(result)?;
 
         NodePublicKey::from_bytes(
-            &contracts::deposit::LEADER_AT_VIEW
-                .decode_output(&leader)?[0]
+            &contracts::deposit::LEADER_AT_VIEW.decode_output(&leader)?[0]
                 .clone()
                 .into_bytes()
                 .unwrap(),

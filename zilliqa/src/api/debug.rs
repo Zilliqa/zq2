@@ -150,7 +150,13 @@ fn debug_trace_transaction(params: Params, node: &Arc<Node>) -> Result<TraceResu
             .get_transaction_by_hash(prev_tx_hash)?
             .ok_or_else(|| anyhow!("transaction not found: {prev_tx_hash}"))?;
 
-        state.apply_transaction(prev_tx, block.header, randao_mix_hash, inspector::noop(), false)?;
+        state.apply_transaction(
+            prev_tx,
+            block.header,
+            randao_mix_hash,
+            inspector::noop(),
+            false,
+        )?;
     }
 
     // Get the target transaction
@@ -162,8 +168,14 @@ fn debug_trace_transaction(params: Params, node: &Arc<Node>) -> Result<TraceResu
     let trace_opts = trace_opts.unwrap_or_default();
 
     // Debug trace the transaction
-    let trace_result =
-        node.debug_trace_transaction(&mut state, txn_hash, txn_index, &block, randao_mix_hash, trace_opts)?;
+    let trace_result = node.debug_trace_transaction(
+        &mut state,
+        txn_hash,
+        txn_index,
+        &block,
+        randao_mix_hash,
+        trace_opts,
+    )?;
 
     trace_result.ok_or_else(|| anyhow!("Failed to trace transaction"))
 }

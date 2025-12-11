@@ -3,6 +3,7 @@ use std::{
     sync::{Arc, atomic::AtomicUsize},
     time::{Duration, Instant},
 };
+
 use alloy::{
     eips::{BlockId, BlockNumberOrTag, RpcBlockHash},
     primitives::Address,
@@ -660,13 +661,25 @@ impl Node {
                 let other_txn = node
                     .get_transaction_by_hash(other_txn_hash)?
                     .ok_or_else(|| anyhow!("transaction not found: {other_txn_hash}"))?;
-                state.apply_transaction(other_txn, block.header, randao_mix_hash, inspector::noop(), false)?;
+                state.apply_transaction(
+                    other_txn,
+                    block.header,
+                    randao_mix_hash,
+                    inspector::noop(),
+                    false,
+                )?;
             } else {
                 let config = TracingInspectorConfig::from_parity_config(trace_types);
                 let mut inspector = TracingInspector::new(config);
                 let pending_state = PendingState::new(state.try_clone()?, fork.clone());
 
-                let result = state.apply_transaction(txn, block.header, randao_mix_hash, &mut inspector, true)?;
+                let result = state.apply_transaction(
+                    txn,
+                    block.header,
+                    randao_mix_hash,
+                    &mut inspector,
+                    true,
+                )?;
 
                 let TransactionApplyResult::Evm(result, ..) = result else {
                     return Err(anyhow!("not an EVM transaction"));
@@ -718,9 +731,16 @@ impl Node {
                 let other_txn = node
                     .get_transaction_by_hash(other_txn_hash)?
                     .ok_or_else(|| anyhow!("transaction not found: {other_txn_hash}"))?;
-                state.apply_transaction(other_txn, parent.header, randao_mix_hash, inspector::noop(), false)?;
+                state.apply_transaction(
+                    other_txn,
+                    parent.header,
+                    randao_mix_hash,
+                    inspector::noop(),
+                    false,
+                )?;
             } else {
-                let result = state.apply_transaction(txn, block.header, randao_mix_hash, inspector, true)?;
+                let result =
+                    state.apply_transaction(txn, block.header, randao_mix_hash, inspector, true)?;
 
                 return Ok(result);
             }
@@ -793,7 +813,13 @@ impl Node {
             let inspector_config = TracingInspectorConfig::from_geth_config(&config);
             let mut inspector = TracingInspector::new(inspector_config);
 
-            let result = state.apply_transaction(txn, block.header, randao_mix_hash, &mut inspector, true)?;
+            let result = state.apply_transaction(
+                txn,
+                block.header,
+                randao_mix_hash,
+                &mut inspector,
+                true,
+            )?;
 
             let TransactionApplyResult::Evm(result, ..) = result else {
                 return Ok(None);
@@ -821,8 +847,13 @@ impl Node {
                         TracingInspectorConfig::from_geth_call_config(&call_config),
                     );
 
-                    let result =
-                        state.apply_transaction(txn, block.header, randao_mix_hash, &mut inspector, true)?;
+                    let result = state.apply_transaction(
+                        txn,
+                        block.header,
+                        randao_mix_hash,
+                        &mut inspector,
+                        true,
+                    )?;
 
                     let TransactionApplyResult::Evm(result, ..) = result else {
                         return Ok(None);
@@ -842,8 +873,13 @@ impl Node {
                 }
                 GethDebugBuiltInTracerType::FourByteTracer => {
                     let mut inspector = FourByteInspector::default();
-                    let result =
-                        state.apply_transaction(txn, block.header, randao_mix_hash, &mut inspector, true)?;
+                    let result = state.apply_transaction(
+                        txn,
+                        block.header,
+                        randao_mix_hash,
+                        &mut inspector,
+                        true,
+                    )?;
 
                     let TransactionApplyResult::Evm(_) = result else {
                         return Ok(None);
@@ -858,8 +894,13 @@ impl Node {
                     let mux_config = tracer_config.into_mux_config()?;
 
                     let mut inspector = MuxInspector::try_from_config(mux_config)?;
-                    let result =
-                        state.apply_transaction(txn, block.header, randao_mix_hash, &mut inspector, true)?;
+                    let result = state.apply_transaction(
+                        txn,
+                        block.header,
+                        randao_mix_hash,
+                        &mut inspector,
+                        true,
+                    )?;
 
                     let TransactionApplyResult::Evm(result, ..) = result else {
                         return Ok(None);
@@ -889,8 +930,13 @@ impl Node {
                     let mut inspector = TracingInspector::new(
                         TracingInspectorConfig::from_geth_prestate_config(&prestate_config),
                     );
-                    let result =
-                        state.apply_transaction(txn, block.header, randao_mix_hash, &mut inspector, true)?;
+                    let result = state.apply_transaction(
+                        txn,
+                        block.header,
+                        randao_mix_hash,
+                        &mut inspector,
+                        true,
+                    )?;
 
                     let TransactionApplyResult::Evm(result, ..) = result else {
                         return Ok(None);
@@ -921,8 +967,13 @@ impl Node {
                     JsInspector::with_transaction_context(js_code, config, transaction_context)
                         .map_err(|e| anyhow!("Unable to create js inspector: {e}"))?;
 
-                let result =
-                    state.apply_transaction(txn.clone(), block.header, randao_mix_hash, &mut inspector, true)?;
+                let result = state.apply_transaction(
+                    txn.clone(),
+                    block.header,
+                    randao_mix_hash,
+                    &mut inspector,
+                    true,
+                )?;
 
                 let TransactionApplyResult::Evm(result) = result else {
                     return Ok(None);

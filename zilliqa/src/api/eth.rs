@@ -308,7 +308,9 @@ fn estimate_gas(params: Params, node: &Arc<Node>) -> Result<String> {
         let block = node
             .get_block(block_number)?
             .ok_or_else(|| anyhow!("missing block: {block_number}"))?;
-        let parent = node.get_block(block.parent_hash())?.ok_or_else(|| anyhow!("missing parent block"))?;
+        let parent = node
+            .get_block(block.parent_hash())?
+            .ok_or_else(|| anyhow!("missing parent block"))?;
 
         let state = node.get_state(&block)?;
         if state.is_empty() {
@@ -331,7 +333,7 @@ fn estimate_gas(params: Params, node: &Arc<Node>) -> Result<String> {
             tx_type: call_params.transaction_type.unwrap_or_default().into(),
             disable_eip3607: true,
             exec_type: Estimate,
-            randao_mix_hash: parent.header.mix_hash.unwrap_or(Hash::ZERO)
+            randao_mix_hash: parent.header.mix_hash.unwrap_or(Hash::ZERO),
         },
     )?;
 

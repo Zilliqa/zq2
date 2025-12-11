@@ -389,8 +389,13 @@ pub mod deposit_v8 {
     pub static LEADER_AT_VIEW: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("leaderAtView").unwrap().clone());
 
-    pub static LEADER_AT_VIEW_WITH_RANDAO: Lazy<Function> =
-        Lazy::new(|| CONTRACT.abi.function("leaderAtViewWithRandao").unwrap().clone());
+    pub static LEADER_AT_VIEW_WITH_RANDAO: Lazy<Function> = Lazy::new(|| {
+        CONTRACT
+            .abi
+            .function("leaderAtViewWithRandao")
+            .unwrap()
+            .clone()
+    });
     pub static DEPOSIT: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("deposit").unwrap().clone());
     pub static DEPOSIT_TOPUP: Lazy<Function> =

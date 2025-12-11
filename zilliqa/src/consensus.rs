@@ -1169,8 +1169,13 @@ impl Consensus {
     ) -> Result<Option<TransactionApplyResult>> {
         let hash = txn.hash;
 
-        let result =
-            state.apply_transaction(txn.clone(), current_block, randao_mix_hash, inspector, enable_inspector);
+        let result = state.apply_transaction(
+            txn.clone(),
+            current_block,
+            randao_mix_hash,
+            inspector,
+            enable_inspector,
+        );
         let result = match result {
             Ok(r) => r,
             Err(error) => {
@@ -1598,7 +1603,9 @@ impl Consensus {
 
         let proposal = early_proposal.as_ref().unwrap().0.clone();
 
-        let parent = self.get_block(&proposal.parent_hash())?.ok_or_else(|| anyhow!("missing parent block"))?;
+        let parent = self
+            .get_block(&proposal.parent_hash())?
+            .ok_or_else(|| anyhow!("missing parent block"))?;
 
         let prev_randa_mix = parent.header.mix_hash.unwrap_or(Hash::ZERO);
 
@@ -2688,15 +2695,15 @@ impl Consensus {
             let view_as_bytes = block.header.view.to_be_bytes();
             proposer.public_key.verify(&view_as_bytes, randao_reveal)?;
 
-            let mix_hash = Block::compute_randao_mix(parent.header, randao_reveal);
+            let computed_mix_hash = Block::compute_randao_mix(parent.header, randao_reveal);
 
             let block_mix_hash = block
                 .header
                 .mix_hash
                 .ok_or(anyhow!("Missing mix hash in received proposal!"))?;
 
-            if mix_hash != block_mix_hash {
-                return Err(anyhow!("Invalid randao mix!"));
+            if computed_mix_hash != block_mix_hash {
+                return Err(anyhow!("Invalid randao mix hash!"));
             }
         }
         Ok(())

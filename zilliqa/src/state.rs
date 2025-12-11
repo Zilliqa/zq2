@@ -254,8 +254,7 @@ impl State {
 
         if let Some(deposit_v8_deploy_config) = &config.contract_upgrades.deposit_v8 {
             if deposit_v8_deploy_config.height == block_header.number {
-                let deposit_v8_contract =
-                    Lazy::<Contract>::force(&contracts::deposit_v8::CONTRACT);
+                let deposit_v8_contract = Lazy::<Contract>::force(&contracts::deposit_v8::CONTRACT);
                 let reinitialise_params_opt = deposit_v8_deploy_config.reinitialise_params.clone();
                 let deposit_v8_reinitialise_data_opt = match reinitialise_params_opt {
                     Some(reinitialise_params) => Some(
