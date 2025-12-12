@@ -120,12 +120,12 @@ contract Deposit is UUPSUpgradeable {
 
     // keccak256(abi.encode(uint256(keccak256("zilliqa.storage.DepositStorage")) - 1)) & ~bytes32(uint256(0xff))
     bytes32 private constant DEPOSIT_STORAGE_LOCATION =
-    0x958a6cf6390bd7165e3519675caa670ab90f0161508a9ee714d3db7edc507400;
+        0x958a6cf6390bd7165e3519675caa670ab90f0161508a9ee714d3db7edc507400;
 
     function _getDepositStorage()
-    private
-    pure
-    returns (DepositStorage storage $)
+        private
+        pure
+        returns (DepositStorage storage $)
     {
         assembly {
             $.slot := DEPOSIT_STORAGE_LOCATION
@@ -137,7 +137,7 @@ contract Deposit is UUPSUpgradeable {
     }
 
     function _authorizeUpgrade(
-    // solhint-disable-next-line no-unused-vars
+        // solhint-disable-next-line no-unused-vars
         address newImplementation
     ) internal virtual override {
         require(
@@ -332,14 +332,14 @@ contract Deposit is UUPSUpgradeable {
     }
 
     function getStakersData()
-    public
-    view
-    returns (
-        bytes[] memory stakerKeys,
-        uint256[] memory indices,
-        uint256[] memory balances,
-        StakerData[] memory stakers
-    )
+        public
+        view
+        returns (
+            bytes[] memory stakerKeys,
+            uint256[] memory indices,
+            uint256[] memory balances,
+            StakerData[] memory stakers
+        )
     {
         DepositStorage storage $ = _getDepositStorage();
         Committee storage currentCommittee = committee();
@@ -381,9 +381,9 @@ contract Deposit is UUPSUpgradeable {
     function getStakerData(
         bytes calldata blsPubKey
     )
-    public
-    view
-    returns (uint256 index, uint256 balance, StakerData memory stakerData)
+        public
+        view
+        returns (uint256 index, uint256 balance, StakerData memory stakerData)
     {
         DepositStorage storage $ = _getDepositStorage();
         Committee storage currentCommittee = committee();
@@ -432,7 +432,7 @@ contract Deposit is UUPSUpgradeable {
         // i.e. `latestComputedEpoch` determines the most recent committee
         Committee storage latestCommittee = $._committee[
             $.latestComputedEpoch % 3
-            ];
+        ];
 
         // We don't need to check if `blsPubKey` is in `stakerKeys` here. If the `blsPubKey` is not a staker, the
         // balance will default to zero.
@@ -536,7 +536,7 @@ contract Deposit is UUPSUpgradeable {
         if ($.latestComputedEpoch < currentEpoch() + 2) {
             Committee storage latestComputedCommittee = $._committee[
                 $.latestComputedEpoch % 3
-                ];
+            ];
             // Note the early exit condition if `latestComputedEpoch + 3` which ensures this loop will not run more
             // than twice. This is acceptable because we only store 3 committees at a time, so once we have updated two
             // of them to the latest computed committee, there is no more work to do.
@@ -555,7 +555,7 @@ contract Deposit is UUPSUpgradeable {
                     j++
                 ) {
                     delete $._committee[i % 3].stakers[
-                    $._committee[i % 3].stakerKeys[j]
+                        $._committee[i % 3].stakerKeys[j]
                     ];
                 }
 
@@ -571,7 +571,7 @@ contract Deposit is UUPSUpgradeable {
                     bytes storage stakerKey = latestComputedCommittee
                         .stakerKeys[j];
                     $._committee[i % 3].stakers[
-                    stakerKey
+                        stakerKey
                     ] = latestComputedCommittee.stakers[stakerKey];
                 }
             }
@@ -661,7 +661,7 @@ contract Deposit is UUPSUpgradeable {
 
         Committee storage futureCommittee = $._committee[
             (currentEpoch() + 2) % 3
-            ];
+        ];
 
         if (futureCommittee.stakerKeys.length >= $.maximumStakers) {
             revert TooManyStakers();
@@ -688,7 +688,7 @@ contract Deposit is UUPSUpgradeable {
 
         Committee storage futureCommittee = $._committee[
             (currentEpoch() + 2) % 3
-            ];
+        ];
         if (futureCommittee.stakers[blsPubKey].index == 0) {
             revert KeyNotStaked();
         }
@@ -713,7 +713,7 @@ contract Deposit is UUPSUpgradeable {
 
         Committee storage futureCommittee = $._committee[
             (currentEpoch() + 2) % 3
-            ];
+        ];
         if (futureCommittee.stakers[blsPubKey].index == 0) {
             revert KeyNotStaked();
         }
@@ -736,8 +736,8 @@ contract Deposit is UUPSUpgradeable {
             if (deleteIndex != lastIndex) {
                 // Move the last staker in `stakerKeys` to the position of the staker we want to delete.
                 bytes storage lastStakerKey = futureCommittee.stakerKeys[
-                            lastIndex
-                    ];
+                    lastIndex
+                ];
                 futureCommittee.stakerKeys[deleteIndex] = lastStakerKey;
                 // We need to remember to update the moved staker's `index` too.
                 futureCommittee.stakers[lastStakerKey].index = futureCommittee
