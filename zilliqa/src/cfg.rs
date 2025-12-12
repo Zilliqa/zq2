@@ -707,6 +707,9 @@ impl Forks {
                 ForkName::InjectAccessList => fork.inject_access_list,
                 ForkName::UseMaxGasPriorityFee => fork.use_max_gas_priority_fee,
                 ForkName::ValidatorJailing => fork.validator_jailing,
+                ForkName::ScillaCallGasExemptAddrsV2 => {
+                    fork.scilla_call_gas_exempt_addrs_v2.length() != 0
+                }
             } {
                 return Some(fork.at_height);
             }
@@ -752,6 +755,7 @@ pub struct Fork {
     pub failed_zil_transfers_to_eoa_proper_fee_deduction: bool,
     pub validator_jailing: bool,
     pub scilla_empty_maps_are_encoded_correctly: bool,
+    pub scilla_call_gas_exempt_addrs_v2: Vec<Address>,
 }
 
 pub enum ForkName {
@@ -778,6 +782,7 @@ pub enum ForkName {
     InjectAccessList,
     UseMaxGasPriorityFee,
     ValidatorJailing,
+    ScillaCallGasExemptAddrsV2,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -892,6 +897,9 @@ pub struct ForkDelta {
     pub validator_jailing: Option<bool>,
     /// if true, empty scilla maps having no presence in state are encoded as empty maps, not empty values
     pub scilla_empty_maps_are_encoded_correctly: Option<bool>,
+    // See comment for scilla_call_gas_exempt_addrs
+    #[serde(default)]
+    pub scilla_call_gas_exempt_addrs_v2: Vec<Address>,
 }
 
 impl Fork {
@@ -997,6 +1005,11 @@ impl Fork {
             scilla_empty_maps_are_encoded_correctly: delta
                 .scilla_empty_maps_are_encoded_correctly
                 .unwrap_or(self.scilla_empty_maps_are_encoded_correctly),
+            scilla_call_gas_exempt_addrs_v2: {
+                let mut addrs = self.scilla_call_gas_exempt_addrs_v2.clone();
+                addrs.extend_from_slice(&delta.scilla_call_gas_exempt_addrs_v2);
+                addrs
+            },
         }
     }
 }
@@ -1099,6 +1112,7 @@ pub fn genesis_fork_default() -> Fork {
         failed_zil_transfers_to_eoa_proper_fee_deduction: true,
         validator_jailing: true,
         scilla_empty_maps_are_encoded_correctly: true,
+        scilla_call_gas_exempt_addrs_v2: vec![],
     }
 }
 
@@ -1534,6 +1548,7 @@ mod tests {
                 failed_zil_transfers_to_eoa_proper_fee_deduction: true,
                 validator_jailing: true,
                 scilla_empty_maps_are_encoded_correctly: true,
+                scilla_call_gas_exempt_addrs_v2: vec![],
             },
             forks: vec![],
             ..Default::default()
@@ -1584,6 +1599,7 @@ mod tests {
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                     validator_jailing: None,
                     scilla_empty_maps_are_encoded_correctly: None,
+                    scilla_call_gas_exempt_addrs_v2: vec![],
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1621,6 +1637,7 @@ mod tests {
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                     validator_jailing: None,
                     scilla_empty_maps_are_encoded_correctly: None,
+                    scilla_call_gas_exempt_addrs_v2: vec![],
                 },
             ],
             ..Default::default()
