@@ -752,6 +752,7 @@ pub struct Fork {
     pub failed_zil_transfers_to_eoa_proper_fee_deduction: bool,
     pub validator_jailing: bool,
     pub scilla_empty_maps_are_encoded_correctly: bool,
+    pub cancun_active: bool,
 }
 
 pub enum ForkName {
@@ -892,6 +893,8 @@ pub struct ForkDelta {
     pub validator_jailing: Option<bool>,
     /// if true, empty scilla maps having no presence in state are encoded as empty maps, not empty values
     pub scilla_empty_maps_are_encoded_correctly: Option<bool>,
+    /// if true, cancun is activated in evm
+    pub cancun_active: Option<bool>,
 }
 
 impl Fork {
@@ -997,6 +1000,7 @@ impl Fork {
             scilla_empty_maps_are_encoded_correctly: delta
                 .scilla_empty_maps_are_encoded_correctly
                 .unwrap_or(self.scilla_empty_maps_are_encoded_correctly),
+            cancun_active: delta.cancun_active.unwrap_or(self.cancun_active),
         }
     }
 }
@@ -1099,6 +1103,7 @@ pub fn genesis_fork_default() -> Fork {
         failed_zil_transfers_to_eoa_proper_fee_deduction: true,
         validator_jailing: true,
         scilla_empty_maps_are_encoded_correctly: true,
+        cancun_active: true,
     }
 }
 
@@ -1267,6 +1272,7 @@ mod tests {
                 failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                 validator_jailing: None,
                 scilla_empty_maps_are_encoded_correctly: None,
+                cancun_active: None,
             }],
             ..Default::default()
         };
@@ -1324,6 +1330,7 @@ mod tests {
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                     validator_jailing: Some(false),
                     scilla_empty_maps_are_encoded_correctly: Some(false),
+                    cancun_active: Some(false),
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1361,6 +1368,7 @@ mod tests {
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                     validator_jailing: None,
                     scilla_empty_maps_are_encoded_correctly: None,
+                    cancun_active: None,
                 },
             ],
             ..Default::default()
@@ -1435,6 +1443,7 @@ mod tests {
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                     validator_jailing: None,
                     scilla_empty_maps_are_encoded_correctly: None,
+                    cancun_active: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1472,6 +1481,7 @@ mod tests {
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                     validator_jailing: None,
                     scilla_empty_maps_are_encoded_correctly: None,
+                    cancun_active: None,
                 },
             ],
             ..Default::default()
@@ -1534,6 +1544,7 @@ mod tests {
                 failed_zil_transfers_to_eoa_proper_fee_deduction: true,
                 validator_jailing: true,
                 scilla_empty_maps_are_encoded_correctly: true,
+                cancun_active: true,
             },
             forks: vec![],
             ..Default::default()
@@ -1584,6 +1595,7 @@ mod tests {
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                     validator_jailing: None,
                     scilla_empty_maps_are_encoded_correctly: None,
+                    cancun_active: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1621,6 +1633,7 @@ mod tests {
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                     validator_jailing: None,
                     scilla_empty_maps_are_encoded_correctly: None,
+                    cancun_active: None,
                 },
             ],
             ..Default::default()

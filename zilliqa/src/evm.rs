@@ -25,12 +25,13 @@ use crate::{
     precompiles::ZQ2PrecompileProvider,
 };
 
-pub(crate) const SPEC_ID: SpecId = SpecId::SHANGHAI;
+pub(crate) const SPEC_ID_SHANGHAI: SpecId = SpecId::SHANGHAI;
+pub(crate) const SPEC_ID_CANCUN: SpecId = SpecId::CANCUN;
 pub type ZQ2EvmContext =
     Context<BlockEnv, TxEnv, CfgEnv, PendingState, Journal<PendingState>, ExternalContext>;
 pub(crate) fn new_zq2_evm_ctx(db: PendingState, chain: ExternalContext) -> ZQ2EvmContext {
     let ctx: Context<BlockEnv, TxEnv, CfgEnv, PendingState, Journal<PendingState>> =
-        Context::new(db, SPEC_ID);
+        Context::new(db, chain.spec_id);
     ctx.with_chain(chain)
 }
 
@@ -49,7 +50,7 @@ impl<I: Inspector<ZQ2EvmContext>> ZQ2Evm<I> {
         let mut precompiles = ZQ2PrecompileProvider::new();
         <ZQ2PrecompileProvider as PrecompileProvider<ZQ2EvmContext>>::set_spec(
             &mut precompiles,
-            SPEC_ID,
+            ctx.chain.spec_id,
         );
         ZQ2Evm(Evm {
             ctx,
