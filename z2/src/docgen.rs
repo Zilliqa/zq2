@@ -195,12 +195,12 @@ fn remove_key(
             // Insert all but
             let mut new_map = serde_yaml::Mapping::new();
             for (k, v) in map {
-                if let serde_yaml::Value::String(k_s) = k {
-                    if !(idx == components.len() - 1 && k_s == component) {
-                        let to_insert = remove_key(v, components, idx + 1);
-                        if let Some(v) = to_insert {
-                            new_map.insert(k.clone(), v);
-                        }
+                if let serde_yaml::Value::String(k_s) = k
+                    && !(idx == components.len() - 1 && k_s == component)
+                {
+                    let to_insert = remove_key(v, components, idx + 1);
+                    if let Some(v) = to_insert {
+                        new_map.insert(k.clone(), v);
                     }
                 }
             }
