@@ -837,11 +837,11 @@ impl Network {
 
             // Remove the matching messages
             messages.retain(|(s, d, m)| {
-                if let AnyMessage::External(ExternalMessage::Proposal(prop)) = m {
-                    if !prop.transactions.is_empty() {
-                        removed_items.push((*s, *d, m.clone()));
-                        return false;
-                    }
+                if let AnyMessage::External(ExternalMessage::Proposal(prop)) = m
+                    && !prop.transactions.is_empty()
+                {
+                    removed_items.push((*s, *d, m.clone()));
+                    return false;
                 }
                 true
             });
@@ -1381,12 +1381,11 @@ impl Network {
         let idx = self.random_index();
         let db = self.get_node(idx).db.clone();
         loop {
-            if let Some(view) = db.get_finalized_view()? {
-                if let Some(block) = db.get_block(BlockFilter::View(view))? {
-                    if block.number() >= target_block {
-                        return Ok(());
-                    }
-                }
+            if let Some(view) = db.get_finalized_view()?
+                && let Some(block) = db.get_block(BlockFilter::View(view))?
+                && block.number() >= target_block
+            {
+                return Ok(());
             }
             if timeout == 0 {
                 return Err(anyhow!(
@@ -1415,13 +1414,12 @@ impl Network {
         let wallet = PrivateKeySigner::random_with(self.rng.lock().unwrap().deref_mut());
         let wallet = EthereumWallet::from(wallet);
 
-        let provider = ProviderBuilder::new()
+        ProviderBuilder::new()
             .wallet(wallet)
             .connect_client(RpcClient::new(
                 FauxRpcTransport::new(node.rpc_module.clone()),
                 true,
-            ));
-        provider
+            ))
     }
 
     /// Returns (index, TestNode)
@@ -1465,12 +1463,11 @@ impl Network {
             .unwrap();
         trace!(index = node.index, "node selected for wallet");
 
-        let provider = ProviderBuilder::new()
+        ProviderBuilder::new()
             .wallet(wallet)
             .connect_pubsub_with(FauxRpcTransport::new(node.rpc_module.clone()))
             .await
-            .unwrap();
-        provider
+            .unwrap()
     }
 
     pub async fn wallet_from_key(&mut self, key: SigningKey) -> Wallet {
@@ -1482,12 +1479,11 @@ impl Network {
             .unwrap();
         trace!(index = node.index, "node selected for wallet");
 
-        let provider = ProviderBuilder::new()
+        ProviderBuilder::new()
             .wallet(wallet)
             .connect_with(&FauxRpcTransport::new(node.rpc_module.clone()))
             .await
-            .unwrap();
-        provider
+            .unwrap()
     }
 
     /// Default genesis wallet
@@ -1611,7 +1607,7 @@ async fn deploy_contract(
         .await
         .unwrap()
         .tx_hash();
-    let receipt = network.run_until_receipt(&wallet, &tx_hash, 50).await;
+    let receipt = network.run_until_receipt(wallet, &tx_hash, 50).await;
     // tracing::debug!("Contract {address:?} <= {abi:?}");
     (receipt.contract_address.unwrap(), receipt)
 }
@@ -1814,7 +1810,7 @@ impl PubSubConnect for FauxRpcTransport {
         let (handle, interface) = ConnectionHandle::new();
         let backend = FauxBackend {
             rpc_module: self.rpc_module.clone(),
-            interface: interface,
+            interface,
             subscriptions: HashMap::with_capacity(3),
         };
         backend.spawn();

@@ -76,7 +76,7 @@ async fn deposit_v2_stake(
 
     let hash = *staker_wallet.send_transaction(tx).await.unwrap().tx_hash();
     let receipt = network.run_until_receipt(staker_wallet, &hash, 102).await;
-    assert_eq!(receipt.status(), true);
+    assert!(receipt.status());
     (hash, receipt.block_number.unwrap())
 }
 
@@ -124,7 +124,7 @@ async fn deposit_stake(
 
     let hash = *staker_wallet.send_transaction(tx).await.unwrap().tx_hash();
     let receipt = network.run_until_receipt(staker_wallet, &hash, 104).await;
-    assert_eq!(receipt.status(), true);
+    assert!(receipt.status());
     (hash, receipt.block_number.unwrap())
 }
 
@@ -139,7 +139,7 @@ async fn current_epoch(wallet: &Wallet, block: Option<u64>) -> u64 {
         ));
     let response = wallet
         .call(tx)
-        .block(block.map_or(BlockId::pending(), |n| BlockId::number(n)))
+        .block(block.map_or(BlockId::pending(), BlockId::number))
         .await
         .unwrap();
     let epoch = contracts::deposit::CURRENT_EPOCH
@@ -176,7 +176,7 @@ async fn unstake_amount(
         .gas_limit(10000000); // TODO: Why needed?
     let hash = *control_wallet.send_transaction(tx).await.unwrap().tx_hash();
     let receipt = network.run_until_receipt(control_wallet, &hash, 200).await;
-    assert_eq!(receipt.status(), true);
+    assert!(receipt.status());
     (hash, receipt.block_number.unwrap())
 }
 

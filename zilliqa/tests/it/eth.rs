@@ -358,7 +358,7 @@ async fn get_transaction_receipt(mut network: Network) {
     assert!(receipt.effective_gas_price > 0);
     assert!(receipt.gas_used > 0);
     assert!(receipt.inner.cumulative_gas_used() > 0);
-    assert_eq!(receipt.status(), true);
+    assert!(receipt.status());
 }
 
 #[zilliqa_macros::test]
@@ -599,7 +599,7 @@ async fn get_storage_at(mut network: Network) {
     // Calculate the storage position with keccak(LeftPad32(key, 0), LeftPad32(map position, 0))
     let mut bytes = Vec::new();
     bytes.extend_from_slice(&[0; 12]);
-    bytes.extend_from_slice(&receipt.from.as_slice());
+    bytes.extend_from_slice(receipt.from.as_slice());
     bytes.extend_from_slice(&[0; 31]);
     bytes.push(1);
     let position = U256::from_be_slice(keccak256(bytes).0.as_slice());
@@ -642,9 +642,9 @@ async fn send_transaction(
     // let mut tx = tx.into();
     // wallet.fill(tx).await;
     let hash = *wallet.send_transaction(tx.into()).await.unwrap().tx_hash();
-    let receipt = network.run_until_receipt(wallet, &hash, 200).await;
+
     // let txn = wallet.get_transaction_by_hash(hash).await.unwrap().unwrap();
-    receipt
+    network.run_until_receipt(wallet, &hash, 200).await
 }
 
 #[zilliqa_macros::test]

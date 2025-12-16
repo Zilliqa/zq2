@@ -1,14 +1,16 @@
 use std::{ops::DerefMut, str::FromStr};
 
-use alloy::primitives::Address;
+use alloy::{
+    primitives::Address, primitives::U256, providers::Provider as _, rpc::types::TransactionRequest,
+};
 use anyhow::Result;
 use bech32::{Bech32, Hrp};
 use ethabi::{ParamType, Token};
-use ethers::{
-    providers::{Middleware, ProviderError},
-    types::TransactionRequest,
-    utils::keccak256,
-};
+// use ethers::{
+//     providers::{Middleware, ProviderError},
+//     types::TransactionRequest,
+//     utils::keccak256,
+// };
 use k256::{PublicKey, elliptic_curve::sec1::ToEncodedPoint};
 use primitive_types::{H160, H256, U128};
 use prost::Message;
@@ -25,7 +27,10 @@ use zilliqa::{
 
 use crate::{Network, Wallet, deploy_contract};
 
-pub async fn zilliqa_account(network: &mut Network, wallet: &Wallet) -> (schnorr::SecretKey, H160) {
+pub async fn zilliqa_account(
+    network: &mut Network,
+    wallet: &Wallet,
+) -> (schnorr::SecretKey, Address) {
     zilliqa_account_with_funds(network, wallet, 1000 * 10u128.pow(18)).await
 }
 
@@ -33,22 +38,24 @@ pub async fn zilliqa_account_with_funds(
     network: &mut Network,
     wallet: &Wallet,
     funds: u128,
-) -> (schnorr::SecretKey, H160) {
+) -> (schnorr::SecretKey, Address) {
     // Generate a Zilliqa account.
     let secret_key = schnorr::SecretKey::random(network.rng.lock().unwrap().deref_mut());
     let public_key = secret_key.public_key();
     let hashed = Sha256::digest(public_key.to_encoded_point(true).as_bytes());
-    let address = H160::from_slice(&hashed[12..]);
+    let address = Address::from_slice(&hashed[12..]);
 
     // Send the Zilliqa account some funds.
-    let tx = TransactionRequest::pay(address, funds);
-    let hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
+    let tx = TransactionRequest::default()
+        .to(address)
+        .value(U256::from(funds));
+    let hash = *wallet.send_transaction(tx).await.unwrap().tx_hash();
     network
         .run_until_async(
             || async {
                 wallet
-                    .provider()
-                    .request::<[_; 1], Option<Value>>("GetTransaction", [hash])
+                    .client()
+                    .request::<_, Option<Value>>("GetTransaction", [hash])
                     .await
                     .is_ok()
             },
@@ -59,30 +66,35 @@ pub async fn zilliqa_account_with_funds(
 
     // Verify the Zilliqa account has funds using the `GetBalance` API.
     let response: Value = wallet
-        .provider()
+        .client()
         .request("GetBalance", [address])
         .await
         .unwrap();
 
-    let resp_eth = wallet
-        .provider()
-        .request::<[&str; 2], String>(
-            "eth_getBalance",
-            [
-                &Address::new(*address.as_fixed_bytes()).to_checksum(None),
-                "latest",
-            ],
-        )
-        .await
-        .unwrap();
-    let eth_balance: U128 =
-        U128::from_str_radix(resp_eth.strip_prefix("0x").unwrap_or(&resp_eth), 16).unwrap();
+    let eth_balance = wallet.get_balance(address).await.unwrap().to::<u64>();
+
+    // let resp_eth = wallet
+    //     .client()
+    //     .request::<[&str; 2], String>(
+    //         "eth_getBalance",
+    //         [
+    //             // &Address::new(*address.as_fixed_bytes()).to_checksum(None),
+    //             address.to_string().as_str(),
+    //             "latest",
+    //         ],
+    //     )
+    //     .await
+    //     .unwrap();
+    // let eth_balance: U128 =
+    //     U128::from_str_radix(resp_eth.strip_prefix("0x").unwrap_or(&resp_eth), 16).unwrap();
 
     // This is in decimal!
-    let zil_balance = U128::from_str_radix(response["balance"].as_str().unwrap(), 10).unwrap();
+    let zil_balance = response["balance"].as_u64().unwrap();
+    // let zil_balance = U128::from_str_radix(response["balance"].as_str().unwrap(), 10).unwrap();
 
-    assert_eq!(zil_balance * U128::from(10u128.pow(6)), funds.into());
-    assert_eq!(eth_balance, funds.into());
+    // assert_eq!(zil_balance * U128::from(10u128.pow(6)), funds.into());
+    assert_eq!(zil_balance * 10u64.pow(6), eth_balance);
+    assert_eq!(eth_balance as u128, funds);
     assert_eq!(response["nonce"].as_u64().unwrap(), 0);
 
     (secret_key, address)
@@ -114,7 +126,7 @@ async fn issue_create_transaction(
     code: Option<&str>,
     data: Option<&str>,
 ) -> Result<Value> {
-    let chain_id = wallet.get_chainid().await.unwrap().as_u32() - 0x8000;
+    let chain_id = wallet.get_chain_id().await.unwrap() as u32 - 0x8000;
     let version = (chain_id << 16) | 1u32;
     let (to_addr_val, to_addr_string) = match to_addr {
         ToAddr::Address(v) => {
@@ -362,7 +374,7 @@ pub async fn deploy_scilla_contract(
     .await;
 
     let api_contract_address = wallet
-        .provider()
+        .client()
         .request("GetContractAddressFromTransactionID", [&txn["ID"]])
         .await
         .unwrap();
@@ -2030,7 +2042,7 @@ async fn interop_nested_call_to_precompile_then_revert(mut network: Network) {
         .run_until_async(
             || async {
                 let response: Result<GetTxResponse, _> =
-                    wallet.provider().request("GetTransaction", [tx_hash]).await;
+                    wallet.client().request("GetTransaction", [tx_hash]).await;
                 response.is_ok()
             },
             400,
@@ -4444,7 +4456,10 @@ async fn create_scilla_contract_send_evm_tx(mut network: Network) {
     // Send type 0 tx
     let hash = wallet
         .send_transaction(
-            TransactionRequest::pay(contract_address, 0).gas(1_000_000),
+            TransactionRequest::default()
+                .to(contract_address)
+                .value(U256::from(0))
+                .gas(1_000_000),
             None,
         )
         .await
@@ -4478,7 +4493,10 @@ async fn evm_tx_to_scilla_contract_should_fail(mut network: Network) {
     // Send type 0 tx
     let hash = wallet
         .send_transaction(
-            TransactionRequest::pay(contract_address, 10).gas(21000),
+            TransactionRequest::default()
+                .to(contract_address)
+                .value(U256::from(10))
+                .gas(21000),
             None,
         )
         .await

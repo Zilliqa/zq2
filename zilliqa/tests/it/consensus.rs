@@ -339,7 +339,7 @@ async fn gas_fees_should_be_transferred_to_zero_account(mut network: Network) {
         let receipt = network.run_until_receipt(&wallet, hash, 200).await;
 
         assert_eq!(receipt.gas_used, 21000);
-        assert_eq!(receipt.effective_gas_price, gas_price.into());
+        assert_eq!(receipt.effective_gas_price, gas_price);
         let block = wallet
             .get_block(receipt.block_number.unwrap().into())
             .await
@@ -412,9 +412,7 @@ async fn test_rapid_transaction_submission_during_block_production(mut network: 
         }
 
         // Allow some processing time between batches
-        network
-            .run_until_block(&wallet, current_block.into(), 50)
-            .await;
+        network.run_until_block(&wallet, current_block, 50).await;
         current_block += 1;
     }
 
