@@ -1601,14 +1601,14 @@ async fn deploy_contract(
     wallet: &Wallet,
     network: &mut Network,
 ) -> (Address, TransactionReceipt) {
-    let (_abi, bytecode) = compile_contract(path, contract);
+    let (abi, bytecode) = compile_contract(path, contract);
     let tx_hash = *wallet
         .send_transaction(TransactionRequest::default().with_deploy_code(bytecode))
         .await
         .unwrap()
         .tx_hash();
     let receipt = network.run_until_receipt(wallet, &tx_hash, 50).await;
-    // tracing::debug!("Contract {address:?} <= {abi:?}");
+    tracing::debug!("Contract {:?} <= {abi:?}", receipt.contract_address);
     (receipt.contract_address.unwrap(), receipt)
 }
 

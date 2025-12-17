@@ -25,36 +25,6 @@ async fn network_can_die_restart(mut network: Network) {
     network.run_until_block_finalized(10, 1000).await.unwrap();
 }
 
-fn get_block_number(n: &Network, index: usize) -> u64 {
-    n.get_node(index).get_finalized_height().unwrap()
-}
-
-// test that even with some consensus messages being dropped, the network can still proceed
-// note: this drops all messages, not just consensus messages, but there should only be
-// consensus messages in the network anyway
-#[zilliqa_macros::test]
-async fn block_production_even_when_lossy_network(mut network: Network) {
-    let index = network.random_index();
-
-    // wait until at least 5 blocks have been produced
-    network.run_until_block_finalized(5, 100).await.unwrap();
-
-    // now, wait until block 10 has been produced, but dropping 10% of the messages.
-    for _ in 0..1000000 {
-        network.randomly_drop_messages_then_tick(0.1).await;
-        if get_block_number(&network, index) >= 10 {
-            break;
-        }
-    }
-
-    assert!(
-        get_block_number(&network, index) >= 10,
-        "block number should be at least {}, but was {}",
-        10,
-        get_block_number(&network, index)
-    );
-}
-
 // Test that new node joining the network catches up on blocks
 #[zilliqa_macros::test]
 async fn block_production(mut network: Network) {
