@@ -52,7 +52,7 @@ mod trace;
 mod txpool;
 mod unreliable;
 mod web3;
-// mod zil;
+mod zil;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -1723,7 +1723,7 @@ pub struct FauxRpcTransport {
 pub struct FauxBackend {
     pub rpc_module: RpcModule<Arc<Node>>,
     pub interface: ConnectionInterface,
-    pub subscriptions: HashMap<u64, mpsc::Receiver<Box<RawValue>>>,
+    pub subscriptions: Arc<Mutex<HashMap<u64, mpsc::Receiver<Box<RawValue>>>>>,
 }
 
 impl FauxBackend {
@@ -1770,7 +1770,7 @@ impl FauxBackend {
                                 if let ResponsePayload::Success(id_raw) = res.payload() {
                                     let json_value: Value = serde_json::from_str(id_raw.get()).unwrap();
                                     let id = json_value.as_u64().unwrap();
-                                    self.subscriptions.insert(id, rx);
+                                    self.subscriptions.lock().unwrap().insert(id, rx);
                                 }
                             }
 
@@ -1786,7 +1786,7 @@ impl FauxBackend {
                 }
                 _ = &mut polling => {
                     polling.set(tokio::time::sleep(Duration::from_millis(100)));
-                    for (_id, rx) in self.subscriptions.iter_mut() {
+                    for (_id, rx) in self.subscriptions.lock().unwrap().iter_mut() {
                         if let Ok(item) = rx.try_recv() {
                             println!("{item:?}");
                             let item: PubSubItem = serde_json::de::from_str(item.get()).unwrap();
@@ -1811,7 +1811,7 @@ impl PubSubConnect for FauxRpcTransport {
         let backend = FauxBackend {
             rpc_module: self.rpc_module.clone(),
             interface,
-            subscriptions: HashMap::with_capacity(3),
+            subscriptions: Arc::new(Mutex::new(HashMap::with_capacity(3))),
         };
         backend.spawn();
         Ok(handle)
@@ -1835,21 +1835,21 @@ impl FauxRpcTransport {
     }
 
     async fn handle(self, req: RequestPacket) -> TransportResult<ResponsePacket> {
-        println!("Request: {:?}", req);
         let response = match req {
             RequestPacket::Single(req) => ResponsePacket::Single(self.map_request(req).await?),
             RequestPacket::Batch(_) => unimplemented!("support single calls only"),
         };
-        println!("Response: {:?}", response);
         Ok(response)
     }
 
     async fn map_request(&self, req: SerializedRequest) -> TransportResult<Response> {
+        println!("REQ> {}", req.serialized().get());
         let (response, _rx) = self
             .rpc_module
-            .raw_json_request(req.serialized().get(), 64)
+            .raw_json_request(req.serialized().get(), 1024)
             .await
             .expect("no transport errors");
+        println!("RES< {}", response.get());
 
         let response: Response = serde_json::from_str(response.get()).expect("no encoding errors");
         Ok(response)

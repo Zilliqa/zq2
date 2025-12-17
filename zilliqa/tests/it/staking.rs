@@ -288,13 +288,13 @@ async fn get_signing_address(wallet: &Wallet, staker: &NodePublicKey) -> Address
     let tx = TransactionRequest::default()
         .to(contract_addr::DEPOSIT_PROXY)
         .input(TransactionInput::both(
-            contracts::deposit_v3::GET_SIGNING_ADDRESS
+            contracts::deposit::GET_SIGNING_ADDRESS
                 .encode_input(&[Token::Bytes(staker.as_bytes())])
                 .unwrap()
                 .into(),
         ));
     let return_value = wallet.call(tx).await.unwrap();
-    contracts::deposit_v3::GET_SIGNING_ADDRESS
+    contracts::deposit::GET_SIGNING_ADDRESS
         .decode_output(&return_value)
         .unwrap()[0]
         .clone()
@@ -408,7 +408,11 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
     )
     .await;
 
-    info!(deposit_block);
+    // wait until deposit block is finalised
+    network
+        .run_until_block_finalized(deposit_block, 100)
+        .await
+        .unwrap();
 
     // The new validator should become part of the committee exactly two epochs after the one in which the deposit was
     // made.
@@ -483,6 +487,12 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
         deposit_signature,
     )
     .await;
+
+    // wait until deposit block is finalised
+    network
+        .run_until_block_finalized(deposit_block, 100)
+        .await
+        .unwrap();
 
     // Check set staker's addresses
     assert_eq!(
@@ -633,6 +643,12 @@ async fn validators_can_unstake(mut network: Network) {
         stake,
     )
     .await;
+
+    // wait until unstake block is finalised
+    network
+        .run_until_block_finalized(unstake_block, 100)
+        .await
+        .unwrap();
 
     // The validator should leave the committee exactly two epochs after the one in which the withdrawal was made.
     let unstake_epoch = current_epoch(&wallet, Some(unstake_block)).await;
