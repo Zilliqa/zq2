@@ -78,7 +78,10 @@ use libp2p::PeerId;
 use rand::{Rng, seq::SliceRandom};
 use rand_chacha::ChaCha8Rng;
 use tempfile::TempDir;
-use tokio::sync::mpsc::{self, UnboundedSender};
+use tokio::{
+    select,
+    sync::mpsc::{self, UnboundedSender},
+};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::*;
 use zilliqa::{
@@ -1597,13 +1600,17 @@ fn compile_contract(path: &str, contract: &str) -> (Contract, Bytes) {
 async fn deploy_contract(
     path: &str,
     contract: &str,
-    _value: u128,
+    value: u128,
     wallet: &Wallet,
     network: &mut Network,
 ) -> (Address, TransactionReceipt) {
     let (abi, bytecode) = compile_contract(path, contract);
     let tx_hash = *wallet
-        .send_transaction(TransactionRequest::default().with_deploy_code(bytecode))
+        .send_transaction(
+            TransactionRequest::default()
+                .with_deploy_code(bytecode)
+                .value(U256::from(value)),
+        )
         .await
         .unwrap()
         .tx_hash();
@@ -1730,43 +1737,46 @@ impl FauxBackend {
     /// Spawn a new backend task.
     pub fn spawn(mut self) {
         let fut = async move {
-            let polling = tokio::time::sleep(Duration::from_millis(100));
+            let polling = tokio::time::sleep(Duration::from_millis(1000));
             tokio::pin!(polling);
             loop {
-                tokio::select! {
+                select! {
                     biased;
                 inst = self.interface.recv_from_frontend() => {
                     match inst {
                         Some(request) => {
-                            println!("Request: {request:?}");
                             let req: Request = serde_json::de::from_str(request.get()).unwrap();
 
-                            // massage inputs
-                            // let mut params: Option<Value> = req.params.map(|p| serde_json::to_value(&p).unwrap());
-                            // if req.method == "eth_unsubscribe" {
-                            //     params.iter_mut().for_each(|p| {
-                            //         let id = p.as_array_mut().unwrap().get_mut(0).unwrap();
-                            //         let str_id = id.as_str().unwrap().strip_prefix("0x").unwrap();
-                            //         let u64_id = u64::from_str_radix(str_id, 16).unwrap();
-                            //         *id = u64_id.into();
-                            //         // self.subscriptions.remove(&u64_id);
-                            //     });
-                            // }
-                            // let payload = Request::owned(
-                            //     req.method.to_string(),
-                            //     params.map(|x| serde_json::value::to_raw_value(&x).unwrap()),
-                            //     req.id,
-                            // );
-                            // let request = serde_json::to_string(&payload).unwrap();
-                            // println!("Request: {request:?}");
+                            // There are some hacks in here for `eth_subscribe` and `eth_unsubscribe`. `RpcModule` does not let us control
+                            // the `id_provider` and it produces subscription IDs incompatible with Ethereum clients. Specifically, it
+                            // produces integers and `ethers-rs` expects hex-encoded integers. Our hacks convert to this encoding.
+                            let mut params: Option<Value> = req.params.map(|p| serde_json::to_value(&p).unwrap());
+                            if req.method == "eth_unsubscribe" {
+                                params.iter_mut().for_each(|p| {
+                                    let id = p.as_array_mut().unwrap().get_mut(0).unwrap();
+                                    let str_id = id.as_str().unwrap().strip_prefix("0x").unwrap();
+                                    let u64_id = u64::from_str_radix(str_id, 16).unwrap();
+                                    *id = u64_id.into();
+                                    self.subscriptions.lock().unwrap().remove(&u64_id);
+                                });
+                            }
+                            let payload = Request::owned(
+                                req.method.to_string(),
+                                params.map(|x| serde_json::value::to_raw_value(&x).unwrap()),
+                                req.id,
+                            );
+                            let request = serde_json::to_string(&payload).unwrap();
+
+                            println!("REQ: {}", request.as_str());
                             let (response, rx) = self
                                 .rpc_module
-                                .raw_json_request(request.get(), 64)
+                                .raw_json_request(request.as_str(), 1024)
                                 .await
                                 .expect("no transport errors");
+                            println!("RES: {}", response.get());
 
                             if req.method == "eth_subscribe" {
-                                let res: Response = serde_json::de::from_str(response.get()).unwrap();
+                                let res: Response = serde_json::from_str(response.get()).unwrap();
                                 if let ResponsePayload::Success(id_raw) = res.payload() {
                                     let json_value: Value = serde_json::from_str(id_raw.get()).unwrap();
                                     let id = json_value.as_u64().unwrap();
@@ -1774,9 +1784,8 @@ impl FauxBackend {
                                 }
                             }
 
-                            println!("Response: {response:?}");
-                            let response: PubSubItem = serde_json::de::from_str(response.get()).unwrap();
-                            self.interface.send_to_frontend(response).unwrap();
+                            let response: PubSubItem = serde_json::from_str(response.get()).expect("serdes error");
+                            self.interface.send_to_frontend(response).expect("send error");
                         },
                         // dispatcher has gone away, or shutdown was received
                         None => {
@@ -1788,7 +1797,7 @@ impl FauxBackend {
                     polling.set(tokio::time::sleep(Duration::from_millis(100)));
                     for (_id, rx) in self.subscriptions.lock().unwrap().iter_mut() {
                         if let Ok(item) = rx.try_recv() {
-                            println!("{item:?}");
+                            println!("NOT: {}", item.get());
                             let item: PubSubItem = serde_json::de::from_str(item.get()).unwrap();
                             self.interface.send_to_frontend(item).unwrap();
                         }

@@ -11,7 +11,7 @@ use crate::Network;
 async fn jailed_node_must_not_propose_blocks(mut network: Network) {
     // wait until a certain number of blocks has been produced
     network
-        .run_until_block_finalized(LAG_BEHIND_CURRENT_VIEW + MISSED_VIEW_WINDOW, 10000)
+        .run_until_block_finalized(LAG_BEHIND_CURRENT_VIEW + MISSED_VIEW_WINDOW, 7000)
         .await
         .unwrap();
 
@@ -103,7 +103,7 @@ async fn jailed_node_must_not_propose_blocks(mut network: Network) {
                     false
                 }
             },
-            10000,
+            1000,
         )
         .await
         .unwrap();
@@ -114,7 +114,7 @@ async fn jailed_node_must_not_propose_blocks(mut network: Network) {
 async fn jailed_node_must_not_cause_timeouts(mut network: Network) {
     // wait until a certain number of blocks has been produced
     network
-        .run_until_block_finalized(LAG_BEHIND_CURRENT_VIEW + MISSED_VIEW_WINDOW, 10000)
+        .run_until_block_finalized(LAG_BEHIND_CURRENT_VIEW + MISSED_VIEW_WINDOW, 7000)
         .await
         .unwrap();
 
@@ -231,7 +231,7 @@ async fn jailed_node_must_not_cause_timeouts(mut network: Network) {
                     false
                 }
             },
-            10000,
+            1000,
         )
         .await
         .unwrap();

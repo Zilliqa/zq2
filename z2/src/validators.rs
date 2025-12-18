@@ -85,15 +85,6 @@ impl SignerClient {
             .wallet(wallet)
             .connect_hyper_http(self.chain_endpoint.parse().unwrap());
         Ok(provider)
-        // let provider = Provider::<Http>::try_from(self.chain_endpoint.clone())?;
-
-        // let wallet: LocalWallet = self
-        //     .private_key
-        //     .as_str()
-        //     .parse::<LocalWallet>()?
-        //     .with_chain_id(provider.get_chainid().await?.as_u64());
-
-        // Ok(SignerMiddleware::new(provider, wallet))
     }
 
     pub async fn deposit(&self, validator: &Validator, params: &DepositParams) -> Result<()> {
@@ -251,14 +242,6 @@ impl SignerClient {
     pub async fn get_future_stake(&self, public_key: &NodePublicKey) -> Result<u128> {
         let client = self.get_signer().await?;
 
-        // abigen!(
-        //     DEPOSIT_V4,
-        //     r#"[
-        //         function getFutureStake(bytes calldata blsPubKey) public view returns (uint256)
-        //     ]"#,
-        //     derives(serde::Deserialize, serde::Serialize);
-        // );
-
         let data = contracts::deposit_v7::GET_FUTURE_STAKE
             .encode_input(&[Token::Bytes(public_key.as_bytes())])
             .unwrap();
@@ -267,8 +250,6 @@ impl SignerClient {
             .input(TransactionInput::both(data.into()));
         let output = client.call(tx).await.unwrap();
 
-        // let client = Arc::new(client.provider().to_owned());
-        // let contract = DEPOSIT_V4::new(contract_addr::DEPOSIT_PROXY, client);
         let future_stake = contracts::deposit_v7::GET_FUTURE_STAKE
             .decode_output(&output)
             .unwrap()[0]
@@ -276,12 +257,6 @@ impl SignerClient {
             .into_uint()
             .unwrap()
             .as_u128();
-
-        // let future_stake = contract
-        //     .get_future_stake(public_key.as_bytes().into())
-        //     .call()
-        //     .await?
-        //     .as_u128();
 
         Ok(future_stake)
     }

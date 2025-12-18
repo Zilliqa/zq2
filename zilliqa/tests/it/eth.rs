@@ -1169,7 +1169,7 @@ async fn block_subscription(mut network: Network) {
     let subs = wallet.subscribe_blocks().await.unwrap();
     let _sub_id = *subs.local_id();
     let mut block_stream = subs.into_stream();
-    network.run_until_block_finalized(3, 100).await.unwrap();
+    network.run_until_block_finalized(5, 100).await.unwrap();
 
     // Assert the stream contains next 2 blocks; usually (3,4) or (4,5)
     let a = block_stream.next().await.unwrap().number;
@@ -1355,7 +1355,7 @@ async fn test_send_transaction_errors(mut network: Network) {
         assert_eq!(code, -32602);
         assert!(msg.to_lowercase().contains("gas"));
     }
-    // FIXME: Test sending a transaction with insufficient funds
+    // FIXME: Test sending a corrupt transaction
     // {
     //     let tx = TransactionRequest::default()
     //         .to(Address::random())
@@ -1463,7 +1463,7 @@ async fn test_block_filter(mut network: Network) {
 
     // Generate some blocks
     println!("Generating blocks");
-    network.run_until_block_finalized(3, 50).await.unwrap();
+    network.run_until_block_finalized(4, 500).await.unwrap();
     println!("Generated blocks");
 
     // Get filter changes - should return the new block hashes

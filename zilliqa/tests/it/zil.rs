@@ -17,7 +17,10 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use zilliqa::{
-    api::types::{eth::TransactionReceipt, zil::GetTxResponse},
+    api::types::{
+        eth::{Log, TransactionReceipt},
+        zil::GetTxResponse,
+    },
     schnorr,
     transaction::{EvmGas, ScillaGas},
     zq1_proto::{Code, Data, Nonce, ProtoTransactionCoreInfo},
@@ -186,6 +189,9 @@ async fn wait_eth_receipt(
 }
 /// Needed to map ZIL receipts; due to type = 0xdd870 deserialization error.
 async fn map_eth_receipt(wallet: &Wallet, tx_hash: TxHash) -> TransactionReceipt {
+    /*
+    {"jsonrpc":"2.0","id":212,"result":{"transactionHash":"0xa91f3c345cf0dda9d2cc3ac3809eae434e288c2b4bc9c381bab0844512c8dbfa","transactionIndex":"0x0","blockHash":"0x94fc8af233743c21fd424579bca502197abec6d9263a81e5130f4f285c47852a","blockNumber":"0xf","from":"0xf220a689dec0caca46bcd8e2f9af97ce9bd16676","to":"0x367800c2ef47f4550f2a8cba7b03a65155c6291e","cumulativeGasUsed":"0x5298c","effectiveGasPrice":"0x454b7a4e100","gasUsed":"0x5298c","contractAddress":null,"logs":[{"removed":false,"logIndex":"0x0","transactionIndex":"0x0","transactionHash":"0xa91f3c345cf0dda9d2cc3ac3809eae434e288c2b4bc9c381bab0844512c8dbfa","blockHash":"0x94fc8af233743c21fd424579bca502197abec6d9263a81e5130f4f285c47852a","blockNumber":"0xf","address":"0x9f4515ce985c2046732d9581950e6c30e6ae9b74","data":"0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000009a7b2261646472657373223a22307839663435313563653938356332303436373332643935383139353065366333306536616539623734222c225f6576656e746e616d65223a2242616c616e6365222c22706172616d73223a5b7b22766e616d65223a2262616c616e6365222c2276616c7565223a2231323334303030303030303030303030222c2274797065223a2255696e74313238227d5d7d000000000000","topics":["0xdb42f09d5a5cb193ea3eae569c8ce2e3a5c8d8b68aadbe1a637f44d07f67bc17"]},{"removed":false,"logIndex":"0x1","transactionIndex":"0x0","transactionHash":"0xa91f3c345cf0dda9d2cc3ac3809eae434e288c2b4bc9c381bab0844512c8dbfa","blockHash":"0x94fc8af233743c21fd424579bca502197abec6d9263a81e5130f4f285c47852a","blockNumber":"0xf","address":"0x9f4515ce985c2046732d9581950e6c30e6ae9b74","data":"0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000008d7b2261646472657373223a22307839663435313563653938356332303436373332643935383139353065366333306536616539623734222c225f6576656e746e616d65223a224d7942616c616e6365222c22706172616d73223a5b7b22766e616d65223a2262616c616e6365222c2276616c7565223a2230222c2274797065223a2255696e74313238227d5d7d00000000000000000000000000000000000000","topics":["0x71a97ba7830518ccc159d5a9da086633b982888de682fcc7328b79c3cdd27bbe"]}],"logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","type":"0x2","status":"0x1","v":"0x0","r":"0x95019c3d3d28f560953db16d810a678c4b1fb2f0381c9de33d0e5570d5ca73d1","s":"0x3367cb95861e49a8df6077e28f06e4b71da157bdc0864eb8ccd6702441fbd7c1"}}
+    */
     let value = wallet
         .client()
         .request::<_, Value>("eth_getTransactionReceipt", [tx_hash])
@@ -274,8 +280,72 @@ async fn map_eth_receipt(wallet: &Wallet, tx_hash: TxHash) -> TransactionReceipt
             16,
         )
         .unwrap(),
-        logs: vec![], // FIXME: Parse logs
         status: value["status"].as_str().unwrap() != "0x0",
+        logs: value["logs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|log| Log {
+                removed: log["removed"].as_bool().unwrap(),
+                log_index: u64::from_str_radix(
+                    log["logIndex"]
+                        .as_str()
+                        .unwrap()
+                        .strip_prefix("0x")
+                        .unwrap(),
+                    16,
+                )
+                .unwrap(),
+                transaction_index: u64::from_str_radix(
+                    log["transactionIndex"]
+                        .as_str()
+                        .unwrap()
+                        .strip_prefix("0x")
+                        .unwrap(),
+                    16,
+                )
+                .unwrap(),
+                transaction_hash: B256::from_hex(
+                    log["transactionHash"]
+                        .as_str()
+                        .unwrap()
+                        .strip_prefix("0x")
+                        .unwrap(),
+                )
+                .unwrap(),
+                block_hash: B256::from_hex(
+                    log["blockHash"]
+                        .as_str()
+                        .unwrap()
+                        .strip_prefix("0x")
+                        .unwrap(),
+                )
+                .unwrap(),
+                block_number: u64::from_str_radix(
+                    log["blockNumber"]
+                        .as_str()
+                        .unwrap()
+                        .strip_prefix("0x")
+                        .unwrap(),
+                    16,
+                )
+                .unwrap(),
+                address: Address::from_hex(
+                    log["address"].as_str().unwrap().strip_prefix("0x").unwrap(),
+                )
+                .unwrap(),
+                data: hex::decode(log["data"].as_str().unwrap().strip_prefix("0x").unwrap())
+                    .unwrap(),
+                topics: log["topics"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|topic| {
+                        B256::from_hex(topic.as_str().unwrap().strip_prefix("0x").unwrap()).unwrap()
+                    })
+                    .collect(),
+            })
+            .collect(),
         // unused
         v: 0,
         r: U256::ZERO,
@@ -1418,6 +1488,7 @@ async fn mutate_evm_then_read_from_scilla(mut network: Network) {
     // Run the transaction.
     let receipt = wait_eth_receipt(&mut network, &wallet, H256::from_slice(hash.as_slice())).await;
 
+    assert!(!receipt.logs.is_empty(), "{receipt:?}");
     let log = &receipt.logs[0];
     let data = ethabi::decode(&[ParamType::String], &log.data).unwrap()[0]
         .clone()
@@ -2673,21 +2744,18 @@ async fn get_tx_rate_1(mut network: Network) {
 #[zilliqa_macros::test]
 async fn get_txns_for_tx_block_ex_0(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    network.run_until_block_finalized(1u64, 100).await.unwrap();
-
-    let block_number = "1";
-    let page_number = "1";
+    network.run_until_block_finalized(2, 100).await.unwrap();
 
     let response: Value = wallet
         .client()
-        .request("GetTransactionsForTxBlockEx", [block_number, page_number])
+        .request("GetTransactionsForTxBlockEx", ["1", "1"])
         .await
         .expect("Failed to call GetTransactionsForTxBlockEx API");
 
     let txns: zilliqa::api::types::zil::TxnsForTxBlockExResponse =
         serde_json::from_value(response).expect("Failed to deserialize response");
 
-    assert_eq!(txns.curr_page, page_number.parse::<u64>().unwrap());
+    assert_eq!(txns.curr_page, 1);
     assert!(
         txns.transactions.len() <= 2500,
         "Expected Transactions length to be less than or equal to 2500"
@@ -2824,7 +2892,7 @@ async fn get_txns_for_tx_block_0(mut network: Network) {
     )
     .await;
 
-    network.run_until_block_finalized(2u64, 300).await.unwrap();
+    network.run_until_block_finalized(2, 300).await.unwrap();
 
     let result: zilliqa::api::types::zil::GetTxResponse =
         serde_json::from_value(txn).expect("serdes error");
@@ -3498,7 +3566,7 @@ async fn get_miner_info(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn get_node_type(mut network: Network) {
-    let wallet = network.genesis_wallet().await;
+    let wallet = network.genesis_wallet_null().await;
 
     let response: Value = wallet
         .client()

@@ -15,14 +15,11 @@ use zilliqa::{
 };
 
 use crate::{
-    Network,
-    NewNodeOptions,
-    TestNode,
-    deploy_contract,
-    // zil::{
-    //     deploy_scilla_contract, scilla_test_contract_code, scilla_test_contract_data,
-    //     zilliqa_account,
-    // },
+    Network, NewNodeOptions, TestNode, deploy_contract,
+    zil::{
+        deploy_scilla_contract, scilla_test_contract_code, scilla_test_contract_data,
+        zilliqa_account,
+    },
 };
 
 #[zilliqa_macros::test]
@@ -138,7 +135,7 @@ sol!(
     #[sol(rpc)]
     "tests/it/contracts/Storage.sol"
 );
-#[zilliqa_macros::test(do_checkpoints)]
+#[zilliqa_macros::test(do_checkpoints, restrict_concurrency)]
 async fn checkpoints_test(mut network: Network) {
     // Populate network with transactions
     let wallet = network.genesis_wallet().await;
@@ -164,15 +161,14 @@ async fn checkpoints_test(mut network: Network) {
         .tx_hash();
     let _ = network.run_until_receipt(&wallet, &hash, 100).await;
 
-    // FIXME: Scilla
-    // let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
-    // let code = scilla_test_contract_code();
-    // let data = scilla_test_contract_data(address);
-    // let scilla_contract_address =
-    //     deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data, 0_u128).await;
+    let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
+    let code = scilla_test_contract_code();
+    let data = scilla_test_contract_data(address);
+    let scilla_contract_address =
+        deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data, 0_u128).await;
 
-    // Run until we can insert a tx in block 10 (note that this transaction may not *always* appear in the desired block, therefore we do not assert its presence later)
-    network.run_until_block_finalized(7, 400).await.unwrap();
+    // Run until we can insert a tx in block 20 (note that this transaction may not *always* appear in the desired block, therefore we do not assert its presence later)
+    network.run_until_block_finalized(17, 400).await.unwrap();
 
     let _hash = *wallet
         .send_transaction(
@@ -185,7 +181,7 @@ async fn checkpoints_test(mut network: Network) {
         .tx_hash();
 
     // wait for checkpoint to happen; and block #30 is finalized.
-    network.run_until_block_finalized(11, 400).await.unwrap();
+    network.run_until_block_finalized(21, 400).await.unwrap();
 
     let checkpoint_files = network
         .nodes
@@ -197,7 +193,7 @@ async fn checkpoints_test(mut network: Network) {
                 .path()
                 .join(network.shard_id.to_string())
                 .join("checkpoints")
-                .join("10")
+                .join("20")
         })
         .collect::<Vec<_>>();
 
@@ -214,7 +210,7 @@ async fn checkpoints_test(mut network: Network) {
     // Create new node and pass it one of those checkpoint files
     let checkpoint_path = checkpoint_files[0].to_str().unwrap().to_owned();
     let checkpoint_hash = wallet
-        .get_block(BlockId::number(10))
+        .get_block(BlockId::number(20))
         .await
         .unwrap()
         .unwrap()
@@ -230,7 +226,7 @@ async fn checkpoints_test(mut network: Network) {
     // Confirm wallet and new_node_wallet have the same block and state
     let new_node_wallet = network.wallet_of_node(new_node_idx).await;
     let latest_block_number = new_node_wallet.get_block_number().await.unwrap();
-    assert_eq!(latest_block_number, 10);
+    assert_eq!(latest_block_number, 20);
 
     let block = wallet
         .get_block(BlockId::number(latest_block_number))
@@ -254,24 +250,23 @@ async fn checkpoints_test(mut network: Network) {
     let call_val = contract.pos1(evm_addr).call().await.unwrap();
     assert_eq!(evm_val, call_val);
 
-    // FIXME: Scilla
-    // let state: serde_json::Value = network
-    //     .random_wallet()
-    //     .await
-    //     .client()
-    //     .request("GetSmartContractState", [scilla_contract_address])
-    //     .await
-    //     .unwrap();
-    // assert_eq!(state["welcome_msg"], "default");
+    let state: serde_json::Value = network
+        .random_wallet()
+        .await
+        .client()
+        .request("GetSmartContractState", [scilla_contract_address])
+        .await
+        .unwrap();
+    assert_eq!(state["welcome_msg"], "default");
 
     // check the new node catches up and keeps up with block production
     network.run_until_synced(new_node_idx).await;
-    network.run_until_block_finalized(15, 400).await.unwrap();
+    network.run_until_block_finalized(25, 400).await.unwrap();
 
     // check account nonce of old wallet
     let nonce = new_node_wallet
         .get_transaction_count(wallet.default_signer_address())
         .await
         .unwrap();
-    assert_eq!(nonce, 3);
+    assert_eq!(nonce, 4);
 }
