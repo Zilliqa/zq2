@@ -107,8 +107,14 @@ impl Default for ScillaServer {
             .arg("3000/tcp")
             .arg("--init")
             .arg("--rm")
-            .arg("-v")
-            .arg(format!("{temp_dir}:{temp_dir}"))
+            .arg("--mount")
+            .arg(format!(
+                "type=bind,src={temp_dir}/scilla_ext_libs,dst={temp_dir}/scilla_ext_libs"
+            ))
+            .arg("--mount")
+            .arg(format!(
+                "type=bind,src={temp_dir}/scilla-sockets,dst={temp_dir}/scilla-sockets"
+            ))
             .arg(
                 "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:abdb24b1",
             )

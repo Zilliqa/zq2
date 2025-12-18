@@ -1392,7 +1392,7 @@ async fn mutate_evm_then_read_from_scilla(mut network: Network) {
     let contract = ScillaInterop::new(evm_contract_address, &wallet);
 
     // Generate a random Address
-    let recipient = get_random_address(&mut network);
+    let recipient = Address::random();
 
     let my_balance_before = wallet
         .get_balance(scilla_contract_address)
@@ -1405,7 +1405,7 @@ async fn mutate_evm_then_read_from_scilla(mut network: Network) {
         .sendEtherThenCallScilla(
             recipient,
             scilla_contract_address,
-            "LogBalance".to_string(),
+            "LogBalance".into(),
             recipient,
         )
         .value(U256::from(amount))

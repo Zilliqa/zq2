@@ -153,7 +153,7 @@ impl Config {
         let provider = ProviderBuilder::new()
             .wallet(wallet)
             .with_chain_id(self.eth_chainid())
-            .connect_http(self.blockchain.rpc_url.parse().unwrap());
+            .connect_hyper_http(self.blockchain.rpc_url.parse().unwrap());
         Ok(provider)
         // Ok(ethers::middleware::SignerMiddleware::new(
         //     provider,

@@ -83,7 +83,7 @@ impl SignerClient {
         let wallet = EthereumWallet::from(signer);
         let provider = ProviderBuilder::new()
             .wallet(wallet)
-            .connect_http(self.chain_endpoint.parse().unwrap());
+            .connect_hyper_http(self.chain_endpoint.parse().unwrap());
         Ok(provider)
         // let provider = Provider::<Http>::try_from(self.chain_endpoint.clone())?;
 
