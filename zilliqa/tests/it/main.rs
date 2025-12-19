@@ -1464,7 +1464,7 @@ impl Network {
             .nodes
             .choose(self.rng.lock().unwrap().deref_mut())
             .unwrap();
-        trace!(index = node.index, "node selected for wallet");
+        info!(index = node.index, "node selected for wallet");
 
         ProviderBuilder::new()
             .wallet(wallet)
@@ -1619,50 +1619,6 @@ async fn deploy_contract(
     (receipt.contract_address.unwrap(), receipt)
 }
 
-// async fn deploy_contract_with_args<T: Tokenize>(
-//     path: &str,
-//     contract: &str,
-//     constructor_args: T,
-//     value: u128,
-//     wallet: &Wallet,
-//     network: &mut Network,
-// ) -> (H256, Contract) {
-//     let (abi, bytecode) = compile_contract(path, contract);
-
-//     let factory = DeploymentTxFactory::new(abi, bytecode, wallet.clone());
-//     let mut deployer = factory.deploy(constructor_args).unwrap();
-//     if value > 0 {
-//         deployer.tx.set_value(value);
-//     }
-//     // For eip1559 txs ethers-middleware sets these fee values to < gas_price which causes a failure.
-//     deployer.tx.set_gas_price(4_761_904_800_000u128);
-
-//     let abi = deployer.abi().clone();
-//     {
-//         let hash = wallet
-//             .send_transaction(deployer.tx, None)
-//             .await
-//             .unwrap()
-//             .tx_hash();
-
-//         network
-//             .run_until_async(
-//                 || async {
-//                     wallet
-//                         .get_transaction_receipt(hash)
-//                         .await
-//                         .unwrap()
-//                         .is_some()
-//                 },
-//                 200,
-//             )
-//             .await
-//             .unwrap();
-
-//         (hash, abi)
-//     }
-// }
-
 async fn fund_wallet(network: &mut Network, from_wallet: &Wallet, to_wallet: &Wallet) {
     let hash = *from_wallet
         .send_transaction(
@@ -1723,7 +1679,6 @@ async fn get_stakers(wallet: &Wallet) -> Vec<NodePublicKey> {
 #[derive(Debug, Clone)]
 pub struct FauxRpcTransport {
     rpc_module: RpcModule<Arc<Node>>,
-    // subscriptions: Arc<Mutex<HashMap<u64, mpsc::Receiver<Box<RawValue>>>>>,
 }
 
 #[derive(Debug)]
@@ -1737,11 +1692,10 @@ impl FauxBackend {
     /// Spawn a new backend task.
     pub fn spawn(mut self) {
         let fut = async move {
-            let polling = tokio::time::sleep(Duration::from_millis(1000));
+            let polling = tokio::time::sleep(Duration::from_millis(500));
             tokio::pin!(polling);
             loop {
                 select! {
-                    biased;
                 inst = self.interface.recv_from_frontend() => {
                     match inst {
                         Some(request) => {
@@ -1757,7 +1711,7 @@ impl FauxBackend {
                                     let str_id = id.as_str().unwrap().strip_prefix("0x").unwrap();
                                     let u64_id = u64::from_str_radix(str_id, 16).unwrap();
                                     *id = u64_id.into();
-                                    self.subscriptions.lock().unwrap().remove(&u64_id);
+                                    self.subscriptions.lock().unwrap().remove(&u64_id).expect("sub must exist");
                                 });
                             }
                             let payload = Request::owned(

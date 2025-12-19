@@ -639,11 +639,7 @@ async fn send_transaction(
     wallet: &Wallet,
     tx: TypedTransaction,
 ) -> TransactionReceipt {
-    // let mut tx = tx.into();
-    // wallet.fill(tx).await;
     let hash = *wallet.send_transaction(tx.into()).await.unwrap().tx_hash();
-
-    // let txn = wallet.get_transaction_by_hash(hash).await.unwrap().unwrap();
     network.run_until_receipt(wallet, &hash, 200).await
 }
 
@@ -1167,9 +1163,10 @@ async fn block_subscription(mut network: Network) {
     let wallet = network.genesis_pubsub_wallet().await;
 
     let subs = wallet.subscribe_blocks().await.unwrap();
-    let _sub_id = *subs.local_id();
+    network.run_until_block_finalized(4, 100).await.unwrap();
+
+    // let _sub_id = *subs.local_id();
     let mut block_stream = subs.into_stream();
-    network.run_until_block_finalized(5, 100).await.unwrap();
 
     // Assert the stream contains next 2 blocks; usually (3,4) or (4,5)
     let a = block_stream.next().await.unwrap().number;
@@ -1272,45 +1269,46 @@ async fn get_accounts_with_extra_args(mut network: Network) {
     assert!(result.is_err());
 }
 
+// FIXME:
 // #[zilliqa_macros::test]
 // async fn deploy_deterministic_deployment_proxy(mut network: Network) {
 //     let wallet = network.genesis_wallet().await;
 
-//     let signer =
+//     let signer = Address::random();
+
 //     let gas_price = 100000000000u128;
-//     let gas = 100000u128;
+//     let gas = 100000u64;
 
 //     // Send the signer enough money to cover the deployment.
 //     let tx = TransactionRequest::default()
 //         .to(signer)
-//         .value(U256::from(gas_price * gas));
+//         .value(U256::from(gas_price * gas as u128));
 //     let hash = *wallet.send_transaction(tx).await.unwrap().tx_hash();
-//     let _receipt = network.run_until_receipt(&wallet, &hash, 100).await;
 
 //     // Transaction from https://github.com/Arachnid/deterministic-deployment-proxy.
-//     let tx: TypedTransaction = TransactionRequest::default()
+//     let tx = TransactionRequest::default()
 //         .nonce(0)
 //         .gas_price(gas_price)
-//         .gas_limit(gas as u64)
+//         .gas_limit(gas)
 //         .value(U256::ZERO)
-//         .input(TransactionInput::both(hex!("604580600e600039806000f350fe7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3").into()))
-//         .build_legacy().unwrap().into();
+//         .input(TransactionInput::both(hex!("604580600e600039806000f350fe7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3").into()));
 
-//     let signature = Signature::from_scalars_and_parity(
-//         hex!("2222222222222222222222222222222222222222222222222222222222222222").into(),
-//         hex!("2222222222222222222222222222222222222222222222222222222222222222").into(),
-//         false,
-//     );
-//     let mut out = Vec::<u8>::new();
-//     tx.into_signed(signature).rlp_encode(&mut out);
-//     let hash = *wallet.send_raw_transaction(&out).await.unwrap().tx_hash();
-//     let receipt = network.run_until_receipt(&wallet, &hash, 150).await;
+//     let tx = tx.build_legacy().unwrap();
+//     // let signature = Signature {
+//     //     r: hex!("2222222222222222222222222222222222222222222222222222222222222222").into(),
+//     //     s: hex!("2222222222222222222222222222222222222222222222222222222222222222").into(),
+//     //     v: 27,
+//     // };
+//     // let raw_tx = tx.rlp_signed(&signature);
+//     let hash = wallet.send_raw_transaction(raw_tx).await.unwrap().tx_hash();
+
+//     let receipt = network.run_until_receipt(&wallet, hash, 150).await;
 
 //     assert_eq!(receipt.from, signer);
 //     assert_eq!(
 //         receipt.contract_address.unwrap(),
 //         "0x4e59b44847b379578588920ca78fbf26c0b4956c"
-//             .parse::<Address>()
+//             .parse()
 //             .unwrap()
 //     );
 // }

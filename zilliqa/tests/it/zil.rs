@@ -2447,58 +2447,56 @@ async fn get_tx_block_verbose(mut network: Network) {
     assert!(timestamp.parse::<u64>().is_ok(), "Invalid Timestamp format");
 }
 
-// #[zilliqa_macros::test]
-// async fn get_smart_contract_init(mut network: Network) {
-//     let wallet = network.genesis_wallet().await;
+#[zilliqa_macros::test]
+async fn get_smart_contract_init(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
 
-//     // Deploy a Scilla contract
-//     let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
-//     let code = scilla_test_contract_code();
-//     let data = scilla_test_contract_data(address);
-//     let contract_address =
-//         deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data, 0_u128).await;
+    // Deploy a Scilla contract
+    let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
+    let code = scilla_test_contract_code();
+    let data = scilla_test_contract_data(address);
+    let contract_address =
+        deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data, 0_u128).await;
 
-//     // Test the success case
-//     let response: Value = wallet
-//         .client()
-//         .request("GetSmartContractInit", [contract_address])
-//         .await
-//         .expect("Failed to call GetSmartContractInit API");
+    // Test the success case
+    let response: Value = wallet
+        .client()
+        .request("GetSmartContractInit", [contract_address])
+        .await
+        .expect("Failed to call GetSmartContractInit API");
 
-//     let init_data: Vec<zilliqa::scilla::ParamValue> =
-//         serde_json::from_value(response).expect("Failed to deserialize response");
+    let init_data: Vec<zilliqa::scilla::ParamValue> =
+        serde_json::from_value(response).expect("Failed to deserialize response");
 
-//     // Assert the data returned from the API is a superset of the init data we passed.
-//     let expected_data: Vec<Value> = serde_json::from_str(&data).unwrap();
-//     for expected in expected_data {
-//         assert!(
-//             init_data
-//                 .iter()
-//                 .any(|d| serde_json::to_value(d).unwrap() == expected)
-//         );
-//     }
+    // Assert the data returned from the API is a superset of the init data we passed.
+    let expected_data: Vec<Value> = serde_json::from_str(&data).unwrap();
+    for expected in expected_data {
+        assert!(
+            init_data
+                .iter()
+                .any(|d| serde_json::to_value(d).unwrap() == expected)
+        );
+    }
 
-//     // Test the error case with an invalid contract address
-//     let invalid_contract_address: H160 = "0x0000000000000000000000000000000000000000"
-//         .parse()
-//         .unwrap();
-//     let response: Result<Value, ProviderError> = wallet
-//         .client()
-//         .request("GetSmartContractInit", [invalid_contract_address])
-//         .await;
+    // Test the error case with an invalid contract address
+    let invalid_contract_address: H160 = "0x0000000000000000000000000000000000000000"
+        .parse()
+        .unwrap();
+    let response = wallet
+        .client()
+        .request::<_, Value>("GetSmartContractInit", [invalid_contract_address])
+        .await;
 
-//     assert!(response.is_err());
-//     if let Err(ProviderError::JsonRpcClientError(rpc_error)) = response {
-//         if let Some(json_error) = rpc_error.as_error_response() {
-//             assert_eq!(json_error.code, -32603); // Invalid params error code
-//             assert!(json_error.message.contains("Address does not exist"));
-//         } else {
-//             panic!("Expected JSON-RPC error response");
-//         }
-//     } else {
-//         panic!("Expected ProviderError::JsonRpcClientError");
-//     }
-// }
+    assert!(response.is_err());
+    if let Some(rpc_error) = response.err()
+        && let Some(json_error) = rpc_error.as_error_resp()
+    {
+        assert_eq!(json_error.code, -32603); // Invalid params error code
+        assert!(json_error.message.contains("Address does not exist"));
+    } else {
+        panic!("Expected JSON-RPC error response");
+    }
+}
 
 #[zilliqa_macros::test]
 async fn get_ds_block(mut network: Network) {
@@ -4052,234 +4050,234 @@ async fn get_state_proof(mut network: Network) {
         serde_json::from_value(response).expect("Failed to deserialize response");
 }
 
-// // LLM generated, may be buggy
-// #[zilliqa_macros::test]
-// async fn get_transaction_status(mut network: Network) {
-//     let wallet = network.genesis_wallet().await;
+// LLM generated, may be buggy
+#[zilliqa_macros::test]
+async fn get_transaction_status(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
 
-//     // Test 1: Create a transaction and check it while pending/dispatched
-//     let (secret_key_1, _address_1) = zilliqa_account(&mut network, &wallet).await;
-//     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
-//         .parse()
-//         .unwrap();
+    // Test 1: Create a transaction and check it while pending/dispatched
+    let (secret_key_1, _address_1) = zilliqa_account(&mut network, &wallet).await;
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
 
-//     // Get the gas price via the Zilliqa API.
-//     let gas_price_str: String = wallet
-//         .client()
-//         .request("GetMinimumGasPrice", ())
-//         .await
-//         .unwrap();
-//     let gas_price: u128 = u128::from_str(&gas_price_str).unwrap();
+    // Get the gas price via the Zilliqa API.
+    let gas_price_str: String = wallet
+        .client()
+        .request("GetMinimumGasPrice", ())
+        .await
+        .unwrap();
+    let gas_price: u128 = u128::from_str(&gas_price_str).unwrap();
 
-//     // Send first transaction (nonce 1) - should be dispatched initially
-//     let response = issue_create_transaction(
-//         &wallet,
-//         &secret_key_1.public_key(),
-//         gas_price,
-//         &mut network,
-//         &secret_key_1,
-//         1,
-//         ToAddr::Address(to_addr),
-//         200u128 * 10u128.pow(12),
-//         50_000,
-//         None,
-//         None,
-//     )
-//     .await
-//     .unwrap();
-//     let txn_hash_1: H256 = response["TranID"].as_str().unwrap().parse().unwrap();
+    // Send first transaction (nonce 1) - should be dispatched initially
+    let response = issue_create_transaction(
+        &wallet,
+        &secret_key_1.public_key(),
+        gas_price,
+        &mut network,
+        &secret_key_1,
+        1,
+        ToAddr::Address(to_addr),
+        200u128 * 10u128.pow(12),
+        50_000,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let txn_hash_1: H256 = response["TranID"].as_str().unwrap().parse().unwrap();
 
-//     // Check status immediately - should be dispatched (pending)
-//     let response_dispatched: Value = wallet
-//         .client()
-//         .request("GetTransactionStatus", [txn_hash_1])
-//         .await
-//         .expect("Failed to call GetTransactionStatus API");
+    // Check status immediately - should be dispatched (pending)
+    let response_dispatched: Value = wallet
+        .client()
+        .request("GetTransactionStatus", [txn_hash_1])
+        .await
+        .expect("Failed to call GetTransactionStatus API");
 
-//     let tx_status_dispatched: zilliqa::api::types::zil::TransactionStatusResponse =
-//         serde_json::from_value(response_dispatched).expect("Failed to deserialize response");
+    let tx_status_dispatched: zilliqa::api::types::zil::TransactionStatusResponse =
+        serde_json::from_value(response_dispatched).expect("Failed to deserialize response");
 
-//     assert!(matches!(
-//         tx_status_dispatched.status,
-//         zilliqa::api::types::zil::TxnStatusCode::Dispatched
-//     ));
-//     assert_eq!(tx_status_dispatched.modification_state, 1);
+    assert!(matches!(
+        tx_status_dispatched.status,
+        zilliqa::api::types::zil::TxnStatusCode::Dispatched
+    ));
+    assert_eq!(tx_status_dispatched.modification_state, 1);
 
-//     // Test 2: Send transaction with future nonce - should be queued
-//     let response = issue_create_transaction(
-//         &wallet,
-//         &secret_key_1.public_key(),
-//         gas_price,
-//         &mut network,
-//         &secret_key_1,
-//         3, // Skip nonce 2, so this will be queued
-//         ToAddr::Address(to_addr),
-//         200u128 * 10u128.pow(12),
-//         50_000,
-//         None,
-//         None,
-//     )
-//     .await
-//     .unwrap();
-//     let txn_hash_queued: H256 = response["TranID"].as_str().unwrap().parse().unwrap();
+    // Test 2: Send transaction with future nonce - should be queued
+    let response = issue_create_transaction(
+        &wallet,
+        &secret_key_1.public_key(),
+        gas_price,
+        &mut network,
+        &secret_key_1,
+        3, // Skip nonce 2, so this will be queued
+        ToAddr::Address(to_addr),
+        200u128 * 10u128.pow(12),
+        50_000,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let txn_hash_queued: H256 = response["TranID"].as_str().unwrap().parse().unwrap();
 
-//     // Check status - should be queued due to high nonce
-//     let response_queued: Value = wallet
-//         .client()
-//         .request("GetTransactionStatus", [txn_hash_queued])
-//         .await
-//         .expect("Failed to call GetTransactionStatus API");
+    // Check status - should be queued due to high nonce
+    let response_queued: Value = wallet
+        .client()
+        .request("GetTransactionStatus", [txn_hash_queued])
+        .await
+        .expect("Failed to call GetTransactionStatus API");
 
-//     let tx_status_queued: zilliqa::api::types::zil::TransactionStatusResponse =
-//         serde_json::from_value(response_queued).expect("Failed to deserialize response");
+    let tx_status_queued: zilliqa::api::types::zil::TransactionStatusResponse =
+        serde_json::from_value(response_queued).expect("Failed to deserialize response");
 
-//     assert!(matches!(
-//         tx_status_queued.status,
-//         zilliqa::api::types::zil::TxnStatusCode::PresentNonceHigh
-//     ));
-//     assert_eq!(tx_status_queued.modification_state, 1);
+    assert!(matches!(
+        tx_status_queued.status,
+        zilliqa::api::types::zil::TxnStatusCode::PresentNonceHigh
+    ));
+    assert_eq!(tx_status_queued.modification_state, 1);
 
-//     // Test 3: Wait for first transaction to be mined and finalized
-//     network
-//         .run_until_async(
-//             || async {
-//                 let response: Result<GetTxResponse, _> = wallet
-//                     .client()
-//                     .request("GetTransaction", [txn_hash_1])
-//                     .await;
-//                 response.is_ok()
-//             },
-//             400,
-//         )
-//         .await
-//         .unwrap();
+    // Test 3: Wait for first transaction to be mined and finalized
+    network
+        .run_until_async(
+            || async {
+                let response: Result<GetTxResponse, _> = wallet
+                    .client()
+                    .request("GetTransaction", [txn_hash_1])
+                    .await;
+                response.is_ok()
+            },
+            400,
+        )
+        .await
+        .unwrap();
 
-//     // Wait for the block to be finalized
-//     network.run_until_block_finalized(2u64, 300).await.unwrap();
+    // Wait for the block to be finalized
+    network.run_until_block_finalized(3u64, 300).await.unwrap();
 
-//     // Check status after finalization - should be confirmed
-//     let response_confirmed: Value = wallet
-//         .client()
-//         .request("GetTransactionStatus", [txn_hash_1])
-//         .await
-//         .expect("Failed to call GetTransactionStatus API");
+    // Check status after finalization - should be confirmed
+    let response_confirmed: Value = wallet
+        .client()
+        .request("GetTransactionStatus", [txn_hash_1])
+        .await
+        .expect("Failed to call GetTransactionStatus API");
 
-//     let tx_status_confirmed: zilliqa::api::types::zil::TransactionStatusResponse =
-//         serde_json::from_value(response_confirmed).expect("Failed to deserialize response");
+    let tx_status_confirmed: zilliqa::api::types::zil::TransactionStatusResponse =
+        serde_json::from_value(response_confirmed).expect("Failed to deserialize response");
 
-//     assert!(matches!(
-//         tx_status_confirmed.status,
-//         zilliqa::api::types::zil::TxnStatusCode::Confirmed
-//     ));
-//     assert_eq!(tx_status_confirmed.modification_state, 2);
-//     assert!(tx_status_confirmed.success);
-//     assert!(!tx_status_confirmed.epoch_inserted.is_empty());
-//     assert!(!tx_status_confirmed.epoch_updated.is_empty());
+    assert!(matches!(
+        tx_status_confirmed.status,
+        zilliqa::api::types::zil::TxnStatusCode::Confirmed
+    ));
+    assert_eq!(tx_status_confirmed.modification_state, 2);
+    assert!(tx_status_confirmed.success);
+    assert!(!tx_status_confirmed.epoch_inserted.is_empty());
+    assert!(!tx_status_confirmed.epoch_updated.is_empty());
 
-//     // Test 4: Create a transaction that will fail/error
-//     let (secret_key_error, _) = zilliqa_account(&mut network, &wallet).await;
+    // Test 4: Create a transaction that will fail/error
+    let (secret_key_error, _) = zilliqa_account(&mut network, &wallet).await;
 
-//     // Deploy a contract that will revert
-//     let revert_code = r#"
-//         scilla_version 0
+    // Deploy a contract that will revert
+    let revert_code = r#"
+        scilla_version 0
 
-//         contract RevertContract
-//         ()
+        contract RevertContract
+        ()
 
-//         transition AlwaysRevert()
-//             throw
-//         end
-//     "#;
+        transition AlwaysRevert()
+            throw
+        end
+    "#;
 
-//     let revert_data = r#"[
-//         {
-//             "vname": "_scilla_version",
-//             "type": "Uint32",
-//             "value": "0"
-//         }
-//     ]"#;
+    let revert_data = r#"[
+        {
+            "vname": "_scilla_version",
+            "type": "Uint32",
+            "value": "0"
+        }
+    ]"#;
 
-//     let (revert_contract_address, _) = send_transaction(
-//         &mut network,
-//         &wallet,
-//         &secret_key_error,
-//         1,
-//         ToAddr::Address(H160::zero()),
-//         0,
-//         50_000,
-//         Some(revert_code),
-//         Some(revert_data),
-//     )
-//     .await;
-//     let revert_contract_address = revert_contract_address.unwrap();
+    let (revert_contract_address, _) = send_transaction(
+        &mut network,
+        &wallet,
+        &secret_key_error,
+        1,
+        ToAddr::Address(H160::zero()),
+        0,
+        50_000,
+        Some(revert_code),
+        Some(revert_data),
+    )
+    .await;
+    let revert_contract_address = revert_contract_address.unwrap();
 
-//     // Call the reverting function
-//     let call = r#"{
-//         "_tag": "AlwaysRevert",
-//         "params": []
-//     }"#;
+    // Call the reverting function
+    let call = r#"{
+        "_tag": "AlwaysRevert",
+        "params": []
+    }"#;
 
-//     let response_error = issue_create_transaction(
-//         &wallet,
-//         &secret_key_error.public_key(),
-//         gas_price,
-//         &mut network,
-//         &secret_key_error,
-//         2,
-//         ToAddr::Address(revert_contract_address),
-//         0,
-//         50_000,
-//         None,
-//         Some(call),
-//     )
-//     .await
-//     .unwrap();
-//     let txn_hash_error: H256 = response_error["TranID"].as_str().unwrap().parse().unwrap();
+    let response_error = issue_create_transaction(
+        &wallet,
+        &secret_key_error.public_key(),
+        gas_price,
+        &mut network,
+        &secret_key_error,
+        2,
+        ToAddr::Address(H160::from_slice(revert_contract_address.as_slice())),
+        0,
+        50_000,
+        None,
+        Some(call),
+    )
+    .await
+    .unwrap();
+    let txn_hash_error: H256 = response_error["TranID"].as_str().unwrap().parse().unwrap();
 
-//     // Wait for the error transaction to be mined
-//     network
-//         .run_until_async(
-//             || async {
-//                 let response: Result<GetTxResponse, _> = wallet
-//                     .client()
-//                     .request("GetTransaction", [txn_hash_error])
-//                     .await;
-//                 response.is_ok()
-//             },
-//             400,
-//         )
-//         .await
-//         .unwrap();
+    // Wait for the error transaction to be mined
+    network
+        .run_until_async(
+            || async {
+                let response: Result<GetTxResponse, _> = wallet
+                    .client()
+                    .request("GetTransaction", [txn_hash_error])
+                    .await;
+                response.is_ok()
+            },
+            400,
+        )
+        .await
+        .unwrap();
 
-//     // Wait for finalization
-//     network.run_until_block_finalized(4u64, 300).await.unwrap();
+    // Wait for finalization
+    network.run_until_block_finalized(5u64, 300).await.unwrap();
 
-//     // Check status of error transaction - should be confirmed but with success=false
-//     let response_error_status: Value = wallet
-//         .client()
-//         .request("GetTransactionStatus", [txn_hash_error])
-//         .await
-//         .expect("Failed to call GetTransactionStatus API");
+    // Check status of error transaction - should be confirmed but with success=false
+    let response_error_status: Value = wallet
+        .client()
+        .request("GetTransactionStatus", [txn_hash_error])
+        .await
+        .expect("Failed to call GetTransactionStatus API");
 
-//     let tx_status_error: zilliqa::api::types::zil::TransactionStatusResponse =
-//         serde_json::from_value(response_error_status).expect("Failed to deserialize response");
+    let tx_status_error: zilliqa::api::types::zil::TransactionStatusResponse =
+        serde_json::from_value(response_error_status).expect("Failed to deserialize response");
 
-//     // Even failed transactions show as "Confirmed" once they're in a finalized block
-//     assert!(matches!(
-//         tx_status_error.status,
-//         zilliqa::api::types::zil::TxnStatusCode::Error
-//     ));
-//     assert_eq!(tx_status_error.modification_state, 2);
-//     assert!(!tx_status_error.success); // This should be false for failed transactions
+    // Even failed transactions show as "Confirmed" once they're in a finalized block
+    assert!(matches!(
+        tx_status_error.status,
+        zilliqa::api::types::zil::TxnStatusCode::Error
+    ));
+    assert_eq!(tx_status_error.modification_state, 2);
+    assert!(!tx_status_error.success); // This should be false for failed transactions
 
-//     // Verify all basic fields are properly formatted
-//     assert!(tx_status_confirmed.amount.parse::<u128>().is_ok());
-//     assert!(tx_status_confirmed.gas_limit.parse::<u64>().is_ok());
-//     assert!(tx_status_confirmed.gas_price.parse::<u64>().is_ok());
-//     assert!(tx_status_confirmed.nonce.parse::<u64>().is_ok());
-//     assert!(!tx_status_confirmed.to_addr.is_empty());
-//     assert!(!tx_status_confirmed.version.is_empty());
-// }
+    // Verify all basic fields are properly formatted
+    assert!(tx_status_confirmed.amount.parse::<u128>().is_ok());
+    assert!(tx_status_confirmed.gas_limit.parse::<u64>().is_ok());
+    assert!(tx_status_confirmed.gas_price.parse::<u64>().is_ok());
+    assert!(tx_status_confirmed.nonce.parse::<u64>().is_ok());
+    assert!(!tx_status_confirmed.to_addr.is_empty());
+    assert!(!tx_status_confirmed.version.is_empty());
+}
 
 #[zilliqa_macros::test]
 async fn get_blockchain_info_structure(mut network: Network) {

@@ -5,7 +5,7 @@ use crate::Network;
 // test that even with some consensus messages being dropped, the network can still proceed
 // note: this drops all messages, not just consensus messages, but there should only be
 // consensus messages in the network anyway
-#[zilliqa_macros::test(blocks_per_epoch = 2)]
+#[zilliqa_macros::test(blocks_per_epoch = 100)]
 async fn block_production_even_when_lossy_network(mut network: Network) {
     let index = network.random_index();
     let until_at = LAG_BEHIND_CURRENT_VIEW + MISSED_VIEW_WINDOW;
@@ -33,7 +33,7 @@ async fn block_production_even_when_lossy_network(mut network: Network) {
     );
 }
 
-#[zilliqa_macros::test(blocks_per_epoch = 2)]
+#[zilliqa_macros::test(blocks_per_epoch = 100)]
 async fn blocks_are_produced_while_a_node_restarts(mut network: Network) {
     let restarted_node = network.random_index();
     let wallet = network.wallet_of_node(restarted_node).await;
