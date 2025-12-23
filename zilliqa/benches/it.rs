@@ -137,6 +137,8 @@ fn process_empty(c: &mut Criterion) {
             SystemTime::UNIX_EPOCH,
             EvmGas(0),
             EvmGas(0),
+            None,
+            None,
         );
         parent_hash = block.hash();
 

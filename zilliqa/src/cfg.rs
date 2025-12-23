@@ -752,6 +752,7 @@ pub struct Fork {
     pub failed_zil_transfers_to_eoa_proper_fee_deduction: bool,
     pub validator_jailing: bool,
     pub scilla_empty_maps_are_encoded_correctly: bool,
+    pub randao_support: bool,
 }
 
 pub enum ForkName {
@@ -892,6 +893,8 @@ pub struct ForkDelta {
     pub validator_jailing: Option<bool>,
     /// if true, empty scilla maps having no presence in state are encoded as empty maps, not empty values
     pub scilla_empty_maps_are_encoded_correctly: Option<bool>,
+    /// if true, randao is supported
+    pub randao_support: Option<bool>,
 }
 
 impl Fork {
@@ -997,6 +1000,7 @@ impl Fork {
             scilla_empty_maps_are_encoded_correctly: delta
                 .scilla_empty_maps_are_encoded_correctly
                 .unwrap_or(self.scilla_empty_maps_are_encoded_correctly),
+            randao_support: delta.randao_support.unwrap_or(self.randao_support),
         }
     }
 }
@@ -1099,6 +1103,7 @@ pub fn genesis_fork_default() -> Fork {
         failed_zil_transfers_to_eoa_proper_fee_deduction: true,
         validator_jailing: true,
         scilla_empty_maps_are_encoded_correctly: true,
+        randao_support: true,
     }
 }
 
@@ -1142,6 +1147,7 @@ pub struct ContractUpgrades {
     pub deposit_v5: Option<ContractUpgradeConfig>,
     pub deposit_v6: Option<ContractUpgradeConfig>,
     pub deposit_v7: Option<ContractUpgradeConfig>,
+    pub deposit_v8: Option<ContractUpgradeConfig>,
 }
 
 impl ContractUpgrades {
@@ -1151,6 +1157,7 @@ impl ContractUpgrades {
         deposit_v5: Option<ContractUpgradeConfig>,
         deposit_v6: Option<ContractUpgradeConfig>,
         deposit_v7: Option<ContractUpgradeConfig>,
+        deposit_v8: Option<ContractUpgradeConfig>,
     ) -> ContractUpgrades {
         Self {
             deposit_v3,
@@ -1158,6 +1165,7 @@ impl ContractUpgrades {
             deposit_v5,
             deposit_v6,
             deposit_v7,
+            deposit_v8,
         }
     }
     pub fn to_toml(&self) -> toml::Value {
@@ -1203,6 +1211,10 @@ impl Default for ContractUpgrades {
                 reinitialise_params: None,
             }),
             deposit_v7: Some(ContractUpgradeConfig {
+                height: 0,
+                reinitialise_params: Some(ReinitialiseParams::default()),
+            }),
+            deposit_v8: Some(ContractUpgradeConfig {
                 height: 0,
                 reinitialise_params: Some(ReinitialiseParams::default()),
             }),
@@ -1267,6 +1279,7 @@ mod tests {
                 failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                 validator_jailing: None,
                 scilla_empty_maps_are_encoded_correctly: None,
+                randao_support: None,
             }],
             ..Default::default()
         };
@@ -1324,6 +1337,7 @@ mod tests {
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                     validator_jailing: Some(false),
                     scilla_empty_maps_are_encoded_correctly: Some(false),
+                    randao_support: Some(false),
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1361,6 +1375,7 @@ mod tests {
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                     validator_jailing: None,
                     scilla_empty_maps_are_encoded_correctly: None,
+                    randao_support: None,
                 },
             ],
             ..Default::default()
@@ -1435,6 +1450,7 @@ mod tests {
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                     validator_jailing: None,
                     scilla_empty_maps_are_encoded_correctly: None,
+                    randao_support: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1472,6 +1488,7 @@ mod tests {
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                     validator_jailing: None,
                     scilla_empty_maps_are_encoded_correctly: None,
+                    randao_support: None,
                 },
             ],
             ..Default::default()
@@ -1534,6 +1551,7 @@ mod tests {
                 failed_zil_transfers_to_eoa_proper_fee_deduction: true,
                 validator_jailing: true,
                 scilla_empty_maps_are_encoded_correctly: true,
+                randao_support: true,
             },
             forks: vec![],
             ..Default::default()
@@ -1584,6 +1602,7 @@ mod tests {
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                     validator_jailing: None,
                     scilla_empty_maps_are_encoded_correctly: None,
+                    randao_support: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1621,6 +1640,7 @@ mod tests {
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                     validator_jailing: None,
                     scilla_empty_maps_are_encoded_correctly: None,
+                    randao_support: None,
                 },
             ],
             ..Default::default()

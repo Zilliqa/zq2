@@ -366,6 +366,7 @@ impl Network {
                         height: deposit_v3_upgrade_block_height_value,
                         reinitialise_params: Some(ReinitialiseParams::default()),
                     }),
+                    None,
                 )
             } else {
                 ContractUpgrades::new(
@@ -380,6 +381,7 @@ impl Network {
                         height: 0,
                         reinitialise_params: Some(ReinitialiseParams::default()),
                     }),
+                    None,
                 )
             }
         };
@@ -541,6 +543,7 @@ impl Network {
                     height: self.deposit_v3_upgrade_block_height.unwrap(),
                     reinitialise_params: Some(ReinitialiseParams::default()),
                 }),
+                None,
             )
         } else {
             ContractUpgrades::new(
@@ -555,6 +558,7 @@ impl Network {
                     height: 0,
                     reinitialise_params: Some(ReinitialiseParams::default()),
                 }),
+                None,
             )
         };
         let config = NodeConfig {
