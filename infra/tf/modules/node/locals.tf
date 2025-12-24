@@ -19,6 +19,7 @@ locals {
         resource_id     = format("%s-%s-%s-%s", var.chain_name, var.role, var.region_mappings[(node.region != null ? node.region : ([for region in data.google_compute_zones.available : region if contains(region.names, node.zone)][0].region))], n)
         image           = lookup(try(node.os_images, {}), tostring(n), "ubuntu-os-cloud/ubuntu-2204-lts")
         instance_type   = lookup(try(var.config.instance_type_override, {}), format("%s-%s-%s-%s", var.chain_name, lookup(local.labels, "private-api", var.role), var.region_mappings[(node.region != null ? node.region : ([for region in data.google_compute_zones.available : region if contains(region.names, node.zone)][0].region))], n), var.config.instance_type)
+        disk_size       = lookup(try(var.config.disk_size_override, {}), format("%s-%s-%s-%s", var.chain_name, lookup(local.labels, "private-api", var.role), var.region_mappings[(node.region != null ? node.region : ([for region in data.google_compute_zones.available : region if contains(region.names, node.zone)][0].region))], n), var.config.disk_size)
       }
     ]
   ])
