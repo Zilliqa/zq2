@@ -477,14 +477,14 @@ impl Consensus {
             // if state_sync but no checkpoint is specified in the config then
             // the already started state syncing will be resumed, otherwise
             // it will be (re)started from the checkpoint specified
-            if state_sync && ckpt_block.is_some() {
+            if state_sync && let Some(ckpt_block) = ckpt_block.as_ref() {
                 let new_history = consensus.state.view_history.read().new_at(
                     finalized_view,
                     finalized_view,
                     max_missed_view_age,
                 );
                 consensus.state.ckpt_view_history = Some(Arc::new(RwLock::new(new_history)));
-                consensus.state.ckpt_finalized_view = Some(ckpt_block.as_ref().unwrap().view());
+                consensus.state.ckpt_finalized_view = Some(ckpt_block.view());
                 // also persist the checkpoint's view history in the db otherwise
                 // we won't be able to resume state syncing if the node is restarted
                 let ckpt_view_history_guard =
@@ -753,9 +753,9 @@ impl Consensus {
             if (milliseconds_since_last_view_change
                 > self.config.consensus.consensus_timeout.as_millis() as u64)
                 && !self.config.consensus.new_view_broadcast_interval.is_zero()
-                && (Duration::from_millis(milliseconds_since_last_view_change).as_secs()
-                    % self.config.consensus.new_view_broadcast_interval.as_secs())
-                    == 0
+                && (Duration::from_millis(milliseconds_since_last_view_change)
+                    .as_secs()
+                    .is_multiple_of(self.config.consensus.new_view_broadcast_interval.as_secs()))
             {
                 match self.network_message_cache.clone() {
                     Some((_, ExternalMessage::NewView(new_view))) => {
@@ -1372,11 +1372,11 @@ impl Consensus {
 
                 // It is possible that we have collected votes for a forked block. Do not propose in that case.
                 let early_proposal = self.early_proposal.read();
-                if let Some((block, _, _, _, _)) = early_proposal.as_ref() {
-                    if block.parent_hash() == block_hash {
-                        std::mem::drop(early_proposal);
-                        return self.ready_for_block_proposal(Some(&votes));
-                    }
+                if let Some((block, _, _, _, _)) = early_proposal.as_ref()
+                    && block.parent_hash() == block_hash
+                {
+                    std::mem::drop(early_proposal);
+                    return self.ready_for_block_proposal(Some(&votes));
                 }
             }
         }
@@ -1484,10 +1484,10 @@ impl Consensus {
     fn early_proposal_assemble_at(&self, agg: Option<AggregateQc>) -> Result<()> {
         let view = self.get_view()?;
         {
-            if let Some(early_proposal) = self.early_proposal.read().as_ref() {
-                if early_proposal.0.view() == view {
-                    return Ok(());
-                }
+            if let Some(early_proposal) = self.early_proposal.read().as_ref()
+                && early_proposal.0.view() == view
+            {
+                return Ok(());
             }
         }
 
@@ -1852,10 +1852,10 @@ impl Consensus {
 
     /// Provides a (cached) preview of the early proposal.
     pub fn get_pending_block(&self) -> Result<Option<Block>> {
-        if let Some(early_proposal) = self.early_proposal.read().as_ref() {
-            if early_proposal.0.view() == self.get_view()? {
-                return Ok(Some(early_proposal.0.clone()));
-            }
+        if let Some(early_proposal) = self.early_proposal.read().as_ref()
+            && early_proposal.0.view() == self.get_view()?
+        {
+            return Ok(Some(early_proposal.0.clone()));
         }
         self.early_proposal_assemble_at(None)?;
         Ok(Some(self.early_proposal.read().as_ref().unwrap().0.clone()))
@@ -2423,38 +2423,37 @@ impl Consensus {
             && !block.is_genesis()
             && self.config.do_checkpoints
             && self.epoch_is_checkpoint(self.epoch_number(block.number()))
+            && let Some(checkpoint_path) = self.db.get_checkpoint_dir()?
         {
-            if let Some(checkpoint_path) = self.db.get_checkpoint_dir()? {
-                let parent = self
-                    .db
-                    .get_block(block.parent_hash().into())?
-                    .ok_or(anyhow!(
-                        "Trying to checkpoint block, but we don't have its parent"
+            let parent = self
+                .db
+                .get_block(block.parent_hash().into())?
+                .ok_or(anyhow!(
+                    "Trying to checkpoint block, but we don't have its parent"
+                ))?;
+            let transactions: Vec<SignedTransaction> = block
+                .transactions
+                .iter()
+                .map(|txn_hash| {
+                    let tx = self.db.get_transaction(txn_hash)?.ok_or(anyhow!(
+                        "failed to fetch transaction {} for checkpoint parent {}",
+                        txn_hash,
+                        parent.hash()
                     ))?;
-                let transactions: Vec<SignedTransaction> = block
-                    .transactions
-                    .iter()
-                    .map(|txn_hash| {
-                        let tx = self.db.get_transaction(txn_hash)?.ok_or(anyhow!(
-                            "failed to fetch transaction {} for checkpoint parent {}",
-                            txn_hash,
-                            parent.hash()
-                        ))?;
-                        Ok::<_, anyhow::Error>(tx.tx)
-                    })
-                    .collect::<Result<Vec<SignedTransaction>>>()?;
+                    Ok::<_, anyhow::Error>(tx.tx)
+                })
+                .collect::<Result<Vec<SignedTransaction>>>()?;
 
-                self.message_sender.send_message_to_coordinator(
-                    InternalMessage::ExportBlockCheckpoint(
-                        Box::new(block),
-                        transactions,
-                        Box::new(parent),
-                        self.db.state_trie()?.clone(),
-                        self.state.view_history.read().clone(),
-                        checkpoint_path,
-                    ),
-                )?;
-            }
+            self.message_sender.send_message_to_coordinator(
+                InternalMessage::ExportBlockCheckpoint(
+                    Box::new(block),
+                    transactions,
+                    Box::new(parent),
+                    self.db.state_trie()?.clone(),
+                    self.state.view_history.read().clone(),
+                    checkpoint_path,
+                ),
+            )?;
         }
 
         Ok(())
@@ -2706,7 +2705,7 @@ impl Consensus {
     }
 
     fn block_is_first_in_epoch(&self, number: u64) -> bool {
-        number % self.config.consensus.blocks_per_epoch == 0
+        number.is_multiple_of(self.config.consensus.blocks_per_epoch)
     }
 
     fn epoch_number(&self, block_number: u64) -> u64 {
@@ -2715,7 +2714,7 @@ impl Consensus {
     }
 
     fn epoch_is_checkpoint(&self, epoch_number: u64) -> bool {
-        epoch_number % self.config.consensus.epochs_per_checkpoint == 0
+        epoch_number.is_multiple_of(self.config.consensus.epochs_per_checkpoint)
     }
 
     fn vote_from_block(&self, block: &Block) -> Vote {
@@ -3461,76 +3460,68 @@ impl Consensus {
             Ok(())
         })?;
 
-        if !fork.fund_accounts_from_zero_account.is_empty() {
-            if let Some(fork_height) = self
+        if !fork.fund_accounts_from_zero_account.is_empty()
+            && let Some(fork_height) = self
                 .state
                 .forks
                 .find_height_fork_first_activated(ForkName::FundAccountsFromZeroAccount)
-            {
-                if fork_height == block.header.number {
-                    for address_amount_pair in fork.fund_accounts_from_zero_account.clone() {
-                        state.mutate_account(Address::ZERO, |a| {
-                            a.balance = a
-                                .balance
-                                .checked_sub(*address_amount_pair.1)
-                                .ok_or(anyhow!("Underflow occurred in zero account balance"))?;
-                            Ok(())
-                        })?;
-                        state.mutate_account(address_amount_pair.0, |a| {
-                            a.balance = a
-                                .balance
-                                .checked_add(*address_amount_pair.1)
-                                .ok_or(anyhow!("Overflow occurred in Faucet account balance"))?;
-                            Ok(())
-                        })?;
-                    }
-                }
-            };
-        }
+            && fork_height == block.header.number
+        {
+            for address_amount_pair in fork.fund_accounts_from_zero_account.clone() {
+                state.mutate_account(Address::ZERO, |a| {
+                    a.balance = a
+                        .balance
+                        .checked_sub(*address_amount_pair.1)
+                        .ok_or(anyhow!("Underflow occurred in zero account balance"))?;
+                    Ok(())
+                })?;
+                state.mutate_account(address_amount_pair.0, |a| {
+                    a.balance = a
+                        .balance
+                        .checked_add(*address_amount_pair.1)
+                        .ok_or(anyhow!("Overflow occurred in Faucet account balance"))?;
+                    Ok(())
+                })?;
+            }
+        };
 
-        if fork.restore_xsgd_contract {
-            if let Some(fork_height) = self
+        if fork.restore_xsgd_contract
+            && let Some(fork_height) = self
                 .state
                 .forks
                 .find_height_fork_first_activated(ForkName::RestoreXsgdContract)
-            {
-                if fork_height == block.header.number {
-                    let code: Code = serde_json::from_slice(&hex::decode(XSGD_CODE)?)?;
-                    state.mutate_account(XSGD_MAINNET_ADDR, |a| {
-                        a.code = code;
-                        Ok(())
-                    })?;
-                }
-            }
+            && fork_height == block.header.number
+        {
+            let code: Code = serde_json::from_slice(&hex::decode(XSGD_CODE)?)?;
+            state.mutate_account(XSGD_MAINNET_ADDR, |a| {
+                a.code = code;
+                Ok(())
+            })?;
         }
-        if fork.revert_restore_xsgd_contract {
-            if let Some(fork_height) = self
+        if fork.revert_restore_xsgd_contract
+            && let Some(fork_height) = self
                 .state
                 .forks
                 .find_height_fork_first_activated(ForkName::RevertRestoreXsgdContract)
-            {
-                if fork_height == block.header.number {
-                    state.mutate_account(XSGD_MAINNET_ADDR, |a| {
-                        a.code = Code::Evm(vec![]);
-                        Ok(())
-                    })?;
-                }
-            }
+            && fork_height == block.header.number
+        {
+            state.mutate_account(XSGD_MAINNET_ADDR, |a| {
+                a.code = Code::Evm(vec![]);
+                Ok(())
+            })?;
         }
-        if fork.restore_ignite_wallet_contracts {
-            if let Some(fork_height) = self
+        if fork.restore_ignite_wallet_contracts
+            && let Some(fork_height) = self
                 .state
                 .forks
                 .find_height_fork_first_activated(ForkName::RestoreIgniteWalletContracts)
-            {
-                if fork_height == block.header.number {
-                    for (addr, code) in build_ignite_wallet_addr_scilla_code_map()?.iter() {
-                        state.mutate_account(*addr, |a| {
-                            a.code = code.clone();
-                            Ok(())
-                        })?;
-                    }
-                }
+            && fork_height == block.header.number
+        {
+            for (addr, code) in build_ignite_wallet_addr_scilla_code_map()?.iter() {
+                state.mutate_account(*addr, |a| {
+                    a.code = code.clone();
+                    Ok(())
+                })?;
             }
         }
 
@@ -3757,18 +3748,18 @@ impl Consensus {
             };
             let mut history = VecDeque::new();
             for view in parent_view + 1..block.view() {
-                if let Ok(leader) = state_at.leader(view, header) {
-                    if view != parent_view + 1 {
-                        history.push_back((view, leader));
-                        self.state
-                            .ckpt_view_history
-                            .as_ref()
-                            .expect("Checkpoint view history missing")
-                            .write()
-                            .append_history(&mut history)?;
-                        self.db.extend_ckpt_view_history(view, leader.as_bytes())?;
-                        // TODO(jailing): collect them in a vector and call append_history only once
-                    }
+                if let Ok(leader) = state_at.leader(view, header)
+                    && view != parent_view + 1
+                {
+                    history.push_back((view, leader));
+                    self.state
+                        .ckpt_view_history
+                        .as_ref()
+                        .expect("Checkpoint view history missing")
+                        .write()
+                        .append_history(&mut history)?;
+                    self.db.extend_ckpt_view_history(view, leader.as_bytes())?;
+                    // TODO(jailing): collect them in a vector and call append_history only once
                 }
             }
             self.state.ckpt_finalized_view = Some(block.view());

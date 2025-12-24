@@ -1,10 +1,8 @@
 use alloy::{
-    primitives::{B256, Uint},
-    rpc::types::trace::geth::TraceResult,
-};
-use ethers::{
-    providers::Middleware,
-    types::{H160, TransactionRequest},
+    network::TransactionBuilder,
+    primitives::{Address, TxHash, U256, Uint},
+    providers::Provider as _,
+    rpc::types::{TransactionRequest, trace::geth::TraceResult},
 };
 
 use crate::Network;
@@ -26,19 +24,22 @@ async fn debug_trace_block_by_number(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
     // Create a transaction to have something to trace
-    let to_addr = H160::random();
-    let tx = TransactionRequest::new().to(to_addr).value(1000).gas(21000);
+    let to_addr = Address::random();
+    let tx = TransactionRequest::default()
+        .to(to_addr)
+        .value(U256::from(1000))
+        .gas_limit(21_000);
 
-    let tx_hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
+    let tx_hash = *wallet.send_transaction(tx).await.unwrap().tx_hash();
 
     // Wait for transaction to be mined
-    let receipt = network.run_until_receipt(&wallet, tx_hash, 100).await;
-    let block_number = receipt.block_number.unwrap();
+    let receipt = network.run_until_receipt(&wallet, &tx_hash, 100).await;
+    let block_number = format!("{:#x}", receipt.block_number.unwrap());
 
     // Get trace
     let response: Vec<TraceResult> = wallet
-        .provider()
-        .request("debug_traceBlockByNumber", [block_number])
+        .client()
+        .request("debug_traceBlockByNumber", [&block_number])
         .await
         .expect("Failed to call debug_traceBlockByNumber API");
 
@@ -50,8 +51,8 @@ async fn debug_trace_block_by_number(mut network: Network) {
     });
 
     let response: Vec<TraceResult> = wallet
-        .provider()
-        .request("debug_traceBlockByNumber", (block_number, tracer_options))
+        .client()
+        .request("debug_traceBlockByNumber", (&block_number, tracer_options))
         .await
         .expect("Failed to call debug_traceBlockByNumber with tracer API");
 
@@ -67,17 +68,20 @@ async fn debug_trace_transaction_basic(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
     // Create a simple transfer transaction
-    let to_addr = H160::random();
-    let tx = TransactionRequest::new().to(to_addr).value(1000).gas(21000);
+    let to_addr = Address::random();
+    let tx = TransactionRequest::default()
+        .to(to_addr)
+        .value(U256::from(1000))
+        .gas_limit(21000);
 
-    let tx_hash_sent = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
+    let tx_hash_sent = *wallet.send_transaction(tx).await.unwrap().tx_hash();
 
     // Wait for transaction to be mined
-    network.run_until_receipt(&wallet, tx_hash_sent, 100).await;
+    network.run_until_receipt(&wallet, &tx_hash_sent, 100).await;
 
     // Get trace
     let response: TraceResult = wallet
-        .provider()
+        .client()
         .request("debug_traceTransaction", [tx_hash_sent])
         .await
         .expect("Failed to call debug_traceTransaction API");
@@ -86,7 +90,7 @@ async fn debug_trace_transaction_basic(mut network: Network) {
         TraceResult::Success { result, tx_hash } => {
             dbg!(&result);
             let frame = result.try_into_default_frame().unwrap();
-            assert_eq!(tx_hash.unwrap(), tx_hash_sent.to_fixed_bytes());
+            assert_eq!(tx_hash.unwrap(), tx_hash_sent);
             assert!(!frame.failed);
             assert!(frame.gas == 21000);
         }
@@ -99,13 +103,16 @@ async fn debug_trace_transaction_with_call_tracer(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
     // Create a simple transfer transaction
-    let to_addr = H160::random();
-    let tx = TransactionRequest::new().to(to_addr).value(1000).gas(21000);
+    let to_addr = Address::random();
+    let tx = TransactionRequest::default()
+        .with_to(to_addr)
+        .with_value(U256::from(1000))
+        .with_gas_limit(21000);
 
-    let tx_hash_sent = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
+    let tx_hash_sent = *wallet.send_transaction(tx).await.unwrap().tx_hash();
 
     // Wait for transaction to be mined
-    network.run_until_receipt(&wallet, tx_hash_sent, 100).await;
+    network.run_until_receipt(&wallet, &tx_hash_sent, 100).await;
 
     // Configure callTracer
     let tracer_options = serde_json::json!({
@@ -117,7 +124,7 @@ async fn debug_trace_transaction_with_call_tracer(mut network: Network) {
 
     // Get trace
     let response: TraceResult = wallet
-        .provider()
+        .client()
         .request("debug_traceTransaction", (tx_hash_sent, tracer_options))
         .await
         .expect("Failed to call debug_traceTransaction API");
@@ -126,7 +133,7 @@ async fn debug_trace_transaction_with_call_tracer(mut network: Network) {
         TraceResult::Success { result, tx_hash } => {
             dbg!(&result);
             let frame = result.try_into_call_frame().unwrap();
-            assert_eq!(tx_hash.unwrap(), tx_hash_sent.to_fixed_bytes());
+            assert_eq!(tx_hash.unwrap(), tx_hash_sent);
             assert!(Uint::from(21000) >= frame.gas_used);
             assert!(Uint::from(0) < frame.gas_used);
             assert!(frame.error.is_none())
@@ -139,13 +146,10 @@ async fn debug_trace_transaction_with_call_tracer(mut network: Network) {
 async fn debug_trace_transaction_not_found(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
-    let nonexistent_hash: B256 =
-        "0x1234567890123456789012345678901234567890123456789012345678901234"
-            .parse()
-            .unwrap();
+    let nonexistent_hash = TxHash::random();
 
     let response: Result<TraceResult, _> = wallet
-        .provider()
+        .client()
         .request("debug_traceTransaction", [nonexistent_hash])
         .await;
 

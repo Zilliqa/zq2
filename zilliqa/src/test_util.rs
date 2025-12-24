@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     fs::DirBuilder,
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     os::unix::fs::DirBuilderExt,
     path::PathBuf,
     process::{Child, Command, Stdio},
@@ -104,11 +104,17 @@ impl Default for ScillaServer {
             .arg(&container_name)
             // Let Docker auto-assign a free port on the host. The scilla-server listens on port 3000.
             .arg("--publish")
-            .arg("3000")
+            .arg("3000/tcp")
             .arg("--init")
             .arg("--rm")
-            .arg("-v")
-            .arg(format!("{temp_dir}:{temp_dir}"))
+            .arg("--mount")
+            .arg(format!(
+                "type=bind,src={temp_dir}/scilla_ext_libs,dst={temp_dir}/scilla_ext_libs"
+            ))
+            .arg("--mount")
+            .arg(format!(
+                "type=bind,src={temp_dir}/scilla-sockets,dst={temp_dir}/scilla-sockets"
+            ))
             .arg(
                 "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:abdb24b1",
             )
@@ -154,9 +160,10 @@ impl Default for ScillaServer {
         let addrs: Vec<SocketAddr> = inspect["3000/tcp"]
             .iter()
             .copied()
-            .map(|a| (a.ip, a.port).into())
+            .filter(|a| a.ip.is_ipv4())
+            .map(|a| (IpAddr::V4(Ipv4Addr::LOCALHOST), a.port).into())
             .collect();
-        let addr = *addrs.iter().find(|a| a.is_ipv4()).unwrap();
+        let addr = *addrs.first().unwrap();
 
         ScillaServer {
             addr: format!("http://{addr}"),

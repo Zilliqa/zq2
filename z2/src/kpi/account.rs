@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
+use alloy::{network::EthereumWallet, primitives::Address, signers::local::PrivateKeySigner};
 use anyhow::Result;
-use ethers::signers::Signer;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Copy, Serialize, Deserialize)]
@@ -39,8 +39,10 @@ impl Account {
         Ok(format!("{}", self.get_zq_address()?))
     }
 
-    pub fn get_eth_wallet(&self) -> Result<ethers::signers::LocalWallet> {
-        Ok(ethers::signers::LocalWallet::from_str(&self.private_key)?)
+    pub fn get_eth_wallet(&self) -> Result<EthereumWallet> {
+        let signer = PrivateKeySigner::from_str(&self.private_key)?;
+        let wallet = EthereumWallet::from(signer);
+        Ok(wallet)
     }
 
     pub fn get_address_as_zil(&self) -> Result<zilliqa_rs::core::ZilAddress> {
@@ -49,8 +51,9 @@ impl Account {
         )?)
     }
 
-    pub fn get_address_as_eth(&self) -> Result<ethers::types::Address> {
-        Ok(ethers::types::Address::from_str(&self.get_address()?)?)
+    pub fn get_address_as_eth(&self) -> Result<Address> {
+        let addr = self.get_address()?;
+        Ok(Address::from_str(&addr)?)
     }
 
     pub fn get_address(&self) -> Result<String> {
@@ -60,8 +63,8 @@ impl Account {
         })
     }
 
-    pub fn get_eth_address(&self) -> Result<ethers::types::Address> {
+    pub fn get_eth_address(&self) -> Result<Address> {
         let wallet = self.get_eth_wallet()?;
-        Ok(wallet.address())
+        Ok(wallet.default_signer().address())
     }
 }

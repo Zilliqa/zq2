@@ -889,10 +889,10 @@ impl Db {
             .query_row((), |row| {
                 row.get(0).map_err(|e| {
                     // workaround where MAX(height) returns NULL if there are no blocks, instead of a NoRows error
-                    if let rusqlite::Error::InvalidColumnType(_, _, typ) = e {
-                        if typ == rusqlite::types::Type::Null {
-                            return rusqlite::Error::QueryReturnedNoRows;
-                        }
+                    if let rusqlite::Error::InvalidColumnType(_, _, typ) = e
+                        && typ == rusqlite::types::Type::Null
+                    {
+                        return rusqlite::Error::QueryReturnedNoRows;
                     }
                     e
                 })
@@ -908,10 +908,10 @@ impl Db {
             .query_row((), |row| {
                 row.get(0).map_err(|e| {
                     // workaround where MIN(view) returns NULL if there are no blocks, instead of a NoRows error
-                    if let rusqlite::Error::InvalidColumnType(_, _, typ) = e {
-                        if typ == rusqlite::types::Type::Null {
-                            return rusqlite::Error::QueryReturnedNoRows;
-                        }
+                    if let rusqlite::Error::InvalidColumnType(_, _, typ) = e
+                        && typ == rusqlite::types::Type::Null
+                    {
+                        return rusqlite::Error::QueryReturnedNoRows;
                     }
                     e
                 })

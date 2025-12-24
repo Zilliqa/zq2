@@ -1071,14 +1071,14 @@ impl Sync {
         info!(%from, number = %brt.block.number(), "BlockRequest : received");
 
         // send cached response
-        if let Some(prop) = self.cache_probe_response.as_ref() {
-            if prop.hash() == brt.block.hash() {
-                return Ok(ExternalMessage::BlockResponse(BlockResponse {
-                    proposals: vec![prop.clone()],
-                    from_view: u64::MAX,
-                    availability: None,
-                }));
-            }
+        if let Some(prop) = self.cache_probe_response.as_ref()
+            && prop.hash() == brt.block.hash()
+        {
+            return Ok(ExternalMessage::BlockResponse(BlockResponse {
+                proposals: vec![prop.clone()],
+                from_view: u64::MAX,
+                availability: None,
+            }));
         };
 
         // Construct the proposal
@@ -2015,7 +2015,7 @@ impl SyncSegments {
 
 // FIXME: Find a better way to do this, other than checking for debug/release build.
 // For the purpose of testing, we need a smaller prune interval to ensure that the test cases run faster.
-#[cfg(debug_assertions)]
+#[cfg(feature = "fake_time")]
 pub const MIN_PRUNE_INTERVAL: u64 = 10;
-#[cfg(not(debug_assertions))]
+#[cfg(not(feature = "fake_time"))]
 pub const MIN_PRUNE_INTERVAL: u64 = 300;

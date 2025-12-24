@@ -10,9 +10,9 @@ echo "building zilliqa and running it as a detached process"
 cargo build -p zilliqa
 ls ./target
 RUST_LOG=zilliqa=warn,zilliqa=info ./target/debug/zilliqa 65d7f4da9bedc8fb79cbf6722342960bbdfb9759bc0d9e3fb4989e831ccbc227 -c evm_scilla_js_tests/config-single-node-js-tests.toml > /tmp/zil_log_out.txt 2>&1 &
-
 echo "Recovering disk space"
 cargo clean
+
 cd evm_scilla_js_tests
 
 # install nvm and switch to desired version
