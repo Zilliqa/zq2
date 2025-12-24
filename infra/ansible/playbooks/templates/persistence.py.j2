@@ -36,7 +36,11 @@ logger = cloud_logging_client.logger(CONFIG['log_name'])
 def log_message(message: str, level: str = 'INFO') -> None:
     """Log message to Google Cloud Logging."""
     log_level = getattr(logging, level.upper())
-    logger.log_text(message, severity=level)
+    logger.log_text(
+        message, 
+        severity=level,
+        labels={"service": "persistence"}
+    )
     print(f"[{level}] {message}")
 
 def acquire_lock() -> bool:
@@ -77,6 +81,29 @@ def get_current_block() -> Optional[int]:
     except Exception as e:
         log_message(f"Failed to get current block: {str(e)}", "ERROR")
         return None
+
+def is_node_synced() -> bool:
+    """Return True if node is synced (eth_syncing result is False), else False."""
+    try:
+        response = requests.post(
+            CONFIG['rpc_endpoint'],
+            json={
+                "jsonrpc": "2.0",
+                "method": "eth_syncing",
+                "params": [],
+                "id": 1
+            },
+            timeout=10
+        )
+        response.raise_for_status()
+        result = response.json()
+        syncing_status = result.get('result')
+        if syncing_status is False:
+            return True
+        return False
+    except Exception as e:
+        log_message(f"Failed to check node sync status: {str(e)}", "ERROR")
+        return False
 
 def get_last_backup_block() -> Optional[int]:
     """Get last backup block number from state file."""
@@ -169,6 +196,10 @@ def perform_backup(block_number: int) -> bool:
     start_time = time.time()
     log_message(f"Starting backup process at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} at block {block_number}")
     
+    if not is_node_synced():
+        log_message("Skipping backup: node is not fully synced", "WARNING")
+        return False
+
     if not stop_zilliqa_service():
         return False
     

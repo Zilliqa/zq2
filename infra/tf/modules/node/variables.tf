@@ -23,6 +23,7 @@ variable "config" {
       os_images = optional(map(string), {})
     }))
     instance_type_override = optional(map(string), {})
+    disk_size_override = optional(map(number), {})
   })
   default = {
     nodes : [
