@@ -36,7 +36,7 @@ variable "apps" {
       os_images = optional(map(string), {})
     })), [])
     instance_type_override = optional(map(string), {})
-    disk_size_override = optional(map(number), {})
+    disk_size_override     = optional(map(number), {})
   })
   default = {}
 
@@ -81,7 +81,7 @@ variable "api" {
       os_images = optional(map(string), {})
     })), [])
     instance_type_override = optional(map(string), {})
-    disk_size_override = optional(map(number), {})
+    disk_size_override     = optional(map(number), {})
     allow_ip_ranges = optional(map(object({
       priority         = number
       description      = string
@@ -141,7 +141,7 @@ variable "validator" {
       os_images = optional(map(string), {})
     })), [])
     instance_type_override = optional(map(string), {})
-    disk_size_override = optional(map(number), {})
+    disk_size_override     = optional(map(number), {})
   })
   default = {}
 
@@ -174,7 +174,7 @@ variable "bootstrap" {
       os_images = optional(map(string), {})
     })), [])
     instance_type_override = optional(map(string), {})
-    disk_size_override = optional(map(number), {})
+    disk_size_override     = optional(map(number), {})
   })
   default = {}
 
@@ -212,7 +212,7 @@ variable "checkpoint" {
       os_images = optional(map(string), {})
     })), [])
     instance_type_override = optional(map(string), {})
-    disk_size_override = optional(map(number), {})
+    disk_size_override     = optional(map(number), {})
   })
   default = {}
 
@@ -245,7 +245,7 @@ variable "persistence" {
       os_images = optional(map(string), {})
     })), [])
     instance_type_override = optional(map(string), {})
-    disk_size_override = optional(map(number), {})
+    disk_size_override     = optional(map(number), {})
   })
   default = {}
 
@@ -283,7 +283,7 @@ variable "private_api" {
       zone   = optional(string)
     })), [])
     instance_type_override = optional(map(string), {})
-    disk_size_override = optional(map(number), {})
+    disk_size_override     = optional(map(number), {})
   }))
   default = {}
 
