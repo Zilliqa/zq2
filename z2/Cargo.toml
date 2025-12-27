@@ -45,7 +45,7 @@ primitive-types = "0.12.2"
 prost = "0.14.1"
 rand = "0.8.5"
 regex = "1.12.2"
-reqwest = { version = "0.12.26", features = [
+reqwest = { version = "0.12.28", features = [
     "json",
     "native-tls",
     "http2",
