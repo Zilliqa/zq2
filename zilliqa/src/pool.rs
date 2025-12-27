@@ -1288,7 +1288,7 @@ mod tests {
     fn get_in_memory_state() -> Result<State> {
         let node_config = NodeConfig::default();
 
-        let db = Db::new::<PathBuf>(None, 0, 0, None, crate::cfg::DbConfig::default())?;
+        let db = Db::new::<PathBuf>(None, 0, None, crate::cfg::DbConfig::default())?;
         let db = Arc::new(db);
 
         State::new_with_genesis(db.state_trie()?, node_config, db.clone())
