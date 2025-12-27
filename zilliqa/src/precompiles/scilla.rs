@@ -448,7 +448,12 @@ impl ContextPrecompile for ScillaCall {
             .chain
             .fork
             .scilla_call_gas_exempt_addrs
-            .contains(&input.caller_address);
+            .contains(&input.caller_address)
+            || ctx
+                .chain
+                .fork
+                .scilla_call_gas_exempt_addrs_v2
+                .contains(&input.caller_address);
 
         // Record access of scilla precompile
         ctx.chain.has_called_scilla_precompile = true;
