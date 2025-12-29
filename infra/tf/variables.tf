@@ -17,7 +17,7 @@ variable "region" {
 variable "apps" {
   description = "(Optional) The configuration of the apps nodes"
   type = object({
-    boot_disk_size             = optional(number, 256)
+    boot_disk_size             = optional(number, 100)
     data_disk_size             = optional(number, 0)
     instance_type              = optional(string, "e2-standard-2")
     provisioning_model         = optional(string, "STANDARD")
@@ -66,8 +66,8 @@ variable "apps" {
 variable "api" {
   description = "(Optional) The configuration of the api nodes"
   type = object({
-    boot_disk_size       = optional(number, 256)
-    data_disk_size       = optional(number, 0)
+    boot_disk_size       = optional(number, 100)
+    data_disk_size       = optional(number, 100)
     instance_type        = optional(string, "e2-standard-2")
     provisioning_model   = optional(string, "STANDARD")
     generate_external_ip = optional(bool, false)
@@ -134,8 +134,8 @@ variable "api" {
 variable "validator" {
   description = "(Optional) The configuration of the validator nodes"
   type = object({
-    boot_disk_size       = optional(number, 256)
-    data_disk_size       = optional(number, 0)
+    boot_disk_size       = optional(number, 100)
+    data_disk_size       = optional(number, 100)
     instance_type        = optional(string, "e2-standard-2")
     provisioning_model   = optional(string, "STANDARD")
     generate_external_ip = optional(bool, false)
@@ -169,8 +169,8 @@ variable "validator" {
 variable "bootstrap" {
   description = "(Optional) The configuration of the bootstrap nodes"
   type = object({
-    boot_disk_size       = optional(number, 256)
-    data_disk_size       = optional(number, 0)
+    boot_disk_size       = optional(number, 100)
+    data_disk_size       = optional(number, 100)
     instance_type        = optional(string, "e2-standard-2")
     provisioning_model   = optional(string, "STANDARD")
     generate_external_ip = optional(bool, true)
@@ -204,8 +204,8 @@ variable "bootstrap" {
 variable "checkpoint" {
   description = "(Optional) The configuration of the checkpoint nodes"
   type = object({
-    boot_disk_size       = optional(number, 256)
-    data_disk_size       = optional(number, 0)
+    boot_disk_size       = optional(number, 100)
+    data_disk_size       = optional(number, 100)
     instance_type        = optional(string, "e2-standard-2")
     provisioning_model   = optional(string, "STANDARD")
     generate_external_ip = optional(bool, false)
@@ -244,8 +244,8 @@ variable "checkpoint" {
 variable "persistence" {
   description = "(Optional) The configuration of the persistence nodes"
   type = object({
-    boot_disk_size       = optional(number, 256)
-    data_disk_size       = optional(number, 0)
+    boot_disk_size       = optional(number, 100)
+    data_disk_size       = optional(number, 100)
     instance_type        = optional(string, "e2-standard-2")
     provisioning_model   = optional(string, "STANDARD")
     generate_external_ip = optional(bool, false)
@@ -279,8 +279,8 @@ variable "persistence" {
 variable "private_api" {
   description = "(Optional) The configuration of the private API nodes"
   type = map(object({
-    boot_disk_size         = optional(number, 256)
-    data_disk_size         = optional(number, 0)
+    boot_disk_size         = optional(number, 100)
+    data_disk_size         = optional(number, 100)
     instance_type          = optional(string, "e2-standard-2")
     provisioning_model     = optional(string, "STANDARD")
     generate_external_ip   = optional(bool, false)
