@@ -400,7 +400,6 @@ pub async fn run_persistence_converter(
     let zq2_db = zilliqa::db::Db::new(
         Some(zq2_dir),
         node_config.eth_chain_id,
-        node_config.state_cache_size,
         // This is None because it makes no difference to the conversion: var is required for fetching ZQ1 blocks and setting their state root hash to zero
         None,
         zilliqa::cfg::DbConfig::default(),
