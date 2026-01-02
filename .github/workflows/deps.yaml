@@ -59,11 +59,11 @@ jobs:
         uses: actions/checkout@v6
 
       - name: download Cargo.lock from update job
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: Cargo-lock
       - name: download cargo-update log from update job
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: cargo-updates
 
