@@ -39,7 +39,7 @@ use crate::{
     constants, contracts,
     crypto::{Hash, NodePublicKey},
     error::ensure_success,
-    evm::{SPEC_ID, SPEC_ID_CANCUN, SPEC_ID_SHANGHAI, ZQ2Evm, ZQ2EvmContext, new_zq2_evm_ctx},
+    evm::{SPEC_ID_CANCUN, SPEC_ID_SHANGHAI, ZQ2Evm, ZQ2EvmContext, new_zq2_evm_ctx},
     inspector::{self, ScillaInspector, TouchedAddressInspector},
     message::{Block, BlockHeader},
     precompiles::{PENALTY_ADDRESS, SCILLA_CALL_ADDRESS, ViewHistory},
