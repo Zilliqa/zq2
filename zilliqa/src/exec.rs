@@ -28,6 +28,8 @@ use revm::{
     primitives::{B256, KECCAK_EMPTY, hardfork::SpecId},
     state::{AccountInfo, Bytecode, EvmState},
 };
+use revm::context_interface::block::BlobExcessGasAndPrice;
+use revm::primitives::eip4844::MIN_BLOB_GASPRICE;
 use revm_context::{ContextTr, TxEnv};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -566,11 +568,11 @@ impl State {
             (self.view_history.clone(), self.finalized_view)
         };
 
-        let spec_id = {
+        let (spec_id, blob_excess_gas_and_price) = {
             if fork.cancun_active {
-                SPEC_ID_CANCUN
+                (SPEC_ID_CANCUN, Some(BlobExcessGasAndPrice::new(0, MIN_BLOB_GASPRICE)))
             } else {
-                SPEC_ID_SHANGHAI
+                (SPEC_ID_SHANGHAI, None)
             }
         };
 
@@ -640,7 +642,7 @@ impl State {
                 basefee: self.gas_price.try_into()?,
                 difficulty: U256::from(1),
                 prevrandao: Some(Hash::builder().with(padded_view_number).finalize().into()),
-                blob_excess_gas_and_price: None,
+                blob_excess_gas_and_price,
                 beneficiary: Default::default(),
             });
 

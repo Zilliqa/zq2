@@ -90,7 +90,7 @@ consensus.forks = [
     { at_height = 11300000, inject_access_list = true, use_max_gas_priority_fee = true },
     { at_height = 12998790, failed_zil_transfers_to_eoa_proper_fee_deduction = true },
     { at_height = 14997600, validator_jailing = true },
-    { at_height = 99999999, scilla_empty_maps_are_encoded_correctly = true },
-    { at_height = 99999999, cancun_active = true },
+    { at_height = 23080419, scilla_empty_maps_are_encoded_correctly = true },
+    { at_height = 23080419, cancun_active = true },
 
 ]
