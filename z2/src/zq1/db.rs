@@ -3,10 +3,12 @@ use std::{
     string::FromUtf8Error, sync::Arc,
 };
 
-use alloy::primitives::{Address, B256};
+use alloy::{
+    hex::FromHex,
+    primitives::{Address, B256},
+};
 use anyhow::{Result, anyhow};
 use eth_trie::{DB, EthTrie, Trie};
-use hex::FromHex;
 use leveldb::{
     db::Database,
     iterator::{Iterable, LevelDBIterator},

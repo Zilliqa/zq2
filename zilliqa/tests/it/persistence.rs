@@ -1,11 +1,13 @@
 use std::{fs, ops::DerefMut};
 
-use alloy::eips::BlockId;
-use ethabi::Token;
-use ethers::{providers::Middleware, types::TransactionRequest};
+use alloy::{
+    eips::BlockId,
+    primitives::{Address, U256},
+    providers::{Provider as _, WalletProvider},
+    rpc::types::TransactionRequest,
+    sol,
+};
 use k256::ecdsa::SigningKey;
-use primitive_types::H160;
-use rand::Rng;
 use tracing::*;
 use zilliqa::{
     cfg::Checkpoint,
@@ -24,29 +26,20 @@ use crate::{
 async fn block_and_tx_data_persistence(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     // send and include tx
-    let hash = Hash(
-        wallet
-            .send_transaction(TransactionRequest::pay(H160::random(), 10), None)
-            .await
-            .unwrap()
-            .tx_hash()
-            .0,
-    );
-
-    let index = network.random_index();
-
-    network
-        .run_until(
-            |n| {
-                n.get_node(index)
-                    .get_transaction_receipt(hash)
-                    .unwrap()
-                    .is_some()
-            },
-            450,
+    let hash = *wallet
+        .send_transaction(
+            TransactionRequest::default()
+                .to(Address::random())
+                .value(U256::from(10)),
         )
         .await
-        .unwrap();
+        .unwrap()
+        .tx_hash();
+
+    // check that it exists in another node
+    let index = network.random_index();
+    let other_wallet = network.wallet_of_node(index).await;
+    let _ = network.run_until_receipt(&other_wallet, &hash, 450).await;
 
     let latest_block_number = network
         .get_node(index)
@@ -56,45 +49,21 @@ async fn block_and_tx_data_persistence(mut network: Network) {
 
     // make one block without txs
     network
-        .run_until(
-            |n| {
-                let block = n
-                    .get_node(index)
-                    .get_block(BlockId::latest())
-                    .unwrap()
-                    .map_or(0, |b| b.number());
-                block > latest_block_number
-            },
-            450,
-        )
+        .run_until_block_finalized(latest_block_number + 1, 450)
         .await
         .unwrap();
 
-    let receipt = wallet
-        .provider()
-        .get_transaction_receipt(hash.0)
-        .await
-        .unwrap()
-        .unwrap();
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
 
     // make one block without txs
     network
-        .run_until(
-            |n| {
-                let block = n
-                    .get_node(index)
-                    .get_block(BlockId::latest())
-                    .unwrap()
-                    .map_or(0, |b| b.number());
-                block > receipt.block_number.unwrap().as_u64()
-            },
-            450,
-        )
+        .run_until_block_finalized(receipt.block_number.unwrap() + 1, 450)
         .await
         .unwrap();
 
     let node = network.remove_node(index);
 
+    let hash = Hash(hash.0);
     let inner = node.inner.clone();
     let last_number = inner.number() - 2;
     let receipt = inner.get_transaction_receipt(hash).unwrap().unwrap();
@@ -162,11 +131,15 @@ async fn block_and_tx_data_persistence(mut network: Network) {
     assert_eq!(finalized_view, inner.get_finalized_height().unwrap());
 }
 
-#[zilliqa_macros::test(do_checkpoints)]
+sol!(
+    #[sol(rpc)]
+    "tests/it/contracts/Storage.sol"
+);
+#[zilliqa_macros::test(do_checkpoints, restrict_concurrency)]
 async fn checkpoints_test(mut network: Network) {
     // Populate network with transactions
     let wallet = network.genesis_wallet().await;
-    let (hash, abi) = deploy_contract(
+    let (contract_address, _abi) = deploy_contract(
         "tests/it/contracts/Storage.sol",
         "Storage",
         0u128,
@@ -175,50 +148,40 @@ async fn checkpoints_test(mut network: Network) {
     )
     .await;
 
-    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
-    let contract_address = receipt.contract_address.unwrap();
-
-    let new_val = 3281u64;
-
     // set some storage items with transactions
     // Evm
-    let function = abi.function("set").unwrap();
-    let mut address_buf = [0u8; 20];
-    network.rng.lock().unwrap().fill(&mut address_buf);
-    let update_tx = TransactionRequest::new().to(contract_address).data(
-        function
-            .encode_input(&[
-                Token::Address(address_buf.into()),
-                Token::Uint(new_val.into()),
-            ])
-            .unwrap(),
-    );
-    let update_tx_hash = wallet
-        .send_transaction(update_tx, None)
+    let contract = Storage::new(contract_address, &wallet);
+    let evm_addr = Address::random();
+    let evm_val = U256::from(0x517710Au32);
+    let hash = *contract
+        .set(evm_addr, evm_val)
+        .send()
         .await
         .unwrap()
         .tx_hash();
-    network
-        .run_until_receipt(&wallet, update_tx_hash, 100)
-        .await;
-    // Scilla
+    let _ = network.run_until_receipt(&wallet, &hash, 100).await;
+
     let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
     let code = scilla_test_contract_code();
     let data = scilla_test_contract_data(address);
     let scilla_contract_address =
         deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data, 0_u128).await;
 
-    // Run until block 19 so that we can insert a tx in block 20 (note that this transaction may not *always* appear in the desired block, therefore we do not assert its presence later)
-    network.run_until_block(&wallet, 19.into(), 400).await;
+    // Run until we can insert a tx in block 20 (note that this transaction may not *always* appear in the desired block, therefore we do not assert its presence later)
+    network.run_until_block_finalized(17, 400).await.unwrap();
 
-    let _hash = wallet
-        .send_transaction(TransactionRequest::pay(wallet.address(), 10), None)
+    let _hash = *wallet
+        .send_transaction(
+            TransactionRequest::default()
+                .to(wallet.default_signer_address())
+                .value(U256::from(10)),
+        )
         .await
         .unwrap()
         .tx_hash();
 
-    // wait 20 blocks for checkpoint to happen - then 3 more to finalize that block
-    network.run_until_block(&wallet, 33.into(), 400).await;
+    // wait for checkpoint to happen; and block #30 is finalized.
+    network.run_until_block_finalized(21, 400).await.unwrap();
 
     let checkpoint_files = network
         .nodes
@@ -230,7 +193,7 @@ async fn checkpoints_test(mut network: Network) {
                 .path()
                 .join(network.shard_id.to_string())
                 .join("checkpoints")
-                .join("30")
+                .join("20")
         })
         .collect::<Vec<_>>();
 
@@ -246,7 +209,12 @@ async fn checkpoints_test(mut network: Network) {
 
     // Create new node and pass it one of those checkpoint files
     let checkpoint_path = checkpoint_files[0].to_str().unwrap().to_owned();
-    let checkpoint_hash = wallet.get_block(30).await.unwrap().unwrap().hash.unwrap();
+    let checkpoint_hash = wallet
+        .get_block(BlockId::number(20))
+        .await
+        .unwrap()
+        .unwrap()
+        .hash();
     let new_node_idx = network.add_node_with_options(NewNodeOptions {
         checkpoint: Some(Checkpoint {
             file: checkpoint_path,
@@ -258,41 +226,34 @@ async fn checkpoints_test(mut network: Network) {
     // Confirm wallet and new_node_wallet have the same block and state
     let new_node_wallet = network.wallet_of_node(new_node_idx).await;
     let latest_block_number = new_node_wallet.get_block_number().await.unwrap();
-    assert_eq!(latest_block_number, 30.into());
+    assert_eq!(latest_block_number, 20);
 
     let block = wallet
-        .get_block(latest_block_number)
+        .get_block(BlockId::number(latest_block_number))
         .await
         .unwrap()
         .unwrap();
     let block_from_checkpoint = new_node_wallet
-        .get_block(latest_block_number)
+        .get_block(BlockId::number(latest_block_number))
         .await
         .unwrap()
         .unwrap();
     assert_eq!(block.transactions, block_from_checkpoint.transactions);
     // Check access to previous block state via fetching author of current block
-    assert_eq!(block.author, block_from_checkpoint.author);
+    assert_eq!(
+        block.header.beneficiary,
+        block_from_checkpoint.header.beneficiary
+    );
 
     // Check storage
     // Evm
-    let storage_getter = abi.function("pos1").unwrap();
-    let check_storage_tx = TransactionRequest::new().to(contract_address).data(
-        storage_getter
-            .encode_input(&[Token::Address(address_buf.into())])
-            .unwrap(),
-    );
-    let storage = new_node_wallet
-        .call(&check_storage_tx.into(), None)
-        .await
-        .unwrap();
-    let val = storage_getter.decode_output(&storage).unwrap();
-    assert_eq!(val[0], Token::Uint(new_val.into()));
-    // Scilla
+    let call_val = contract.pos1(evm_addr).call().await.unwrap();
+    assert_eq!(evm_val, call_val);
+
     let state: serde_json::Value = network
         .random_wallet()
         .await
-        .provider()
+        .client()
         .request("GetSmartContractState", [scilla_contract_address])
         .await
         .unwrap();
@@ -300,14 +261,12 @@ async fn checkpoints_test(mut network: Network) {
 
     // check the new node catches up and keeps up with block production
     network.run_until_synced(new_node_idx).await;
-    network
-        .run_until_block(&new_node_wallet, 40.into(), 400)
-        .await;
+    network.run_until_block_finalized(25, 400).await.unwrap();
 
     // check account nonce of old wallet
     let nonce = new_node_wallet
-        .get_transaction_count(wallet.address(), None)
+        .get_transaction_count(wallet.default_signer_address())
         .await
         .unwrap();
-    assert_eq!(nonce, 4.into());
+    assert_eq!(nonce, 4);
 }

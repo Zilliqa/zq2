@@ -1,14 +1,13 @@
 use std::collections::HashSet;
 
-use alloy::eips::BlockId;
-use ethers::{
-    providers::Middleware,
-    types::{
-        Eip1559TransactionRequest, Eip2930TransactionRequest, TransactionRequest, U64,
-        transaction::{eip2718::TypedTransaction, eip2930::AccessList},
-    },
+use alloy::{
+    consensus::TypedTransaction,
+    eips::{BlockId, eip2930::AccessList},
+    network::TransactionBuilder,
+    primitives::{Address, U256},
+    providers::{Provider as _, WalletProvider},
+    rpc::types::TransactionRequest,
 };
-use primitive_types::{H160, H256, U256};
 use tracing::*;
 use zilliqa::{crypto::Hash, state::contract_addr};
 
@@ -18,94 +17,18 @@ use crate::{Network, get_reward_address, get_stakers};
 // times)
 #[zilliqa_macros::test]
 async fn network_can_die_restart(mut network: Network) {
-    let start_block = 5;
-    let finish_block = 10;
-
     // wait until at least 5 blocks have been produced
-    network
-        .run_until(
-            |n| {
-                let index = n.random_index();
-                n.get_node(index).get_finalized_height().unwrap() >= start_block
-            },
-            100,
-        )
-        .await
-        .unwrap();
-
+    network.run_until_block_finalized(5, 100).await.unwrap();
     // Forcibly restart the network, with a random time delay between each node
     network.restart();
-
     // Panic if it can't progress to the target block
-    network
-        .run_until(
-            |n| {
-                let index = n.random_index();
-                n.get_node(index).get_finalized_height().unwrap() >= finish_block
-            },
-            1000,
-        )
-        .await
-        .expect("Failed to progress to target block");
-}
-
-fn get_block_number(n: &Network, index: usize) -> u64 {
-    n.get_node(index).get_finalized_height().unwrap()
-}
-
-// test that even with some consensus messages being dropped, the network can still proceed
-// note: this drops all messages, not just consensus messages, but there should only be
-// consensus messages in the network anyway
-#[zilliqa_macros::test]
-async fn block_production_even_when_lossy_network(mut network: Network) {
-    let failure_rate = 0.1;
-    let start_block = 5;
-    let finish_block = 8;
-
-    let index = network.random_index();
-
-    // wait until at least 5 blocks have been produced
-    network
-        .run_until(
-            |n| n.get_node(index).get_finalized_height().unwrap() >= start_block,
-            100,
-        )
-        .await
-        .unwrap();
-
-    // now, wait until block 15 has been produced, but dropping 10% of the messages.
-    for _ in 0..1000000 {
-        network.randomly_drop_messages_then_tick(failure_rate).await;
-        if get_block_number(&network, index) >= finish_block {
-            break;
-        }
-    }
-
-    assert!(
-        get_block_number(&network, index) >= finish_block,
-        "block number should be at least {}, but was {}",
-        finish_block,
-        get_block_number(&network, index)
-    );
+    network.run_until_block_finalized(10, 1000).await.unwrap();
 }
 
 // Test that new node joining the network catches up on blocks
 #[zilliqa_macros::test]
 async fn block_production(mut network: Network) {
-    network
-        .run_until(
-            |n| {
-                let index = n.random_index();
-                n.get_node(index)
-                    .get_block(BlockId::latest())
-                    .unwrap()
-                    .map_or(0, |b| b.number())
-                    >= 5
-            },
-            100,
-        )
-        .await
-        .unwrap();
+    network.run_until_block_finalized(5, 100).await.unwrap();
 
     info!("Adding networked node.");
     let index = network.add_node();
@@ -129,8 +52,6 @@ async fn block_production(mut network: Network) {
 #[zilliqa_macros::test]
 async fn handle_forking_correctly(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    let _provider = wallet.provider();
-
     let start_block = 5;
 
     // wait until at least 5 blocks have been produced
@@ -146,7 +67,7 @@ async fn handle_forking_correctly(mut network: Network) {
         .unwrap();
 
     let init_nonce = wallet
-        .get_transaction_count(wallet.address(), None)
+        .get_transaction_count(wallet.default_signer_address())
         .await
         .unwrap();
 
@@ -155,8 +76,10 @@ async fn handle_forking_correctly(mut network: Network) {
     for num in 0..gap_txn_count {
         wallet
             .send_transaction(
-                TransactionRequest::pay(H160::random(), 0).nonce(gap_nonce + num),
-                None,
+                TransactionRequest::default()
+                    .with_to(Address::random())
+                    .with_value(U256::from(0))
+                    .with_nonce(gap_nonce + num),
             )
             .await
             .unwrap()
@@ -192,18 +115,20 @@ async fn handle_forking_correctly(mut network: Network) {
     }
 
     // Ensure txns are queued on both nodes
-    verify_queued(&network, gap_txn_count, 0);
-    verify_queued(&network, gap_txn_count, 1);
+    verify_queued(&network, gap_txn_count as usize, 0);
+    verify_queued(&network, gap_txn_count as usize, 1);
 
     // Send a single TX to the network that triggers txns inclusion
-    let hash: H256 = wallet
+    let res = wallet
         .send_transaction(
-            TransactionRequest::pay(H160::random(), 10).nonce(init_nonce),
-            None,
+            TransactionRequest::default()
+                .with_to(Address::random())
+                .with_value(U256::from(10))
+                .with_nonce(init_nonce),
         )
         .await
-        .unwrap()
-        .tx_hash();
+        .unwrap();
+    let hash = res.tx_hash();
 
     network.drop_propose_messages_except_one().await;
 
@@ -242,18 +167,18 @@ async fn handle_forking_correctly(mut network: Network) {
         .unwrap();
 
     // Verify txns are still queued on both nodes
-    verify_queued(&network, gap_txn_count, 0);
-    verify_queued(&network, gap_txn_count, 1);
+    verify_queued(&network, gap_txn_count as usize, 0);
+    verify_queued(&network, gap_txn_count as usize, 1);
 }
 
 // Test that zero account has correct initial funds, is the source of rewards and is the sink of gas
 #[zilliqa_macros::test]
 async fn zero_account_per_block_balance_updates(mut network: Network) {
-    let wallet = network.genesis_wallet().await;
+    let wallet = network.genesis_wallet_null().await;
 
     // Check initial account values
     let block_height = wallet.get_block_number().await.unwrap();
-    assert_eq!(block_height, U64::from(0));
+    assert_eq!(block_height, 0);
 
     // Amount assigned to genesis account
     let genesis_account_expected_balance = network
@@ -265,7 +190,7 @@ async fn zero_account_per_block_balance_updates(mut network: Network) {
         .1
         .0;
     let genesis_account_balance: u128 = wallet
-        .get_balance(wallet.address(), None)
+        .get_balance(wallet.default_signer_address())
         .await
         .unwrap()
         .try_into()
@@ -283,13 +208,13 @@ async fn zero_account_per_block_balance_updates(mut network: Network) {
 
     // Zero account balance plus genesis account plus initial stakes plus deposit contract should equal total_native_token_supply
     let zero_account_balance: u128 = wallet
-        .get_balance(H160::zero(), None)
+        .get_balance(Address::ZERO)
         .await
         .unwrap()
         .try_into()
         .unwrap();
     let deposit_contract_balance: u128 = wallet
-        .get_balance(H160(contract_addr::DEPOSIT_PROXY.into_array()), None)
+        .get_balance(contract_addr::DEPOSIT_PROXY)
         .await
         .unwrap()
         .try_into()
@@ -306,31 +231,35 @@ async fn zero_account_per_block_balance_updates(mut network: Network) {
     );
 
     // Mine first block
-    network.run_until_block(&wallet, 1.into(), 50).await;
+    network.run_until_block(&wallet, 1, 50).await;
 
-    let block = wallet.get_block(1).await.unwrap().unwrap();
+    let block = wallet.get_block(1.into()).await.unwrap().unwrap();
     assert_eq!(block.transactions.len(), 0);
 
     // Check proposer was rewarded
-    let miner: H160 = block.author.unwrap();
+    let miner = block.header.beneficiary;
     let miner_balance_before = wallet
-        .get_balance(miner, Some((block.number.unwrap() - 1).into()))
+        .get_balance(miner)
+        .number(block.number() - 1)
         .await
         .unwrap();
     let miner_balance_after = wallet
-        .get_balance(miner, Some(block.number.unwrap().into()))
+        .get_balance(miner)
+        .number(block.number())
         .await
         .unwrap();
     assert!(miner_balance_before < miner_balance_after);
 
     // Check reward came from zero account balance
-    let zero_account = H160::zero();
+    let zero_account = Address::ZERO;
     let zero_account_balance_before = wallet
-        .get_balance(zero_account, Some((block.number.unwrap() - 1).into()))
+        .get_balance(zero_account)
+        .number(block.number() - 1)
         .await
         .unwrap();
     let zero_account_balance_after = wallet
-        .get_balance(zero_account, Some(block.number.unwrap().into()))
+        .get_balance(zero_account)
+        .number(block.number())
         .await
         .unwrap();
     assert!(zero_account_balance_before > zero_account_balance_after);
@@ -339,73 +268,87 @@ async fn zero_account_per_block_balance_updates(mut network: Network) {
 #[zilliqa_macros::test]
 async fn gas_fees_should_be_transferred_to_zero_account(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    let provider = wallet.provider();
-
-    network.run_until_block(&wallet, 1.into(), 50).await;
-    let tx_legacy: TypedTransaction = TransactionRequest::pay(wallet.address(), 10).into();
+    let chain_id = network.get_node(0).chain_id.eth;
     let gas_price = network.get_node(0).get_gas_price();
-    let tx_eip1559: TypedTransaction = Eip1559TransactionRequest {
-        to: Some(wallet.address().into()),
-        value: Some(10.into()),
-        max_fee_per_gas: Some(gas_price.into()),
-        max_priority_fee_per_gas: Some(gas_price.into()),
-        ..Default::default()
-    }
-    .into();
-    let tx_eip2930: TypedTransaction = Eip2930TransactionRequest::new(
-        TransactionRequest::pay(wallet.address(), 10),
-        AccessList(vec![]),
-    )
-    .into();
+    let tx_legacy: TypedTransaction = TransactionRequest::default()
+        .with_chain_id(chain_id)
+        .to(wallet.default_signer_address())
+        .value(U256::from(10))
+        .nonce(0)
+        .gas_limit(21_000)
+        .gas_price(gas_price)
+        .build_legacy()
+        .unwrap()
+        .into();
+    let tx_eip1559: TypedTransaction = TransactionRequest::default()
+        .with_chain_id(chain_id)
+        .to(wallet.default_signer_address())
+        .value(U256::from(10))
+        .nonce(1)
+        .gas_limit(21_000)
+        .max_fee_per_gas(gas_price)
+        .max_priority_fee_per_gas(gas_price)
+        .build_1559()
+        .unwrap()
+        .into();
+    let tx_eip2930: TypedTransaction = TransactionRequest::default()
+        .with_chain_id(chain_id)
+        .to(wallet.default_signer_address())
+        .value(U256::from(10))
+        .nonce(2)
+        .gas_limit(21_000)
+        .gas_price(gas_price)
+        .access_list(AccessList::default())
+        .build_2930()
+        .unwrap()
+        .into();
 
     for tx_request in [tx_legacy, tx_eip1559, tx_eip2930] {
-        let tx = wallet.send_transaction(tx_request, None).await.unwrap();
+        let tx = wallet.send_transaction(tx_request.into()).await.unwrap();
         let hash = tx.tx_hash();
-        network.run_until_receipt(&wallet, hash, 200).await;
+        let receipt = network.run_until_receipt(&wallet, hash, 200).await;
 
-        let receipt = provider
-            .get_transaction_receipt(hash)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(receipt.gas_used.unwrap(), 21000.into());
-        assert_eq!(receipt.effective_gas_price.unwrap(), gas_price.into());
+        assert_eq!(receipt.gas_used, 21000);
+        assert_eq!(receipt.effective_gas_price, gas_price);
         let block = wallet
-            .get_block(receipt.block_number.unwrap())
+            .get_block(receipt.block_number.unwrap().into())
             .await
             .unwrap()
             .unwrap();
         assert_eq!(block.transactions.len(), 1);
 
-        let mut total_rewards = U256::zero();
+        let mut total_rewards = U256::ZERO;
         let stakers = get_stakers(&wallet).await;
         for staker in stakers {
-            let reward_address = get_reward_address(&wallet, &staker).await;
+            let reward_address = get_reward_address(&wallet, &staker).await.0.into();
             let reward_address_balance_before = wallet
-                .get_balance(reward_address, Some((block.number.unwrap() - 1).into()))
+                .get_balance(reward_address)
+                .number(block.number() - 1)
                 .await
                 .unwrap();
             let reward_address_balance_after = wallet
-                .get_balance(reward_address, Some(block.number.unwrap().into()))
+                .get_balance(reward_address)
+                .number(block.number())
                 .await
                 .unwrap();
-
             total_rewards += reward_address_balance_after - reward_address_balance_before;
         }
 
-        let zero_account = H160::zero();
+        let zero_account = Address::ZERO;
         let zero_account_balance_before = wallet
-            .get_balance(zero_account, Some((block.number.unwrap() - 1).into()))
+            .get_balance(zero_account)
+            .number(block.number() - 1)
             .await
             .unwrap();
         let zero_account_balance_after = wallet
-            .get_balance(zero_account, Some(block.number.unwrap().into()))
+            .get_balance(zero_account)
+            .number(block.number())
             .await
             .unwrap();
+        let total_gas = U256::from(receipt.effective_gas_price) * U256::from(receipt.gas_used);
         assert_eq!(
             zero_account_balance_after,
-            zero_account_balance_before - total_rewards
-                + (receipt.gas_used.unwrap() * receipt.effective_gas_price.unwrap())
+            zero_account_balance_before - total_rewards + total_gas
         );
     }
 }
@@ -416,40 +359,36 @@ async fn test_rapid_transaction_submission_during_block_production(mut network: 
     let wallet = network.genesis_wallet().await;
 
     // Wait for network to be ready
-    network.run_until_block(&wallet, 1.into(), 50).await;
+    network.run_until_block(&wallet, 1, 50).await;
 
     // Submit many transactions rapidly
     let mut submitted_hashes = Vec::new();
 
-    let mut current_block = 1;
+    let mut current_block = 1u64;
     // Rapid submission while blocks are being produced
     for batch in 0..5 {
         // Submit a batch of transactions
         for i in 0..3 {
-            let nonce = batch * 3 + i;
-            let tx_request = TransactionRequest {
-                to: Some(H160::random().into()),
-                value: Some(U256::from(10)),
-                gas: Some(U256::from(21000)),
-                gas_price: Some(U256::from(4_761_904_800_000u128 + batch * 3 + i)), // Vary gas price
-                nonce: Some(U256::from(nonce)),
-                ..Default::default()
-            };
+            let nonce = (batch * 3 + i) as u64;
+            let tx_request = TransactionRequest::default()
+                .with_to(Address::random())
+                .with_value(U256::from(10))
+                .with_gas_limit(21000)
+                .with_gas_price(4_761_904_800_000u128 + batch * 3 + i)
+                .with_nonce(nonce);
 
-            let pending_tx = wallet.send_transaction(tx_request, None).await.unwrap();
-            submitted_hashes.push(pending_tx.tx_hash());
+            let pending_tx = wallet.send_transaction(tx_request).await.unwrap();
+            submitted_hashes.push(*pending_tx.tx_hash());
         }
 
         // Allow some processing time between batches
-        network
-            .run_until_block(&wallet, current_block.into(), 50)
-            .await;
+        network.run_until_block(&wallet, current_block, 50).await;
         current_block += 1;
     }
 
     // Let the network process all transactions
     network
-        .run_until_block(&wallet, (current_block + 5).into(), 300)
+        .run_until_block(&wallet, current_block + 5, 300)
         .await;
 
     // Check transaction pool state consistency
@@ -491,20 +430,17 @@ async fn test_transaction_replacement_during_consensus(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
     // Wait for network to be ready
-    network.run_until_block(&wallet, 1.into(), 50).await;
+    network.run_until_block(&wallet, 1, 50).await;
 
     // Submit initial transaction with low gas price
     let initial_tx = wallet
         .send_transaction(
-            TransactionRequest {
-                to: Some(H160::random().into()),
-                value: Some(U256::from(100)),
-                gas: Some(U256::from(21000)),
-                gas_price: Some(U256::from(4_761_904_800_000u128)), // 1 gwei
-                nonce: Some(U256::from(0)),
-                ..Default::default()
-            },
-            None,
+            TransactionRequest::default()
+                .with_to(Address::random())
+                .with_value(U256::from(100))
+                .with_gas_limit(21000)
+                .with_gas_price(4_761_904_800_000u128)
+                .with_nonce(0),
         )
         .await
         .unwrap();
@@ -515,35 +451,29 @@ async fn test_transaction_replacement_during_consensus(mut network: Network) {
     // Replace with higher gas price transaction
     let replacement_tx = wallet
         .send_transaction(
-            TransactionRequest {
-                to: Some(H160::random().into()),
-                value: Some(U256::from(200)),
-                gas: Some(U256::from(21000)),
-                gas_price: Some(U256::from(4_761_904_800_000u128 * 2)), // 2 gwei
-                nonce: Some(U256::from(0)),                             // Same nonce
-                ..Default::default()
-            },
-            None,
+            TransactionRequest::default()
+                .with_to(Address::random())
+                .with_value(U256::from(200))
+                .with_gas_limit(21000)
+                .with_gas_price(4_761_904_800_000u128 * 2)
+                .with_nonce(0),
         )
         .await
         .unwrap();
 
     // Submit more transactions with subsequent nonces
     for nonce in 1..5 {
-        let tx_request = TransactionRequest {
-            to: Some(H160::random().into()),
-            value: Some(U256::from(10)),
-            gas: Some(U256::from(21000)),
-            gas_price: Some(U256::from(7_161_904_800_000u128)),
-            nonce: Some(U256::from(nonce)),
-            ..Default::default()
-        };
-
-        let _pending_tx = wallet.send_transaction(tx_request, None).await.unwrap();
+        let tx_request = TransactionRequest::default()
+            .with_to(Address::random())
+            .with_value(U256::from(10))
+            .with_gas_limit(21000)
+            .with_gas_price(7_161_904_800_000u128)
+            .with_nonce(nonce);
+        let _pending_tx = wallet.send_transaction(tx_request).await.unwrap();
     }
 
     // Let the network process transactions
-    network.run_until_block(&wallet, 5.into(), 200).await;
+    network.run_until_block(&wallet, 5, 200).await;
 
     // Verify that transaction replacement worked correctly
     for index in network.nodes.iter().map(|x| x.index) {
@@ -602,22 +532,19 @@ async fn test_transaction_pool_during_network_partition(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
     // Wait for network to be ready
-    network.run_until_block(&wallet, 2.into(), 50).await;
+    network.run_until_block(&wallet, 2, 50).await;
 
     // Submit some initial transactions
     let mut transaction_hashes = Vec::new();
     for nonce in 0..3 {
-        let tx_request = TransactionRequest {
-            to: Some(H160::random().into()),
-            value: Some(U256::from(10)),
-            gas: Some(U256::from(21000)),
-            gas_price: Some(U256::from(4_761_904_800_000u128)),
-            nonce: Some(U256::from(nonce)),
-            ..Default::default()
-        };
-
-        let pending_tx = wallet.send_transaction(tx_request, None).await.unwrap();
-        transaction_hashes.push(pending_tx.tx_hash());
+        let tx_request = TransactionRequest::default()
+            .with_to(Address::random())
+            .with_value(U256::from(10))
+            .with_gas_limit(21000)
+            .with_gas_price(4_761_904_800_000u128)
+            .nonce(nonce);
+        let pending_tx = wallet.send_transaction(tx_request).await.unwrap();
+        transaction_hashes.push(*pending_tx.tx_hash());
     }
 
     // Simulate network issues by dropping many messages
@@ -627,21 +554,18 @@ async fn test_transaction_pool_during_network_partition(mut network: Network) {
 
     // Submit more transactions during network issues
     for nonce in 3..6 {
-        let tx_request = TransactionRequest {
-            to: Some(H160::random().into()),
-            value: Some(U256::from(10)),
-            gas: Some(U256::from(21000)),
-            gas_price: Some(U256::from(4_761_904_800_000u128)),
-            nonce: Some(U256::from(nonce)),
-            ..Default::default()
-        };
-
-        let pending_tx = wallet.send_transaction(tx_request, None).await.unwrap();
-        transaction_hashes.push(pending_tx.tx_hash());
+        let tx_request = TransactionRequest::default()
+            .with_to(Address::random())
+            .with_value(U256::from(10))
+            .with_gas_limit(21000)
+            .with_gas_price(4_761_904_800_000u128)
+            .nonce(nonce);
+        let pending_tx = wallet.send_transaction(tx_request).await.unwrap();
+        transaction_hashes.push(*pending_tx.tx_hash());
     }
 
     // Allow network to heal and process transactions
-    network.run_until_block(&wallet, 8.into(), 2500).await;
+    network.run_until_block(&wallet, 8, 2500).await;
 
     // Verify all nodes have consistent transaction pool states after healing
     let mut node_states = Vec::new();

@@ -1,9 +1,7 @@
-use std::str::FromStr;
-
-use alloy::{primitives::B256, rpc::types::trace::parity::TraceResults};
-use ethers::{
-    providers::Middleware,
-    types::{H160, TransactionRequest},
+use alloy::{
+    primitives::{Address, B256, U256},
+    providers::{Provider as _, WalletProvider},
+    rpc::types::{TransactionRequest, trace::parity::TraceResults},
 };
 use serde_json::Value;
 
@@ -14,17 +12,20 @@ async fn trace_transaction_basic(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
     // Create a simple transfer transaction
-    let to_addr = H160::random();
-    let tx = TransactionRequest::new().to(to_addr).value(1000).gas(21000);
+    let to_addr = Address::random();
+    let tx = TransactionRequest::default()
+        .to(to_addr)
+        .value(U256::from(1_000))
+        .gas_limit(21_000);
 
-    let tx_hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
+    let tx_hash = *wallet.send_transaction(tx).await.unwrap().tx_hash();
 
     // Wait for transaction to be mined
-    network.run_until_receipt(&wallet, tx_hash, 100).await;
+    network.run_until_receipt(&wallet, &tx_hash, 100).await;
 
     // Get trace
     let response: Value = wallet
-        .provider()
+        .client()
         .request("trace_transaction", [tx_hash])
         .await
         .expect("Failed to call trace_transaction API");
@@ -37,12 +38,9 @@ async fn trace_transaction_basic(mut network: Network) {
 async fn trace_transaction_not_found(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
-    let nonexistent_hash =
-        B256::from_str("0x1234567890123456789012345678901234567890123456789012345678901234")
-            .unwrap();
-
+    let nonexistent_hash = B256::random();
     let response: Result<TraceResults, _> = wallet
-        .provider()
+        .client()
         .request("trace_transaction", [nonexistent_hash])
         .await;
 
@@ -54,18 +52,21 @@ async fn trace_block_basic(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
     // Create some transactions in a block
-    let to_addr = H160::random();
-    let tx = TransactionRequest::new().to(to_addr).value(1000).gas(21000);
+    let to_addr = Address::random();
+    let tx = TransactionRequest::default()
+        .to(to_addr)
+        .value(U256::from(1_000))
+        .gas_limit(21_000);
 
-    let tx_hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
+    let tx_hash = *wallet.send_transaction(tx).await.unwrap().tx_hash();
 
     // Wait for block to be mined
-    let receipt = network.run_until_receipt(&wallet, tx_hash, 100).await;
-    let block_number = receipt.block_number.unwrap();
+    let receipt = network.run_until_receipt(&wallet, &tx_hash, 100).await;
+    let block_number = format!("{:#x}", receipt.block_number.unwrap());
 
     // Get block trace
     let response: Value = wallet
-        .provider()
+        .client()
         .request("trace_block", [block_number])
         .await
         .expect("Failed to call trace_block API");
@@ -79,21 +80,24 @@ async fn trace_filter_basic(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
     // Create transactions from different addresses
-    let to_addr = H160::random();
-    let tx1 = TransactionRequest::new().to(to_addr).value(1000).gas(21000);
+    let to_addr = Address::random();
+    let tx1 = TransactionRequest::default()
+        .to(to_addr)
+        .value(U256::from(1_000))
+        .gas_limit(21_000);
 
-    let tx_hash1 = wallet.send_transaction(tx1, None).await.unwrap().tx_hash();
-    let receipt1 = network.run_until_receipt(&wallet, tx_hash1, 100).await;
+    let tx_hash1 = *wallet.send_transaction(tx1).await.unwrap().tx_hash();
+    let receipt1 = network.run_until_receipt(&wallet, &tx_hash1, 100).await;
 
     let filter = serde_json::json!({
         "fromBlock": receipt1.block_number.unwrap(),
         "toBlock": receipt1.block_number.unwrap(),
-        "fromAddress": [wallet.address()],
+        "fromAddress": [wallet.default_signer_address()],
         "toAddress": [to_addr],
     });
 
     let response: Value = wallet
-        .provider()
+        .client()
         .request("trace_filter", [filter])
         .await
         .expect("Failed to call trace_filter API");
@@ -111,7 +115,7 @@ async fn trace_filter_basic(mut network: Network) {
                 }
                 _ => panic!("Unexpected action type"),
             };
-            assert_eq!(from_address_result.0, wallet.address().0);
+            assert_eq!(from_address_result.0, wallet.default_signer_address().0);
             assert_eq!(to_address_result.0, to_addr.0);
         }
     }
@@ -124,11 +128,14 @@ async fn trace_filter_pagination(mut network: Network) {
     // Create multiple transactions
     let mut receipts = Vec::new();
     for _ in 0..5 {
-        let to_addr = H160::random();
-        let tx = TransactionRequest::new().to(to_addr).value(1000).gas(21000);
+        let to_addr = Address::random();
+        let tx = TransactionRequest::default()
+            .to(to_addr)
+            .value(U256::from(1_000))
+            .gas_limit(21_000);
 
-        let tx_hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
-        receipts.push(network.run_until_receipt(&wallet, tx_hash, 100).await);
+        let tx_hash = *wallet.send_transaction(tx).await.unwrap().tx_hash();
+        receipts.push(network.run_until_receipt(&wallet, &tx_hash, 100).await);
     }
 
     let first_block = receipts.first().unwrap().block_number.unwrap();
@@ -143,7 +150,7 @@ async fn trace_filter_pagination(mut network: Network) {
     });
 
     let response: Value = wallet
-        .provider()
+        .client()
         .request("trace_filter", [filter])
         .await
         .expect("Failed to call trace_filter API");

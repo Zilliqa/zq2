@@ -1,4 +1,4 @@
-use ethers::providers::Middleware;
+use alloy::providers::Provider;
 use serde_json::Value;
 
 use crate::Network;
@@ -6,9 +6,9 @@ use crate::Network;
 #[zilliqa_macros::test]
 async fn generate_checkpoint(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    network.run_until_block(&wallet, 8.into(), 800).await;
+    network.run_until_block_finalized(5, 800).await.unwrap();
     let response: Value = wallet
-        .provider()
+        .client()
         .request("admin_generateCheckpoint", ["0x4"])
         .await
         .unwrap();
@@ -26,11 +26,11 @@ async fn generate_checkpoint(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn admin_votes_received_empty(mut network: Network) {
-    let wallet = network.genesis_wallet().await;
+    let wallet = network.genesis_wallet_null().await;
 
     // Query votes when no consensus activity has happened yet
     let response: Value = wallet
-        .provider()
+        .client()
         .request("admin_votesReceived", ())
         .await
         .unwrap();
@@ -47,12 +47,14 @@ async fn admin_votes_received_with_data(mut network: Network) {
 
     // Generate some blocks to trigger consensus activity
     // This should generate votes, possibly new views
-    network.run_until_block(&wallet, 10.into(), 800).await;
+    network.run_until_block_finalized(8, 800).await.unwrap();
 
     // Query votes after consensus activity
-    let _response: Value = wallet
-        .provider()
+    let response: Value = wallet
+        .client()
         .request("admin_votesReceived", ())
         .await
         .unwrap();
+    // FIXME: missing asserts
+    tracing::debug!("{:?}", response);
 }

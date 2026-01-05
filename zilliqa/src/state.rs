@@ -183,73 +183,73 @@ impl State {
         config: &ConsensusConfig,
         block_header: BlockHeader,
     ) -> Result<()> {
-        if let Some(deposit_v3_deploy_config) = &config.contract_upgrades.deposit_v3 {
-            if deposit_v3_deploy_config.height == block_header.number {
-                let deposit_v3_contract =
-                    Lazy::<contracts::Contract>::force(&contracts::deposit_v3::CONTRACT);
-                self.upgrade_deposit_contract(block_header, deposit_v3_contract, None)?;
-            }
+        if let Some(deposit_v3_deploy_config) = &config.contract_upgrades.deposit_v3
+            && deposit_v3_deploy_config.height == block_header.number
+        {
+            let deposit_v3_contract =
+                Lazy::<contracts::Contract>::force(&contracts::deposit_v3::CONTRACT);
+            self.upgrade_deposit_contract(block_header, deposit_v3_contract, None)?;
         }
-        if let Some(deposit_v4_deploy_config) = &config.contract_upgrades.deposit_v4 {
-            if deposit_v4_deploy_config.height == block_header.number {
-                // The below account mutation fixes the Zero account's nonce in prototestnet and protomainnet.
-                // Issue #2254 explains how the nonce was incorrect due to a bug in the ZQ1 persistence converter.
-                // This code should run once for these networks in order for the deposit_v4 contract to be deployed, then this code can be removed.
-                if self.chain_id.eth == 33103 || self.chain_id.eth == 32770 {
-                    self.mutate_account(Address::ZERO, |a| {
-                        // Nonce 5 is the next address to not have any code deployed
-                        a.nonce = 5;
-                        Ok(())
-                    })?;
-                }
-                let deposit_v4_contract =
-                    Lazy::<contracts::Contract>::force(&contracts::deposit_v4::CONTRACT);
-                self.upgrade_deposit_contract(block_header, deposit_v4_contract, None)?;
+        if let Some(deposit_v4_deploy_config) = &config.contract_upgrades.deposit_v4
+            && deposit_v4_deploy_config.height == block_header.number
+        {
+            // The below account mutation fixes the Zero account's nonce in prototestnet and protomainnet.
+            // Issue #2254 explains how the nonce was incorrect due to a bug in the ZQ1 persistence converter.
+            // This code should run once for these networks in order for the deposit_v4 contract to be deployed, then this code can be removed.
+            if self.chain_id.eth == 33103 || self.chain_id.eth == 32770 {
+                self.mutate_account(Address::ZERO, |a| {
+                    // Nonce 5 is the next address to not have any code deployed
+                    a.nonce = 5;
+                    Ok(())
+                })?;
             }
+            let deposit_v4_contract =
+                Lazy::<contracts::Contract>::force(&contracts::deposit_v4::CONTRACT);
+            self.upgrade_deposit_contract(block_header, deposit_v4_contract, None)?;
         }
-        if let Some(deposit_v5_deploy_config) = &config.contract_upgrades.deposit_v5 {
-            if deposit_v5_deploy_config.height == block_header.number {
-                let deposit_v5_contract =
-                    Lazy::<contracts::Contract>::force(&contracts::deposit_v5::CONTRACT);
-                let reinitialise_params = deposit_v5_deploy_config
-                    .reinitialise_params
-                    .clone()
-                    .unwrap_or(ReinitialiseParams::default());
-                let deposit_v5_reinitialise_data = contracts::deposit_v5::REINITIALIZE
-                    .encode_input(&[Token::Uint(reinitialise_params.withdrawal_period.into())])?;
-                self.upgrade_deposit_contract(
-                    block_header,
-                    deposit_v5_contract,
-                    Some(deposit_v5_reinitialise_data),
-                )?;
-            }
+        if let Some(deposit_v5_deploy_config) = &config.contract_upgrades.deposit_v5
+            && deposit_v5_deploy_config.height == block_header.number
+        {
+            let deposit_v5_contract =
+                Lazy::<contracts::Contract>::force(&contracts::deposit_v5::CONTRACT);
+            let reinitialise_params = deposit_v5_deploy_config
+                .reinitialise_params
+                .clone()
+                .unwrap_or(ReinitialiseParams::default());
+            let deposit_v5_reinitialise_data = contracts::deposit_v5::REINITIALIZE
+                .encode_input(&[Token::Uint(reinitialise_params.withdrawal_period.into())])?;
+            self.upgrade_deposit_contract(
+                block_header,
+                deposit_v5_contract,
+                Some(deposit_v5_reinitialise_data),
+            )?;
         }
-        if let Some(deposit_v6_deploy_config) = &config.contract_upgrades.deposit_v6 {
-            if deposit_v6_deploy_config.height == block_header.number {
-                let deposit_v6_contract =
-                    Lazy::<contracts::Contract>::force(&contracts::deposit_v6::CONTRACT);
-                self.upgrade_deposit_contract(block_header, deposit_v6_contract, None)?;
-            }
+        if let Some(deposit_v6_deploy_config) = &config.contract_upgrades.deposit_v6
+            && deposit_v6_deploy_config.height == block_header.number
+        {
+            let deposit_v6_contract =
+                Lazy::<contracts::Contract>::force(&contracts::deposit_v6::CONTRACT);
+            self.upgrade_deposit_contract(block_header, deposit_v6_contract, None)?;
         }
-        if let Some(deposit_v7_deploy_config) = &config.contract_upgrades.deposit_v7 {
-            if deposit_v7_deploy_config.height == block_header.number {
-                let deposit_v7_contract =
-                    Lazy::<contracts::Contract>::force(&contracts::deposit_v7::CONTRACT);
-                let reinitialise_params_opt = deposit_v7_deploy_config.reinitialise_params.clone();
-                let deposit_v7_reinitialise_data_opt = match reinitialise_params_opt {
-                    Some(reinitialise_params) => Some(
-                        contracts::deposit_v7::REINITIALIZE_2.encode_input(&[Token::Uint(
-                            reinitialise_params.withdrawal_period.into(),
-                        )])?,
-                    ),
-                    None => None,
-                };
-                self.upgrade_deposit_contract(
-                    block_header,
-                    deposit_v7_contract,
-                    deposit_v7_reinitialise_data_opt,
-                )?;
-            }
+        if let Some(deposit_v7_deploy_config) = &config.contract_upgrades.deposit_v7
+            && deposit_v7_deploy_config.height == block_header.number
+        {
+            let deposit_v7_contract =
+                Lazy::<contracts::Contract>::force(&contracts::deposit_v7::CONTRACT);
+            let reinitialise_params_opt = deposit_v7_deploy_config.reinitialise_params.clone();
+            let deposit_v7_reinitialise_data_opt = match reinitialise_params_opt {
+                Some(reinitialise_params) => Some(
+                    contracts::deposit_v7::REINITIALIZE_2.encode_input(&[Token::Uint(
+                        reinitialise_params.withdrawal_period.into(),
+                    )])?,
+                ),
+                None => None,
+            };
+            self.upgrade_deposit_contract(
+                block_header,
+                deposit_v7_contract,
+                deposit_v7_reinitialise_data_opt,
+            )?;
         }
         Ok(())
     }
@@ -568,26 +568,26 @@ impl ContractInit {
     pub fn external_libraries(&self) -> Result<Vec<ExternalLibrary>> {
         let mut external_libraries = Vec::new();
         for entry in &self.0 {
-            if entry.name == "_extlibs" {
-                if let Some(ext_libs) = entry.value.as_array() {
-                    for ext_lib in ext_libs {
-                        if let Some(lib) = ext_lib["arguments"].as_array() {
-                            if lib.len() != 2 {
-                                return Err(anyhow!("Invalid init."));
-                            }
-                            let lib_name = lib[0].as_str().ok_or_else(|| {
-                                anyhow!("Invalid init. Library name is not an string")
-                            })?;
-                            let lib_address = lib[1].as_str().ok_or_else(|| {
-                                anyhow!("Invalid init. Library address is not an string")
-                            })?;
-                            external_libraries.push(ExternalLibrary {
-                                name: lib_name.to_string(),
-                                address: lib_address.parse::<Address>()?,
-                            });
-                        } else {
+            if entry.name == "_extlibs"
+                && let Some(ext_libs) = entry.value.as_array()
+            {
+                for ext_lib in ext_libs {
+                    if let Some(lib) = ext_lib["arguments"].as_array() {
+                        if lib.len() != 2 {
                             return Err(anyhow!("Invalid init."));
                         }
+                        let lib_name = lib[0].as_str().ok_or_else(|| {
+                            anyhow!("Invalid init. Library name is not an string")
+                        })?;
+                        let lib_address = lib[1].as_str().ok_or_else(|| {
+                            anyhow!("Invalid init. Library address is not an string")
+                        })?;
+                        external_libraries.push(ExternalLibrary {
+                            name: lib_name.to_string(),
+                            address: lib_address.parse::<Address>()?,
+                        });
+                    } else {
+                        return Err(anyhow!("Invalid init."));
                     }
                 }
             }
@@ -703,7 +703,7 @@ mod tests {
 
     #[test]
     fn deposit_contract_updateability() {
-        let db = Db::new::<PathBuf>(None, 0, 0, None, crate::cfg::DbConfig::default()).unwrap();
+        let db = Db::new::<PathBuf>(None, 0, None, crate::cfg::DbConfig::default()).unwrap();
         let db = Arc::new(db);
         let config = NodeConfig::default();
 

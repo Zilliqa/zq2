@@ -1,4 +1,4 @@
-use ethers::providers::Middleware;
+use alloy::providers::Provider as _;
 
 use crate::Network;
 
@@ -8,7 +8,7 @@ async fn sha3(mut network: Network) {
 
     // Example from https://ethereum.org/en/developers/docs/apis/json-rpc/#web3_sha3
     let result: String = wallet
-        .provider()
+        .client()
         .request("web3_sha3", ["0x68656c6c6f20776f726c64"])
         .await
         .unwrap();

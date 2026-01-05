@@ -1,17 +1,23 @@
 /// Code to render the validator join configuration and startup script.
 use std::env;
-use std::{convert::TryFrom, path::Path, sync::Arc};
+use std::path::Path;
 
+use alloy::{
+    hex,
+    network::EthereumWallet,
+    primitives::{Address, U256},
+    providers::{
+        Identity, Provider as _, ProviderBuilder, RootProvider,
+        fillers::{
+            BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller,
+            WalletFiller,
+        },
+    },
+    rpc::types::{TransactionInput, TransactionRequest},
+    signers::local::PrivateKeySigner,
+};
 use anyhow::{Context as _, Result, anyhow};
 use ethabi::Token;
-use ethers::{
-    contract::abigen,
-    core::types::TransactionRequest,
-    middleware::SignerMiddleware,
-    providers::{Http, Middleware, Provider},
-    signers::{LocalWallet, Signer},
-    types::H160,
-};
 use libp2p::PeerId;
 use serde::Deserialize;
 use tera::Tera;
@@ -46,6 +52,17 @@ impl Validator {
     }
 }
 
+type Wallet = FillProvider<
+    JoinFill<
+        JoinFill<
+            Identity,
+            JoinFill<GasFiller, JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>>,
+        >,
+        WalletFiller<EthereumWallet>,
+    >,
+    RootProvider,
+>;
+
 #[derive(Debug)]
 pub struct SignerClient {
     chain_endpoint: String,
@@ -60,16 +77,14 @@ impl SignerClient {
         })
     }
 
-    pub async fn get_signer(&self) -> Result<SignerMiddleware<Provider<Http>, LocalWallet>> {
-        let provider = Provider::<Http>::try_from(self.chain_endpoint.clone())?;
-
-        let wallet: LocalWallet = self
-            .private_key
-            .as_str()
-            .parse::<LocalWallet>()?
-            .with_chain_id(provider.get_chainid().await?.as_u64());
-
-        Ok(SignerMiddleware::new(provider, wallet))
+    pub async fn get_signer(&self) -> Result<Wallet> {
+        let key = hex::decode(self.private_key.as_str())?;
+        let signer = PrivateKeySigner::from_slice(key.as_slice()).unwrap();
+        let wallet = EthereumWallet::from(signer);
+        let provider = ProviderBuilder::new()
+            .wallet(wallet)
+            .connect_hyper_http(self.chain_endpoint.parse().unwrap());
+        Ok(provider)
     }
 
     pub async fn deposit(&self, validator: &Validator, params: &DepositParams) -> Result<()> {
@@ -81,29 +96,31 @@ impl SignerClient {
         let client = self.get_signer().await?;
 
         // Stake the new validator's funds.
-        let tx = TransactionRequest::new()
-            .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
-            .value(params.amount as u128 * 1_000_000u128 * 10u128.pow(18))
-            .data(
-                contracts::deposit_v4::DEPOSIT
-                    .encode_input(&[
-                        Token::Bytes(validator.public_key.as_bytes()),
-                        Token::Bytes(validator.peer_id.to_bytes()),
-                        Token::Bytes(validator.deposit_auth_signature.to_bytes()),
-                        Token::Address(params.reward_address),
-                        Token::Address(params.signing_address),
-                    ])
-                    .unwrap(),
-            );
+        let data = contracts::deposit_v4::DEPOSIT
+            .encode_input(&[
+                Token::Bytes(validator.public_key.as_bytes()),
+                Token::Bytes(validator.peer_id.to_bytes()),
+                Token::Bytes(validator.deposit_auth_signature.to_bytes()),
+                Token::Address(params.reward_address.0.0.into()),
+                Token::Address(params.signing_address.0.0.into()),
+            ])
+            .unwrap();
+        let tx = TransactionRequest::default()
+            .to(contract_addr::DEPOSIT_PROXY)
+            .value(U256::from(
+                params.amount as u128 * 1_000_000u128 * 10u128.pow(18),
+            ))
+            .input(TransactionInput::both(data.into()));
 
         // send it!
-        let pending_tx = client.send_transaction(tx, None).await?;
+        let pending_tx = client.send_transaction(tx).await?;
 
         // get the mined tx
-        let receipt = pending_tx
+        let receipt = pending_tx.get_receipt().await?;
+        let tx = client
+            .get_transaction_by_hash(receipt.transaction_hash)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("tx dropped from mempool"))?;
-        let tx = client.get_transaction(receipt.transaction_hash).await?;
+            .unwrap();
 
         println!("Sent tx: {}\n", serde_json::to_string(&tx)?);
         println!("Tx receipt: {}", serde_json::to_string(&receipt)?);
@@ -117,23 +134,23 @@ impl SignerClient {
         let client = self.get_signer().await?;
 
         // Topup the validator's funds.
-        let tx = TransactionRequest::new()
-            .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
-            .value(amount as u128 * 10u128.pow(18))
-            .data(
-                contracts::deposit_v4::DEPOSIT_TOPUP
-                    .encode_input(&[Token::Bytes(bls_public_key.as_bytes())])
-                    .unwrap(),
-            );
+        let data = contracts::deposit_v4::DEPOSIT_TOPUP
+            .encode_input(&[Token::Bytes(bls_public_key.as_bytes())])
+            .unwrap();
+        let tx = TransactionRequest::default()
+            .to(contract_addr::DEPOSIT_PROXY)
+            .value(U256::from(amount as u128 * 10u128.pow(18)))
+            .input(TransactionInput::both(data.into()));
 
         // send it!
-        let pending_tx = client.send_transaction(tx, None).await?;
+        let pending_tx = client.send_transaction(tx).await?;
 
         // get the mined tx
-        let receipt = pending_tx
+        let receipt = pending_tx.get_receipt().await?;
+        let tx = client
+            .get_transaction_by_hash(receipt.transaction_hash)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("tx dropped from mempool"))?;
-        let tx = client.get_transaction(receipt.transaction_hash).await?;
+            .unwrap();
 
         println!("Sent tx: {}\n", serde_json::to_string(&tx)?);
         println!("Tx receipt: {}", serde_json::to_string(&receipt)?);
@@ -146,25 +163,25 @@ impl SignerClient {
 
         let client = self.get_signer().await?;
         // Unstake the validator's funds.
-        let tx = TransactionRequest::new()
-            .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
-            .data(
-                contracts::deposit_v4::UNSTAKE
-                    .encode_input(&[
-                        Token::Bytes(bls_public_key.as_bytes()),
-                        Token::Uint((amount as u128 * 10u128.pow(18)).into()),
-                    ])
-                    .unwrap(),
-            );
+        let data = contracts::deposit_v4::UNSTAKE
+            .encode_input(&[
+                Token::Bytes(bls_public_key.as_bytes()),
+                Token::Uint((amount as u128 * 10u128.pow(18)).into()),
+            ])
+            .unwrap();
+        let tx = TransactionRequest::default()
+            .to(contract_addr::DEPOSIT_PROXY)
+            .input(TransactionInput::both(data.into()));
 
         // send it!
-        let pending_tx = client.send_transaction(tx, None).await?;
+        let pending_tx = client.send_transaction(tx).await?;
 
         // get the mined tx
-        let receipt = pending_tx
+        let receipt = pending_tx.get_receipt().await?;
+        let tx = client
+            .get_transaction_by_hash(receipt.transaction_hash)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("tx dropped from mempool"))?;
-        let tx = client.get_transaction(receipt.transaction_hash).await?;
+            .unwrap();
 
         println!("Sent tx: {}\n", serde_json::to_string(&tx)?);
         println!("Tx receipt: {}", serde_json::to_string(&receipt)?);
@@ -177,25 +194,24 @@ impl SignerClient {
 
         let client = self.get_signer().await?;
         // Withdraw the validator's funds.
-        let tx = TransactionRequest::new()
-            .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
-            .data(
-                contracts::deposit_v4::WITHDRAW
-                    .encode_input(&[
-                        Token::Bytes(bls_public_key.as_bytes()),
-                        Token::Uint((count as u128).into()),
-                    ])
-                    .unwrap(),
-            );
-
+        let data = contracts::deposit_v4::WITHDRAW
+            .encode_input(&[
+                Token::Bytes(bls_public_key.as_bytes()),
+                Token::Uint((count as u128).into()),
+            ])
+            .unwrap();
+        let tx = TransactionRequest::default()
+            .to(contract_addr::DEPOSIT_PROXY)
+            .input(TransactionInput::both(data.into()));
         // send it!
-        let pending_tx = client.send_transaction(tx, None).await?;
+        let pending_tx = client.send_transaction(tx).await?;
 
         // get the mined tx
-        let receipt = pending_tx
+        let receipt = pending_tx.get_receipt().await?;
+        let tx = client
+            .get_transaction_by_hash(receipt.transaction_hash)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("tx dropped from mempool"))?;
-        let tx = client.get_transaction(receipt.transaction_hash).await?;
+            .unwrap();
 
         println!("Sent tx: {}\n", serde_json::to_string(&tx)?);
         println!("Tx receipt: {}", serde_json::to_string(&receipt)?);
@@ -206,14 +222,13 @@ impl SignerClient {
     pub async fn get_stake(&self, public_key: &NodePublicKey) -> Result<u128> {
         let client = self.get_signer().await?;
 
-        let tx = TransactionRequest::new()
-            .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
-            .data(
-                contracts::deposit_v4::GET_STAKE
-                    .encode_input(&[Token::Bytes(public_key.as_bytes())])
-                    .unwrap(),
-            );
-        let output = client.call(&tx.into(), None).await.unwrap();
+        let data = contracts::deposit_v4::GET_STAKE
+            .encode_input(&[Token::Bytes(public_key.as_bytes())])
+            .unwrap();
+        let tx = TransactionRequest::default()
+            .to(contract_addr::DEPOSIT_PROXY)
+            .input(TransactionInput::both(data.into()));
+        let output = client.call(tx).await.unwrap();
 
         Ok(contracts::deposit_v4::GET_STAKE
             .decode_output(&output)
@@ -227,21 +242,20 @@ impl SignerClient {
     pub async fn get_future_stake(&self, public_key: &NodePublicKey) -> Result<u128> {
         let client = self.get_signer().await?;
 
-        abigen!(
-            DEPOSIT_V4,
-            r#"[
-                function getFutureStake(bytes calldata blsPubKey) public view returns (uint256)
-            ]"#,
-            derives(serde::Deserialize, serde::Serialize);
-        );
+        let data = contracts::deposit_v7::GET_FUTURE_STAKE
+            .encode_input(&[Token::Bytes(public_key.as_bytes())])
+            .unwrap();
+        let tx = TransactionRequest::default()
+            .to(contract_addr::DEPOSIT_PROXY)
+            .input(TransactionInput::both(data.into()));
+        let output = client.call(tx).await.unwrap();
 
-        let client = Arc::new(client.provider().to_owned());
-        let contract = DEPOSIT_V4::new(H160(contract_addr::DEPOSIT_PROXY.into_array()), client);
-
-        let future_stake = contract
-            .get_future_stake(public_key.as_bytes().into())
-            .call()
-            .await?
+        let future_stake = contracts::deposit_v7::GET_FUTURE_STAKE
+            .decode_output(&output)
+            .unwrap()[0]
+            .clone()
+            .into_uint()
+            .unwrap()
             .as_u128();
 
         Ok(future_stake)
@@ -250,14 +264,13 @@ impl SignerClient {
     pub async fn get_stakers(&self) -> Result<Vec<NodePublicKey>> {
         let client = self.get_signer().await?;
 
-        let tx = TransactionRequest::new()
-            .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
-            .data(
-                contracts::deposit_v4::GET_STAKERS
-                    .encode_input(&[])
-                    .unwrap(),
-            );
-        let output = client.call(&tx.into(), None).await.unwrap();
+        let data = contracts::deposit_v4::GET_STAKERS
+            .encode_input(&[])
+            .unwrap();
+        let tx = TransactionRequest::default()
+            .to(contract_addr::DEPOSIT_PROXY)
+            .input(TransactionInput::both(data.into()));
+        let output = client.call(tx).await.unwrap();
 
         let stakers = contracts::deposit_v4::GET_STAKERS
             .decode_output(&output)
@@ -272,24 +285,25 @@ impl SignerClient {
             .collect())
     }
 
-    pub async fn get_reward_address(&self, public_key: &NodePublicKey) -> Result<H160> {
+    pub async fn get_reward_address(&self, public_key: &NodePublicKey) -> Result<Address> {
         let client = self.get_signer().await?;
 
-        let tx = TransactionRequest::new()
-            .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
-            .data(
-                contracts::deposit_v4::GET_REWARD_ADDRESS
-                    .encode_input(&[Token::Bytes(public_key.as_bytes())])
-                    .unwrap(),
-            );
-        let output = client.call(&tx.into(), None).await.unwrap();
+        let data = contracts::deposit_v4::GET_REWARD_ADDRESS
+            .encode_input(&[Token::Bytes(public_key.as_bytes())])
+            .unwrap();
+        let tx = TransactionRequest::default()
+            .to(contract_addr::DEPOSIT_PROXY)
+            .input(TransactionInput::both(data.into()));
+        let output = client.call(tx).await.unwrap();
 
         Ok(contracts::deposit_v4::GET_REWARD_ADDRESS
             .decode_output(&output)
             .unwrap()[0]
             .clone()
             .into_address()
-            .unwrap())
+            .unwrap()
+            .0
+            .into())
     }
 }
 
@@ -334,16 +348,20 @@ impl ChainConfig {
 #[derive(Debug)]
 pub struct DepositParams {
     amount: u8,
-    reward_address: H160,
-    signing_address: H160,
+    reward_address: Address,
+    signing_address: Address,
 }
 
 impl DepositParams {
     pub fn new(amount: u8, reward_address: &str, signing_address: &str) -> Result<Self> {
         Ok(Self {
             amount,
-            reward_address: H160(hex_string_to_u8_20(reward_address).unwrap()),
-            signing_address: H160(hex_string_to_u8_20(signing_address).unwrap()),
+            reward_address: Address::from_slice(
+                hex_string_to_u8_20(reward_address).unwrap().as_slice(),
+            ),
+            signing_address: Address::from_slice(
+                hex_string_to_u8_20(signing_address).unwrap().as_slice(),
+            ),
         })
     }
 }
