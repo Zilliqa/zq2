@@ -23,13 +23,13 @@ use revm::{
         BlockEnv, CfgEnv,
         result::{ExecutionResult, HaltReason, Output, ResultAndState},
     },
-    context_interface::{DBErrorMarker, TransactionType, transaction::AccessList},
+    context_interface::{
+        DBErrorMarker, TransactionType, block::BlobExcessGasAndPrice, transaction::AccessList,
+    },
     handler::EvmTr,
-    primitives::{B256, KECCAK_EMPTY, hardfork::SpecId},
+    primitives::{B256, KECCAK_EMPTY, eip4844::MIN_BLOB_GASPRICE, hardfork::SpecId},
     state::{AccountInfo, Bytecode, EvmState},
 };
-use revm::context_interface::block::BlobExcessGasAndPrice;
-use revm::primitives::eip4844::MIN_BLOB_GASPRICE;
 use revm_context::{ContextTr, TxEnv};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -570,7 +570,10 @@ impl State {
 
         let (spec_id, blob_excess_gas_and_price) = {
             if fork.cancun_active {
-                (SPEC_ID_CANCUN, Some(BlobExcessGasAndPrice::new(0, MIN_BLOB_GASPRICE)))
+                (
+                    SPEC_ID_CANCUN,
+                    Some(BlobExcessGasAndPrice::new(0, MIN_BLOB_GASPRICE)),
+                )
             } else {
                 (SPEC_ID_SHANGHAI, None)
             }
