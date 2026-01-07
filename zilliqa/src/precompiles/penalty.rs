@@ -66,16 +66,17 @@ impl ViewHistory {
 
     pub fn append_history(
         &mut self,
-        new_missed_views: &mut VecDeque<(u64, NodePublicKey)>,
+        new_missed_views: &VecDeque<(u64, NodePublicKey)>,
     ) -> anyhow::Result<bool> {
         if !new_missed_views.is_empty() && !self.missed_views.is_empty() {
+            // new_missed_views are in ascending order
             anyhow::ensure!(
                 new_missed_views.front().unwrap().0 > self.missed_views.back().unwrap().0,
                 "Appending older missed_views"
             );
         }
         let len = self.missed_views.len();
-        self.missed_views.append(new_missed_views); // new_missed_views are in ascending order
+        self.missed_views.extend(new_missed_views.iter().cloned());
         Ok(len < self.missed_views.len())
     }
 
