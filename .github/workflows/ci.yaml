@@ -43,7 +43,7 @@ jobs:
           file_pattern: "*.sol"
           status_options: "--untracked-files=no"
   check:
-    runs-on: [self-hosted, gcp]
+    runs-on: [self-hosted-8-cores]
     steps:
       - name: Install Rust
         run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && echo "$HOME/.cargo/bin" >> $GITHUB_PATH
