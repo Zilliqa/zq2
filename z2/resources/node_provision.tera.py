@@ -135,7 +135,7 @@ start() {
 }
 
 stop() {
-    docker stop zilliqa-""" + VERSIONS.get('zilliqa') + """
+    docker stop -t 60 --signal SIGINT zilliqa-""" + VERSIONS.get('zilliqa') + """
 }
 
 case ${1} in
