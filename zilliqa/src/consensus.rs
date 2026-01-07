@@ -2567,7 +2567,8 @@ impl Consensus {
             .get_stakers(block.header)?;
 
         if verified.is_err() {
-            info!(?block, "Unable to verify block = ");
+            tracing::error!(?block, "Unable to verify block");
+            tracing::warn!(public_key=%proposer.public_key, peer_id=%proposer.peer_id, view=%block.view(), "Unable to verify block");
             return Err(anyhow!(
                 "invalid block signature found! block hash: {:?} block view: {:?} committee len {:?}",
                 block.hash(),
