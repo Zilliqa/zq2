@@ -2363,28 +2363,20 @@ impl Consensus {
         let max_missed_view_age = self.config.max_missed_view_age;
         let (extended, pruned, min_view) = {
             let mut history_guard = self.state.view_history.write();
-            let extended = history_guard.append_history(&mut new_missed_views)?;
+            let extended = history_guard.append_history(&new_missed_views)?;
             let min_view = history_guard.min_view;
             let pruned = history_guard.prune_history(block.view(), max_missed_view_age)?;
             if min_view != history_guard.min_view {
                 self.db
                     .set_min_view_of_view_history(history_guard.min_view)?;
             }
-            // the following code is only for logging and can be commented out
-            if extended || pruned {
-                trace!(
-                    view = self.get_view()?,
-                    finalized = block.view(),
-                    history = display(&*history_guard),
-                    "~~~~~~~~~~> current"
-                );
-            }
             (extended, pruned, min_view)
         };
-        //TODO(jailing): do not update the db on every finalization to avoid impact on block times
+
+        // *** In-memory and on-disk history must be kept in-sync. ***
         if extended {
-            for (view, leader) in new_missed_views.iter().rev() {
-                self.db.extend_view_history(*view, leader.as_bytes())?;
+            for (view, leader) in new_missed_views {
+                self.db.extend_view_history(view, leader.as_bytes())?;
             }
         }
         if pruned {
@@ -3758,7 +3750,7 @@ impl Consensus {
                         .as_ref()
                         .expect("Checkpoint view history missing")
                         .write()
-                        .append_history(&mut history)?;
+                        .append_history(&history)?;
                     self.db.extend_ckpt_view_history(view, leader.as_bytes())?;
                     // TODO(jailing): collect them in a vector and call append_history only once
                 }
@@ -3825,7 +3817,7 @@ impl Consensus {
                         .as_ref()
                         .expect("Checkpoint view history missing")
                         .write()
-                        .append_history(&mut history)?;
+                        .append_history(&history)?;
                     self.db.extend_ckpt_view_history(view, leader.as_bytes())?;
                     // TODO(jailing): collect them in a vector and call append_history only once
                 }
