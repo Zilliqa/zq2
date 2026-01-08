@@ -1607,7 +1607,7 @@ impl Consensus {
             .get_block(&proposal.parent_hash())?
             .ok_or_else(|| anyhow!("missing parent block"))?;
 
-        let prev_randa_mix = parent.header.mix_hash.unwrap_or(Hash::ZERO);
+        let prev_randao_mix = parent.header.mix_hash.unwrap_or(Hash::ZERO);
 
         // Use state root hash of current early proposal
         state.set_to_root(proposal.state_root_hash().into());
@@ -1652,7 +1652,7 @@ impl Consensus {
                 &mut state,
                 tx.clone(),
                 proposal.header,
-                prev_randa_mix,
+                prev_randao_mix,
                 &mut inspector,
                 self.config.enable_ots_indices,
             )?;
