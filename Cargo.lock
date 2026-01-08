@@ -2595,7 +2595,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "18e4fdb82bd54a12e42fb58a800dcae6b9e13982238ce2296dc3570b92148e1f"
 dependencies = [
  "data-encoding",
- "syn 2.0.112",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -4394,6 +4394,15 @@ name = "impl-codec"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba6a270039626615617f3f36d15fc827041df3b78c439da2cadfa47455a77f2f"
+dependencies = [
+ "parity-scale-codec",
+]
+
+[[package]]
+name = "impl-codec"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d40b9d5e17727407e55028eafc22b2dc68781786e6d7eb8a21103f5058e3a14"
 dependencies = [
  "parity-scale-codec",
 ]
@@ -6819,7 +6828,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b34d9fd68ae0b74a41b21c03c2f62847aa0ffea044eee893b4c140b37e244e2"
 dependencies = [
  "fixed-hash",
- "impl-codec",
+ "impl-codec 0.6.0",
  "impl-rlp",
  "impl-serde",
  "uint 0.9.5",
@@ -6832,6 +6841,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d15600a7d856470b7d278b3fe0e311fe28c2526348549f8ef2ff7db3299c87f5"
 dependencies = [
  "fixed-hash",
+ "impl-codec 0.7.1",
  "uint 0.10.0",
 ]
 
@@ -10745,7 +10755,7 @@ dependencies = [
  "libp2p",
  "log",
  "parking_lot 0.12.5",
- "primitive-types 0.12.2",
+ "primitive-types 0.13.1",
  "prost 0.14.1",
  "prost-build",
  "rand 0.8.5",
@@ -10915,7 +10925,7 @@ dependencies = [
  "parking_lot 0.12.5",
  "paste",
  "pprof",
- "primitive-types 0.12.2",
+ "primitive-types 0.13.1",
  "prost 0.14.1",
  "r2d2",
  "r2d2_sqlite",
