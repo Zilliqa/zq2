@@ -64,8 +64,8 @@ async fn deposit_stake(
                     .to_bytes(),
             ),
             Token::Bytes(deposit_signature.to_bytes()),
-            Token::Address(H160(reward_address.0.0)),
-            Token::Address(H160(signing_address.0.0)),
+            Token::Address(reward_address.0.0.into()),
+            Token::Address(signing_address.0.0.into()),
         ])
         .unwrap();
     let tx = TransactionRequest::default()
@@ -275,6 +275,8 @@ async fn get_control_address(wallet: &Wallet, staker: &NodePublicKey) -> H160 {
         .clone()
         .into_address()
         .unwrap()
+        .0
+        .into()
 }
 
 #[zilliqa_macros::test]
