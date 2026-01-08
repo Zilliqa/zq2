@@ -410,6 +410,8 @@ pub mod deposit_v8 {
         Lazy::new(|| CONTRACT.abi.function("currentEpoch").unwrap().clone());
     pub static GET_STAKE: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("getStake").unwrap().clone());
+    pub static GET_FUTURE_STAKE: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("getFutureStake").unwrap().clone());
     pub static GET_REWARD_ADDRESS: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("getRewardAddress").unwrap().clone());
     pub static GET_SIGNING_ADDRESS: Lazy<Function> =
@@ -560,6 +562,7 @@ mod tests {
                 "src/contracts/deposit_v5.sol",
                 "src/contracts/deposit_v6.sol",
                 "src/contracts/deposit_v7.sol",
+                "src/contracts/deposit_v8.sol",
                 "src/contracts/utils/deque.sol",
                 "src/contracts/intershard_bridge.sol",
                 "src/contracts/shard.sol",

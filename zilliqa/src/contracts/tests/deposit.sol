@@ -3,6 +3,7 @@ pragma solidity ^0.8.26;
 import {Deposit as DepositV5} from "../deposit_v5.sol";
 import {Deposit as DepositV6} from "../deposit_v6.sol";
 import {Deposit} from "../deposit_v7.sol";
+import {Deposit as DepositV8} from "../deposit_v8.sol";
 import {DepositInit, InitialStaker} from "../deposit_v1.sol";
 import {
     Test,
@@ -114,7 +115,16 @@ contract DepositTest is Test {
             depositContractAddr,
             reinitializerCall
         );
-        depositContract = Deposit(proxy);
+
+        // Upgrade to deposit_v8
+        depositContractAddr = address(new DepositV8());
+        reinitializerCall = abi.encodeWithSignature("reinitialize()");
+        depositInitContract.upgradeToAndCall(
+            depositContractAddr,
+            reinitializerCall
+        );
+
+        depositContract = DepositV8(proxy);
 
         // Other setup
         vm.etch(address(0x5a494c81), address(new BlsVerifyPrecompile()).code);
