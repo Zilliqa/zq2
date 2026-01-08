@@ -37,6 +37,7 @@
           - unzip
           - zip
           - python3-venv
+          - ncdu
         state: present
 
     - name: Ensure /opt/zilliqa exists
