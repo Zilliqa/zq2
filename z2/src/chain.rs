@@ -267,10 +267,10 @@ impl Chain {
                 json!({ "at_height": 12998790, "failed_zil_transfers_to_eoa_proper_fee_deduction": true}),
                 // estimated: 2025-09-19T12.00.00Z
                 json!({ "at_height": 14997600, "validator_jailing": true}),
-                // estimated: 2026-01-07T11.00.00Z
-                json!({ "at_height": 23080419, "scilla_empty_maps_are_encoded_correctly": true}),
-                // estimated: 2026-01-07T11.00.00Z
-                json!({ "at_height": 23080419, "cancun_active": true}),
+                // estimated: 2026-01-14T11.00.00Z
+                json!({ "at_height": 23685219, "scilla_empty_maps_are_encoded_correctly": true}),
+                // estimated: 2026-01-14T11.00.00Z
+                json!({ "at_height": 23685219, "cancun_active": true}),
             ]),
             Chain::Zq2Mainnet => Some(vec![
                 json!({ "at_height": 4770088, "executable_blocks": true }),
