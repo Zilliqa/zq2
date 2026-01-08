@@ -3791,7 +3791,8 @@ impl Consensus {
             };
             let mut history = VecDeque::new();
             for view in parent_view + 1..block.view() {
-                if let Ok(leader) = state_at.leader(view, header)
+                let fork = self.state.forks.get(header.number);
+                if let Ok(leader) = state_at.leader(view, header, fork)
                     && view != parent_view + 1
                 {
                     history.push_back((view, leader));
@@ -3858,7 +3859,7 @@ impl Consensus {
 
             let fork = self.state.forks.get(header.number);
             // but add all subsequent missed views to the history
-            let mut history = VecDeque::new();
+            let history = VecDeque::new();
             while self.get_block_by_view(view)?.is_none()
                 && self.state.view_history.read().min_view > view
             {

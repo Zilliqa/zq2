@@ -644,7 +644,7 @@ impl State {
                 basefee: self.gas_price.try_into()?,
                 difficulty: U256::from(1),
                 prevrandao: Some(extra_opts.randao_mix_hash.into()),
-                blob_excess_gas_and_price: None,
+                blob_excess_gas_and_price,
                 beneficiary: Default::default(),
             });
 
