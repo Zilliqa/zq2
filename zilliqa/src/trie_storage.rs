@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rocksdb::WriteBatch;
+use rocksdb::{WriteBatch, SingleThreaded, DBWithThreadMode};
 use rusqlite::OptionalExtension;
 
 use crate::{cfg::Forks, crypto::Hash};
@@ -25,6 +25,16 @@ pub struct TrieStorage {
 impl TrieStorage {
     pub fn new(pool: Arc<Pool<SqliteConnectionManager>>, kvdb: Arc<rocksdb::DB>) -> Self {
         Self { pool, kvdb }
+    }
+
+    pub fn read_only(&self) -> Self {
+        let rdb_path = self.kvdb.path();
+        let rdb_opts = rocksdb::Options::default();
+        let rdb = DBWithThreadMode::<SingleThreaded>::open_for_read_only(&rdb_opts, rdb_path, false).expect("reopen existing database");
+        Self {
+            pool: self.pool.clone(),
+            kvdb: Arc::new(rdb),
+        }
     }
 
     pub fn write_batch(&self, keys: Vec<Vec<u8>>, values: Vec<Vec<u8>>) -> Result<()> {
