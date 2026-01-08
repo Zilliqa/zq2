@@ -3,6 +3,7 @@ use std::{
     io::{BufReader, Read, Seek, Write},
     path::Path,
     sync::Arc,
+    u64,
 };
 
 use anyhow::{Result, anyhow, ensure};
@@ -314,14 +315,14 @@ pub fn load_ckpt_state(
         let mut state_trie = EthTrie::new(trie_storage.clone());
         let mem_storage = Arc::new(MemoryDB::new(true));
 
-        let mut account_count = 0;
-        let mut record_count = 0;
+        let mut account_count = u64::MIN;
+        let mut record_count = u64::MIN;
 
         let mut reader = zipreader.by_name("state.bincode")?;
         while let Ok(account_key) =
             bincode::decode_from_std_read::<Vec<u8>, _, _>(&mut reader, BIN_CONFIG)
         {
-            if account_count % 10000 == 0 {
+            if account_count.is_multiple_of(10_000) {
                 tracing::debug!(account=%account_count, record=%record_count, "Loaded");
                 // Due to the way EthTrie works, we need to flush the trie to disk from time-to-time.
                 //
@@ -331,7 +332,7 @@ pub fn load_ckpt_state(
                 //
                 // Unfortunately, this introduces intermediate states that will not be used normally.
                 // So, we do this in batches.
-                if account_count % 100000 == 0 {
+                if account_count.is_multiple_of(100_000) {
                     state_trie.root_hash()?;
                 }
             }
@@ -469,19 +470,17 @@ pub fn save_ckpt(
     // write the accounts in the state trie at this point
     zipwriter.start_file("state.bincode", options)?;
 
-    let mut account_count = 0;
-    let mut record_count = 0;
+    let mut account_count = u64::MIN;
+    let mut record_count = u64::MIN;
     // iterate over accounts and save the accounts to the checkpoint file.
     // do not save intermediate state trie values.
+    let trie_storage = Arc::new(trie_storage.read_only());
     let state_trie = EthTrie::new(trie_storage.clone()).at_root(parent.state_root_hash().into());
     for akv in state_trie.iter() {
         let (key, serialised_account) = akv?;
-        if account_count % 10000 == 0 {
+        if account_count.is_multiple_of(10_000) {
             tracing::debug!(account=%account_count, record=%record_count, "Saved");
         }
-
-        bincode::encode_into_std_write(&key, &mut zipwriter, BIN_CONFIG)?;
-        bincode::encode_into_std_write(&serialised_account, &mut zipwriter, BIN_CONFIG)?;
 
         // iterate over account storage keys, and save them to the checkpoint file.
         // use a single-pass strategy to reduce disk I/O and memory usage.
@@ -498,9 +497,11 @@ pub fn save_ckpt(
             count += 1;
         }
         spool.flush()?; // flush data to spool
+        spool.rewind()?; // reset spool for reading
 
         // copy account storage contents to zipfile
-        spool.rewind()?; // reset spool for reading
+        bincode::encode_into_std_write(&key, &mut zipwriter, BIN_CONFIG)?;
+        bincode::encode_into_std_write(&serialised_account, &mut zipwriter, BIN_CONFIG)?;
         bincode::serde::encode_into_std_write(count, &mut zipwriter, BIN_CONFIG)?;
         std::io::copy(&mut spool, &mut zipwriter)?; // copy to zipwriter
 
