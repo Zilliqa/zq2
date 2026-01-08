@@ -1105,7 +1105,8 @@ impl State {
     ) -> Result<NodePublicKey> {
         let data = {
             if fork.randao_support {
-                contracts::deposit::LEADER_AT_VIEW_WITH_RANDAO.encode_input(&[])?
+                contracts::deposit::LEADER_AT_VIEW_WITH_RANDAO
+                    .encode_input(&[Token::Uint(view.into())])?
             } else {
                 contracts::deposit::LEADER_AT_VIEW.encode_input(&[Token::Uint(view.into())])?
             }
