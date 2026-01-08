@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: checkout the source code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           submodules: recursive
       - uses: Swatinem/rust-cache@v2
@@ -35,13 +35,13 @@ jobs:
         # Remove first line that always just says "Updating crates.io index"
         run: cargo update 2>&1 | sed '/crates.io index/d' | tee -a cargo_update.log
       - name: upload Cargo.lock artifact for use in PR
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: Cargo-lock
           path: Cargo.lock
           retention-days: 1
       - name: upload cargo-update log artifact for use in PR
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: cargo-updates
           path: cargo_update.log
@@ -56,14 +56,14 @@ jobs:
       pull-requests: write
     steps:
       - name: checkout the source code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: download Cargo.lock from update job
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: Cargo-lock
       - name: download cargo-update log from update job
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: cargo-updates
 

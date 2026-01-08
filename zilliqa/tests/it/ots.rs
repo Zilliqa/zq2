@@ -1,22 +1,22 @@
-use std::{ops::DerefMut, str::FromStr};
+use std::str::FromStr;
 
-use ethabi::Token;
-use ethers::{
-    contract::EthError,
-    providers::Middleware,
-    types::{TransactionRequest, U64},
-    utils,
+use alloy::{
+    eips::BlockId,
+    primitives::{Address, BlockHash, TxHash, U64, U256},
+    providers::{Provider, WalletProvider},
+    rpc::types::TransactionRequest,
+    sol,
 };
 use futures::future::join_all;
 use itertools::Itertools;
-use primitive_types::{H160, H256};
-use serde_json::Value;
+use serde_json::{Value, json};
+use zilliqa::api::to_hex::ToHex;
 
 use crate::{Network, Wallet, deploy_contract};
 
 async fn search_transactions(
     wallet: &Wallet,
-    address: H160,
+    address: &Address,
     block_number: u64,
     page_size: usize,
     reverse: bool,
@@ -26,64 +26,78 @@ async fn search_transactions(
     } else {
         "ots_searchTransactionsAfter"
     };
-    wallet
-        .provider()
+    let result = wallet
+        .client()
         .request(
             method,
             [
-                utils::serialize(&address),
-                utils::serialize(&block_number),
-                utils::serialize(&page_size),
+                json!(address.to_hex()),
+                json!(block_number),
+                json!(page_size),
             ],
         )
         .await
-        .unwrap()
+        .unwrap();
+    tracing::debug!("{result:?}");
+    result
 }
+
+sol!(
+    #[sol(rpc)]
+    "tests/it/contracts/CallingContract.sol"
+);
 
 #[zilliqa_macros::test]
 async fn search_transactions_evm(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    network.run_until_block(&wallet, 2.into(), 70).await;
 
-    let (hash, caller_abi) = deploy_contract(
+    let (caller_address, _) = deploy_contract(
         "tests/it/contracts/CallingContract.sol",
         "Caller",
-        0u128,
+        0,
         &wallet,
         &mut network,
     )
     .await;
-    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
-    let caller_address = receipt.contract_address.unwrap();
+    let caller_abi = Caller::new(caller_address, &wallet);
 
-    let (hash, _) = deploy_contract(
+    let (callee_address, _) = deploy_contract(
         "tests/it/contracts/CallingContract.sol",
         "Callee",
-        0u128,
+        0,
         &wallet,
         &mut network,
     )
     .await;
-    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
-    let callee_address = receipt.contract_address.unwrap();
 
-    let data = caller_abi
-        .function("setX")
+    let n = wallet.get_block_number().await.unwrap();
+
+    let call_hash = *caller_abi
+        .setX(callee_address, U256::from(0xDEADBEEFu32))
+        .send()
+        .await
         .unwrap()
-        .encode_input(&[Token::Address(callee_address), Token::Uint(123.into())])
-        .unwrap();
-
-    let tx = TransactionRequest::new().to(caller_address).data(data);
-    let hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
-    network.run_until_receipt(&wallet, hash, 50).await;
+        .tx_hash();
+    let _receipt = network.run_until_receipt(&wallet, &call_hash, 100).await;
 
     // Search for the transaction with: the sender, the caller contract and the callee contract.
-    let response = search_transactions(&wallet, wallet.address(), 0, 1, false).await;
-    assert_eq!(response["txs"].as_array().unwrap().len(), 1);
-    let response = search_transactions(&wallet, caller_address, 0, 1, false).await;
-    assert_eq!(response["txs"].as_array().unwrap().len(), 1);
-    let response = search_transactions(&wallet, callee_address, 0, 1, false).await;
-    assert_eq!(response["txs"].as_array().unwrap().len(), 1);
+    let wallet_tx =
+        search_transactions(&wallet, &wallet.default_signer_address(), n, 1, false).await;
+    assert_eq!(wallet_tx["txs"].as_array().unwrap().len(), 1);
+    let caller_tx = search_transactions(&wallet, &caller_address, n, 1, false).await;
+    assert_eq!(caller_tx["txs"].as_array().unwrap().len(), 1);
+    let callee_tx = search_transactions(&wallet, &callee_address, n, 1, false).await;
+    assert_eq!(callee_tx["txs"].as_array().unwrap().len(), 1);
+
+    // Ensure that they are all the same block
+    assert_eq!(
+        wallet_tx["txs"][0]["blockHash"],
+        caller_tx["txs"][0]["blockHash"]
+    );
+    assert_eq!(
+        wallet_tx["txs"][0]["blockHash"],
+        callee_tx["txs"][0]["blockHash"]
+    );
 }
 
 // TODO: Add test for searching for internal Scilla contract calls once they are supported.
@@ -91,32 +105,41 @@ async fn search_transactions_evm(mut network: Network) {
 #[zilliqa_macros::test]
 async fn search_transactions_paging(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    network.run_until_block(&wallet, 2.into(), 70).await;
 
     // Generate 16 transactions.
-    let to = H160::random_using(network.rng.lock().unwrap().deref_mut());
+    let to = Address::random();
     let hashes: Vec<_> = join_all((0..16).map(|i| {
         let wallet = &wallet;
         async move {
-            let tx = TransactionRequest::pay(to, 123).nonce(i);
-            wallet.send_transaction(tx, None).await.unwrap().tx_hash()
+            let tx = TransactionRequest::default()
+                .to(to)
+                .value(U256::from(123))
+                .nonce(i);
+            *wallet.send_transaction(tx).await.unwrap().tx_hash()
         }
     }))
     .await;
 
     for h in hashes {
-        network.run_until_receipt(&wallet, h, 100).await;
+        network.run_until_receipt(&wallet, &h, 100).await;
     }
 
     let page_size = 8;
-    let response = search_transactions(&wallet, wallet.address(), 0, page_size, false).await;
+    let response = search_transactions(
+        &wallet,
+        &wallet.default_signer_address(),
+        0,
+        page_size,
+        false,
+    )
+    .await;
     let txs = response["txs"].as_array().unwrap();
     // Response should include at least as many transactions as the page size.
     assert!(txs.len() >= page_size);
     // It should include all transactions from the last block (even if this results in more txs than `page_size`).
     let last_block_hash = txs[txs.len() - 1]["blockHash"].as_str().unwrap();
     let last_block = wallet
-        .get_block(H256::from_str(last_block_hash).unwrap())
+        .get_block(BlockId::hash(BlockHash::from_str(last_block_hash).unwrap()))
         .await
         .unwrap()
         .unwrap();
@@ -129,7 +152,8 @@ async fn search_transactions_paging(mut network: Network) {
     // It should be marked as the last (earliest) page because we started from the genesis block.
     assert!(response["lastPage"].as_bool().unwrap());
 
-    let response = search_transactions(&wallet, wallet.address(), 0, 16, false).await;
+    let response =
+        search_transactions(&wallet, &wallet.default_signer_address(), 0, 16, false).await;
     let txs = response["txs"].as_array().unwrap();
     // It should be marked as the first (latest) page because we queried for all 16 transactions.
     assert!(response["firstPage"].as_bool().unwrap());
@@ -148,7 +172,7 @@ async fn search_transactions_paging(mut network: Network) {
             .all(|(a, b)| a > b)
     );
 
-    let response = search_transactions(&wallet, wallet.address(), 0, 1, true).await;
+    let response = search_transactions(&wallet, &wallet.default_signer_address(), 0, 1, true).await;
     let txs = response["txs"].as_array().unwrap();
     // Searching in reverse from the latest block and a page size of 1 should only yield results from a single block.
     assert!(!txs.is_empty());
@@ -173,12 +197,16 @@ async fn search_transactions_paging(mut network: Network) {
     );
 }
 
+sol!(
+    #[sol(rpc)]
+    "tests/it/contracts/ContractCreatesAnotherContract.sol"
+);
 #[zilliqa_macros::test]
 async fn contract_creator(mut network: Network) {
-    async fn get_contract_creator(wallet: &Wallet, address: H160) -> Option<(H256, H160)> {
+    async fn get_contract_creator(wallet: &Wallet, address: Address) -> Option<(TxHash, Address)> {
         let response: Value = wallet
-            .provider()
-            .request("ots_getContractCreator", [address])
+            .client()
+            .request("ots_getContractCreator", [json!(address.to_hex())])
             .await
             .unwrap();
 
@@ -193,12 +221,14 @@ async fn contract_creator(mut network: Network) {
     }
 
     let wallet = network.genesis_wallet().await;
-    network.run_until_block(&wallet, 2.into(), 70).await;
 
     // EOAs have no creator
-    assert_eq!(get_contract_creator(&wallet, wallet.address()).await, None);
+    assert_eq!(
+        get_contract_creator(&wallet, wallet.default_signer_address()).await,
+        None
+    );
 
-    let (hash, abi) = deploy_contract(
+    let (creator_address, creator_receipt) = deploy_contract(
         "tests/it/contracts/ContractCreatesAnotherContract.sol",
         "Creator",
         0u128,
@@ -206,30 +236,26 @@ async fn contract_creator(mut network: Network) {
         &mut network,
     )
     .await;
-    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
-    let creator_address = receipt.contract_address.unwrap();
 
     // The EOA is the creator of the `Creator` contract.
     assert_eq!(
         get_contract_creator(&wallet, creator_address).await,
-        Some((hash, wallet.address()))
+        Some((
+            creator_receipt.transaction_hash,
+            wallet.default_signer_address()
+        ))
     );
 
-    let data = abi.function("create").unwrap().encode_input(&[]).unwrap();
+    let creator = Creator::new(creator_address, &wallet);
+    let hash = *creator.create().send().await.unwrap().tx_hash();
+    let receipt = network.run_until_receipt(&wallet, &hash, 50).await;
 
-    let tx = TransactionRequest::new().to(creator_address).data(data);
-    let hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
-    let receipt = network.run_until_receipt(&wallet, hash, 50).await;
-    let log = abi
-        .event("Created")
-        .unwrap()
-        .parse_log_whole(receipt.logs[0].clone().into())
-        .unwrap();
-    let create_me_address = log.params[0].value.clone().into_address().unwrap();
-
+    // Extract the value from the `Created` event.
+    let log = receipt.decoded_log::<Creator::Created>().unwrap();
+    let Creator::Created { createMe } = log.data;
     // The `Creator` is the creator of the `CreateMe` contract.
     assert_eq!(
-        get_contract_creator(&wallet, create_me_address).await,
+        get_contract_creator(&wallet, createMe).await,
         Some((hash, creator_address))
     );
 
@@ -238,18 +264,17 @@ async fn contract_creator(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn trace_transaction(mut network: Network) {
-    async fn get_trace(wallet: &Wallet, hash: H256) -> Value {
+    async fn get_trace(wallet: &Wallet, hash: TxHash) -> Value {
         wallet
-            .provider()
-            .request("ots_traceTransaction", [hash])
+            .client()
+            .request("ots_traceTransaction", [json!(hash.to_hex())])
             .await
             .unwrap()
     }
 
     let wallet = network.genesis_wallet().await;
-    network.run_until_block(&wallet, 2.into(), 70).await;
 
-    let (hash, caller_abi) = deploy_contract(
+    let (caller_address, receipt) = deploy_contract(
         "tests/it/contracts/CallingContract.sol",
         "Caller",
         0u128,
@@ -257,24 +282,23 @@ async fn trace_transaction(mut network: Network) {
         &mut network,
     )
     .await;
-    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
-    let caller_address = receipt.contract_address.unwrap();
 
-    let trace = get_trace(&wallet, hash).await;
+    let trace = get_trace(&wallet, receipt.transaction_hash).await;
     assert_eq!(trace.as_array().unwrap().len(), 1);
+
     let entry = &trace[0];
     assert_eq!(entry["type"], "CREATE");
     assert_eq!(entry["depth"], 0);
     assert_eq!(
-        entry["from"].as_str().unwrap().parse::<H160>().unwrap(),
-        wallet.address()
+        entry["from"].as_str().unwrap().parse::<Address>().unwrap(),
+        wallet.default_signer_address()
     );
     assert_eq!(
-        entry["to"].as_str().unwrap().parse::<H160>().unwrap(),
+        entry["to"].as_str().unwrap().parse::<Address>().unwrap(),
         caller_address
     );
 
-    let (hash, _) = deploy_contract(
+    let (callee_address, _hash) = deploy_contract(
         "tests/it/contracts/CallingContract.sol",
         "Callee",
         0u128,
@@ -282,18 +306,15 @@ async fn trace_transaction(mut network: Network) {
         &mut network,
     )
     .await;
-    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
-    let callee_address = receipt.contract_address.unwrap();
 
-    let data = caller_abi
-        .function("setX")
+    let caller_abi = Caller::new(caller_address, &wallet);
+    let hash = *caller_abi
+        .setX(callee_address, U256::from(0x517710Au32))
+        .send()
+        .await
         .unwrap()
-        .encode_input(&[Token::Address(callee_address), Token::Uint(123.into())])
-        .unwrap();
-
-    let tx = TransactionRequest::new().to(caller_address).data(data);
-    let hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
-    network.run_until_receipt(&wallet, hash, 50).await;
+        .tx_hash();
+    network.run_until_receipt(&wallet, &hash, 100).await;
 
     let trace = get_trace(&wallet, hash).await;
     assert_eq!(trace.as_array().unwrap().len(), 2);
@@ -302,25 +323,28 @@ async fn trace_transaction(mut network: Network) {
     assert_eq!(first["type"], "CALL");
     assert_eq!(first["depth"], 0);
     assert_eq!(
-        first["to"].as_str().unwrap().parse::<H160>().unwrap(),
+        first["to"].as_str().unwrap().parse::<Address>().unwrap(),
         caller_address
     );
     assert_eq!(second["type"], "CALL");
     assert_eq!(second["depth"], 1);
     assert_eq!(
-        second["to"].as_str().unwrap().parse::<H160>().unwrap(),
+        second["to"].as_str().unwrap().parse::<Address>().unwrap(),
         callee_address
     );
 
     // TODO: Test Scilla contract
 }
 
+sol!(
+    #[sol(rpc)]
+    "tests/it/contracts/RevertMe.sol"
+);
 #[zilliqa_macros::test]
 async fn get_transaction_error(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    network.run_until_block(&wallet, 2.into(), 70).await;
 
-    let (hash, abi) = deploy_contract(
+    let (address, _) = deploy_contract(
         "tests/it/contracts/RevertMe.sol",
         "RevertMe",
         0u128,
@@ -328,29 +352,28 @@ async fn get_transaction_error(mut network: Network) {
         &mut network,
     )
     .await;
-    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
-    let address = receipt.contract_address.unwrap();
 
-    let revertable = abi.function("revertable").unwrap();
+    let contract = RevertMe::new(address, &wallet);
 
-    let data = revertable.encode_input(&[Token::Bool(false)]).unwrap();
-    let tx = TransactionRequest::new()
-        .to(address)
-        .data(data)
-        .gas(1_000_000);
-    let hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
-    network.run_until_receipt(&wallet, hash, 50).await;
+    let hash = *contract
+        .revertable(false)
+        .gas(1_000_000)
+        .send()
+        .await
+        .unwrap()
+        .tx_hash();
+    network.run_until_receipt(&wallet, &hash, 50).await;
 
     let error: String = wallet
-        .provider()
-        .request("ots_getTransactionError", [hash])
+        .client()
+        .request("ots_getTransactionError", [json!(hash.to_hex())])
         .await
         .unwrap();
-    println!("{error}");
+
     let error = error.strip_prefix("0x").unwrap();
     let error = hex::decode(error).unwrap();
-    let error = String::decode_with_selector(&error).unwrap();
-    assert_eq!(error, "Reverting.");
+    let error = alloy::sol_types::decode_revert_reason(&error).unwrap();
+    assert!(error.ends_with("Reverting."));
 
     // TODO: Test Scilla contract
 }

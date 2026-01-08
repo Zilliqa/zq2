@@ -3,6 +3,9 @@
 - name: Required packages installation
   ansible.builtin.import_playbook: install_packages.yml
 
+- name: Mount data disk
+  ansible.builtin.import_playbook: mount_data_disk.yml
+
 - name: Docker installation
   ansible.builtin.import_playbook: install_docker.yml
 

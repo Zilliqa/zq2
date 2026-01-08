@@ -17,7 +17,8 @@ variable "region" {
 variable "apps" {
   description = "(Optional) The configuration of the apps nodes"
   type = object({
-    disk_size                  = optional(number, 256)
+    boot_disk_size             = optional(number, 100)
+    data_disk_size             = optional(number, 0)
     instance_type              = optional(string, "e2-standard-2")
     provisioning_model         = optional(string, "STANDARD")
     generate_external_ip       = optional(bool, false)
@@ -30,12 +31,14 @@ variable "apps" {
       stats     = optional(list(string), [])
     }), {})
     nodes = optional(list(object({
-      count     = number
-      region    = optional(string)
-      zone      = optional(string)
-      os_images = optional(map(string), {})
+      count  = number
+      region = optional(string)
+      zone   = optional(string)
     })), [])
-    instance_type_override = optional(map(string), {})
+    os_images_override      = optional(map(string), {})
+    instance_type_override  = optional(map(string), {})
+    boot_disk_size_override = optional(map(number), {})
+    data_disk_size_override = optional(map(number), {})
   })
   default = {}
 
@@ -63,7 +66,8 @@ variable "apps" {
 variable "api" {
   description = "(Optional) The configuration of the api nodes"
   type = object({
-    disk_size            = optional(number, 256)
+    boot_disk_size       = optional(number, 100)
+    data_disk_size       = optional(number, 100)
     instance_type        = optional(string, "e2-standard-2")
     provisioning_model   = optional(string, "STANDARD")
     generate_external_ip = optional(bool, false)
@@ -74,12 +78,14 @@ variable "api" {
       health = optional(list(string), [])
     }), {})
     nodes = optional(list(object({
-      count     = number
-      region    = optional(string)
-      zone      = optional(string)
-      os_images = optional(map(string), {})
+      count  = number
+      region = optional(string)
+      zone   = optional(string)
     })), [])
-    instance_type_override = optional(map(string), {})
+    os_images_override      = optional(map(string), {})
+    instance_type_override  = optional(map(string), {})
+    boot_disk_size_override = optional(map(number), {})
+    data_disk_size_override = optional(map(number), {})
     allow_ip_ranges = optional(map(object({
       priority         = number
       description      = string
@@ -128,17 +134,20 @@ variable "api" {
 variable "validator" {
   description = "(Optional) The configuration of the validator nodes"
   type = object({
-    disk_size            = optional(number, 256)
+    boot_disk_size       = optional(number, 100)
+    data_disk_size       = optional(number, 100)
     instance_type        = optional(string, "e2-standard-2")
     provisioning_model   = optional(string, "STANDARD")
     generate_external_ip = optional(bool, false)
     nodes = optional(list(object({
-      count     = number
-      region    = optional(string)
-      zone      = optional(string)
-      os_images = optional(map(string), {})
+      count  = number
+      region = optional(string)
+      zone   = optional(string)
     })), [])
-    instance_type_override = optional(map(string), {})
+    os_images_override      = optional(map(string), {})
+    instance_type_override  = optional(map(string), {})
+    boot_disk_size_override = optional(map(number), {})
+    data_disk_size_override = optional(map(number), {})
   })
   default = {}
 
@@ -160,17 +169,20 @@ variable "validator" {
 variable "bootstrap" {
   description = "(Optional) The configuration of the bootstrap nodes"
   type = object({
-    disk_size            = optional(number, 256)
+    boot_disk_size       = optional(number, 100)
+    data_disk_size       = optional(number, 100)
     instance_type        = optional(string, "e2-standard-2")
     provisioning_model   = optional(string, "STANDARD")
     generate_external_ip = optional(bool, true)
     nodes = optional(list(object({
-      count     = number
-      region    = optional(string)
-      zone      = optional(string)
-      os_images = optional(map(string), {})
+      count  = number
+      region = optional(string)
+      zone   = optional(string)
     })), [])
-    instance_type_override = optional(map(string), {})
+    os_images_override      = optional(map(string), {})
+    instance_type_override  = optional(map(string), {})
+    boot_disk_size_override = optional(map(number), {})
+    data_disk_size_override = optional(map(number), {})
   })
   default = {}
 
@@ -192,7 +204,8 @@ variable "bootstrap" {
 variable "checkpoint" {
   description = "(Optional) The configuration of the checkpoint nodes"
   type = object({
-    disk_size            = optional(number, 256)
+    boot_disk_size       = optional(number, 100)
+    data_disk_size       = optional(number, 100)
     instance_type        = optional(string, "e2-standard-2")
     provisioning_model   = optional(string, "STANDARD")
     generate_external_ip = optional(bool, false)
@@ -202,12 +215,14 @@ variable "checkpoint" {
       default = optional(list(string), [])
     }), {})
     nodes = optional(list(object({
-      count     = number
-      region    = optional(string)
-      zone      = optional(string)
-      os_images = optional(map(string), {})
+      count  = number
+      region = optional(string)
+      zone   = optional(string)
     })), [])
-    instance_type_override = optional(map(string), {})
+    os_images_override      = optional(map(string), {})
+    instance_type_override  = optional(map(string), {})
+    boot_disk_size_override = optional(map(number), {})
+    data_disk_size_override = optional(map(number), {})
   })
   default = {}
 
@@ -229,17 +244,20 @@ variable "checkpoint" {
 variable "persistence" {
   description = "(Optional) The configuration of the persistence nodes"
   type = object({
-    disk_size            = optional(number, 256)
+    boot_disk_size       = optional(number, 100)
+    data_disk_size       = optional(number, 100)
     instance_type        = optional(string, "e2-standard-2")
     provisioning_model   = optional(string, "STANDARD")
     generate_external_ip = optional(bool, false)
     nodes = optional(list(object({
-      count     = number
-      region    = optional(string)
-      zone      = optional(string)
-      os_images = optional(map(string), {})
+      count  = number
+      region = optional(string)
+      zone   = optional(string)
     })), [])
-    instance_type_override = optional(map(string), {})
+    os_images_override      = optional(map(string), {})
+    instance_type_override  = optional(map(string), {})
+    boot_disk_size_override = optional(map(number), {})
+    data_disk_size_override = optional(map(number), {})
   })
   default = {}
 
@@ -261,7 +279,8 @@ variable "persistence" {
 variable "private_api" {
   description = "(Optional) The configuration of the private API nodes"
   type = map(object({
-    disk_size              = optional(number, 256)
+    boot_disk_size         = optional(number, 100)
+    data_disk_size         = optional(number, 100)
     instance_type          = optional(string, "e2-standard-2")
     provisioning_model     = optional(string, "STANDARD")
     generate_external_ip   = optional(bool, false)
@@ -276,7 +295,10 @@ variable "private_api" {
       region = optional(string)
       zone   = optional(string)
     })), [])
-    instance_type_override = optional(map(string), {})
+    os_images_override      = optional(map(string), {})
+    instance_type_override  = optional(map(string), {})
+    boot_disk_size_override = optional(map(number), {})
+    data_disk_size_override = optional(map(number), {})
   }))
   default = {}
 

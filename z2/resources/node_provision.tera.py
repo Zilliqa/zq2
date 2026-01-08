@@ -121,7 +121,6 @@ ZQ2_IMAGE="{{ docker_image }}"
 
 start() {
     docker rm zilliqa-""" + VERSIONS.get('zilliqa') + """ &> /dev/null || echo 0
-    docker container prune -f
     docker run --ulimit nofile=1000000:1000000 -td -p 3333:3333/udp -p 4201:4201 -p 4202:4202 --cap-add=SYS_PTRACE --cap-add=PERFMON --cap-add=BPF --cap-add=SYS_ADMIN \
         --net=host --name zilliqa-""" + VERSIONS.get('zilliqa') + """ \
         -v /config.toml:/config.toml -v /zilliqa.log:/zilliqa.log -v /data:/data \
@@ -132,10 +131,11 @@ start() {
         """ + build_rate_limit_env_vars() + """ \
         --restart=unless-stopped \
     """ + mount_checkpoint_file() + """ ${ZQ2_IMAGE} """ + SCILLA_SERVER_PORT + """ --log-json
+    docker system prune -a -f --volumes
 }
 
 stop() {
-    docker stop zilliqa-""" + VERSIONS.get('zilliqa') + """
+    docker stop -t 60 --signal SIGINT zilliqa-""" + VERSIONS.get('zilliqa') + """
 }
 
 case ${1} in

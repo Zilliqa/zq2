@@ -1,5 +1,5 @@
 ---
-- name: Install required packages
+- name: Import rocksdb-tools installation
   hosts: all:!role_apps
   become: true
   tags:

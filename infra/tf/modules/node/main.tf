@@ -35,6 +35,20 @@ resource "google_compute_address" "external_regional" {
   labels = merge(local.labels, { "node-name" = each.value.resource_name })
 }
 
+resource "google_compute_disk" "data" {
+  for_each = {
+    for k, v in local.instances_map : k => v
+    if v.data_disk_size > 0
+  }
+
+  name = "${each.value.resource_name}-data"
+  type = "pd-ssd"
+  zone = each.value.zone
+  size = each.value.data_disk_size
+
+  labels = merge(local.labels, { "node-name" = each.value.resource_name })
+}
+
 resource "google_compute_instance" "this" {
   for_each = local.instances_map
 
@@ -66,9 +80,18 @@ resource "google_compute_instance" "this" {
 
   boot_disk {
     initialize_params {
-      size  = var.config.disk_size
+      size  = each.value.boot_disk_size
       image = each.value.image
       type  = "pd-ssd"
+    }
+  }
+
+  dynamic "attached_disk" {
+    for_each = each.value.data_disk_size > 0 ? [1] : []
+    content {
+      source      = google_compute_disk.data[each.key].id
+      device_name = "data"
+      mode        = "READ_WRITE"
     }
   }
 

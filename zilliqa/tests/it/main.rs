@@ -1,13 +1,37 @@
-use alloy::primitives::Address;
+use alloy::{
+    json_abi::JsonAbi as Contract,
+    network::{EthereumWallet, TransactionBuilder},
+    primitives::{Address, Bytes, TxHash, U256},
+    providers::{
+        Identity,
+        Provider,
+        ProviderBuilder,
+        RootProvider,
+        WalletProvider,
+        fillers::{
+            BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller,
+            WalletFiller,
+        },
+        // mock::Asserter,
+    },
+    pubsub::{ConnectionHandle, ConnectionInterface, PubSubConnect},
+    rpc::{
+        client::RpcClient,
+        json_rpc::{RequestPacket, Response, ResponsePacket, SerializedRequest},
+        types::{TransactionInput, TransactionReceipt, TransactionRequest},
+    },
+    signers::{local::PrivateKeySigner, utils::secret_key_to_address},
+    transports::{BoxTransport, TransportConnect, TransportError, TransportFut, TransportResult},
+};
+use alloy::{
+    rpc::json_rpc::{PubSubItem, ResponsePayload},
+    transports::utils::Spawnable,
+};
 use arc_swap::ArcSwap;
 use ethabi::Token;
-use ethers::{
-    abi::Tokenize,
-    providers::{Middleware, PubsubClient},
-    types::TransactionRequest,
-};
-use primitive_types::{H160, U256};
-use serde_json::{Value, value::RawValue};
+use jsonrpsee::types::Request;
+use serde_json::value::{RawValue, Value};
+use tower::Service;
 use zilliqa::{
     cfg::{ApiLimits, DbConfig, max_missed_view_age_default, new_view_broadcast_interval_default},
     contracts,
@@ -36,44 +60,29 @@ use std::{
     fmt::Debug,
     ops::DerefMut,
     path::Path,
-    pin::Pin,
-    rc::Rc,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicU64, AtomicUsize, Ordering},
-    },
+    sync::{Arc, Mutex, atomic::AtomicUsize},
     time::Duration,
 };
 
 use anyhow::{Result, anyhow};
-use async_trait::async_trait;
-use ethers::{
-    abi::Contract,
-    prelude::{DeploymentTxFactory, SignerMiddleware},
-    providers::{HttpClientError, JsonRpcClient, JsonRpcError, Provider},
-    signers::LocalWallet,
-    types::{Bytes, H256, TransactionReceipt, U64},
-    utils::{get_contract_address, secret_key_to_address},
-};
 use foundry_compilers::{
     artifacts::{EvmVersion, SolcInput, Source},
     solc::{Solc, SolcLanguage},
 };
 use fs_extra::dir::*;
-use futures::{Future, FutureExt, Stream, StreamExt, stream::BoxStream};
+use futures::{Future, FutureExt, StreamExt, stream::BoxStream};
 use itertools::Itertools;
-use jsonrpsee::{
-    RpcModule,
-    types::{Id, Notification, Request, Response, ResponsePayload},
-};
+use jsonrpsee::RpcModule;
 use k256::ecdsa::SigningKey;
 use libp2p::PeerId;
 use rand::{Rng, seq::SliceRandom};
 use rand_chacha::ChaCha8Rng;
-use serde::{Serialize, de::DeserializeOwned};
 use tempfile::TempDir;
-use tokio::sync::mpsc::{self, UnboundedSender};
-use tokio_stream::wrappers::{ReceiverStream, UnboundedReceiverStream};
+use tokio::{
+    select,
+    sync::mpsc::{self, UnboundedSender},
+};
+use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::*;
 use zilliqa::{
     api,
@@ -130,8 +139,16 @@ enum AnyMessage {
         message: ExternalMessage,
     },
 }
-
-type Wallet = SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>;
+type Wallet = FillProvider<
+    JoinFill<
+        JoinFill<
+            Identity,
+            JoinFill<GasFiller, JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>>,
+        >,
+        WalletFiller<EthereumWallet>,
+    >,
+    RootProvider,
+>;
 
 type StreamMessage = (PeerId, Option<(PeerId, RequestId)>, AnyMessage);
 
@@ -413,9 +430,7 @@ impl Network {
                 genesis_fork: Fork {
                     scilla_call_gas_exempt_addrs: vec![
                         // Allow the *third* contract deployed by the genesis key to call `scilla_call` for free.
-                        Address::new(
-                            get_contract_address(secret_key_to_address(&genesis_key).0, 2).0,
-                        ),
+                        secret_key_to_address(&genesis_key).create(2),
                     ],
                     ..genesis_fork_default()
                 },
@@ -509,7 +524,7 @@ impl Network {
 
     fn genesis_accounts(genesis_key: &SigningKey) -> Vec<(Address, Amount)> {
         vec![(
-            Address::new(secret_key_to_address(genesis_key).0),
+            secret_key_to_address(genesis_key),
             1_000_000_000u128
                 .checked_mul(10u128.pow(18))
                 .unwrap()
@@ -598,9 +613,7 @@ impl Network {
                 genesis_fork: Fork {
                     scilla_call_gas_exempt_addrs: vec![
                         // Allow the *third* contract deployed by the genesis key to call `scilla_call` for free.
-                        Address::new(
-                            get_contract_address(secret_key_to_address(&self.genesis_key).0, 2).0,
-                        ),
+                        secret_key_to_address(&self.genesis_key).create(2),
                     ],
                     ..genesis_fork_default()
                 },
@@ -831,11 +844,11 @@ impl Network {
 
             // Remove the matching messages
             messages.retain(|(s, d, m)| {
-                if let AnyMessage::External(ExternalMessage::Proposal(prop)) = m {
-                    if !prop.transactions.is_empty() {
-                        removed_items.push((*s, *d, m.clone()));
-                        return false;
-                    }
+                if let AnyMessage::External(ExternalMessage::Proposal(prop)) = m
+                    && !prop.transactions.is_empty()
+                {
+                    removed_items.push((*s, *d, m.clone()));
+                    return false;
                 }
                 true
             });
@@ -1335,13 +1348,13 @@ impl Network {
     pub async fn run_until_receipt(
         &mut self,
         wallet: &Wallet,
-        hash: H256,
+        hash: &TxHash,
         timeout: usize,
     ) -> TransactionReceipt {
         self.run_until_async(
             || async {
                 wallet
-                    .get_transaction_receipt(hash)
+                    .get_transaction_receipt(*hash)
                     .await
                     .unwrap()
                     .is_some()
@@ -1350,10 +1363,14 @@ impl Network {
         )
         .await
         .unwrap();
-        wallet.get_transaction_receipt(hash).await.unwrap().unwrap()
+        wallet
+            .get_transaction_receipt(*hash)
+            .await
+            .unwrap()
+            .unwrap()
     }
 
-    pub async fn run_until_block(&mut self, wallet: &Wallet, target_block: U64, timeout: usize) {
+    pub async fn run_until_block(&mut self, wallet: &Wallet, target_block: u64, timeout: usize) {
         self.run_until_async(
             || async { wallet.get_block_number().await.unwrap() >= target_block },
             timeout,
@@ -1368,14 +1385,14 @@ impl Network {
         mut timeout: usize,
     ) -> Result<()> {
         let initial_timeout = timeout;
-        let db = self.get_node(0).db.clone();
+        let idx = self.random_index();
+        let db = self.get_node(idx).db.clone();
         loop {
-            if let Some(view) = db.get_finalized_view()? {
-                if let Some(block) = db.get_block(BlockFilter::View(view))? {
-                    if block.number() >= target_block {
-                        return Ok(());
-                    }
-                }
+            if let Some(view) = db.get_finalized_view()?
+                && let Some(block) = db.get_block(BlockFilter::View(view))?
+                && block.number() >= target_block
+            {
+                return Ok(());
             }
             if timeout == 0 {
                 return Err(anyhow!(
@@ -1399,23 +1416,17 @@ impl Network {
         self.rng.lock().unwrap().gen_range(0..self.nodes.len())
     }
 
-    pub async fn wallet_of_node(
-        &mut self,
-        index: usize,
-    ) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
-        let key = SigningKey::random(self.rng.lock().unwrap().deref_mut());
-        let wallet: LocalWallet = key.into();
+    pub async fn wallet_of_node(&mut self, index: usize) -> Wallet {
         let node = &self.nodes[index];
-        let client = LocalRpcClient {
-            id: Arc::new(AtomicU64::new(0)),
-            rpc_module: node.rpc_module.clone(),
-            subscriptions: Arc::new(Mutex::new(HashMap::new())),
-        };
-        let provider = Provider::new(client);
+        let wallet = PrivateKeySigner::random_with(self.rng.lock().unwrap().deref_mut());
+        let wallet = EthereumWallet::from(wallet);
 
-        SignerMiddleware::new_with_provider_chain(provider, wallet)
-            .await
-            .unwrap()
+        ProviderBuilder::new()
+            .wallet(wallet)
+            .connect_client(RpcClient::new(
+                FauxRpcTransport::new(node.rpc_module.clone()),
+                true,
+            ))
     }
 
     /// Returns (index, TestNode)
@@ -1443,38 +1454,69 @@ impl Network {
         self.nodes[index].inner.clone()
     }
 
-    pub async fn rpc_client(&mut self, index: usize) -> Result<LocalRpcClient> {
-        Ok(LocalRpcClient {
-            id: Arc::new(AtomicU64::new(0)),
-            rpc_module: self.nodes[index].rpc_module.clone(),
-            subscriptions: Arc::new(Mutex::new(HashMap::new())),
-        })
+    // pub async fn rpc_client(&mut self, index: usize) -> Result<LocalRpcLayer> {
+    //     Ok(LocalRpcLayer {
+    //         id: Arc::new(AtomicU64::new(0)),
+    //         rpc_module: self.nodes[index].rpc_module.clone(),
+    //     })
+    // }
+
+    pub async fn wallet_from_key_with_pubsub(&mut self, key: SigningKey) -> Wallet {
+        let wallet = PrivateKeySigner::from_signing_key(key);
+        let wallet = EthereumWallet::from(wallet);
+        let node = self
+            .nodes
+            .choose(self.rng.lock().unwrap().deref_mut())
+            .unwrap();
+        info!(index = node.index, "node selected for wallet");
+
+        ProviderBuilder::new()
+            .wallet(wallet)
+            .connect_pubsub_with(FauxRpcTransport::new(node.rpc_module.clone()))
+            .await
+            .unwrap()
     }
 
     pub async fn wallet_from_key(&mut self, key: SigningKey) -> Wallet {
-        let wallet: LocalWallet = key.into();
+        let wallet = PrivateKeySigner::from_signing_key(key);
+        let wallet = EthereumWallet::from(wallet);
         let node = self
             .nodes
             .choose(self.rng.lock().unwrap().deref_mut())
             .unwrap();
         trace!(index = node.index, "node selected for wallet");
-        let client = LocalRpcClient {
-            id: Arc::new(AtomicU64::new(0)),
-            rpc_module: node.rpc_module.clone(),
-            subscriptions: Arc::new(Mutex::new(HashMap::new())),
-        };
-        let provider = Provider::new(client);
 
-        SignerMiddleware::new_with_provider_chain(provider, wallet)
+        ProviderBuilder::new()
+            .wallet(wallet)
+            .connect_with(&FauxRpcTransport::new(node.rpc_module.clone()))
             .await
             .unwrap()
     }
 
+    /// Default genesis wallet
+    /// It runs the network for a little bit, so that the automated fillers are able to retreive sane values
+    /// Used for nearly all test cases.
     pub async fn genesis_wallet(&mut self) -> Wallet {
+        self.run_until_block_finalized(1, 50).await.unwrap(); // run for a little bit
         self.wallet_from_key(self.genesis_key.clone()).await
     }
 
+    /// Genesis wallet that does not run the network at all
+    pub async fn genesis_wallet_null(&mut self) -> Wallet {
+        self.wallet_from_key(self.genesis_key.clone()).await
+    }
+
+    /// Genesis wallet + pubsub
+    /// This wallet automatically subscribes to notifications upon submitting transactions.
+    /// Used only for subscription related tests.
+    pub async fn genesis_pubsub_wallet(&mut self) -> Wallet {
+        self.run_until_block_finalized(1, 50).await.unwrap(); // run for a little bit
+        self.wallet_from_key_with_pubsub(self.genesis_key.clone())
+            .await
+    }
+
     pub async fn random_wallet(&mut self) -> Wallet {
+        self.run_until_block_finalized(1, 100).await.unwrap();
         let key = SigningKey::random(self.rng.lock().unwrap().deref_mut());
         self.wallet_from_key(key).await
     }
@@ -1565,93 +1607,64 @@ async fn deploy_contract(
     value: u128,
     wallet: &Wallet,
     network: &mut Network,
-) -> (H256, Contract) {
-    deploy_contract_with_args(path, contract, (), value, wallet, network).await
-}
-
-async fn deploy_contract_with_args<T: Tokenize>(
-    path: &str,
-    contract: &str,
-    constructor_args: T,
-    value: u128,
-    wallet: &Wallet,
-    network: &mut Network,
-) -> (H256, Contract) {
+) -> (Address, TransactionReceipt) {
     let (abi, bytecode) = compile_contract(path, contract);
-
-    let factory = DeploymentTxFactory::new(abi, bytecode, wallet.clone());
-    let mut deployer = factory.deploy(constructor_args).unwrap();
-    if value > 0 {
-        deployer.tx.set_value(value);
-    }
-    // For eip1559 txs ethers-middleware sets these fee values to < gas_price which causes a failure.
-    deployer.tx.set_gas_price(4_761_904_800_000u128);
-
-    let abi = deployer.abi().clone();
-    {
-        let hash = wallet
-            .send_transaction(deployer.tx, None)
-            .await
-            .unwrap()
-            .tx_hash();
-
-        network
-            .run_until_async(
-                || async {
-                    wallet
-                        .get_transaction_receipt(hash)
-                        .await
-                        .unwrap()
-                        .is_some()
-                },
-                200,
-            )
-            .await
-            .unwrap();
-
-        (hash, abi)
-    }
-}
-
-async fn fund_wallet(network: &mut Network, from_wallet: &Wallet, to_wallet: &Wallet) {
-    let hash = from_wallet
+    let tx_hash = *wallet
         .send_transaction(
-            TransactionRequest::pay(to_wallet.address(), 100_000_000_000_000_000_000u128),
-            None,
+            TransactionRequest::default()
+                .with_deploy_code(bytecode)
+                .value(U256::from(value)),
         )
         .await
         .unwrap()
         .tx_hash();
-    network.run_until_receipt(to_wallet, hash, 100).await;
+    let receipt = network.run_until_receipt(wallet, &tx_hash, 50).await;
+    tracing::debug!("Contract {:?} <= {abi:?}", receipt.contract_address);
+    (receipt.contract_address.unwrap(), receipt)
 }
 
-async fn get_reward_address(
-    wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
-    staker: &NodePublicKey,
-) -> H160 {
-    let tx = TransactionRequest::new()
-        .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
-        .data(
+async fn fund_wallet(network: &mut Network, from_wallet: &Wallet, to_wallet: &Wallet) {
+    let hash = *from_wallet
+        .send_transaction(
+            TransactionRequest::default()
+                .with_to(to_wallet.default_signer_address())
+                .with_value(U256::from(100_000_000_000_000_000_000u128)),
+        )
+        .await
+        .unwrap()
+        .tx_hash();
+    network.run_until_receipt(to_wallet, &hash, 100).await;
+}
+
+async fn get_reward_address(wallet: &Wallet, staker: &NodePublicKey) -> Address {
+    let tx = TransactionRequest::default()
+        .with_to(contract_addr::DEPOSIT_PROXY)
+        .with_input(
             contracts::deposit::GET_REWARD_ADDRESS
                 .encode_input(&[Token::Bytes(staker.as_bytes())])
                 .unwrap(),
         );
-    let return_value = wallet.call(&tx.into(), None).await.unwrap();
+    let return_value = wallet.call(tx).await.unwrap();
     contracts::deposit::GET_REWARD_ADDRESS
         .decode_output(&return_value)
         .unwrap()[0]
         .clone()
         .into_address()
         .unwrap()
+        .0
+        .into()
 }
 
-async fn get_stakers(
-    wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
-) -> Vec<NodePublicKey> {
-    let tx = TransactionRequest::new()
-        .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
-        .data(contracts::deposit::GET_STAKERS.encode_input(&[]).unwrap());
-    let stakers = wallet.call(&tx.into(), None).await.unwrap();
+async fn get_stakers(wallet: &Wallet) -> Vec<NodePublicKey> {
+    let tx = TransactionRequest::default()
+        .to(contract_addr::DEPOSIT_PROXY)
+        .input(TransactionInput::both(
+            contracts::deposit::GET_STAKERS
+                .encode_input(&[])
+                .unwrap()
+                .into(),
+        ));
+    let stakers = wallet.call(tx).await.unwrap();
     let stakers = contracts::deposit::GET_STAKERS
         .decode_output(&stakers)
         .unwrap()[0]
@@ -1665,124 +1678,164 @@ async fn get_stakers(
         .collect()
 }
 
-/// An implementation of [JsonRpcClient] which sends requests directly to an [RpcModule], without making any network
-/// calls.
+/// A mock transport that directly calls the RPC module w/o any network stack.
+///
 #[derive(Debug, Clone)]
-pub struct LocalRpcClient {
-    id: Arc<AtomicU64>,
+pub struct FauxRpcTransport {
     rpc_module: RpcModule<Arc<Node>>,
-    subscriptions: Arc<Mutex<HashMap<u64, mpsc::Receiver<Box<RawValue>>>>>,
 }
 
-impl LocalRpcClient {
-    /// A version of request that allows the params to be optional, so we can test behaviour under
-    /// those circumstances.
-    async fn request_optional<T, R>(
-        &self,
-        method: &str,
-        params: Option<T>,
-    ) -> Result<R, <LocalRpcClient as JsonRpcClient>::Error>
-    where
-        T: Debug + Serialize + Send + Sync,
-        R: DeserializeOwned + Send,
-    {
-        // There are some hacks in here for `eth_subscribe` and `eth_unsubscribe`. `RpcModule` does not let us control
-        // the `id_provider` and it produces subscription IDs incompatible with Ethereum clients. Specifically, it
-        // produces integers and `ethers-rs` expects hex-encoded integers. Our hacks convert to this encoding.
+#[derive(Debug)]
+pub struct FauxBackend {
+    pub rpc_module: RpcModule<Arc<Node>>,
+    pub interface: ConnectionInterface,
+    pub subscriptions: Arc<Mutex<HashMap<u64, mpsc::Receiver<Box<RawValue>>>>>,
+}
 
-        let next_id = self.id.fetch_add(1, Ordering::SeqCst);
-        let mut params: Option<Value> = params.map(|p| serde_json::to_value(&p).unwrap());
-        if method == "eth_unsubscribe" {
-            params.iter_mut().for_each(|p| {
-                let id = p.as_array_mut().unwrap().get_mut(0).unwrap();
-                let str_id = id.as_str().unwrap().strip_prefix("0x").unwrap();
-                *id = u64::from_str_radix(str_id, 16).unwrap().into();
-            });
-        }
-        let payload = Request::owned(
-            method.to_string(),
-            params.map(|x| serde_json::value::to_raw_value(&x).unwrap()),
-            Id::Number(next_id),
-        );
-        let request = serde_json::to_string(&payload).unwrap();
+impl FauxBackend {
+    /// Spawn a new backend task.
+    pub fn spawn(mut self) {
+        let fut = async move {
+            let polling = tokio::time::sleep(Duration::from_millis(500));
+            tokio::pin!(polling);
+            loop {
+                select! {
+                inst = self.interface.recv_from_frontend() => {
+                    match inst {
+                        Some(request) => {
+                            let req: Request = serde_json::de::from_str(request.get()).unwrap();
 
-        let (response, rx) = self
-            .rpc_module
-            .raw_json_request(&request, 64)
-            .await
-            .unwrap();
+                            // There are some hacks in here for `eth_subscribe` and `eth_unsubscribe`. `RpcModule` does not let us control
+                            // the `id_provider` and it produces subscription IDs incompatible with Ethereum clients. Specifically, it
+                            // produces integers and `ethers-rs` expects hex-encoded integers. Our hacks convert to this encoding.
+                            let mut params: Option<Value> = req.params.map(|p| serde_json::to_value(&p).unwrap());
+                            if req.method == "eth_unsubscribe" {
+                                params.iter_mut().for_each(|p| {
+                                    let id = p.as_array_mut().unwrap().get_mut(0).unwrap();
+                                    let str_id = id.as_str().unwrap().strip_prefix("0x").unwrap();
+                                    let u64_id = u64::from_str_radix(str_id, 16).unwrap();
+                                    *id = u64_id.into();
+                                    self.subscriptions.lock().unwrap().remove(&u64_id).expect("sub must exist");
+                                });
+                            }
+                            let payload = Request::owned(
+                                req.method.to_string(),
+                                params.map(|x| serde_json::value::to_raw_value(&x).unwrap()),
+                                req.id,
+                            );
+                            let request = serde_json::to_string(&payload).unwrap();
 
-        if method == "eth_subscribe" {
-            let sub_response = serde_json::from_str::<Response<u64>>(response.get());
-            if let Ok(Response {
-                payload: ResponsePayload::Success(id),
-                ..
-            }) = sub_response
-            {
-                let id = id.into_owned();
-                self.subscriptions.lock().unwrap().insert(id, rx);
-                let r = serde_json::from_str(&format!("\"{id:#x}\"")).unwrap();
-                return Ok(r);
-            }
-        }
+                            println!("REQ: {}", request.as_str());
+                            let (response, rx) = self
+                                .rpc_module
+                                .raw_json_request(request.as_str(), 1024)
+                                .await
+                                .expect("no transport errors");
+                            println!("RES: {}", response.get());
 
-        let response: Response<Rc<R>> = serde_json::from_str(response.get()).unwrap();
+                            if req.method == "eth_subscribe" {
+                                let res: Response = serde_json::from_str(response.get()).unwrap();
+                                if let ResponsePayload::Success(id_raw) = res.payload() {
+                                    let json_value: Value = serde_json::from_str(id_raw.get()).unwrap();
+                                    let id = json_value.as_u64().unwrap();
+                                    self.subscriptions.lock().unwrap().insert(id, rx);
+                                }
+                            }
 
-        let r = match response.payload {
-            ResponsePayload::Success(r) => r,
-            ResponsePayload::Error(e) => {
-                return Err(JsonRpcError {
-                    code: e.code() as i64,
-                    message: e.message().to_owned(),
-                    data: e.data().map(|d| serde_json::to_value(d).unwrap()),
+                            let response: PubSubItem = serde_json::from_str(response.get()).expect("serdes error");
+                            self.interface.send_to_frontend(response).expect("send error");
+                        },
+                        // dispatcher has gone away, or shutdown was received
+                        None => {
+                            break
+                        },
+                    }
                 }
-                .into());
+                _ = &mut polling => {
+                    polling.set(tokio::time::sleep(Duration::from_millis(100)));
+                    for (_id, rx) in self.subscriptions.lock().unwrap().iter_mut() {
+                        if let Ok(item) = rx.try_recv() {
+                            println!("NOT: {}", item.get());
+                            let item: PubSubItem = serde_json::de::from_str(item.get()).unwrap();
+                            self.interface.send_to_frontend(item).unwrap();
+                        }
+                    }
+                }
+                }
             }
         };
-
-        let r = Rc::try_unwrap(r.into_owned()).unwrap_or_else(|_| panic!());
-        Ok(r)
+        fut.spawn_task();
     }
 }
 
-#[async_trait]
-impl PubsubClient for LocalRpcClient {
-    type NotificationStream = Pin<Box<dyn Stream<Item = Box<RawValue>> + Send + Sync + 'static>>;
-
-    fn subscribe<T: Into<U256>>(&self, id: T) -> Result<Self::NotificationStream, Self::Error> {
-        let id: U256 = id.into();
-        let rx = self
-            .subscriptions
-            .lock()
-            .unwrap()
-            .remove(&id.as_u64())
-            .unwrap();
-        Ok(Box::pin(ReceiverStream::new(rx).map(|s| {
-            serde_json::value::to_raw_value(
-                &serde_json::from_str::<Notification<Value>>(s.get())
-                    .unwrap()
-                    .params["result"],
-            )
-            .unwrap()
-        })))
+impl PubSubConnect for FauxRpcTransport {
+    fn is_local(&self) -> bool {
+        true
     }
 
-    fn unsubscribe<T: Into<U256>>(&self, id: T) -> Result<(), Self::Error> {
-        let id: U256 = id.into();
-        self.subscriptions.lock().unwrap().remove(&id.as_u64());
-        Ok(())
+    async fn connect(&self) -> TransportResult<ConnectionHandle> {
+        let (handle, interface) = ConnectionHandle::new();
+        let backend = FauxBackend {
+            rpc_module: self.rpc_module.clone(),
+            interface,
+            subscriptions: Arc::new(Mutex::new(HashMap::with_capacity(3))),
+        };
+        backend.spawn();
+        Ok(handle)
     }
 }
 
-#[async_trait]
-impl JsonRpcClient for LocalRpcClient {
-    type Error = HttpClientError;
+impl TransportConnect for FauxRpcTransport {
+    fn is_local(&self) -> bool {
+        true
+    }
 
-    async fn request<T, R>(&self, method: &str, params: T) -> Result<R, Self::Error>
-    where
-        T: Debug + Serialize + Send + Sync,
-        R: DeserializeOwned + Send,
-    {
-        self.request_optional(method, Some(params)).await
+    async fn get_transport(&self) -> Result<BoxTransport, TransportError> {
+        Ok(BoxTransport::new(self.clone()))
+    }
+}
+
+impl FauxRpcTransport {
+    /// Create a new [`FauxRpcTransport`] with the given [`RpcModule`].
+    pub fn new(rpc_module: RpcModule<Arc<Node>>) -> Self {
+        Self { rpc_module }
+    }
+
+    async fn handle(self, req: RequestPacket) -> TransportResult<ResponsePacket> {
+        let response = match req {
+            RequestPacket::Single(req) => ResponsePacket::Single(self.map_request(req).await?),
+            RequestPacket::Batch(_) => unimplemented!("support single calls only"),
+        };
+        Ok(response)
+    }
+
+    async fn map_request(&self, req: SerializedRequest) -> TransportResult<Response> {
+        println!("REQ> {}", req.serialized().get());
+        let (response, _rx) = self
+            .rpc_module
+            .raw_json_request(req.serialized().get(), 1024)
+            .await
+            .expect("no transport errors");
+        println!("RES< {}", response.get());
+
+        let response: Response = serde_json::from_str(response.get()).expect("no encoding errors");
+        Ok(response)
+    }
+}
+
+impl Service<RequestPacket> for FauxRpcTransport {
+    type Response = ResponsePacket;
+    type Error = TransportError;
+    type Future = TransportFut<'static>;
+
+    fn poll_ready(
+        &mut self,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, req: RequestPacket) -> Self::Future {
+        Box::pin(self.clone().handle(req))
     }
 }

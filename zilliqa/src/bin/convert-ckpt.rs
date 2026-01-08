@@ -66,10 +66,9 @@ async fn main() -> Result<()> {
 
     let dbpath = tempdir()?.keep();
     let path = PathBuf::from(args.input.clone());
-    let db = Arc::new(Db::new::<PathBuf>(
+    let db = Arc::new(Db::new(
         Some(dbpath.clone()),
         args.id,
-        0,
         None,
         zilliqa::cfg::DbConfig::default(),
     )?);
@@ -103,10 +102,9 @@ async fn main() -> Result<()> {
 
     let dbpath = tempdir()?.keep();
     let path = PathBuf::from(args.output.clone());
-    let db = Arc::new(Db::new::<PathBuf>(
+    let db = Arc::new(Db::new(
         Some(dbpath.clone()),
         args.id,
-        0,
         None,
         zilliqa::cfg::DbConfig::default(),
     )?);

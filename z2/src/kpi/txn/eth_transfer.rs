@@ -1,13 +1,11 @@
 use std::time::Instant;
 
-use anyhow::Result;
-use ethers::{
-    providers::Middleware,
-    signers::{Signer, Wallet},
+use alloy::{
+    hex, network::TransactionBuilder as _, primitives::U256, providers::Provider as _,
+    rpc::types::TransactionRequest, signers::local::PrivateKeySigner,
 };
+use anyhow::Result;
 use futures::future::join_all;
-use k256::SecretKey;
-use rand::thread_rng;
 
 use crate::kpi::{CallTransactionResult, KpiResult, ScenarioAgent};
 
@@ -19,13 +17,12 @@ pub struct EthTransfer {
 
 impl ScenarioAgent for EthTransfer {
     async fn run(&self, config: &crate::kpi::Config) -> Result<crate::kpi::KpiResult> {
-        let mut rng = thread_rng();
-        let key = SecretKey::random(&mut rng);
+        let wallet = PrivateKeySigner::random();
 
-        let wallet = Wallet::from(key);
-
-        let txn = ethers::types::TransactionRequest::pay(wallet.address(), 1)
-            .chain_id(config.eth_chainid());
+        let txn = TransactionRequest::default()
+            .to(wallet.address())
+            .value(U256::from(1))
+            .with_chain_id(config.eth_chainid());
         let mware = config.get_eth_middleware(&config.source_of_funds).await?;
         let num_transactions = self.iterations;
         let mut futures = Vec::new();
@@ -40,7 +37,7 @@ impl ScenarioAgent for EthTransfer {
             let future: tokio::task::JoinHandle<Result<(f64, bool, u64)>> =
                 tokio::spawn(async move {
                     let start = Instant::now();
-                    let txn_sent = mware.send_transaction(txn, None).await?;
+                    let txn_sent = mware.send_transaction(txn).await?;
                     let txn_hash = hex::encode(txn_sent.tx_hash());
 
                     for _ in 0..attempts {

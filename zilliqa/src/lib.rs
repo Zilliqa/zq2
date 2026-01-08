@@ -33,3 +33,9 @@ pub mod time;
 pub mod transaction;
 pub mod trie_storage;
 pub mod zq1_proto;
+
+pub fn tokio_worker_count() -> usize {
+    tokio::runtime::Handle::try_current()
+        .map(|h| h.metrics().num_workers())
+        .unwrap_or_default()
+}

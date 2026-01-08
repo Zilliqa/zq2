@@ -197,6 +197,7 @@ impl Chain {
                 "failed_zil_transfers_to_eoa_proper_fee_deduction": false,
                 "validator_jailing": false,
                 "scilla_empty_maps_are_encoded_correctly": false,
+                "cancun_active": false,
                 "randao_support": false,
             })),
             Chain::Zq2Mainnet => Some(json!({
@@ -235,6 +236,7 @@ impl Chain {
                 "failed_zil_transfers_to_eoa_proper_fee_deduction": false,
                 "validator_jailing": false,
                 "scilla_empty_maps_are_encoded_correctly": false,
+                "cancun_active": false,
                 "randao_support": false,
             })),
             _ => None,
@@ -283,8 +285,10 @@ impl Chain {
                 json!({ "at_height": 12998790, "failed_zil_transfers_to_eoa_proper_fee_deduction": true}),
                 // estimated: 2025-09-19T12.00.00Z
                 json!({ "at_height": 14997600, "validator_jailing": true}),
-                // estimated: arbitrary high block number no reachable before next fork
-                json!({ "at_height": 99999999, "scilla_empty_maps_are_encoded_correctly": true}),
+                // estimated: 2026-01-14T11.00.00Z
+                json!({ "at_height": 23685219, "scilla_empty_maps_are_encoded_correctly": true}),
+                // estimated: 2026-01-14T11.00.00Z
+                json!({ "at_height": 23685219, "cancun_active": true}),
                 // estimated: arbitrary high block number no reachable before next fork
                 json!({ "at_height": 99999999, "randao_support": true}),
             ]),
@@ -333,6 +337,8 @@ impl Chain {
                 json!({ "at_height": 13514400, "validator_jailing": true}),
                 // estimated: arbitrary high block number no reachable before next fork
                 json!({ "at_height": 99999999, "scilla_empty_maps_are_encoded_correctly": true}),
+                // estimated: arbitrary high block number no reachable before next fork
+                json!({ "at_height": 99999999, "cancun_active": true}),
                 // estimated: arbitrary high block number no reachable before next fork
                 json!({ "at_height": 99999999, "randao_support": true}),
             ]),

@@ -3,7 +3,7 @@ FROM rust:1.88.0-slim-bullseye as builder
 ARG is_release=false
 RUN apt update -y && \
     apt upgrade -y && \
-    apt install -y protobuf-compiler libclang-dev build-essential
+    apt install -y protobuf-compiler libclang-dev build-essential libssl-dev pkg-config
 
 RUN apt autoremove
 

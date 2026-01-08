@@ -354,6 +354,8 @@ pub mod deposit_v7 {
         Lazy::new(|| CONTRACT.abi.function("getStakers").unwrap().clone());
     pub static GET_TOTAL_STAKE: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("getTotalStake").unwrap().clone());
+    pub static GET_FUTURE_STAKE: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("getFutureStake").unwrap().clone());
     pub static COMMITTEE: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("committee").unwrap().clone());
     pub static MIN_DEPOSIT: Lazy<Function> =

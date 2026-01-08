@@ -200,10 +200,10 @@ fn trace_filter(params: Params, node: &Arc<Node>) -> Result<Vec<TraceResults>> {
             let tx_from = txn.signer;
             let tx_to = txn.tx.clone().into_transaction().to_addr();
 
-            if let Some(ref from_addrs) = filter.from_address {
-                if !from_addrs.contains(&tx_from) {
-                    continue;
-                }
+            if let Some(ref from_addrs) = filter.from_address
+                && !from_addrs.contains(&tx_from)
+            {
+                continue;
             }
 
             if let Some(ref to_addrs) = filter.to_address {

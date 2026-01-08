@@ -512,7 +512,7 @@ impl TransactionsAccount {
                     "Transaction could not be marked executed since it was not in pool: {:?}",
                     txn
                 );
-                return vec![];
+                vec![]
             }
         } else {
             tracing::warn!("No nonced transactions in pool");
@@ -992,17 +992,17 @@ impl TransactionPool {
             return TxAddResult::Duplicate(txn.hash);
         }
 
-        if let Some(transaction_nonce) = txn.tx.nonce() {
-            if transaction_nonce < account.nonce {
-                debug!(
-                    "Nonce is too low. Txn hash: {:?}, from: {:?}, nonce: {:?}, account nonce: {:?}",
-                    txn.hash, txn.signer, transaction_nonce, account.nonce,
-                );
-                // This transaction is permanently invalid, so there is nothing to do.
-                // unwrap() is safe because we checked above that it was some().
-                self.update_with_account(&txn.signer, account);
-                return TxAddResult::NonceTooLow(transaction_nonce, account.nonce);
-            }
+        if let Some(transaction_nonce) = txn.tx.nonce()
+            && transaction_nonce < account.nonce
+        {
+            debug!(
+                "Nonce is too low. Txn hash: {:?}, from: {:?}, nonce: {:?}, account nonce: {:?}",
+                txn.hash, txn.signer, transaction_nonce, account.nonce,
+            );
+            // This transaction is permanently invalid, so there is nothing to do.
+            // unwrap() is safe because we checked above that it was some().
+            self.update_with_account(&txn.signer, account);
+            return TxAddResult::NonceTooLow(transaction_nonce, account.nonce);
         }
 
         let existing_transaction = match txn.tx.nonce() {
@@ -1101,17 +1101,17 @@ impl TransactionPool {
             return TxAddResult::Duplicate(txn.hash);
         }
 
-        if let Some(transaction_nonce) = txn.tx.nonce() {
-            if transaction_nonce < account.nonce {
-                debug!(
-                    "Nonce is too low. Txn hash: {:?}, from: {:?}, nonce: {:?}, account nonce: {:?}",
-                    txn.hash, txn.signer, transaction_nonce, account.nonce,
-                );
-                // This transaction is permanently invalid, so there is nothing to do.
-                // unwrap() is safe because we checked above that it was some().
-                self.update_with_account(&txn.signer, account);
-                return TxAddResult::NonceTooLow(transaction_nonce, account.nonce);
-            }
+        if let Some(transaction_nonce) = txn.tx.nonce()
+            && transaction_nonce < account.nonce
+        {
+            debug!(
+                "Nonce is too low. Txn hash: {:?}, from: {:?}, nonce: {:?}, account nonce: {:?}",
+                txn.hash, txn.signer, transaction_nonce, account.nonce,
+            );
+            // This transaction is permanently invalid, so there is nothing to do.
+            // unwrap() is safe because we checked above that it was some().
+            self.update_with_account(&txn.signer, account);
+            return TxAddResult::NonceTooLow(transaction_nonce, account.nonce);
         }
 
         let existing_transaction = match txn.tx.nonce() {
@@ -1288,7 +1288,7 @@ mod tests {
     fn get_in_memory_state() -> Result<State> {
         let node_config = NodeConfig::default();
 
-        let db = Db::new::<PathBuf>(None, 0, 0, None, crate::cfg::DbConfig::default())?;
+        let db = Db::new::<PathBuf>(None, 0, None, crate::cfg::DbConfig::default())?;
         let db = Arc::new(db);
 
         State::new_with_genesis(db.state_trie()?, node_config, db.clone())

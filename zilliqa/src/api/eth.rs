@@ -683,13 +683,14 @@ pub fn get_eth_block(
     let block_gas_limit = block.gas_limit();
     let mut result = eth::Block::from_block(&block, miner.unwrap_or_default(), block_gas_limit);
 
-    if let Some(max_txns) = node.config.api_limits.max_txns_in_block_to_fetch {
-        if full && block.transactions.len() as u64 > max_txns {
-            return Err(anyhow!(
-                "Block has too many transactions to fetch. Max: {max_txns}, got: {}",
-                block.transactions.len()
-            ));
-        }
+    if let Some(max_txns) = node.config.api_limits.max_txns_in_block_to_fetch
+        && full
+        && block.transactions.len() as u64 > max_txns
+    {
+        return Err(anyhow!(
+            "Block has too many transactions to fetch. Max: {max_txns}, got: {}",
+            block.transactions.len()
+        ));
     }
 
     if full {
@@ -773,10 +774,10 @@ fn get_logs_inner(params: &alloy::rpc::types::Filter, node: &Arc<Node>) -> Resul
                 return Err(anyhow!("`from` is greater than `to` ({from} > {to})"));
             }
 
-            if let Some(max_blocks) = node.config.api_limits.max_blocks_to_fetch {
-                if to - from > max_blocks {
-                    return Err(anyhow!("Range of blocks exceeds {max_blocks}"));
-                }
+            if let Some(max_blocks) = node.config.api_limits.max_blocks_to_fetch
+                && to - from > max_blocks
+            {
+                return Err(anyhow!("Range of blocks exceeds {max_blocks}"));
             }
 
             let db = node.db.clone();
@@ -1181,14 +1182,13 @@ fn fee_history(params: Params, node: &Arc<Node>) -> Result<FeeHistory> {
 
     let newest_block: BlockNumberOrTag = params.next()?;
     let reward_percentiles: Option<Vec<f64>> = params.optional_next()?;
-    if let Some(ref percentiles) = reward_percentiles {
-        if !percentiles.windows(2).all(|w| w[0] <= w[1])
-            || percentiles.iter().any(|&p| !(0.0..=100.0).contains(&p))
-        {
-            return Err(anyhow!(
-                "reward_percentiles must be in ascending order and within the range [0, 100]"
-            ));
-        }
+    if let Some(ref percentiles) = reward_percentiles
+        && (!percentiles.windows(2).all(|w| w[0] <= w[1])
+            || percentiles.iter().any(|&p| !(0.0..=100.0).contains(&p)))
+    {
+        return Err(anyhow!(
+            "reward_percentiles must be in ascending order and within the range [0, 100]"
+        ));
     }
     expect_end_of_params(&mut params, 2, 3)?;
 

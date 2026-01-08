@@ -57,7 +57,7 @@ fn process_empty(c: &mut Criterion) {
         outbound_channel: outbound_message_sender,
         local_channel: local_message_sender,
     };
-    let db = Db::new::<PathBuf>(None, 0, 1024, None, zilliqa::cfg::DbConfig::default()).unwrap();
+    let db = Db::new::<PathBuf>(None, 0, None, zilliqa::cfg::DbConfig::default()).unwrap();
     let mut consensus = Consensus::new(
         secret_key,
         toml::from_str(&format!(
@@ -184,7 +184,6 @@ fn consensus(
     let db = Db::new(
         Some(data_dir.path()),
         0,
-        1024,
         None,
         zilliqa::cfg::DbConfig::default(),
     )

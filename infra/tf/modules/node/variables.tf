@@ -12,17 +12,20 @@ variable "region_mappings" {
 variable "config" {
   description = "(Optional) The configuration of the apps nodes"
   type = object({
-    disk_size            = optional(number, 256)
+    boot_disk_size       = optional(number, 100)
+    data_disk_size       = optional(number, 0)
     instance_type        = optional(string, "e2-standard-2")
     provisioning_model   = optional(string, "STANDARD")
     generate_external_ip = optional(bool, false)
     nodes = list(object({
-      count     = number
-      region    = optional(string)
-      zone      = optional(string)
-      os_images = optional(map(string), {})
+      count  = number
+      region = optional(string)
+      zone   = optional(string)
     }))
-    instance_type_override = optional(map(string), {})
+    os_images_override      = optional(map(string), {})
+    instance_type_override  = optional(map(string), {})
+    boot_disk_size_override = optional(map(number), {})
+    data_disk_size_override = optional(map(number), {})
   })
   default = {
     nodes : [

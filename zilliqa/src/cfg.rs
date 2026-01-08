@@ -1,4 +1,9 @@
-use std::{collections::HashMap, ops::Deref, str::FromStr, time::Duration};
+use std::{
+    collections::HashMap,
+    ops::{Deref, Div},
+    str::FromStr,
+    time::Duration,
+};
 
 use alloy::{primitives::Address, rlp::Encodable};
 use anyhow::{Result, anyhow};
@@ -45,7 +50,9 @@ pub struct Config {
 }
 
 pub fn slow_rpc_queries_handlers_count_default() -> usize {
-    4 // half the CPU cores
+    // half the workers; or 1
+    let num_workers = crate::tokio_worker_count();
+    num_workers.div(2).max(1)
 }
 
 #[derive(Debug, Clone)]
@@ -164,10 +171,10 @@ fn max_rpc_response_size_default() -> u32 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DbConfig {
-    /// SQLite per-connection cache; default 8_192 i.e. 256MB
+    /// SQLite per-connection page cache;
     #[serde(default = "sql_cache_size_default")]
     pub conn_cache_size: usize,
-    /// SQLite auto-checkpoint threshold; 0 to disable; default 1_000
+    /// SQLite auto-checkpoint threshold; 0 to disable;
     #[serde(default = "sql_auto_checkpoint_default")]
     pub auto_checkpoint: usize,
     /// Whether to enable state-sync/state-migration
@@ -183,24 +190,28 @@ pub struct DbConfig {
     #[serde(default = "rocksdb_max_open_files_default")]
     pub rocksdb_max_open_files: i32,
     /// RocksDB cache index/filters
-    #[serde(default)]
+    #[serde(default = "rocksdb_cache_index_filters_default")]
     pub rocksdb_cache_index_filters: bool,
 }
 
+fn rocksdb_cache_index_filters_default() -> bool {
+    false // true: mitigate OOM; false: better performance.
+}
+
 fn rocksdb_max_open_files_default() -> i32 {
-    -1 // unlimited
+    -1 // Set max_open_files to -1 to always keep all files open, which avoids expensive table cache calls.
 }
 
 fn rocksdb_compaction_period_default() -> u64 {
-    u64::MAX - 1 // rocksdb default
+    u64::MAX - 1 // allow rocksdb to decide
 }
 
 fn rocksdb_cache_size_default() -> usize {
-    1024 * 1024 * 1024 // 1GB default
+    1024 * 1024 * 1024 // 1GB is enough for normal nodes
 }
 
 fn sql_cache_size_default() -> usize {
-    4_096 // 128MB default
+    256 // 32KB * 256 = 8MB (SQLite default)
 }
 
 fn sql_auto_checkpoint_default() -> usize {
@@ -216,7 +227,7 @@ impl Default for DbConfig {
             rocksdb_cache_size: rocksdb_cache_size_default(),
             rocksdb_compaction_period: rocksdb_compaction_period_default(),
             rocksdb_max_open_files: rocksdb_max_open_files_default(),
-            rocksdb_cache_index_filters: false,
+            rocksdb_cache_index_filters: rocksdb_cache_index_filters_default(),
         }
     }
 }
@@ -348,6 +359,11 @@ impl NodeConfig {
         }
 
         anyhow::ensure!(
+            self.state_cache_size == state_cache_size_default(),
+            "state_cache_size is deprecated. Use db.rocksdb_cache_size instead."
+        );
+
+        anyhow::ensure!(
             self.sync.base_height == u64_max() || self.sync.prune_interval == u64_max(),
             "base_height and prune_interval cannot be set at the same time"
         );
@@ -415,7 +431,7 @@ pub fn allowed_timestamp_skew_default() -> Duration {
 }
 
 pub fn state_cache_size_default() -> usize {
-    1024 * 1024 * 1024 // 1 GB
+    usize::MIN // no longer used
 }
 
 pub fn eth_chain_id_default() -> u64 {
@@ -752,6 +768,7 @@ pub struct Fork {
     pub failed_zil_transfers_to_eoa_proper_fee_deduction: bool,
     pub validator_jailing: bool,
     pub scilla_empty_maps_are_encoded_correctly: bool,
+    pub cancun_active: bool,
     pub randao_support: bool,
 }
 
@@ -893,6 +910,8 @@ pub struct ForkDelta {
     pub validator_jailing: Option<bool>,
     /// if true, empty scilla maps having no presence in state are encoded as empty maps, not empty values
     pub scilla_empty_maps_are_encoded_correctly: Option<bool>,
+    /// if true, cancun is activated in evm
+    pub cancun_active: Option<bool>,
     /// if true, randao is supported
     pub randao_support: Option<bool>,
 }
@@ -1000,6 +1019,7 @@ impl Fork {
             scilla_empty_maps_are_encoded_correctly: delta
                 .scilla_empty_maps_are_encoded_correctly
                 .unwrap_or(self.scilla_empty_maps_are_encoded_correctly),
+            cancun_active: delta.cancun_active.unwrap_or(self.cancun_active),
             randao_support: delta.randao_support.unwrap_or(self.randao_support),
         }
     }
@@ -1103,6 +1123,7 @@ pub fn genesis_fork_default() -> Fork {
         failed_zil_transfers_to_eoa_proper_fee_deduction: true,
         validator_jailing: true,
         scilla_empty_maps_are_encoded_correctly: true,
+        cancun_active: true,
         randao_support: true,
     }
 }
@@ -1279,6 +1300,7 @@ mod tests {
                 failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                 validator_jailing: None,
                 scilla_empty_maps_are_encoded_correctly: None,
+                cancun_active: None,
                 randao_support: None,
             }],
             ..Default::default()
@@ -1337,6 +1359,7 @@ mod tests {
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                     validator_jailing: Some(false),
                     scilla_empty_maps_are_encoded_correctly: Some(false),
+                    cancun_active: Some(false),
                     randao_support: Some(false),
                 },
                 ForkDelta {
@@ -1375,6 +1398,7 @@ mod tests {
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                     validator_jailing: None,
                     scilla_empty_maps_are_encoded_correctly: None,
+                    cancun_active: None,
                     randao_support: None,
                 },
             ],
@@ -1450,6 +1474,7 @@ mod tests {
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                     validator_jailing: None,
                     scilla_empty_maps_are_encoded_correctly: None,
+                    cancun_active: None,
                     randao_support: None,
                 },
                 ForkDelta {
@@ -1488,6 +1513,7 @@ mod tests {
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                     validator_jailing: None,
                     scilla_empty_maps_are_encoded_correctly: None,
+                    cancun_active: None,
                     randao_support: None,
                 },
             ],
@@ -1551,6 +1577,7 @@ mod tests {
                 failed_zil_transfers_to_eoa_proper_fee_deduction: true,
                 validator_jailing: true,
                 scilla_empty_maps_are_encoded_correctly: true,
+                cancun_active: true,
                 randao_support: true,
             },
             forks: vec![],
@@ -1602,6 +1629,7 @@ mod tests {
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                     validator_jailing: None,
                     scilla_empty_maps_are_encoded_correctly: None,
+                    cancun_active: None,
                     randao_support: None,
                 },
                 ForkDelta {
@@ -1640,6 +1668,7 @@ mod tests {
                     failed_zil_transfers_to_eoa_proper_fee_deduction: None,
                     validator_jailing: None,
                     scilla_empty_maps_are_encoded_correctly: None,
+                    cancun_active: None,
                     randao_support: None,
                 },
             ],

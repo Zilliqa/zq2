@@ -21,57 +21,50 @@ test = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-alloy = { version = "1.0.41", default-features = false, features = [
-    "consensus",
-    "eips",
-    "rlp",
-    "serde",
-    "signer-local",
-] }
+alloy = { version = "1.1.3", default-features = false, features = ["consensus", "hyper", "provider-http", "provider-ws", "pubsub", "rlp", "serde", "signer-local"] }
 anyhow = "1.0.100"
-arc-swap = "1.7.1"
+arc-swap = "1.8.0"
 base64 = "0.22.1"
 bitvec = "1.0.1"
-clap = { version = "4.5.53", features = ["derive"] }
+clap = { version = "4.5.54", features = ["derive"] }
 clap-verbosity-flag = "3.0.4"
-cliclack = "0.3.6"
+cliclack = "0.3.7"
 colored = "3.0.0"
 env_logger = "0.11.8"
 eth_trie = { git = "https://github.com/Zilliqa/eth-trie.rs.git", branch = "zilliqa-revm" }
 ethabi = "18.0.0"
-ethers = { version = "2.0.14", features = ["ws"] }
 futures = "0.3.31"
 hex = "0.4.3"
 indicatif = "0.18.3"
 itertools = "0.14.0"
 k256 = "0.13.4"
 libp2p = { version = "0.56.0", features = ["identify"] }
-log = "0.4.28"
+log = "0.4.29"
 parking_lot = "0.12.5"
 primitive-types = "0.12.2"
 prost = "0.14.1"
 rand = "0.8.5"
 regex = "1.12.2"
-reqwest = { version = "0.12.15", features = [
+reqwest = { version = "0.13.1", features = [
     "json",
-    "rustls-tls",
+    "default-tls",
     "http2",
     "charset",
 ], default-features = false }
 rs-leveldb = { version = "0.1.5", default-features = false }
 rustls = "0.23.31"
 scopeguard = "1.2.0"
-serde = { version = "1.0.219", features = ["derive"] }
-serde_json = { version = "1.0.143", features = ["preserve_order"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.148", features = ["preserve_order"] }
 serde_yaml = "0.9.34"
 sha2 = "0.10.8"
 sha3 = "0.10.8"
 strum = { version = "0.27.2", features = ["derive"] }
 strum_macros = "0.27.2"
-tempfile = "3.23.0"
+tempfile = "3.24.0"
 tera = "1.20.1"
 thiserror = "2.0.17"
-tokio = { version = "1.48.0", features = [
+tokio = { version = "1.49.0", features = [
     "macros",
     "rt-multi-thread",
     "sync",
@@ -80,8 +73,8 @@ tokio = { version = "1.48.0", features = [
     "process",
     "fs",
 ] }
-toml = { version = "0.9.5", features = ["preserve_order"] }
-tracing = "0.1.43"
+toml = { version = "0.9.10", features = ["preserve_order"] }
+tracing = "0.1.44"
 zilliqa = { path = "../zilliqa" }
 zilliqa-rs = "0.3.2"
 
