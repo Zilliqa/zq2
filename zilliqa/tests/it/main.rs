@@ -383,7 +383,7 @@ impl Network {
                         height: deposit_v3_upgrade_block_height_value,
                         reinitialise_params: Some(ReinitialiseParams::default()),
                     }),
-                    None,
+                    Some(ContractUpgradeConfig::from_height(0)),
                 )
             } else {
                 ContractUpgrades::new(
@@ -398,7 +398,7 @@ impl Network {
                         height: 0,
                         reinitialise_params: Some(ReinitialiseParams::default()),
                     }),
-                    None,
+                    Some(ContractUpgradeConfig::from_height(0)),
                 )
             }
         };
