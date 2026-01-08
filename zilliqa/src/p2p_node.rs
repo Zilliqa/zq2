@@ -467,8 +467,7 @@ impl P2pNode {
                             self.send_to(&Self::shard_id_to_topic(destination, None).hash(), |c| c.local_messages.send((source, message)))?;
                         }
                         InternalMessage::ExportBlockCheckpoint(block, transactions, parent, trie_storage, view_history, path) => {
-                            // Exporting the checkpoint is a CPU-intensive task, so we spawn it on a separate thread.
-                            self.task_threads.spawn_blocking( move  || {
+                            self.task_threads.spawn(async move {
                                 db::checkpoint_block_with_state(&block, &transactions, &parent, trie_storage, source, view_history, path)
                             });
                         }
