@@ -1164,8 +1164,8 @@ impl Db {
         block: &Block,
     ) -> Result<()> {
         sqlite_tx.prepare_cached("INSERT INTO blocks
-        (block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg, is_canonical)
-    VALUES (:block_hash, :view, :height, :qc, :signature, :state_root_hash, :transactions_root_hash, :receipts_root_hash, :timestamp, :gas_used, :gas_limit, :agg, TRUE)",)?.execute(
+        (block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg, randao_reveal, mix_hash, is_canonical)
+    VALUES (:block_hash, :view, :height, :qc, :signature, :state_root_hash, :transactions_root_hash, :receipts_root_hash, :timestamp, :gas_used, :gas_limit, :agg, :randao_reveal, :mix_hash, TRUE)",)?.execute(
             named_params! {
                 ":block_hash": hash,
                 ":view": block.header.view,
@@ -1179,6 +1179,8 @@ impl Db {
                 ":gas_used": block.header.gas_used,
                 ":gas_limit": block.header.gas_limit,
                 ":agg": block.agg,
+                ":randao_reveal": block.header.randao_reveal,
+                ":mix_hash": block.header.mix_hash,
             })?;
         Ok(())
     }
