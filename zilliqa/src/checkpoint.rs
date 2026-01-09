@@ -485,7 +485,8 @@ pub fn save_ckpt(
     let (blob_tx, blob_rx) = crossbeam::channel::bounded::<AccountBlob>(num_workers);
 
     // iterate over accounts and save the accounts to the checkpoint file.
-    // do not save intermediate state trie values.
+    // This is done in parallel, using crossbeam, to speed up the process.
+    // While the ordering of the accounts being saved is not guaranteed, it is not a problem as long as every account is completely saved.
     let state_trie = EthTrie::new(trie_storage.clone()).at_root(parent.state_root_hash().into());
     crossbeam::thread::scope(|s| {
         // Consumer: receive processed blobs and write them sequentially into the zip writer.
