@@ -1,4 +1,4 @@
-FROM rust:1.88.0-slim-bullseye as builder
+FROM rust:1.92.0-slim-bookworm as builder
 
 ARG is_release=false
 RUN apt update -y && \

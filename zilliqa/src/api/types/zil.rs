@@ -34,8 +34,6 @@ pub struct TxBlock {
 
 impl TxBlock {
     pub fn new(block: &Block, txn_fees: EvmGas) -> Self {
-        let mut scalar = [0; 32];
-        scalar[31] = 1;
         TxBlock {
             header: TxBlockHeader {
                 version: 1,                                    // To match ZQ1
