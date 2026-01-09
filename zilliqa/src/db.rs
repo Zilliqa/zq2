@@ -750,7 +750,7 @@ impl Db {
                 our_shard_id,
                 hash,
             )?
-            .expect("does not return None");
+                .expect("does not return None");
 
             let parent_ref: &Block = &parent; // for moving into the closure
             self.with_sqlite_tx(move |tx| {
@@ -911,8 +911,8 @@ impl Db {
         high_qc: QuorumCertificate,
     ) -> Result<()> {
         sqlite_tx.prepare_cached("INSERT INTO tip_info (high_qc, high_qc_updated_at) VALUES (:high_qc, :timestamp) ON CONFLICT DO UPDATE SET high_qc = :high_qc, high_qc_updated_at = :timestamp",)?
-        .execute(
-            named_params! {
+            .execute(
+                named_params! {
                 ":high_qc": high_qc,
                 ":timestamp": SystemTimeSqlable(SystemTime::now())
             })?;
@@ -1260,11 +1260,13 @@ impl Db {
                     timestamp: row.get::<_, SystemTimeSqlable>(8)?.into(),
                     gas_used: row.get(9)?,
                     gas_limit: row.get(10)?,
+                    mix_hash: None,
+                    randao_reveal: None,
                 },
                 agg: row.get(11)?,
                 transactions: vec![],
             })
-        )?.collect::<Result<Vec<_>, _>>()?;
+            )?.collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     }
 
@@ -1300,6 +1302,8 @@ impl Db {
                         timestamp: row.get::<_, SystemTimeSqlable>(8)?.into(),
                         gas_used: row.get(9)?,
                         gas_limit: row.get(10)?,
+                        mix_hash: None,
+                        randao_reveal: None,
                     },
                     agg: row.get(11)?,
                     transactions: vec![],
@@ -1325,6 +1329,8 @@ impl Db {
                     timestamp: row.get::<_, SystemTimeSqlable>(8)?.into(),
                     gas_used: row.get(9)?,
                     gas_limit: row.get(10)?,
+                    mix_hash: None,
+                    randao_reveal: None,
                 },
                 agg: row.get(11)?,
                 transactions: vec![],
@@ -1334,39 +1340,39 @@ impl Db {
         Ok(match filter {
             BlockFilter::Hash(hash) => {
                 self.pool.get()?.prepare_cached(concat!(
-                    "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
-                    "WHERE block_hash = ?1"
+                "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
+                "WHERE block_hash = ?1"
                 ),)?.query_row([hash], make_block).optional()?
             }
             BlockFilter::View(view) => {
                 self.pool.get()?.prepare_cached(concat!(
-                    "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
-                    "WHERE view = ?1"
+                "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
+                "WHERE view = ?1"
                 ),)?.query_row([view], make_block).optional()?
             }
             BlockFilter::Height(height) => {
                 self.pool.get()?.prepare_cached(concat!(
-                    "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
-                    "WHERE height = ?1 AND is_canonical = TRUE"
+                "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
+                "WHERE height = ?1 AND is_canonical = TRUE"
                 ),)?.query_row([height], make_block).optional()?
             }
             // Compound SQL queries below, due to - https://github.com/Zilliqa/zq2/issues/2629
             BlockFilter::MaxCanonicalByHeight => {
                 self.pool.get()?.prepare_cached(concat!(
-                    "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
-                    "WHERE is_canonical = true AND height = (SELECT MAX(height) FROM blocks WHERE is_canonical = TRUE)"
+                "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
+                "WHERE is_canonical = true AND height = (SELECT MAX(height) FROM blocks WHERE is_canonical = TRUE)"
                 ),)?.query_row([], make_block).optional()?
             }
             BlockFilter::MaxHeight => {
                 self.pool.get()?.prepare_cached(concat!(
-                    "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
-                    "WHERE height = (SELECT MAX(height) FROM blocks) LIMIT 1"
+                "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
+                "WHERE height = (SELECT MAX(height) FROM blocks) LIMIT 1"
                 ),)?.query_row([], make_block).optional()?
             }
             BlockFilter::Finalized => {
                 if let Some(result) = self.pool.get()?.prepare_cached(concat!(
-                    "SELECT block_hash, blocks.view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
-                    "INNER JOIN tip_info ON blocks.view = tip_info.finalized_view"
+                "SELECT block_hash, blocks.view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
+                "INNER JOIN tip_info ON blocks.view = tip_info.finalized_view"
                 ),)?.query_row([], make_block).optional()? {
                     Some(result)
                 }else{
@@ -1376,8 +1382,8 @@ impl Db {
             BlockFilter::HighQC => {
                 if let Some(high_qc) = self.get_high_qc()?{
                     self.pool.get()?.prepare_cached(concat!(
-                        "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
-                        "WHERE block_hash = ?1"
+                    "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
+                    "WHERE block_hash = ?1"
                     ),)?.query_row([high_qc.block_hash], make_block).optional()?
                 }else {
                     self.get_transactionless_block(BlockFilter::Height(0))?
@@ -1816,7 +1822,7 @@ mod tests {
             view_history,
             &checkpoint_path,
         )
-        .unwrap();
+            .unwrap();
 
         // now load the checkpoint
         let (block, transactions, parent, view_history) = db
