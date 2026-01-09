@@ -68,7 +68,7 @@ jobs:
       id-token: write
       contents: write
     name: Jmeter test
-    runs-on: self-hosted
+    runs-on: ubuntu-latest-16-cores
     container:
       image: alpine/jmeter:5.6
     if: github.actor != 'dependabot[bot]'
