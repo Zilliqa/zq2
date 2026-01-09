@@ -1555,10 +1555,10 @@ impl Consensus {
         let mut transactions_trie: EthTrie<MemoryDB> = EthTrie::new(Arc::new(MemoryDB::new(true)));
         let applied_txs = Vec::<VerifiedTransaction>::new();
 
-        let randao_reveal =
-            Block::compute_randao_reveal(&self.secret_key, executed_block_header.view);
-
-        let mix_hash = Block::compute_randao_mix(parent.header, randao_reveal);
+        // let randao_reveal =
+        //     Block::compute_randao_reveal(&self.secret_key, executed_block_header.view);
+        //
+        // let mix_hash = Block::compute_randao_mix(parent.header, randao_reveal);
 
         // Generate the early proposal
         // Some critical parts are dummy/missing:
@@ -1578,8 +1578,8 @@ impl Consensus {
             executed_block_header.timestamp,
             EvmGas(0),
             executed_block_header.gas_limit,
-            Some(randao_reveal),
-            Some(mix_hash),
+            None,
+            None,
         );
 
         let mut early_proposal = self.early_proposal.write();
@@ -1603,11 +1603,11 @@ impl Consensus {
 
         let proposal = early_proposal.as_ref().unwrap().0.clone();
 
-        let parent = self
-            .get_block(&proposal.parent_hash())?
-            .ok_or_else(|| anyhow!("missing parent block"))?;
-
-        let prev_randao_mix = parent.header.mix_hash.unwrap_or(Hash::ZERO);
+        // let parent = self
+        //     .get_block(&proposal.parent_hash())?
+        //     .ok_or_else(|| anyhow!("missing parent block"))?;
+        //
+        // let prev_randao_mix = parent.header.mix_hash.unwrap_or(Hash::ZERO);
 
         // Use state root hash of current early proposal
         state.set_to_root(proposal.state_root_hash().into());
@@ -1652,7 +1652,7 @@ impl Consensus {
                 &mut state,
                 tx.clone(),
                 proposal.header,
-                prev_randao_mix,
+                Hash::ZERO,
                 &mut inspector,
                 self.config.enable_ots_indices,
             )?;
@@ -2677,27 +2677,27 @@ impl Consensus {
             ));
         }
 
-        let randao_supported = self.state.forks.get(block.number()).randao_support;
-
-        if randao_supported {
-            let randao_reveal = block
-                .header
-                .randao_reveal
-                .ok_or(anyhow!("Missing randao reveal in received proposal!"))?;
-            let view_as_bytes = block.header.view.to_be_bytes();
-            proposer.public_key.verify(&view_as_bytes, randao_reveal)?;
-
-            let computed_mix_hash = Block::compute_randao_mix(parent.header, randao_reveal);
-
-            let block_mix_hash = block
-                .header
-                .mix_hash
-                .ok_or(anyhow!("Missing mix hash in received proposal!"))?;
-
-            if computed_mix_hash != block_mix_hash {
-                return Err(anyhow!("Invalid randao mix hash!"));
-            }
-        }
+        // let randao_supported = self.state.forks.get(block.number()).randao_support;
+        //
+        // if randao_supported {
+        //     let randao_reveal = block
+        //         .header
+        //         .randao_reveal
+        //         .ok_or(anyhow!("Missing randao reveal in received proposal!"))?;
+        //     let view_as_bytes = block.header.view.to_be_bytes();
+        //     proposer.public_key.verify(&view_as_bytes, randao_reveal)?;
+        //
+        //     let computed_mix_hash = Block::compute_randao_mix(parent.header, randao_reveal);
+        //
+        //     let block_mix_hash = block
+        //         .header
+        //         .mix_hash
+        //         .ok_or(anyhow!("Missing mix hash in received proposal!"))?;
+        //
+        //     if computed_mix_hash != block_mix_hash {
+        //         return Err(anyhow!("Invalid randao mix hash!"));
+        //     }
+        // }
         Ok(())
     }
 
@@ -3351,7 +3351,7 @@ impl Consensus {
 
         let mut touched_addresses = vec![];
 
-        let prev_randao_mix_hash = parent.header.mix_hash.unwrap_or(Hash::ZERO);
+        //let prev_randao_mix_hash = parent.header.mix_hash.unwrap_or(Hash::ZERO);
 
         for (tx_index, txn) in verified_txns.iter().enumerate() {
             self.new_transaction(txn.clone(), true)?;
@@ -3361,7 +3361,7 @@ impl Consensus {
                 &mut self.state,
                 txn.clone(),
                 block.header,
-                prev_randao_mix_hash,
+                Hash::ZERO,//prev_randao_mix_hash,
                 &mut inspector,
                 self.config.enable_ots_indices,
             )?

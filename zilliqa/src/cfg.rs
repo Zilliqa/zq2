@@ -1124,7 +1124,7 @@ pub fn genesis_fork_default() -> Fork {
         validator_jailing: true,
         scilla_empty_maps_are_encoded_correctly: true,
         cancun_active: true,
-        randao_support: true,
+        randao_support: false,
     }
 }
 
@@ -1578,7 +1578,7 @@ mod tests {
                 validator_jailing: true,
                 scilla_empty_maps_are_encoded_correctly: true,
                 cancun_active: true,
-                randao_support: true,
+                randao_support: false,
             },
             forks: vec![],
             ..Default::default()
