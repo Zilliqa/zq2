@@ -16,7 +16,7 @@ on:
 jobs:
   backfill_benchmarks:
     name: Backfill Benchmarks
-    runs-on: ubuntu-latest-16-cores
+    runs-on: ubuntu-latest-8-cores
     timeout-minutes: 2880
     steps:
       - uses: actions/checkout@v6
