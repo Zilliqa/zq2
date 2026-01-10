@@ -124,7 +124,7 @@ pprof = { version = "0.15.0", default-features = false, features = [
     "criterion",
     "flamegraph",
 ] }
-primitive-types = { version = "0.13.1", features = ["serde"] }
+primitive-types = { version = "0.14.0", features = ["serde"] }
 zilliqa = { path = ".", default-features = false, features = [
     "fake_response_channel",
     "fake_time",
