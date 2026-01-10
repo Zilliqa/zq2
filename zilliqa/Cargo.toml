@@ -69,7 +69,7 @@ revm-context = "9.1.0"
 rusqlite = { version = "0.37.0", features = ["bundled", "trace"] }
 serde = { version = "1.0.228", features = ["derive", "rc"] }
 serde_bytes = "0.11.19"
-serde_json = { version = "1.0.148", features = [
+serde_json = { version = "1.0.149", features = [
     "raw_value",
     "arbitrary_precision",
 ] }
