@@ -2595,7 +2595,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "18e4fdb82bd54a12e42fb58a800dcae6b9e13982238ce2296dc3570b92148e1f"
 dependencies = [
  "data-encoding",
- "syn 1.0.109",
+ "syn 2.0.112",
 ]
 
 [[package]]
@@ -6850,6 +6850,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d15600a7d856470b7d278b3fe0e311fe28c2526348549f8ef2ff7db3299c87f5"
 dependencies = [
  "fixed-hash",
+ "uint 0.10.0",
+]
+
+[[package]]
+name = "primitive-types"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "721a1da530b5a2633218dc9f75713394c983c352be88d2d7c9ee85e2c4c21794"
+dependencies = [
+ "fixed-hash",
  "impl-codec 0.7.1",
  "impl-serde 0.5.0",
  "uint 0.10.0",
@@ -10765,7 +10775,7 @@ dependencies = [
  "libp2p",
  "log",
  "parking_lot 0.12.5",
- "primitive-types 0.13.1",
+ "primitive-types 0.14.0",
  "prost 0.14.1",
  "prost-build",
  "rand 0.8.5",
@@ -10935,7 +10945,7 @@ dependencies = [
  "parking_lot 0.12.5",
  "paste",
  "pprof",
- "primitive-types 0.13.1",
+ "primitive-types 0.14.0",
  "prost 0.14.1",
  "r2d2",
  "r2d2_sqlite",

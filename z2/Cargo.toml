@@ -41,7 +41,7 @@ k256 = "0.13.4"
 libp2p = { version = "0.56.0", features = ["identify"] }
 log = "0.4.29"
 parking_lot = "0.12.5"
-primitive-types = "0.13.1"
+primitive-types = "0.14.0"
 prost = "0.14.1"
 rand = "0.8.5"
 regex = "1.12.2"
