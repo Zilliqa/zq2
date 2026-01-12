@@ -480,9 +480,9 @@ pub fn save_ckpt(
 
     let mut account_count = u64::MIN;
     let mut record_count = u64::MIN;
-    let num_workers = crate::tokio_worker_count().max(1);
-    let (work_tx, work_rx) = crossbeam::channel::bounded::<(Vec<u8>, Vec<u8>)>(num_workers);
-    let (blob_tx, blob_rx) = crossbeam::channel::bounded::<AccountBlob>(num_workers);
+    let num_workers = crate::tokio_worker_count().max(1) * 2; // 2 x CPUs
+    let (work_tx, work_rx) = crossbeam::channel::bounded::<(Vec<u8>, Vec<u8>)>(num_workers * 2); // 2 x Threads
+    let (blob_tx, blob_rx) = crossbeam::channel::bounded::<AccountBlob>(num_workers * 2); // 2 x Threads
 
     // iterate over accounts and save the accounts to the checkpoint file.
     // This is done in parallel, using crossbeam, to speed up the process.
