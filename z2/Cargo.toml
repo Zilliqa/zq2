@@ -41,7 +41,7 @@ k256 = "0.13.4"
 libp2p = { version = "0.56.0", features = ["identify"] }
 log = "0.4.29"
 parking_lot = "0.12.5"
-primitive-types = "0.13.1"
+primitive-types = "0.14.0"
 prost = "0.14.1"
 rand = "0.8.5"
 regex = "1.12.2"
@@ -55,7 +55,7 @@ rs-leveldb = { version = "0.1.5", default-features = false }
 rustls = "0.23.31"
 scopeguard = "1.2.0"
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = { version = "1.0.148", features = ["preserve_order"] }
+serde_json = { version = "1.0.149", features = ["preserve_order"] }
 serde_yaml = "0.9.34"
 sha2 = "0.10.8"
 sha3 = "0.10.8"
@@ -73,7 +73,7 @@ tokio = { version = "1.49.0", features = [
     "process",
     "fs",
 ] }
-toml = { version = "0.9.10", features = ["preserve_order"] }
+toml = { version = "0.9.11", features = ["preserve_order"] }
 tracing = "0.1.44"
 zilliqa = { path = "../zilliqa" }
 zilliqa-rs = "0.3.2"
