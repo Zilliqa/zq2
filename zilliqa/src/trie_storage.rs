@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
+use parking_lot::RwLock;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rocksdb::WriteBatch;
@@ -20,7 +21,7 @@ const ROCKSDB_CUTOVER_AT: &str = "cutover_at";
 pub struct TrieStorage {
     pool: Arc<Pool<SqliteConnectionManager>>,
     kvdb: Arc<rocksdb::DB>,
-    height_tag: [u8; 8], // reverse height tag, big-endian u64
+    height_tag: Arc<RwLock<[u8; 8]>>, // reverse height tag, big-endian u64
 }
 
 impl TrieStorage {
@@ -32,9 +33,11 @@ impl TrieStorage {
         Self {
             pool,
             kvdb,
-            height_tag: u64::MAX
-                .saturating_sub(final_height.unwrap_or(u64::MIN))
-                .to_be_bytes(),
+            height_tag: Arc::new(RwLock::new(
+                u64::MAX
+                    .saturating_sub(final_height.unwrap_or(u64::MIN))
+                    .to_be_bytes(),
+            )),
         }
     }
 
@@ -46,9 +49,10 @@ impl TrieStorage {
         anyhow::ensure!(keys.len() == values.len(), "Keys != Values");
 
         let mut batch = WriteBatch::default();
+        let height_tag = self.height_tag.read();
         for (mut key, value) in keys.into_iter().zip(values.into_iter()) {
-            // timestamp-suffix keys; lexicographically sorted
-            key.extend_from_slice(&self.height_tag); // suffix big-endian height tags
+            // height-tag keys; lexicographically sorted
+            key.extend_from_slice(height_tag.as_slice()); // suffix big-endian height tags
             batch.put(key.as_slice(), value.as_slice());
         }
         Ok(self.kvdb.write(batch)?)
@@ -128,8 +132,8 @@ impl TrieStorage {
     }
 
     // This function retrieves the 'latest' key, at all times.
-    // Legacy keys do not have a timestamp-suffix and are iterated first due to lexicographical sorting used by rocksdb.
-    // We peek the next key to determine if the legacy key is the latest, or if a later timestamp-suffix key is present.
+    // Legacy keys do not have a height-tag and are iterated first due to lexicographical sorting used by rocksdb.
+    // We peek the next key to determine if the legacy key is the latest, or if a later height-tag key is present.
     fn get_latest_value(&self, key_prefix: &[u8]) -> Result<Option<Vec<u8>>> {
         let mut iter = self.kvdb.prefix_iterator(key_prefix);
         // early return if prefix is not found
@@ -142,10 +146,10 @@ impl TrieStorage {
         }
 
         if key.len() == 40 {
-            // timestamp-suffix key, return the latest value
+            // height-tag key, return the latest value
             Ok(Some(value.to_vec()))
         } else if key.len() == 32 {
-            // legacy key - check to see if timestamp-suffix key is present
+            // legacy key - peek to see if a later height-tag key is present
             if let Some(peek) = iter.next() {
                 let peek = peek?;
                 if peek.0.starts_with(key_prefix) {
@@ -156,6 +160,19 @@ impl TrieStorage {
         } else {
             unimplemented!("unsupported key");
         }
+    }
+
+    // We set the height tag to the reverse height, due to the lexicographical order used by rocksdb.
+    // This ensures that the higher/later keys always get hit first, improving performance.
+    fn inc_height_tag(&self, new_height: u64) -> Result<()> {
+        let mut height_tag = self.height_tag.write();
+        let new_height_tag = u64::MAX.saturating_sub(new_height).to_be_bytes();
+        anyhow::ensure!(
+            new_height_tag <= *height_tag,
+            "descending height is not supported"
+        );
+        *height_tag = new_height_tag;
+        Ok(())
     }
 }
 
@@ -218,5 +235,147 @@ impl eth_trie::DB for TrieStorage {
     fn remove_batch(&self, _: &[Vec<u8>]) -> Result<(), Self::Error> {
         // we keep old state to function as an archive node, therefore no-op
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use eth_trie::DB;
+    use tempfile::tempdir;
+
+    use super::*;
+
+    #[test]
+    // basic read/write
+    fn read_write() {
+        let sql = Arc::new(
+            Pool::builder()
+                .build(SqliteConnectionManager::memory())
+                .unwrap(),
+        );
+        let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
+        let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), None);
+
+        let key_prefix = alloy::consensus::EMPTY_ROOT_HASH.0;
+
+        // normal key read/write, w/o height-tags
+        assert_eq!(trie_storage.get_migrate_at().unwrap(), u64::MAX); // default
+
+        trie_storage.inc_height_tag(u64::MAX).unwrap();
+        trie_storage.set_migrate_at(u64::MIN).unwrap();
+        assert_eq!(trie_storage.get_migrate_at().unwrap(), u64::MIN); // new value
+
+        assert!(trie_storage.inc_height_tag(u64::MIN).is_err());
+
+        // count all keys
+        let iter = rdb.prefix_iterator(key_prefix.as_slice());
+        assert_eq!(iter.count(), 1);
+    }
+
+    #[test]
+    // lazy migration from sqlite to rocksdb, works.
+    fn lazy_migration() {
+        let sql = Arc::new(
+            Pool::builder()
+                .build(SqliteConnectionManager::memory())
+                .unwrap(),
+        );
+        let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
+        let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), None);
+
+        let key_prefix = alloy::consensus::EMPTY_ROOT_HASH.0;
+        let conn = sql.get().unwrap();
+        conn.execute("CREATE TABLE IF NOT EXISTS state_trie (key BLOB NOT NULL PRIMARY KEY, value BLOB NOT NULL) WITHOUT ROWID;", []).unwrap();
+
+        // read missing key
+        let value = trie_storage.get(key_prefix.as_slice()).unwrap();
+        assert_eq!(value, None);
+
+        // migrate key - from sql
+        conn.execute(
+            "INSERT INTO state_trie (key, value) VALUES (?1, ?2)",
+            [key_prefix.as_slice(), b"sql_value".to_vec().as_slice()],
+        )
+        .unwrap();
+        let value = trie_storage.get(key_prefix.as_slice()).unwrap().unwrap();
+        assert_eq!(value, b"sql_value".to_vec());
+
+        // count all keys
+        let iter = rdb.prefix_iterator(key_prefix.as_slice());
+        assert_eq!(iter.count(), 1);
+    }
+
+    #[test]
+    // height-tag read/write works
+    fn height_tagging() {
+        let sql = Arc::new(
+            Pool::builder()
+                .build(SqliteConnectionManager::memory())
+                .unwrap(),
+        );
+        let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
+        let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), None);
+
+        let key_prefix = alloy::consensus::EMPTY_ROOT_HASH.0;
+
+        // write/read lo value
+        trie_storage.inc_height_tag(u64::MIN).unwrap();
+        trie_storage
+            .insert(key_prefix.as_slice(), b"min_value".to_vec())
+            .unwrap();
+        let value = trie_storage.get(key_prefix.as_slice()).unwrap();
+        assert_eq!(value.unwrap(), b"min_value".to_vec());
+
+        // write/read hi value
+        trie_storage.inc_height_tag(u64::MAX).unwrap();
+        trie_storage
+            .insert(key_prefix.as_slice(), b"max_value".to_vec())
+            .unwrap();
+        let value = trie_storage.get(key_prefix.as_slice()).unwrap();
+        assert_eq!(value.unwrap(), b"max_value".to_vec());
+
+        // count all keys
+        let iter = rdb.prefix_iterator(key_prefix.as_slice());
+        assert_eq!(iter.count(), 2);
+    }
+
+    #[test]
+    // peek ahead works
+    fn peek_ahead() {
+        let sql = Arc::new(
+            Pool::builder()
+                .build(SqliteConnectionManager::memory())
+                .unwrap(),
+        );
+        let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
+        let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), None);
+
+        let key_prefix = alloy::consensus::EMPTY_ROOT_HASH.0;
+        rdb.put(key_prefix.as_slice(), b"rdb_value".to_vec())
+            .unwrap();
+
+        // read legacy value
+        let value = trie_storage.get(key_prefix.as_slice()).unwrap().unwrap();
+        assert_eq!(value, b"rdb_value".to_vec());
+
+        // peak ahead tests
+        trie_storage.inc_height_tag(u64::MIN).unwrap();
+        trie_storage
+            .insert(key_prefix.as_slice(), b"min_value".to_vec())
+            .unwrap();
+        let value = trie_storage.get(key_prefix.as_slice()).unwrap().unwrap();
+        assert_eq!(value, b"min_value".to_vec());
+
+        // peak ahead ordering
+        trie_storage.inc_height_tag(u64::MAX).unwrap();
+        trie_storage
+            .insert(key_prefix.as_slice(), b"max_value".to_vec())
+            .unwrap();
+        let value = trie_storage.get(key_prefix.as_slice()).unwrap().unwrap();
+        assert_eq!(value, b"max_value".to_vec());
+
+        // count all keys
+        let iter = rdb.prefix_iterator(key_prefix.as_slice());
+        assert_eq!(iter.count(), 3);
     }
 }
