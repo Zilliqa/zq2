@@ -790,7 +790,12 @@ impl Db {
     }
 
     pub fn state_trie(&self) -> Result<TrieStorage> {
-        Ok(TrieStorage::new(self.pool.clone(), self.kvdb.clone()))
+        let final_height = self.get_highest_canonical_block_number()?;
+        Ok(TrieStorage::new(
+            self.pool.clone(),
+            self.kvdb.clone(),
+            final_height,
+        ))
     }
 
     pub fn with_sqlite_tx(&self, operations: impl FnOnce(&Connection) -> Result<()>) -> Result<()> {
