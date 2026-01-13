@@ -3,14 +3,12 @@ use std::{
     io::{BufReader, Read, Seek, Write},
     path::Path,
     sync::Arc,
-    thread,
 };
 
 use anyhow::{Result, anyhow, ensure};
 use eth_trie::{DB, EthTrie, MemoryDB, Trie};
 use lz4::Decoder;
-use parking_lot::Mutex;
-use tokio::sync::mpsc::channel;
+use tempfile::SpooledTempFile;
 
 use crate::{
     crypto::Hash, db::Db, message::Block, precompiles::ViewHistory, state::Account,
@@ -423,7 +421,7 @@ struct AccountBlob {
     pub key: Vec<u8>,
     pub serialised_account: Vec<u8>,
     pub count: u64,
-    pub data: std::fs::File,
+    pub spool: SpooledTempFile,
 }
 
 pub fn save_ckpt(
@@ -482,122 +480,103 @@ pub fn save_ckpt(
 
     let mut account_count = u64::MIN;
     let mut record_count = u64::MIN;
+    let num_workers = crate::tokio_worker_count().max(1);
+    let (work_tx, work_rx) = crossbeam::channel::bounded::<(Vec<u8>, Vec<u8>)>(num_workers);
+    let (blob_tx, blob_rx) = crossbeam::channel::bounded::<AccountBlob>(num_workers);
+
     // iterate over accounts and save the accounts to the checkpoint file.
     // do not save intermediate state trie values.
-    let trie_storage = Arc::new(trie_storage.read_only());
     let state_trie = EthTrie::new(trie_storage.clone()).at_root(parent.state_root_hash().into());
+    crossbeam::thread::scope(|s| {
+        // Consumer: receive processed blobs and write them sequentially into the zip writer.
+        let consumer = s.spawn(|_s| -> Result<u64> {
+            let mut counter = u64::MIN;
+            while let Ok(mut blob) = blob_rx.recv() {
+                if account_count.is_multiple_of(10_000) {
+                    tracing::info!(account=%account_count, record=%record_count, "Saved");
+                }
+                bincode::encode_into_std_write(&blob.key, &mut zipwriter, BIN_CONFIG)?;
+                bincode::encode_into_std_write(
+                    &blob.serialised_account,
+                    &mut zipwriter,
+                    BIN_CONFIG,
+                )?;
+                bincode::serde::encode_into_std_write(blob.count, &mut zipwriter, BIN_CONFIG)?;
+                std::io::copy(&mut blob.spool, &mut zipwriter)?;
+                record_count += blob.count;
+                account_count += 1;
+                counter += 1;
+            }
+            Ok(counter)
+        });
 
-    let num_workers = crate::tokio_worker_count().max(1);
+        // Producer: iterate the state_trie and push work to workers.
+        let producer = s.spawn(move |_s| -> Result<u64> {
+            let mut counter = u64::MIN;
+            for akv in state_trie.iter() {
+                let (key, serialised_account) = akv?;
+                work_tx.send((key.to_vec(), serialised_account.to_vec()))?;
+                counter += 1;
+            }
+            drop(work_tx); // Close the work channel so Workers exit when done
+            Ok(counter)
+        });
 
-    let (work_tx, work_rx) = channel::<(Vec<u8>, Vec<u8>)>(num_workers * 4);
-    let (res_tx, mut res_rx) = channel::<AccountBlob>(num_workers * 4);
-    let work_rx = Arc::new(Mutex::new(work_rx));
-
-    thread::scope(|s| {
-        for _ in 0..num_workers {
+        // Workers: concurrently construct each account blob
+        let mut workers = Vec::with_capacity(num_workers);
+        for _worker in 0..num_workers {
             let work_rx = work_rx.clone();
-            let res_tx = res_tx.clone();
+            let blob_tx = blob_tx.clone();
             let trie_storage = trie_storage.clone();
 
-            s.spawn(move || {
-                while let Some((key, serialised_account)) = work_rx.lock().blocking_recv() {
-                    match (|| -> Result<AccountBlob> {
-                        // iterate over account storage keys, and save them to the checkpoint file.
-                        // use a single-pass strategy to reduce disk I/O and memory usage.
-                        let account_root =
-                            Account::try_from(serialised_account.as_slice())?.storage_root;
-                        let account_trie = EthTrie::new(trie_storage.clone()).at_root(account_root);
+            let handle = s.spawn(move |_s| -> Result<u64> {
+                let mut counter = u64::MIN;
+                while let Ok((key, serialised_account)) = work_rx.recv() {
+                    // iterate over account storage keys, and save them to the checkpoint file.
+                    // use a single-pass strategy to reduce disk I/O and memory usage.
+                    let account_root =
+                        Account::try_from(serialised_account.as_slice())?.storage_root;
+                    let account_trie = EthTrie::new(trie_storage.clone()).at_root(account_root);
 
-                        let mut count = 0;
-                        // write to spooled file, avoiding OOM.
-                        let mut spool = tempfile::tempfile()?;
-                        for skv in account_trie.iter() {
-                            let (storage_key, storage_val) = skv?;
-                            bincode::encode_into_std_write(&storage_key, &mut spool, BIN_CONFIG)?;
-                            bincode::encode_into_std_write(&storage_val, &mut spool, BIN_CONFIG)?;
-                            count += 1;
-                        }
-                        spool.flush()?; // flush data to spool
-                        spool.rewind()?; // reset spool for reading
+                    let mut count = u64::MIN;
+                    // write to spooled file, avoiding OOM.
+                    let mut spool = tempfile::spooled_tempfile(1024 * 1024);
+                    for skv in account_trie.iter() {
+                        let (storage_key, storage_val) = skv?;
+                        bincode::encode_into_std_write(&storage_key, &mut spool, BIN_CONFIG)?;
+                        bincode::encode_into_std_write(&storage_val, &mut spool, BIN_CONFIG)?;
+                        count += 1;
+                    }
+                    spool.flush()?; // flush data to spool
+                    spool.rewind()?; // reset spool for reading
 
-                        Ok(AccountBlob {
-                            key,
-                            serialised_account,
-                            count,
-                            data: spool,
-                        })
-                    })() {
-                        Ok(blob) => {
-                            if res_tx.blocking_send(blob).is_err() {
-                                tracing::error!("Failed to send checkpoint blob");
-                                break;
-                            }
-                        }
-                        Err(err) => {
-                            tracing::error!("Failed to create checkpoint blob: {}", err);
-                            break;
-                        }
+                    let blob = AccountBlob {
+                        key,
+                        serialised_account,
+                        count,
+                        spool,
                     };
+
+                    blob_tx.send(blob)?;
+                    counter += 1;
                 }
+                Ok(counter)
             });
+            workers.push(handle);
         }
-    });
-    drop(res_tx);
 
-    // Producer: iterate the state_trie and push work to workers.
-    // This send will block if the work queue is full, bounding memory usage.
-    for akv in state_trie.iter() {
-        let (key, serialised_account) = akv?;
-        work_tx.blocking_send((key.to_vec(), serialised_account.to_vec()))?;
-    }
-    drop(work_tx); // Close the work channel so workers exit when done
-
-    // Consumer: receive processed blobs and write them sequentially into the zip writer.
-    while let Some(mut blob) = res_rx.blocking_recv() {
-        if account_count.is_multiple_of(10_000) {
-            tracing::debug!(account=%account_count, record=%record_count, "Saved");
+        // wait for all workers to finish
+        for handle in workers {
+            let _ = handle.join().expect("worker panicked").unwrap();
         }
-        bincode::encode_into_std_write(&blob.key, &mut zipwriter, BIN_CONFIG)?;
-        bincode::encode_into_std_write(&blob.serialised_account, &mut zipwriter, BIN_CONFIG)?;
-        bincode::serde::encode_into_std_write(blob.count, &mut zipwriter, BIN_CONFIG)?;
-        std::io::copy(&mut blob.data, &mut zipwriter)?;
-        record_count += blob.count;
-        account_count += 1;
-    }
+        drop(blob_tx); // Close channel so that Consumer can exit.
 
-    // for akv in state_trie.iter() {
-    //     let (key, serialised_account) = akv?;
-    //     if account_count.is_multiple_of(10_000) {
-    //         tracing::debug!(account=%account_count, record=%record_count, "Saved");
-    //     }
-
-    //     // iterate over account storage keys, and save them to the checkpoint file.
-    //     // use a single-pass strategy to reduce disk I/O and memory usage.
-    //     let account_root = Account::try_from(serialised_account.as_slice())?.storage_root;
-    //     let account_trie = EthTrie::new(trie_storage.clone()).at_root(account_root);
-
-    //     let mut count = 0;
-    //     // write to spooled file, avoiding OOM.
-    //     let mut spool = tempfile::spooled_tempfile(1024 * 1024);
-    //     for skv in account_trie.iter() {
-    //         let (storage_key, storage_val) = skv?;
-    //         bincode::encode_into_std_write(&storage_key, &mut spool, BIN_CONFIG)?;
-    //         bincode::encode_into_std_write(&storage_val, &mut spool, BIN_CONFIG)?;
-    //         count += 1;
-    //     }
-    //     spool.flush()?; // flush data to spool
-    //     spool.rewind()?; // reset spool for reading
-
-    //     // copy account storage contents to zipfile
-    //     bincode::encode_into_std_write(&key, &mut zipwriter, BIN_CONFIG)?;
-    //     bincode::encode_into_std_write(&serialised_account, &mut zipwriter, BIN_CONFIG)?;
-    //     bincode::serde::encode_into_std_write(count, &mut zipwriter, BIN_CONFIG)?;
-    //     std::io::copy(&mut spool, &mut zipwriter)?; // copy to zipwriter
-
-    //     // increment counters
-    //     record_count += count;
-    //     account_count += 1;
-    // }
+        // assert checks
+        let producer_count = producer.join().expect("producer panicked").unwrap();
+        let consumer_count = consumer.join().expect("consumer panicked").unwrap();
+        assert_eq!(producer_count, consumer_count);
+    })
+    .expect("Failed concurrent checkpoint generation");
 
     tracing::info!(account=%account_count, record=%record_count, "Saved"); // final update
 
