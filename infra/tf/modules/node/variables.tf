@@ -24,6 +24,7 @@ variable "config" {
     }))
     os_images_override      = optional(map(string), {})
     instance_type_override  = optional(map(string), {})
+    disk_snapshot_override  = optional(map(string), {})
     boot_disk_size_override = optional(map(number), {})
     data_disk_size_override = optional(map(number), {})
   })

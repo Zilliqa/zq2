@@ -46,7 +46,8 @@ resource "google_compute_disk" "data" {
   zone = each.value.zone
   size = each.value.data_disk_size
 
-  labels = merge(local.labels, { "node-name" = each.value.resource_name })
+  snapshot = each.value.snapshot
+  labels   = merge(local.labels, { "node-name" = each.value.resource_name })
 }
 
 resource "google_compute_instance" "this" {
