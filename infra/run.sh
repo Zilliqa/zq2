@@ -1,12 +1,21 @@
 #!/bin/bash
 
-trap 'kill $(jobs -p) 2>/dev/null' EXIT
+# Define a cleanup function
+cleanup() {
+    echo "Container stopped, killing processes..."
+    kill -TERM "$child_pid" "$scilla_pid"
+    wait "$child_pid"
+}
+
+# Trap the SIGTERM signal
+trap cleanup SIGTERM
 
 # Start Scilla server
 /scilla/0/bin/scilla-server-http --port=$1 &
-sleep 2
+scilla_pid=$!
 
-# Confirm Scilla Server is responding at specified port 
+# Confirm Scilla Server is responding at specified port
+sleep 2
 RETRY_COUNT=0
 RETRIES=5
 while [ $RETRY_COUNT -lt $RETRIES ]; do
@@ -26,4 +35,7 @@ done
 shift
 
 # Start Zilliqa
-/zilliqa $@
+/zilliqa $@ &
+child_pid=$!
+
+wait "$child_pid"
