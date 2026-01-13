@@ -538,13 +538,13 @@ impl P2pNode {
                     }
                 }
                 _ = terminate.recv() => {
-                    tracing::info!(shards=%self.shard_threads.len(), tasks=%self.task_threads.len(), "SIGTERM. Shutting down.");
+                    info!(shards=%self.shard_threads.len(), tasks=%self.task_threads.len(), "SIGTERM. Shutting down.");
                     self.shard_threads.shutdown().await;
                     self.task_threads.shutdown().await;
                     break;
                 },
                 _ = signal::ctrl_c() => {
-                    tracing::info!(shards=%self.shard_threads.len(), tasks=%self.task_threads.len(), "CTRL-C. Shutting down.");
+                    info!(shards=%self.shard_threads.len(), tasks=%self.task_threads.len(), "CTRL-C. Shutting down.");
                     self.shard_threads.shutdown().await;
                     self.task_threads.shutdown().await;
                     break;
@@ -555,8 +555,7 @@ impl P2pNode {
                 std::sync::atomic::Ordering::Relaxed,
             );
         }
-        tracing::info!("Shutdown.");
-        println!("Shutdown complete.");
+        info!("Shutdown.");
         Ok(())
     }
 }
