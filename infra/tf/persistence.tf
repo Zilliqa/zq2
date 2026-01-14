@@ -17,6 +17,8 @@ module "persistences" {
   }
 
   service_account_iam = local.default_service_account_iam
+  
+  snapshot_schedule_policy_name = google_compute_resource_policy.persistence_snapshots_schedule.name
 }
 
 resource "google_compute_instance_group" "persistence" {
@@ -79,4 +81,35 @@ resource "google_storage_bucket_iam_binding" "persistence_bucket_admins" {
       ]
     ])
   )
+}
+
+################################################################################
+# PERSISTENCE SNAPSHOTS SCHEDULE
+################################################################################
+
+resource "google_compute_resource_policy" "persistence_snapshots_schedule" {
+  name   = "${var.chain_name}-persistence-snapshots-schedule"
+  region = var.region
+  description = "${var.chain_name} - Persistence snapshots schedule"
+
+  snapshot_schedule_policy {
+    schedule {
+      hourly_schedule {
+        hours_in_cycle = 1
+        start_time    = "03:00"
+      }
+    }
+
+    retention_policy {
+      max_retention_days = 14
+      on_source_disk_delete = "APPLY_RETENTION_POLICY"
+    }
+
+    snapshot_properties {
+      guest_flush = true
+      storage_locations = [var.region]
+      chain_name = var.chain_name
+      labels = local.labels
+    }
+  }
 }
