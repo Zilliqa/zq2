@@ -21,10 +21,6 @@
 - name: Log rotation configuration
   ansible.builtin.import_playbook: configure_logrotate.yml
 
-- name: Download Zilliqa node persistence
-  ansible.builtin.import_playbook: download_persistence.yml
-  when: persistence_url is defined and persistence_url != ""
-
 - name: Zilliqa node installation
   ansible.builtin.import_playbook: install_zilliqa.yml
   vars:

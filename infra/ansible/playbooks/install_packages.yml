@@ -25,6 +25,7 @@
           - build-essential
           - ca-certificates
           - curl
+          - fio
           - gnupg
           - jq
           - lsb-release
