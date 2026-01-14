@@ -276,7 +276,11 @@ contract Deposit is UUPSUpgradeable {
         uint256 index;
         bytes memory output;
         do {
-            randomness = uint256(keccak256(bytes.concat(bytes32(randomness), bytes32(viewNumber))));
+            randomness = uint256(
+                keccak256(
+                    bytes.concat(bytes32(randomness), bytes32(viewNumber))
+                )
+            );
             (stakerKey, index) = leaderFromRandomness(randomness);
             // skip the precompile if this stakerKey has already been checked
             if (bitmap & (1 << index) != 0) continue;
