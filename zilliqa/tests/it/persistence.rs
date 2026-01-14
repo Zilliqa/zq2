@@ -180,7 +180,7 @@ async fn checkpoints_test(mut network: Network) {
         .unwrap()
         .tx_hash();
 
-    // wait for checkpoint to happen; and block #30 is finalized.
+    // wait for checkpoint to happen; and block #20 is finalized.
     network.run_until_block_finalized(21, 400).await.unwrap();
 
     let checkpoint_files = network
@@ -197,14 +197,12 @@ async fn checkpoints_test(mut network: Network) {
         })
         .collect::<Vec<_>>();
 
-    let mut len_check = 0;
+    // Note: the files created by different nodes, may have different sizes
     for path in &checkpoint_files {
         let metadata = fs::metadata(path).unwrap();
         assert!(metadata.is_file());
         let file_len = metadata.len();
-        assert!(file_len != 0);
-        assert!(len_check == 0 || len_check == file_len); // len_check = 0 on first loop iteration
-        len_check = file_len;
+        assert!(file_len > 0);
     }
 
     // Create new node and pass it one of those checkpoint files
@@ -260,8 +258,8 @@ async fn checkpoints_test(mut network: Network) {
     assert_eq!(state["welcome_msg"], "default");
 
     // check the new node catches up and keeps up with block production
-    network.run_until_synced(new_node_idx).await;
     network.run_until_block_finalized(25, 400).await.unwrap();
+    network.run_until_synced(new_node_idx).await;
 
     // check account nonce of old wallet
     let nonce = new_node_wallet
