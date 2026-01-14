@@ -54,5 +54,7 @@ ignore = [
     { id = "RUSTSEC-2024-0384", reason = "downstream dependency of ethers-rs which is only used in tests" },
     { id = "RUSTSEC-2024-0436", reason = "unmaintained, we'll upgrade eventually" },
     { id = "RUSTSEC-2025-0057", reason = "unmaintained" },
-    { id = "RUSTSEC-2025-0137", reason = "will be updated by downstream ruint >= 0.17.0" },
+    { id = "RUSTSEC-2025-0137", reason = "wait for upstream ruint >= 0.17.0" },
+    { id = "RUSTSEC-2025-0141", reason = "unmaintained"},
+    { id = "RUSTSEC-2026-0002", reason = "wait for upstream"}
 ]

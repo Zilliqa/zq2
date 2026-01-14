@@ -56,6 +56,17 @@ resource "google_compute_disk" "data" {
   }
 }
 
+resource "google_compute_disk_resource_policy_attachment" "persistence_snapshots_schedule" {
+  for_each = {
+    for k, v in google_compute_disk.data : k => v
+    if var.snapshot_schedule_policy_name != ""
+  }
+
+  name = var.snapshot_schedule_policy_name
+  disk = each.value.name
+  zone = each.value.zone
+}
+
 resource "google_compute_instance" "this" {
   for_each = local.instances_map
 

@@ -98,3 +98,10 @@ variable "service_account_iam" {
     error_message = "You need to specify the permissions in the form role=>project_id (ie. roles/monitoring.metricWriter=>prj-d-zq2-devnet-c83bkpsd)"
   }
 }
+
+variable "snapshot_schedule_policy_name" {
+  description = "The snapshot schedule policy name"
+  type        = string
+  default     = ""
+  nullable    = true
+}

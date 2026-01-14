@@ -22,23 +22,24 @@
       ansible.builtin.apt:
         name:
           - apt-transport-https
+          - build-essential
           - ca-certificates
           - curl
+          - fio
           - gnupg
-          - lsb-release
-          - software-properties-common
           - jq
-          - python3-pip
-          - python3-setuptools
-          - python3-wheel
-          - build-essential
+          - lsb-release
+          - ncdu
           - pigz
           - python3-dev
-          - unzip
-          - zip
+          - python3-pip
+          - python3-setuptools
           - python3-venv
-          - ncdu
-          - fio
+          - python3-wheel
+          - software-properties-common
+          - unzip
+          - util-linux
+          - zip
         state: present
 
     - name: Ensure /opt/zilliqa exists
