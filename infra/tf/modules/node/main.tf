@@ -49,7 +49,10 @@ resource "google_compute_disk" "data" {
   labels = merge(local.labels, { "node-name" = each.value.resource_name })
  
   lifecycle {
-    ignore_changes = [snapshot]
+    ignore_changes = [
+      snapshot, 
+      terraform_labels
+    ]
   }
 }
 
