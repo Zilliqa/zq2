@@ -38,6 +38,7 @@
           - zip
           - python3-venv
           - ncdu
+          - fio
         state: present
 
     - name: Ensure /opt/zilliqa exists

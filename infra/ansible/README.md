@@ -14,6 +14,7 @@ This repository contains Ansible playbooks and Python scripts for deploying and 
 ## Prerequisites
 
 ### Required Tools
+
 - Python 3.9+
 - Ansible 2.9+
 - Google Cloud SDK
@@ -21,6 +22,7 @@ This repository contains Ansible playbooks and Python scripts for deploying and 
 - Terraform (for infrastructure provisioning)
 
 ### GCP Requirements
+
 - GCP project with billing enabled
 - Service account with the following roles:
   - Compute Admin
@@ -36,8 +38,16 @@ This repository contains Ansible playbooks and Python scripts for deploying and 
   - Cloud Monitoring API
   - Cloud Logging API
 
+### Ansible Requirements
+
+- Install Ansible collection requirements:
+```bash
+ansible-galaxy collection install -r requirements.yml
+```
+
 ### Authentication Setup
-1. Set up GCP authentication:
+
+- Set up GCP authentication:
 ```bash
 gcloud auth application-default login
 gcloud config set project <your-project-id>
@@ -96,7 +106,6 @@ zq2_image: "asia-docker.pkg.dev/your-project/zq2:latest"
 
 ## Deployment Process
 
-
 ### 1. Key Generation
 
 If you want to remove the previously generated key:
@@ -129,7 +138,6 @@ python3 scripts/generate_stats_key.py --project-id prj-d-zq2-devnet-c83bkpsd ../
 
 python3 scripts/generate_genesis_key.py --project-id prj-d-zq2-devnet-c83bkpsd ../../zq2-infratest.yaml
 ```
-
 
 To backup the just created credentials, please run:
 ```bash
@@ -178,6 +186,17 @@ ansible-playbook -i inventory.gcp.yml -l network_zq2_infratest,localhost playboo
 # Update node software
 ansible-playbook -i inventory.gcp.yml -l network_zq2_infratest,localhost playbooks/install_zilliqa.yml --limit role_validator \
   -e "zq2_image=asia-docker.pkg.dev/your-project/zq2:new-version"
+```
+
+### Restore Persistence Snapshot
+
+In the `all.yml` file for the network you want to restore, set the `persistence_snapshot_id` variable to reference the desired snapshot. If `persistence_snapshot_id` is not set, the latest snapshot backup will be used.
+
+Then run the playbook:
+
+```bash
+# Restore the GCP snapshot backup in a node /data disk
+ansible-playbook -i inventory.gcp.yml -l network_zq2_infratest,localhost playbooks/restore_persistence_snapshot.yml --limit role_api
 ```
 
 ### Upgrade Ubuntu
