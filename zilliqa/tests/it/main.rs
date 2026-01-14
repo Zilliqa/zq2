@@ -1816,13 +1816,11 @@ impl FauxRpcTransport {
     }
 
     async fn map_request(&self, req: SerializedRequest) -> TransportResult<Response> {
-        println!("REQ> {}", req.serialized().get());
         let (response, _rx) = self
             .rpc_module
             .raw_json_request(req.serialized().get(), 1024)
             .await
             .expect("no transport errors");
-        println!("RES< {}", response.get());
 
         let response: Response = serde_json::from_str(response.get()).expect("no encoding errors");
         Ok(response)

@@ -602,7 +602,7 @@ impl Consensus {
         // Set self.network_message_cache incase the network is stuck
         if consensus.db.get_voted_in_view()? {
             let block = consensus.head_block();
-            if let Some(leader) = consensus.leader_at_block(&block, &block, consensus.get_view()?) {
+            if let Some(leader) = consensus.leader_at_block(&block, consensus.get_view()?) {
                 consensus.build_vote(leader.peer_id, consensus.vote_from_block(&block));
             }
         } else {
@@ -617,7 +617,7 @@ impl Consensus {
         let block = self.get_block(&self.high_qc.block_hash)?.ok_or_else(|| {
             anyhow!("missing block corresponding to our high qc - this should never happen")
         })?;
-        let leader = self.leader_at_block(&block, &block, view);
+        let leader = self.leader_at_block(&block, view);
         let new_view_message = (
             leader.map(|leader: Validator| leader.peer_id),
             ExternalMessage::NewView(Box::new(NewView::new(
@@ -686,7 +686,7 @@ impl Consensus {
                     view,
                     block.hash()
                 );
-                let leader = self.leader_at_block(&block, &block, view).unwrap();
+                let leader = self.leader_at_block(&block, view).unwrap();
                 let vote = self.vote_from_block(&block);
                 let network_msg = self.build_vote(leader.peer_id, vote);
                 return Ok(Some(network_msg));
@@ -1021,7 +1021,7 @@ impl Consensus {
             } else {
                 self.in_committee(true)?;
                 let vote = self.vote_from_block(&block);
-                let next_leader = self.leader_at_block(&block, &block, view);
+                let next_leader = self.leader_at_block(&block, view);
 
                 if self.create_next_block_on_timeout.load(Ordering::SeqCst) {
                     warn!("Create block on timeout set. Clearing");
@@ -1872,7 +1872,7 @@ impl Consensus {
 
     fn leader_for_view(&self, parent_hash: Hash, view: u64) -> Option<NodePublicKey> {
         if let Ok(Some(parent)) = self.get_block(&parent_hash) {
-            let leader = self.leader_at_block(&parent, &parent, view).unwrap();
+            let leader = self.leader_at_block(&parent, view).unwrap();
             Some(leader.public_key)
         } else {
             if view > 1 {
@@ -1883,9 +1883,7 @@ impl Consensus {
                 return None;
             }
             let head_block = self.head_block();
-            let leader = self
-                .leader_at_block(&head_block, &head_block, view)
-                .unwrap();
+            let leader = self.leader_at_block(&head_block, view).unwrap();
             Some(leader.public_key)
         }
     }
@@ -2547,7 +2545,7 @@ impl Consensus {
             parent.number(),
             block.view()
         );
-        let Some(proposer) = self.leader_at_block(&parent, &parent, block.view()) else {
+        let Some(proposer) = self.leader_at_block(&parent, block.view()) else {
             return Err(anyhow!(
                 "Failed to find leader. Block number {}, Parent number {}",
                 block.number(),
@@ -3005,9 +3003,9 @@ impl Consensus {
         Ok(())
     }
 
-    pub fn leader_at_block(&self, parent: &Block, block: &Block, view: u64) -> Option<Validator> {
-        let state_at = self.state.at_root(parent.state_root_hash().into());
-        Self::leader_at_state(&state_at, parent, view)
+    pub fn leader_at_block(&self, block: &Block, view: u64) -> Option<Validator> {
+        let state_at = self.state.at_root(block.state_root_hash().into());
+        Self::leader_at_state(&state_at, block, view)
     }
 
     fn leader_at_state(state: &State, block: &Block, view: u64) -> Option<Validator> {
@@ -3460,7 +3458,7 @@ impl Consensus {
         cumulative_gas_fee: u128,
     ) -> Result<()> {
         // Apply the rewards of previous round
-        let proposer = self.leader_at_block(parent, block, block.view()).unwrap();
+        let proposer = self.leader_at_block(parent, block.view()).unwrap();
         Self::apply_rewards_late_at(
             parent,
             state,
@@ -3849,11 +3847,12 @@ impl Consensus {
 
             let fork = self.state.forks.get(header.number);
             // but add all subsequent missed views to the history
-            let history = VecDeque::new();
+            let mut history = VecDeque::new();
             while self.get_block_by_view(view)?.is_none()
                 && self.state.view_history.read().min_view > view
             {
                 if let Ok(leader) = state_at.leader(view, block.header, fork) {
+                    history.push_back((view, leader));
                     self.state
                         .ckpt_view_history
                         .as_ref()

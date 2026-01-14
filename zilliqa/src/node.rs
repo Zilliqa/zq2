@@ -969,11 +969,7 @@ impl Node {
             .get_block(block.parent_hash())?
             .ok_or_else(|| anyhow!("missing parent: {}", block.parent_hash()))?;
 
-        let Some(proposer) = self
-            .consensus
-            .read()
-            .leader_at_block(&parent, &block, block.view())
-        else {
+        let Some(proposer) = self.consensus.read().leader_at_block(&parent, block.view()) else {
             return Ok(None);
         };
 
