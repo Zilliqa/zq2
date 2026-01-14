@@ -2338,15 +2338,14 @@ impl Consensus {
             })?;
             let state_at = self.state.at_root(parent.state_root_hash().into());
             let block_header = BlockHeader {
-                view: current.header.view,
-                number: current.header.number,
-                mix_hash: current.header.mix_hash,
+                view: parent.header.view,
+                number: parent.header.number,
+                mix_hash: parent.header.mix_hash,
                 ..Default::default()
             };
             for view in (parent.view() + 1..current.view()).rev() {
                 let fork = self.state.forks.get(block_header.number);
-                //if let Ok(leader) = state_at.leader(view, block_header, fork) {
-                if let Ok(leader) = state_at.leader(view, parent.header, fork) {
+                if let Ok(leader) = state_at.leader(view, block_header, fork) {
                     if view == parent.view() + 1 {
                         trace!(
                             view,
