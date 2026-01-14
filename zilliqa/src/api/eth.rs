@@ -304,19 +304,15 @@ fn estimate_gas(params: Params, node: &Arc<Node>) -> Result<String> {
     let block_number: BlockNumberOrTag = params.optional_next()?.unwrap_or_default();
     expect_end_of_params(&mut params, 1, 2)?;
 
-    let (block, parent, state) = {
+    let (block, state) = {
         let block = node
             .get_block(block_number)?
             .ok_or_else(|| anyhow!("missing block: {block_number}"))?;
-        let parent = node
-            .get_block(block.parent_hash())?
-            .ok_or_else(|| anyhow!("missing parent block"))?;
-
         let state = node.get_state(&block)?;
         if state.is_empty() {
             return Err(anyhow!("State required to execute request does not exist"));
         }
-        (block, parent, state)
+        (block, state)
     };
 
     let return_value = state.estimate_gas(
@@ -333,7 +329,6 @@ fn estimate_gas(params: Params, node: &Arc<Node>) -> Result<String> {
             tx_type: call_params.transaction_type.unwrap_or_default().into(),
             disable_eip3607: true,
             exec_type: Estimate,
-            randao_mix_hash: parent.header.mix_hash.unwrap_or(Hash::ZERO),
         },
     )?;
 
@@ -651,7 +646,7 @@ fn get_block_by_number(params: Params, node: &Arc<Node>) -> Result<Option<eth::B
         let block = node
             .get_block(block_number)?
             .ok_or_else(|| anyhow!("Block not found"))?;
-        let miner = node.get_proposer_reward_address(block.header)?;
+        let miner = node.get_proposer_reward_address(&block)?;
         let block_gas_limit = block.gas_limit();
         let result = eth::Block::from_block(&block, miner.unwrap_or_default(), block_gas_limit);
         return Ok(Some(result));
@@ -679,7 +674,7 @@ pub fn get_eth_block(
         None => return Ok(None),
     };
 
-    let miner = node.get_proposer_reward_address(block.header)?;
+    let miner = node.get_proposer_reward_address(&block)?;
     let block_gas_limit = block.gas_limit();
     let mut result = eth::Block::from_block(&block, miner.unwrap_or_default(), block_gas_limit);
 
@@ -1036,7 +1031,7 @@ async fn subscribe(
                     .db
                     .get_transactionless_block(header.hash.into())?
                     .ok_or("Block not found")?;
-                let miner = node.get_proposer_reward_address(block.header)?;
+                let miner = node.get_proposer_reward_address(&block)?;
                 let block_gas_limit = block.gas_limit();
                 let eth_block =
                     eth::Block::from_block(&block, miner.unwrap_or_default(), block_gas_limit);

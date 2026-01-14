@@ -67,7 +67,6 @@ pub struct ExtraOpts {
     pub(crate) disable_eip3607: bool,
     pub(crate) exec_type: ExecType,
     pub(crate) tx_type: TransactionType,
-    pub(crate) randao_mix_hash: Hash,
 }
 
 type ScillaResultAndState = (ScillaResult, HashMap<Address, PendingAccount>);
@@ -487,7 +486,6 @@ impl State {
                 disable_eip3607: false,
                 exec_type: ExecType::Transact,
                 tx_type: TransactionType::Legacy,
-                randao_mix_hash: Hash::ZERO,
             },
         )?;
 
@@ -616,6 +614,8 @@ impl State {
         };
         let pending_state = PendingState::new(self.clone(), fork.clone());
 
+        let randao_mix_hash = current_block.mix_hash.unwrap_or(Hash::EMPTY);
+
         let evm_ctx = new_zq2_evm_ctx(pending_state, external_context)
             .with_cfg({
                 let mut cfg = CfgEnv::new_with_spec(spec_id);
@@ -643,7 +643,7 @@ impl State {
                 gas_limit: self.block_gas_limit.0,
                 basefee: self.gas_price.try_into()?,
                 difficulty: U256::from(1),
-                prevrandao: Some(extra_opts.randao_mix_hash.into()),
+                prevrandao: Some(randao_mix_hash.0.into()),
                 blob_excess_gas_and_price,
                 beneficiary: Default::default(),
             });
@@ -835,7 +835,6 @@ impl State {
         &mut self,
         txn: VerifiedTransaction,
         current_block: BlockHeader,
-        randao_mix_hash: Hash,
         inspector: I,
         enable_inspector: bool,
     ) -> Result<TransactionApplyResult> {
@@ -900,7 +899,6 @@ impl State {
                     disable_eip3607: false,
                     exec_type: ExecType::Transact,
                     tx_type: txn.revm_transaction_type(),
-                    randao_mix_hash,
                 },
             )?;
 
@@ -1107,6 +1105,7 @@ impl State {
             if fork.randao_support {
                 contracts::deposit::LEADER_AT_VIEW_WITH_RANDAO
                     .encode_input(&[Token::Uint(view.into())])?
+                //contracts::deposit::LEADER_AT_VIEW.encode_input(&[Token::Uint(view.into())])?
             } else {
                 contracts::deposit::LEADER_AT_VIEW.encode_input(&[Token::Uint(view.into())])?
             }
@@ -1412,7 +1411,6 @@ impl State {
                 disable_eip3607: true,
                 exec_type: ExecType::Call,
                 tx_type: TransactionType::Legacy,
-                randao_mix_hash: Hash::ZERO,
             },
         )?;
 
@@ -1447,7 +1445,6 @@ impl State {
                 disable_eip3607: false,
                 exec_type: ExecType::Transact,
                 tx_type: TransactionType::Legacy,
-                randao_mix_hash: Hash::ZERO,
             },
         )?;
         self.apply_delta_evm(&state, current_block.number)?;

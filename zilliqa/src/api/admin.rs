@@ -401,7 +401,11 @@ fn get_leaders(params: Params, node: &Arc<Node>) -> Result<Vec<(u64, Validator)>
     };
 
     while leaders.len() <= count {
-        if let Some(leader) = node.consensus.read().leader_at_block(&parent_block, view) {
+        if let Some(leader) =
+            node.consensus
+                .read()
+                .leader_at_block(&parent_block, &parent_block, view)
+        {
             leaders.push((view, leader));
         } else {
             break; // missed view history not available

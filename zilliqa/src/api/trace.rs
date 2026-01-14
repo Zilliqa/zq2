@@ -81,8 +81,6 @@ fn trace_block(params: Params, node: &Arc<Node>) -> Result<Vec<TraceResults>> {
 
     let mut traces = Vec::new();
 
-    let randao_mix_hash = parent.header.mix_hash.unwrap_or(Hash::ZERO);
-
     // Process each transaction
     for &txn_hash in block.transactions.iter() {
         let txn = node
@@ -95,8 +93,7 @@ fn trace_block(params: Params, node: &Arc<Node>) -> Result<Vec<TraceResults>> {
         let pre_state = PendingState::new(state.try_clone()?, fork.clone());
 
         // Apply the transaction
-        let result =
-            state.apply_transaction(txn, block.header, randao_mix_hash, &mut inspector, true)?;
+        let result = state.apply_transaction(txn, block.header, &mut inspector, true)?;
 
         // Build trace results
         if let TransactionApplyResult::Evm(result, ..) = result {
@@ -187,8 +184,6 @@ fn trace_filter(params: Params, node: &Arc<Node>) -> Result<Vec<TraceResults>> {
 
         let fork = state.forks.get(block.number()).clone();
 
-        let randao_mix_hash = parent.header.mix_hash.unwrap_or(Hash::ZERO);
-
         // Process each transaction in the block
         for txn_hash in &block.transactions {
             let txn = match node.get_transaction_by_hash(*txn_hash)? {
@@ -231,13 +226,7 @@ fn trace_filter(params: Params, node: &Arc<Node>) -> Result<Vec<TraceResults>> {
             let mut inspector = TracingInspector::new(config);
             let pending_state = PendingState::new(state.try_clone()?, fork.clone());
 
-            let result = state.apply_transaction(
-                txn,
-                block.header,
-                randao_mix_hash,
-                &mut inspector,
-                true,
-            )?;
+            let result = state.apply_transaction(txn, block.header, &mut inspector, true)?;
 
             // Only include EVM transaction traces
             if let TransactionApplyResult::Evm(result, ..) = result {

@@ -653,32 +653,18 @@ impl Node {
 
         let fork = state.forks.get(block.number()).clone();
 
-        let randao_mix_hash = parent.header.mix_hash.unwrap_or(Hash::ZERO);
-
         for other_txn_hash in block.transactions {
             if txn_hash != other_txn_hash {
                 let other_txn = node
                     .get_transaction_by_hash(other_txn_hash)?
                     .ok_or_else(|| anyhow!("transaction not found: {other_txn_hash}"))?;
-                state.apply_transaction(
-                    other_txn,
-                    block.header,
-                    randao_mix_hash,
-                    inspector::noop(),
-                    false,
-                )?;
+                state.apply_transaction(other_txn, block.header, inspector::noop(), false)?;
             } else {
                 let config = TracingInspectorConfig::from_parity_config(trace_types);
                 let mut inspector = TracingInspector::new(config);
                 let pending_state = PendingState::new(state.try_clone()?, fork.clone());
 
-                let result = state.apply_transaction(
-                    txn,
-                    block.header,
-                    randao_mix_hash,
-                    &mut inspector,
-                    true,
-                )?;
+                let result = state.apply_transaction(txn, block.header, &mut inspector, true)?;
 
                 let TransactionApplyResult::Evm(result, ..) = result else {
                     return Err(anyhow!("not an EVM transaction"));
@@ -723,23 +709,14 @@ impl Node {
             return Err(anyhow!("State required to execute request does not exist"));
         }
 
-        let randao_mix_hash = parent.header.mix_hash.unwrap_or(Hash::ZERO);
-
         for other_txn_hash in block.transactions {
             if txn_hash != other_txn_hash {
                 let other_txn = node
                     .get_transaction_by_hash(other_txn_hash)?
                     .ok_or_else(|| anyhow!("transaction not found: {other_txn_hash}"))?;
-                state.apply_transaction(
-                    other_txn,
-                    parent.header,
-                    randao_mix_hash,
-                    inspector::noop(),
-                    false,
-                )?;
+                state.apply_transaction(other_txn, parent.header, inspector::noop(), false)?;
             } else {
-                let result =
-                    state.apply_transaction(txn, block.header, randao_mix_hash, inspector, true)?;
+                let result = state.apply_transaction(txn, block.header, inspector, true)?;
 
                 return Ok(result);
             }
@@ -770,15 +747,12 @@ impl Node {
 
         let mut traces: Vec<TraceResult> = Vec::new();
 
-        let randao_mix_hash = parent.header.mix_hash.unwrap_or(Hash::ZERO);
-
         for (index, &txn_hash) in block.transactions.iter().enumerate() {
             if let Ok(Some(trace)) = self.debug_trace_transaction(
                 &mut state,
                 txn_hash,
                 index,
                 &block,
-                randao_mix_hash,
                 trace_opts.clone(),
             ) {
                 traces.push(trace);
@@ -794,7 +768,6 @@ impl Node {
         txn_hash: Hash,
         txn_index: usize,
         block: &Block,
-        randao_mix_hash: Hash,
         trace_opts: GethDebugTracingOptions,
     ) -> Result<Option<TraceResult>> {
         let GethDebugTracingOptions {
@@ -812,13 +785,7 @@ impl Node {
             let inspector_config = TracingInspectorConfig::from_geth_config(&config);
             let mut inspector = TracingInspector::new(inspector_config);
 
-            let result = state.apply_transaction(
-                txn,
-                block.header,
-                randao_mix_hash,
-                &mut inspector,
-                true,
-            )?;
+            let result = state.apply_transaction(txn, block.header, &mut inspector, true)?;
 
             let TransactionApplyResult::Evm(result, ..) = result else {
                 return Ok(None);
@@ -846,13 +813,8 @@ impl Node {
                         TracingInspectorConfig::from_geth_call_config(&call_config),
                     );
 
-                    let result = state.apply_transaction(
-                        txn,
-                        block.header,
-                        randao_mix_hash,
-                        &mut inspector,
-                        true,
-                    )?;
+                    let result =
+                        state.apply_transaction(txn, block.header, &mut inspector, true)?;
 
                     let TransactionApplyResult::Evm(result, ..) = result else {
                         return Ok(None);
@@ -872,13 +834,8 @@ impl Node {
                 }
                 GethDebugBuiltInTracerType::FourByteTracer => {
                     let mut inspector = FourByteInspector::default();
-                    let result = state.apply_transaction(
-                        txn,
-                        block.header,
-                        randao_mix_hash,
-                        &mut inspector,
-                        true,
-                    )?;
+                    let result =
+                        state.apply_transaction(txn, block.header, &mut inspector, true)?;
 
                     let TransactionApplyResult::Evm(_) = result else {
                         return Ok(None);
@@ -893,13 +850,8 @@ impl Node {
                     let mux_config = tracer_config.into_mux_config()?;
 
                     let mut inspector = MuxInspector::try_from_config(mux_config)?;
-                    let result = state.apply_transaction(
-                        txn,
-                        block.header,
-                        randao_mix_hash,
-                        &mut inspector,
-                        true,
-                    )?;
+                    let result =
+                        state.apply_transaction(txn, block.header, &mut inspector, true)?;
 
                     let TransactionApplyResult::Evm(result, ..) = result else {
                         return Ok(None);
@@ -929,13 +881,8 @@ impl Node {
                     let mut inspector = TracingInspector::new(
                         TracingInspectorConfig::from_geth_prestate_config(&prestate_config),
                     );
-                    let result = state.apply_transaction(
-                        txn,
-                        block.header,
-                        randao_mix_hash,
-                        &mut inspector,
-                        true,
-                    )?;
+                    let result =
+                        state.apply_transaction(txn, block.header, &mut inspector, true)?;
 
                     let TransactionApplyResult::Evm(result, ..) = result else {
                         return Ok(None);
@@ -966,13 +913,8 @@ impl Node {
                     JsInspector::with_transaction_context(js_code, config, transaction_context)
                         .map_err(|e| anyhow!("Unable to create js inspector: {e}"))?;
 
-                let result = state.apply_transaction(
-                    txn.clone(),
-                    block.header,
-                    randao_mix_hash,
-                    &mut inspector,
-                    true,
-                )?;
+                let result =
+                    state.apply_transaction(txn.clone(), block.header, &mut inspector, true)?;
 
                 let TransactionApplyResult::Evm(result) = result else {
                     return Ok(None);
@@ -1017,17 +959,21 @@ impl Node {
         state.call_contract(from_addr, to_addr, data, amount, block.header)
     }
 
-    pub fn get_proposer_reward_address(&self, header: BlockHeader) -> Result<Option<Address>> {
+    pub fn get_proposer_reward_address(&self, block: &Block) -> Result<Option<Address>> {
         // Return the zero address for the genesis block. There was no reward for it.
-        if header.view == 0 {
+        if block.header.view == 0 {
             return Ok(None);
         }
 
         let parent = self
-            .get_block(header.qc.block_hash)?
-            .ok_or_else(|| anyhow!("missing parent: {}", header.qc.block_hash))?;
+            .get_block(block.parent_hash())?
+            .ok_or_else(|| anyhow!("missing parent: {}", block.parent_hash()))?;
 
-        let Some(proposer) = self.consensus.read().leader_at_block(&parent, header.view) else {
+        let Some(proposer) = self
+            .consensus
+            .read()
+            .leader_at_block(&parent, &block, block.view())
+        else {
             return Ok(None);
         };
 

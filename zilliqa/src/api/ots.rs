@@ -97,7 +97,7 @@ fn get_block_details(params: Params, node: &Arc<Node>) -> Result<Option<ots::Blo
     let Some(ref block) = node.get_block(block_number)? else {
         return Ok(None);
     };
-    let miner = node.get_proposer_reward_address(block.header)?;
+    let miner = node.get_proposer_reward_address(block)?;
 
     let block_gas_limit = node.config.consensus.eth_block_gas_limit;
     Ok(Some(ots::BlockDetails::from_block(
@@ -116,7 +116,7 @@ fn get_block_details_by_hash(
     let Some(ref block) = node.get_block(block_hash)? else {
         return Ok(None);
     };
-    let miner = node.get_proposer_reward_address(block.header)?;
+    let miner = node.get_proposer_reward_address(block)?;
     let block_gas_limit = node.config.consensus.eth_block_gas_limit;
     Ok(Some(ots::BlockDetails::from_block(
         block,
@@ -138,7 +138,7 @@ fn get_block_transactions(
         let Some(block) = node.get_block(block_number)? else {
             return Ok(None);
         };
-        let miner = node.get_proposer_reward_address(block.header)?;
+        let miner = node.get_proposer_reward_address(&block)?;
         (
             node.consensus.read().transaction_pool.clone(),
             node.db.clone(),

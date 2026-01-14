@@ -616,7 +616,7 @@ impl BlockHeader {
             gas_used: EvmGas(0),
             gas_limit: EvmGas(0),
             randao_reveal: Some(BlsSignature::identity()),
-            mix_hash: Some(Hash::ZERO),
+            mix_hash: Some(Hash::EMPTY),
         }
     }
 
@@ -688,8 +688,8 @@ impl Block {
             EvmGas(0),
             EvmGas(0),
             Either::Right(BlsSignature::identity()),
-            None,
-            Some(Hash::ZERO),
+            Some(BlsSignature::identity()),
+            Some(Hash::EMPTY),
         )
     }
 
@@ -941,7 +941,7 @@ impl revm_context::Block for Block {
     }
 
     fn prevrandao(&self) -> Option<B256> {
-        Some(self.header.mix_hash.unwrap_or(Hash::ZERO).0.into())
+        Some(self.header.mix_hash.unwrap_or(Hash::EMPTY).0.into())
     }
 
     fn blob_excess_gas_and_price(&self) -> Option<BlobExcessGasAndPrice> {
