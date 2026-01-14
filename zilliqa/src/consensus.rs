@@ -617,14 +617,6 @@ impl Consensus {
         let block = self.get_block(&self.high_qc.block_hash)?.ok_or_else(|| {
             anyhow!("missing block corresponding to our high qc - this should never happen")
         })?;
-        // let parent = self
-        //     .get_block(&block.parent_hash())?
-        //     .ok_or_else(|| anyhow!("missing parent block"))?;
-        error!(
-            "Build new view for block.height: {} and view: {}",
-            block.number(),
-            view
-        );
         let leader = self.leader_at_block(&block, &block, view);
         let new_view_message = (
             leader.map(|leader: Validator| leader.peer_id),
@@ -1256,7 +1248,7 @@ impl Consensus {
         let block_hash = vote.block_hash;
         let block_view = vote.view;
         let current_view = self.get_view()?;
-        error!(block_view, current_view, %block_hash, "handling vote from: {:?}", peer_id);
+        info!(block_view, current_view, %block_hash, "handling vote from: {:?}", peer_id);
 
         // if the vote is too old; or too new
         if block_view + 1 < current_view {
@@ -1303,20 +1295,7 @@ impl Consensus {
 
         // if we are not the leader of the round in which the vote counts
         // The vote is in the happy path (?) - so the view is block view + 1
-        // There's no parent of genesis block so the block is its parent
-        let parent = if block.view() == 0 {
-            block.clone()
-        } else {
-            self.get_block(&block.parent_hash())?
-                .ok_or_else(|| anyhow!("missing parent block "))?
-        };
-        error!(
-            "Checking in vote leader for parent height: {} and view: {}, am I leader? {}",
-            block.number(),
-            block_view + 1,
-            self.are_we_leader_for_view(&block, &block, block_view + 1)
-        );
-        if !self.are_we_leader_for_view(&block, &block, block_view + 1) {
+        if !self.are_we_leader_for_view(block_hash, block_view + 1) {
             trace!(
                 vote_view = block_view + 1,
                 ?block_hash,
@@ -1884,29 +1863,31 @@ impl Consensus {
         Ok(Some(self.early_proposal.read().as_ref().unwrap().0.clone()))
     }
 
-    fn are_we_leader_for_view(
-        &self,
-        parent_block: &Block,
-        current_block: &Block,
-        view: u64,
-    ) -> bool {
-        match self.leader_for_view(parent_block, current_block, view) {
+    fn are_we_leader_for_view(&self, parent_hash: Hash, view: u64) -> bool {
+        match self.leader_for_view(parent_hash, view) {
             Some(leader) => leader == self.public_key(),
             None => false,
         }
     }
 
-    fn leader_for_view(
-        &self,
-        parent_block: &Block,
-        block: &Block,
-        view: u64,
-    ) -> Option<NodePublicKey> {
-        let Some(leader) = self.leader_at_block(parent_block, block, view) else {
-            info!("no leader for view {}", view);
-            return None;
-        };
-        Some(leader.public_key)
+    fn leader_for_view(&self, parent_hash: Hash, view: u64) -> Option<NodePublicKey> {
+        if let Ok(Some(parent)) = self.get_block(&parent_hash) {
+            let leader = self.leader_at_block(&parent, &parent, view).unwrap();
+            Some(leader.public_key)
+        } else {
+            if view > 1 {
+                warn!(
+                    "parent not found while determining leader for view {}",
+                    view
+                );
+                return None;
+            }
+            let head_block = self.head_block();
+            let leader = self
+                .leader_at_block(&head_block, &head_block, view)
+                .unwrap();
+            Some(leader.public_key)
+        }
     }
 
     fn committee_for_hash(&self, parent_hash: Hash) -> Result<Vec<NodePublicKey>> {
@@ -1935,11 +1916,11 @@ impl Consensus {
             new_view.view, from
         );
 
-        let Some(high_qc_block) = self.get_block(&new_view.qc.block_hash)? else {
+        if self.get_block(&new_view.qc.block_hash)?.is_none() {
             trace!("high_qc block does not exist for NewView. Attempting to fetch block via sync");
             self.sync.sync_from_probe()?;
             return Ok(None);
-        };
+        }
 
         // Get the committee for the qc hash (should be highest?) for this view
         let committee: Vec<_> = self.committee_for_hash(new_view.qc.block_hash)?;
@@ -1978,7 +1959,7 @@ impl Consensus {
         // The leader for this view should be chosen according to the parent of the highest QC
         // What happens when there are multiple QCs with different parents?
         // if we are not the leader of the round in which the vote counts
-        if !self.are_we_leader_for_view(&high_qc_block, &high_qc_block, new_view.view) {
+        if !self.are_we_leader_for_view(new_view.qc.block_hash, new_view.view) {
             trace!(new_view.view, "skipping new view, not the leader");
             return Ok(None);
         }
@@ -1993,8 +1974,15 @@ impl Consensus {
                     qcs: BTreeMap::new(),
                 });
 
+        let Ok(Some(parent)) = self.get_block(&new_view.qc.block_hash) else {
+            return Err(anyhow!(
+                "parent block not found: {:?}",
+                new_view.qc.block_hash
+            ));
+        };
+
         let executed_block = BlockHeader {
-            number: high_qc_block.header.number + 1,
+            number: parent.header.number + 1,
             ..Default::default()
         };
 
@@ -2006,8 +1994,7 @@ impl Consensus {
             new_view_vote.signatures.push(new_view.signature);
 
             // Update state to root pointed by voted block (in meantime it might have changed!)
-            self.state
-                .set_to_root(high_qc_block.state_root_hash().into());
+            self.state.set_to_root(parent.state_root_hash().into());
             let Some(weight) = self.state.get_stake(new_view.public_key, executed_block)? else {
                 return Err(anyhow!("vote from validator without stake"));
             };
@@ -2560,7 +2547,7 @@ impl Consensus {
             parent.number(),
             block.view()
         );
-        let Some(proposer) = self.leader_at_block(&parent, block, block.view()) else {
+        let Some(proposer) = self.leader_at_block(&parent, &parent, block.view()) else {
             return Err(anyhow!(
                 "Failed to find leader. Block number {}, Parent number {}",
                 block.number(),
@@ -3028,8 +3015,8 @@ impl Consensus {
             // we need to set the (parent) block's view at which we call the jailing
             // precompile otherwise we won't know if we must use the node's history
             // or the checkpoint's history gradually extended during state-syncing
-            view: block.header.view,
-            number: block.header.number,
+            view: block.header.view + 1,
+            number: block.header.number + 1,
             mix_hash: block.header.mix_hash,
             ..Default::default()
         };
