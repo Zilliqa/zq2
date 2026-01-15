@@ -28,16 +28,12 @@ impl TrieStorage {
     pub fn new(
         pool: Arc<Pool<SqliteConnectionManager>>,
         kvdb: Arc<rocksdb::DB>,
-        final_height: Option<u64>,
+        height_tag: Arc<RwLock<[u8; 8]>>,
     ) -> Self {
         Self {
             pool,
             kvdb,
-            height_tag: Arc::new(RwLock::new(
-                u64::MAX
-                    .saturating_sub(final_height.unwrap_or(u64::MIN))
-                    .to_be_bytes(),
-            )),
+            height_tag,
         }
     }
 
@@ -162,15 +158,12 @@ impl TrieStorage {
         }
     }
 
+    #[cfg(test)]
     // We set the height tag to the reverse height, due to the lexicographical order used by rocksdb.
     // This ensures that the higher/later keys always get hit first, improving performance.
     fn inc_height_tag(&self, new_height: u64) -> Result<()> {
         let mut height_tag = self.height_tag.write();
         let new_height_tag = u64::MAX.saturating_sub(new_height).to_be_bytes();
-        anyhow::ensure!(
-            new_height_tag <= *height_tag,
-            "descending height is not supported"
-        );
         *height_tag = new_height_tag;
         Ok(())
     }
@@ -254,18 +247,21 @@ mod tests {
                 .unwrap(),
         );
         let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
-        let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), None);
+        let tag = Arc::new(RwLock::new(u64::MAX.to_be_bytes()));
+        let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), tag);
 
         let key_prefix = alloy::consensus::EMPTY_ROOT_HASH.0;
 
         // normal key read/write, w/o height-tags
         assert_eq!(trie_storage.get_migrate_at().unwrap(), u64::MAX); // default
 
-        trie_storage.inc_height_tag(u64::MAX).unwrap();
+        trie_storage.inc_height_tag(u64::MAX).unwrap(); // ignored
         trie_storage.set_migrate_at(u64::MIN).unwrap();
         assert_eq!(trie_storage.get_migrate_at().unwrap(), u64::MIN); // new value
 
-        assert!(trie_storage.inc_height_tag(u64::MIN).is_err());
+        trie_storage.inc_height_tag(u64::MIN).unwrap(); // ignored
+        trie_storage.set_migrate_at(u64::MAX).unwrap();
+        assert_eq!(trie_storage.get_migrate_at().unwrap(), u64::MAX); // prev value
 
         // count all keys
         let iter = rdb.prefix_iterator(key_prefix.as_slice());
@@ -281,7 +277,8 @@ mod tests {
                 .unwrap(),
         );
         let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
-        let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), None);
+        let tag = Arc::new(RwLock::new(u64::MAX.to_be_bytes()));
+        let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), tag);
 
         let key_prefix = alloy::consensus::EMPTY_ROOT_HASH.0;
         let conn = sql.get().unwrap();
@@ -314,7 +311,8 @@ mod tests {
                 .unwrap(),
         );
         let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
-        let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), None);
+        let tag = Arc::new(RwLock::new(u64::MAX.to_be_bytes()));
+        let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), tag);
 
         let key_prefix = alloy::consensus::EMPTY_ROOT_HASH.0;
 
@@ -334,6 +332,14 @@ mod tests {
         let value = trie_storage.get(key_prefix.as_slice()).unwrap();
         assert_eq!(value.unwrap(), b"max_value".to_vec());
 
+        // test
+        trie_storage.inc_height_tag(u64::MIN).unwrap();
+        trie_storage
+            .insert(key_prefix.as_slice(), b"min_value".to_vec())
+            .unwrap();
+        let value = trie_storage.get(key_prefix.as_slice()).unwrap();
+        assert_eq!(value.unwrap(), b"max_value".to_vec());
+
         // count all keys
         let iter = rdb.prefix_iterator(key_prefix.as_slice());
         assert_eq!(iter.count(), 2);
@@ -348,7 +354,8 @@ mod tests {
                 .unwrap(),
         );
         let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
-        let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), None);
+        let tag = Arc::new(RwLock::new(u64::MAX.to_be_bytes()));
+        let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), tag);
 
         let key_prefix = alloy::consensus::EMPTY_ROOT_HASH.0;
         rdb.put(key_prefix.as_slice(), b"rdb_value".to_vec())

@@ -13,6 +13,7 @@ use alloy::primitives::Address;
 use anyhow::{Context, Result, anyhow};
 #[allow(unused_imports)]
 use eth_trie::{DB, EthTrie, MemoryDB, Trie};
+use parking_lot::RwLock;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rocksdb::{BlockBasedOptions, Cache, DBWithThreadMode, Options, SingleThreaded};
@@ -246,6 +247,7 @@ const CURRENT_DB_VERSION: &str = "1";
 pub struct Db {
     pool: Arc<Pool<SqliteConnectionManager>>,
     kvdb: Arc<rocksdb::DB>,
+    height_tag: Arc<RwLock<[u8; 8]>>,
     path: Option<Box<Path>>,
     /// The block height at which ZQ2 blocks begin.
     /// This value should be required only for proto networks to distinguise between ZQ1 and ZQ2 blocks.
@@ -346,12 +348,21 @@ impl Db {
             rdb.latest_sequence_number()
         );
 
+        let final_height = rdb
+            .get("height_tag")?
+            .map(|b| u64::from_be_bytes(b.try_into().expect("must be 8-bytes")))
+            .unwrap_or_default();
+        let height_tag = Arc::new(RwLock::new(
+            u64::MAX.saturating_sub(final_height).to_be_bytes(),
+        ));
+
         Ok(Db {
             pool: Arc::new(pool),
             path,
             executable_blocks_height,
             kvdb: Arc::new(rdb),
             config,
+            height_tag,
         })
     }
 
@@ -790,11 +801,10 @@ impl Db {
     }
 
     pub fn state_trie(&self) -> Result<TrieStorage> {
-        let final_height = self.get_highest_canonical_block_number()?;
         Ok(TrieStorage::new(
             self.pool.clone(),
             self.kvdb.clone(),
-            final_height,
+            self.height_tag.clone(),
         ))
     }
 
