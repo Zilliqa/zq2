@@ -16,10 +16,10 @@ on:
 jobs:
   backfill_benchmarks:
     name: Backfill Benchmarks
-    runs-on: self-hosted
+    runs-on: ubuntu-latest-16-cores
     timeout-minutes: 2880
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: bencherdev/bencher@main
       - name: Install Rust
         run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && echo "$HOME/.cargo/bin" >> $GITHUB_PATH

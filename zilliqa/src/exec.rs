@@ -23,9 +23,11 @@ use revm::{
         BlockEnv, CfgEnv,
         result::{ExecutionResult, HaltReason, Output, ResultAndState},
     },
-    context_interface::{DBErrorMarker, TransactionType, transaction::AccessList},
+    context_interface::{
+        DBErrorMarker, TransactionType, block::BlobExcessGasAndPrice, transaction::AccessList,
+    },
     handler::EvmTr,
-    primitives::{B256, KECCAK_EMPTY},
+    primitives::{B256, KECCAK_EMPTY, eip4844::MIN_BLOB_GASPRICE, hardfork::SpecId},
     state::{AccountInfo, Bytecode, EvmState},
 };
 use revm_context::{ContextTr, TxEnv};
@@ -39,7 +41,7 @@ use crate::{
     constants, contracts,
     crypto::{Hash, NodePublicKey},
     error::ensure_success,
-    evm::{SPEC_ID, ZQ2Evm, ZQ2EvmContext, new_zq2_evm_ctx},
+    evm::{SPEC_ID_CANCUN, SPEC_ID_SHANGHAI, ZQ2Evm, ZQ2EvmContext, new_zq2_evm_ctx},
     inspector::{self, ScillaInspector, TouchedAddressInspector},
     message::{Block, BlockHeader},
     precompiles::{PENALTY_ADDRESS, SCILLA_CALL_ADDRESS, ViewHistory},
@@ -446,6 +448,7 @@ pub struct ExternalContext {
     pub has_called_scilla_precompile: bool,
     pub finalized_view: u64,
     pub view_history: Arc<RwLock<ViewHistory>>,
+    pub spec_id: SpecId,
 }
 
 pub enum BaseFeeAndNonceCheck {
@@ -564,6 +567,18 @@ impl State {
         } else {
             (self.view_history.clone(), self.finalized_view)
         };
+
+        let (spec_id, blob_excess_gas_and_price) = {
+            if fork.cancun_active {
+                (
+                    SPEC_ID_CANCUN,
+                    Some(BlobExcessGasAndPrice::new(0, MIN_BLOB_GASPRICE)),
+                )
+            } else {
+                (SPEC_ID_SHANGHAI, None)
+            }
+        };
+
         let external_context = ExternalContext {
             touched_address_inspector: TouchedAddressInspector::default(),
             fork: fork.clone(),
@@ -573,6 +588,7 @@ impl State {
             has_called_scilla_precompile: false,
             finalized_view,
             view_history,
+            spec_id,
         };
 
         let (tx_type, access_list, gas_priority_fee) = {
@@ -603,7 +619,7 @@ impl State {
 
         let evm_ctx = new_zq2_evm_ctx(pending_state, external_context)
             .with_cfg({
-                let mut cfg = CfgEnv::new_with_spec(SPEC_ID);
+                let mut cfg = CfgEnv::new_with_spec(spec_id);
                 cfg.disable_eip3607 = extra_opts.disable_eip3607;
                 cfg.chain_id = self.chain_id.eth;
                 cfg.disable_base_fee = match base_fee_and_nonce_check {
@@ -629,7 +645,7 @@ impl State {
                 basefee: self.gas_price.try_into()?,
                 difficulty: U256::from(1),
                 prevrandao: Some(Hash::builder().with(padded_view_number).finalize().into()),
-                blob_excess_gas_and_price: None,
+                blob_excess_gas_and_price,
                 beneficiary: Default::default(),
             });
 

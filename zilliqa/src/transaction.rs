@@ -618,17 +618,17 @@ impl SignedTransaction {
             _ => eth_chain_id,
         };
 
-        if let Some(txn_chain_id) = self.chain_id() {
-            if node_chain_id != txn_chain_id {
-                warn!(
-                    "Chain_id provided in transaction: {} is different than node chain_id: {}",
-                    txn_chain_id, node_chain_id
-                );
-                return Ok(ValidationOutcome::IncorrectChainId(
-                    txn_chain_id,
-                    node_chain_id,
-                ));
-            }
+        if let Some(txn_chain_id) = self.chain_id()
+            && node_chain_id != txn_chain_id
+        {
+            warn!(
+                "Chain_id provided in transaction: {} is different than node chain_id: {}",
+                txn_chain_id, node_chain_id
+            );
+            return Ok(ValidationOutcome::IncorrectChainId(
+                txn_chain_id,
+                node_chain_id,
+            ));
         }
         Ok(ValidationOutcome::Success)
     }

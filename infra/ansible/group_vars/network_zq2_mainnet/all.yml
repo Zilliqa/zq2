@@ -14,7 +14,7 @@ enable_faucet: false
 ubuntu_version: "24.04"
 
 # Docker images
-zq2_image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zq2:v0.18.1
+zq2_image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zq2:v0.19.0
 otterscan_image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/otterscan:v1.0.7
 spout_image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/eth-spout:main
 stats_dashboard_image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zilstats-server:v0.1.0
@@ -24,6 +24,7 @@ process_exporter_image: ncabatoff/process-exporter:0.8.1
 node_exporter_image: prom/node-exporter:v1.9.0
 
 # Persistence Configuration
+persistence_snapshot_id: ""
 persistence_interval_blocks: 10800
 persistence_max_item_to_keep: 50
 persistence_dir: "/data"

@@ -467,8 +467,7 @@ impl P2pNode {
                             self.send_to(&Self::shard_id_to_topic(destination, None).hash(), |c| c.local_messages.send((source, message)))?;
                         }
                         InternalMessage::ExportBlockCheckpoint(block, transactions, parent, trie_storage, view_history, path) => {
-                            // Exporting the checkpoint is a CPU-intensive task, so we spawn it on a separate thread.
-                            self.task_threads.spawn_blocking( move  || {
+                            self.task_threads.spawn(async move {
                                 db::checkpoint_block_with_state(&block, &transactions, &parent, trie_storage, source, view_history, path)
                             });
                         }
@@ -538,11 +537,15 @@ impl P2pNode {
                     }
                 }
                 _ = terminate.recv() => {
+                    info!(shards=%self.shard_threads.len(), tasks=%self.task_threads.len(), "SIGTERM. Shutting down.");
                     self.shard_threads.shutdown().await;
+                    self.task_threads.shutdown().await;
                     break;
                 },
                 _ = signal::ctrl_c() => {
+                    info!(shards=%self.shard_threads.len(), tasks=%self.task_threads.len(), "CTRL-C. Shutting down.");
                     self.shard_threads.shutdown().await;
+                    self.task_threads.shutdown().await;
                     break;
                 },
             }
@@ -551,6 +554,7 @@ impl P2pNode {
                 std::sync::atomic::Ordering::Relaxed,
             );
         }
+        info!("Shutdown.");
         Ok(())
     }
 }

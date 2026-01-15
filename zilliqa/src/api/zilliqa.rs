@@ -1038,7 +1038,12 @@ pub fn ds_block_listing(params: Params, node: &Arc<Node>) -> Result<DSBlockListi
         } else {
             1
         };
-    let max_pages = num_ds_blocks / 10 + if num_ds_blocks % 10 == 0 { 0 } else { 1 };
+    let max_pages = num_ds_blocks / 10
+        + if num_ds_blocks.is_multiple_of(10) {
+            0
+        } else {
+            1
+        };
     let page_requested: u64 = params.one()?;
 
     if page_requested == 0 || page_requested > max_pages {

@@ -16,13 +16,13 @@ jobs:
       id-token: write
       contents: write
     if: ${{ github.ref_name != 'main' && github.ref_type == 'tag' }} 
-    runs-on: [ self-hosted, gcp]
+    runs-on: ubuntu-latest-16-cores
     env:
       GCP_REGISTRY_DOMAIN: asia-docker.pkg.dev
       GCP_REGISTRY: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public
     steps:
     - name: 'Checkout scm'
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
       with:
         fetch-depth: 0
     - name: "Configure GCP Credentials"
@@ -62,13 +62,13 @@ jobs:
         id-token: write
         contents: write
       if: ${{ github.ref_name == 'main' }} || ${{ github.event_name == 'workflow_dispatch' }}
-      runs-on: [ self-hosted, gcp]
+      runs-on: ubuntu-latest-16-cores
       env:
         GCP_REGISTRY_DOMAIN: asia-docker.pkg.dev
         GCP_REGISTRY: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-private
       steps:
       - name: 'Checkout scm'
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - name: Get tag version - private image

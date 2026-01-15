@@ -1,7 +1,18 @@
 use std::{env, fs::File, io::Read};
 
+use alloy::{
+    network::EthereumWallet,
+    providers::{
+        Identity, ProviderBuilder, RootProvider,
+        fillers::{
+            BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller,
+            WalletFiller,
+        },
+    },
+    signers::local::PrivateKeySigner,
+};
 use anyhow::Result;
-use ethers::signers::Signer;
+use k256::ecdsa::SigningKey;
 use serde::{Deserialize, Serialize};
 use zilliqa_rs::{
     providers::{Http, Provider},
@@ -107,15 +118,9 @@ impl Config {
         Ok(self.source_of_funds.private_key.parse()?)
     }
 
-    pub fn make_eth_provider(
-        &self,
-    ) -> Result<ethers::providers::Provider<ethers::providers::Http>> {
-        Ok(
-            ethers::providers::Provider::<ethers::providers::Http>::try_from(
-                self.blockchain.rpc_url.as_str(),
-            )?,
-        )
-    }
+    // pub fn make_eth_provider(&self) -> Result<Wallet> {
+    //     Ok(ProviderBuilder::new().connect_http(self.blockchain.rpc_url.parse().unwrap()))
+    // }
 
     pub fn eth_chainid(&self) -> u64 {
         u64::from(self.blockchain.chainid | 0x8000)
@@ -125,15 +130,34 @@ impl Config {
         &self,
         from: &Account,
     ) -> Result<
-        ethers::middleware::signer::SignerMiddleware<
-            ethers::providers::Provider<ethers::providers::Http>,
-            ethers::signers::LocalWallet,
+        FillProvider<
+            JoinFill<
+                JoinFill<
+                    JoinFill<
+                        Identity,
+                        JoinFill<
+                            GasFiller,
+                            JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>,
+                        >,
+                    >,
+                    WalletFiller<EthereumWallet>,
+                >,
+                ChainIdFiller,
+            >,
+            RootProvider,
         >,
     > {
-        let provider = self.make_eth_provider()?;
-        Ok(ethers::middleware::SignerMiddleware::new(
-            provider,
-            from.get_eth_wallet()?.with_chain_id(self.eth_chainid()),
-        ))
+        let key = SigningKey::from_slice(from.get_privkey_hex()?.as_bytes())?;
+        let signer = PrivateKeySigner::from_signing_key(key);
+        let wallet = EthereumWallet::new(signer);
+        let provider = ProviderBuilder::new()
+            .wallet(wallet)
+            .with_chain_id(self.eth_chainid())
+            .connect_hyper_http(self.blockchain.rpc_url.parse().unwrap());
+        Ok(provider)
+        // Ok(ethers::middleware::SignerMiddleware::new(
+        //     provider,
+        //     from.get_eth_wallet()?.with_chain_id(self.eth_chainid()),
+        // ));
     }
 }

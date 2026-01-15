@@ -6,7 +6,6 @@ SCILLA_SERVER_PORT="62831"
 
 start() {
     docker ps -a --filter "name=zilliqa-" --format "{{'{{'}}.ID{{'}}'}}" | xargs -r docker rm -f &> /dev/null || echo 0
-    docker container prune -f
     docker run --ulimit nofile=1000000:1000000 -td -p 3333:3333/udp -p 4201:4201 -p 4202:4202 --cap-add=SYS_PTRACE --cap-add=PERFMON --cap-add=BPF --cap-add=SYS_ADMIN \
         --net=host --name zilliqa-{{ zq2_version }} \
         -v /config.toml:/config.toml \
@@ -30,10 +29,11 @@ start() {
         -e SECRET_KEY={{ zq2_private_key }} \
         --restart=unless-stopped \
         ${ZQ2_IMAGE} ${SCILLA_SERVER_PORT} --log-json
+    docker system prune -a -f --volumes
 }
 
 stop() {
-    docker ps --filter "name=zilliqa-" --format "{{'{{'}}.ID{{'}}'}}" | xargs -r docker stop
+    docker ps --filter "name=zilliqa-" --format "{{'{{'}}.ID{{'}}'}}" | xargs -r docker stop -t 600 --signal SIGTERM
 }
 
 case ${1} in

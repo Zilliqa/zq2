@@ -1,9 +1,9 @@
-FROM rust:1.88.0-slim-bullseye as builder
+FROM rust:1.92.0-slim-bookworm as builder
 
 ARG is_release=false
 RUN apt update -y && \
     apt upgrade -y && \
-    apt install -y protobuf-compiler libclang-dev build-essential
+    apt install -y protobuf-compiler libclang-dev build-essential libssl-dev pkg-config
 
 RUN apt autoremove
 
@@ -24,7 +24,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     fi
 
 
-FROM ubuntu:22.04
+FROM ubuntu:24.04
 
 RUN apt update -y && \
     apt install -y build-essential libev-dev libgmp-dev curl

@@ -214,7 +214,6 @@ impl Node {
         let db = Arc::new(Db::new(
             config.data_dir.as_ref(),
             config.eth_chain_id,
-            config.state_cache_size,
             executable_blocks_height,
             config.db.clone(),
         )?);
@@ -808,6 +807,7 @@ impl Node {
 
         match tracer {
             GethDebugTracerType::BuiltInTracer(tracer) => match tracer {
+                GethDebugBuiltInTracerType::Erc7562Tracer => todo!("Implement ERC7562 tracer"),
                 GethDebugBuiltInTracerType::CallTracer => {
                     let call_config = tracer_config.into_call_config()?;
                     let mut inspector = TracingInspector::new(

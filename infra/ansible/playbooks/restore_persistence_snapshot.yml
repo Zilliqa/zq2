@@ -1,0 +1,263 @@
+- name: Restore persistence snapshot
+  hosts: all:!role_apps
+  become: true
+  tags:
+    - install
+    - all
+  
+  tasks:
+  
+    - name: Validate persistence snapshot exists
+      google.cloud.gcp_compute_snapshot_info:
+        project: "{{ project_id }}"
+        auth_kind: application
+      delegate_to: localhost
+      become: false
+      register: snapshots_info
+      changed_when: false
+
+    - name: Compute snapshot selection settings
+      ansible.builtin.set_fact:
+        use_requested_snapshot: "{{ (persistence_snapshot_id is defined) and ((persistence_snapshot_id | string) | length > 0) }}"
+        network_filter_value: "{{ network | default(chain_name) }}"
+
+    - name: Check if requested snapshot exists
+      ansible.builtin.set_fact:
+        requested_snapshot_found: "{{ (snapshots_info.resources | default([]) | selectattr('name', 'equalto', persistence_snapshot_id) | list | length) > 0 }}"
+      when: use_requested_snapshot | bool
+
+    - name: Abort if requested snapshot does not exist
+      ansible.builtin.fail:
+        msg: "Requested snapshot '{{ persistence_snapshot_id }}' not found in project {{ project_id }}; aborting play."
+      when:
+        - use_requested_snapshot | bool
+        - not requested_snapshot_found | default(false)
+
+    - name: Use requested snapshot id when found
+      ansible.builtin.set_fact:
+        effective_snapshot_id: "{{ persistence_snapshot_id }}"
+      when:
+        - use_requested_snapshot | bool
+        - requested_snapshot_found | default(false)
+
+    - name: Select latest labeled snapshot when no snapshot id provided
+      ansible.builtin.set_fact:
+        latest_labeled_snapshot: >-
+          {{ (snapshots_info.resources | default([])
+              | selectattr('labels', 'defined')
+              | selectattr('labels.network', 'defined')
+              | selectattr('labels.network', 'equalto', network_filter_value)
+              | selectattr('labels.backup', 'defined')
+              | selectattr('labels.backup', 'equalto', 'true')
+              | sort(attribute='creationTimestamp')) | last | default(None) }}
+      when: not use_requested_snapshot | bool
+
+    - name: Abort if no labeled snapshot found for fallback
+      ansible.builtin.fail:
+        msg: "No snapshots found with labels network='{{ network_filter_value }}' and backup='true' in project {{ project_id }}."
+      when:
+        - not use_requested_snapshot | bool
+        - latest_labeled_snapshot is not defined or latest_labeled_snapshot is none
+
+    - name: Set effective snapshot id from latest labeled snapshot
+      ansible.builtin.set_fact:
+        effective_snapshot_id: "{{ latest_labeled_snapshot.name }}"
+      when:
+        - not use_requested_snapshot | bool
+        - latest_labeled_snapshot is defined and latest_labeled_snapshot is not none
+  
+    - name: Check if Zilliqa service exists
+      ansible.builtin.stat:
+        path: "/etc/systemd/system/zilliqa.service"
+      register: service_file
+
+    - name: Abort if Zilliqa service is missing
+      ansible.builtin.fail:
+        msg: "Zilliqa service not found; aborting play."
+      when: not service_file.stat.exists
+
+    - name: Stop Zilliqa service
+      ansible.builtin.systemd:
+        name: zilliqa
+        state: stopped
+
+    - name: Unmount /data volume
+      ansible.builtin.mount:
+        path: /data
+        state: unmounted
+
+    - name: Resolve GCE zone for instance
+      ansible.builtin.command:
+        argv:
+          - gcloud
+          - compute
+          - instances
+          - list
+          - "--project={{ project_id }}"
+          - "--filter=name=('{{ inventory_hostname }}')"
+          - "--format=value(zone.basename())"
+      delegate_to: localhost
+      become: false
+      register: resolved_zone
+      changed_when: false
+
+    - name: Set zone variable from resolved zone
+      ansible.builtin.set_fact:
+        zone: "{{ resolved_zone.stdout }}"
+      when: resolved_zone.stdout | length > 0
+
+    - name: Fail if zone could not be resolved
+      ansible.builtin.fail:
+        msg: "Could not resolve zone for instance {{ inventory_hostname }} in project {{ project_id }}"
+      when: resolved_zone.stdout | length == 0
+
+    - name: Check if data disk is attached
+      ansible.builtin.command:
+        argv:
+          - gcloud
+          - compute
+          - instances
+          - describe
+          - "{{ inventory_hostname }}"
+          - "--project={{ project_id }}"
+          - "--zone={{ zone }}"
+          - "--format=value(disks.source)"
+      delegate_to: localhost
+      become: false
+      register: attached_disk_sources
+      changed_when: false
+
+    - name: Detach data disk from instance if attached
+      ansible.builtin.command:
+        argv:
+          - gcloud
+          - compute
+          - instances
+          - detach-disk
+          - "{{ inventory_hostname }}"
+          - "--disk={{ inventory_hostname }}-data"
+          - "--project={{ project_id }}"
+          - "--zone={{ zone }}"
+      delegate_to: localhost
+      become: false
+      when: ("https://www.googleapis.com/compute/v1/projects/" ~ project_id ~ "/zones/" ~ zone ~ "/disks/" ~ inventory_hostname ~ "-data") in (attached_disk_sources.stdout | split(';'))
+
+    - name: Delete data disk
+      google.cloud.gcp_compute_disk:
+        name: "{{ inventory_hostname }}-data"
+        zone: "{{ zone }}"
+        project: "{{ project_id }}"
+        state: absent
+        auth_kind: application
+      delegate_to: localhost
+      become: false
+
+    - name: Restore data disk from snapshot
+      google.cloud.gcp_compute_disk:
+        name: "{{ inventory_hostname }}-data"
+        zone: "{{ zone }}"
+        project: "{{ project_id }}"
+        type: "pd-ssd"
+        source_snapshot:
+          selfLink: "projects/{{ project_id }}/global/snapshots/{{ effective_snapshot_id }}"
+        labels:
+          node-name: "{{ inventory_hostname }}"
+          role: "{{ labels['role'] | default('unknown') }}"
+          zq2-network: "{{ chain_name }}"
+          goog-terraform-provisioned: "true"
+        state: present
+        auth_kind: application
+      delegate_to: localhost
+      become: false
+
+    - name: Attach restored data disk to instance
+      ansible.builtin.command:
+        argv:
+          - gcloud
+          - compute
+          - instances
+          - attach-disk
+          - "{{ inventory_hostname }}"
+          - "--disk={{ inventory_hostname }}-data"
+          - "--device-name=data"
+          - "--zone={{ zone }}"
+          - "--project={{ project_id }}"
+      delegate_to: localhost
+      become: false
+
+    - name: Check if data disk device exists
+      ansible.builtin.stat:
+        path: /dev/disk/by-id/google-data
+      register: data_disk_device
+      failed_when: false
+      changed_when: false
+
+    - name: Get real device path for data disk
+      ansible.builtin.command: readlink -f /dev/disk/by-id/google-data
+      register: data_disk_path
+      when: data_disk_device.stat.exists
+      changed_when: false
+      failed_when: false
+
+    - name: Ensure /data directory exists
+      ansible.builtin.file:
+        path: /data
+        state: directory
+        mode: '0755'
+      when: data_disk_device.stat.exists
+
+    - name: Get UUID of data disk
+      ansible.builtin.command: blkid -s UUID -o value {{ data_disk_path.stdout }}
+      register: data_disk_uuid
+      when: data_disk_device.stat.exists
+      changed_when: false
+      failed_when: false
+
+    - name: Mount data disk to /data
+      ansible.builtin.mount:
+        path: /data
+        src: "UUID={{ data_disk_uuid.stdout }}"
+        fstype: ext4
+        opts: defaults,nofail
+        state: mounted
+      when:
+        - data_disk_device.stat.exists
+        - data_disk_uuid.stdout is defined
+        - data_disk_uuid.stdout != ""
+
+    - name: Ensure ownership of /data directory
+      ansible.builtin.file:
+        path: /data
+        owner: root
+        group: root
+        mode: '0755'
+      when: data_disk_device.stat.exists
+
+    - name: Display message if data disk not found
+      ansible.builtin.debug:
+        msg: "Data disk not found on this node, skipping mount configuration"
+      when: not data_disk_device.stat.exists
+
+    - name: Warm up data disk by sequential read
+      ansible.builtin.command:
+        argv:
+          - fio
+          - --name=warmup
+          - --filename={{ data_disk_path.stdout }}
+          - --rw=read
+          - --bs=1M
+          - --iodepth=32
+          - --direct=1
+      when:
+        - data_disk_device.stat.exists
+        - data_disk_path.stdout is defined
+        - data_disk_path.stdout | length > 0
+      changed_when: false
+      failed_when: false
+
+    - name: Start Zilliqa service with daemon reload
+      ansible.builtin.systemd:
+        name: zilliqa
+        state: started
+        enabled: yes
+        daemon_reload: yes

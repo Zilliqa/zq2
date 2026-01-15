@@ -5,11 +5,15 @@ start() {
     docker ps -a --filter "name=node-exporter" --format "{{'{{'}}.ID{{'}}'}}" | xargs -r docker rm -f &> /dev/null || echo 0
     docker run -td -p 9100:9100 --name node-exporter \
         --net=host --restart=unless-stopped --pull=always \
+        -v "/:/host:ro,rslave" \
         ${NODE_EXPORTER_IMAGE} \
+        --path.rootfs=/host \
         --collector.disable-defaults \
         --collector.cpu \
         --collector.meminfo \
         --collector.filesystem \
+        --collector.filesystem.mount-points-exclude='^/(sys|proc|dev|run)($|/)' \
+        --collector.filesystem.fs-types-exclude='^(sysfs|procfs|devtmpfs|tmpfs|overlay|squashfs|autofs)$' \
         &> /dev/null &
 }
 

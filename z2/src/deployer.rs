@@ -1,13 +1,13 @@
 use std::{collections::HashMap, ops::Add, sync::Arc};
 
+use alloy::{
+    primitives::{Bytes, U256},
+    providers::Provider as _,
+    rpc::types::TransactionRequest,
+};
 use anyhow::Result;
 use clap::ValueEnum;
 use colored::Colorize;
-use ethers::{
-    middleware::Middleware,
-    prelude::{Bytes, TransactionRequest},
-};
-use primitive_types::{H160, H256, U256};
 use tokio::{sync::Semaphore, task};
 use zilliqa::{crypto::SecretKey, exec::BLESSED_TRANSACTIONS};
 
@@ -149,29 +149,30 @@ async fn post_install(chain: ChainInstance) -> Result<()> {
     let gas_price = client.get_gas_price().await?;
 
     let mut start_nonce = client
-        .get_transaction_count(H160(genesis_address.address.0.into()), None)
+        .get_transaction_count(genesis_address.address)
         .await?;
+
     for blessed_txns in BLESSED_TRANSACTIONS {
         if let Ok(Some(_)) = client
-            .get_transaction_receipt(H256(blessed_txns.hash.0))
+            .get_transaction_receipt(blessed_txns.hash.0.into())
             .await
         {
             continue;
         }
 
-        let tx = TransactionRequest::new()
-            .to(H160(blessed_txns.sender.0.into()))
+        let tx = TransactionRequest::default()
+            .to(blessed_txns.sender)
             .nonce(start_nonce)
-            .value(U256::from(blessed_txns.gas_limit) * gas_price);
+            .value(U256::from(blessed_txns.gas_limit as u128 * gas_price));
 
         start_nonce = start_nonce.add(1);
 
-        let funding_txn = client.send_transaction(tx, None).await?;
-        _ = funding_txn.await?;
+        let funding_txn = client.send_transaction(tx).await?;
+        _ = funding_txn.get_receipt().await?;
 
         // Send blessed transaction itself
         let payload = Bytes::from(blessed_txns.payload.to_vec());
-        _ = client.send_raw_transaction(payload).await?;
+        _ = client.send_raw_transaction(&payload).await?;
     }
 
     anyhow::Ok(())
