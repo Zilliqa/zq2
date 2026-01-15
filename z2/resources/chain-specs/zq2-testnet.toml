@@ -92,5 +92,5 @@ consensus.forks = [
     { at_height = 14997600, validator_jailing = true },
     { at_height = 23685219, scilla_empty_maps_are_encoded_correctly = true },
     { at_height = 23685219, cancun_active = true },
-    { at_height = 99999999, scilla_call_gas_exempt_addrs_v2 = [] },
+    { at_height = 23685219, scilla_call_gas_exempt_addrs_v2 = [] },
 ]
