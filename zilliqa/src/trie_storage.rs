@@ -1,13 +1,14 @@
 use std::sync::Arc;
 
 use anyhow::Result;
+use eth_trie::{EthTrie, Trie};
 use parking_lot::RwLock;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rocksdb::WriteBatch;
 use rusqlite::OptionalExtension;
 
-use crate::{cfg::Forks, crypto::Hash};
+use crate::{cfg::Forks, crypto::Hash, state::Account};
 
 // Percentiles: P50: 414.93 P75: 497.53 P99: 576.82 P99.9: 579.79 P99.99: 12678.76
 pub const BLOCK_SIZE: usize = 1 << 12;
@@ -35,6 +36,35 @@ impl TrieStorage {
             kvdb,
             view_tag,
         }
+    }
+
+    // This snapshot promotes the *active* keys to the latest tag, duplicating the values.
+    pub fn snapshot(&self, state_root_hash: Hash) -> Result<()> {
+        let trie_storage = Arc::new(self.clone());
+        // iterate over the entire state trie
+        let mut state_trie = EthTrie::new(trie_storage.clone()).at_root(state_root_hash.into());
+        for akv in state_trie.iter() {
+            let (key, serialised_account) = akv?;
+            let mut keys = Vec::with_capacity(100);
+            let mut values = Vec::with_capacity(100);
+            {
+                // iterate over the entire account trie
+                let account_root = Account::try_from(serialised_account.as_slice())?.storage_root;
+                let mut account_trie = EthTrie::new(trie_storage.clone()).at_root(account_root);
+                for skv in account_trie.iter() {
+                    let (storage_key, storage_val) = skv?;
+                    keys.push(storage_key);
+                    values.push(storage_val);
+                }
+                keys.push(key);
+                values.push(serialised_account);
+                account_trie.root_hash()?; // promote root
+            }
+            // promote the entire set of keys/values
+            self.write_batch(keys, values)?;
+        }
+        state_trie.root_hash()?; // promote root
+        Ok(())
     }
 
     // Writes a batch of key-value pairs to the database.
