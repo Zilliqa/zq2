@@ -484,7 +484,7 @@ impl Sync {
                 continue; // skip if block has empty transactions root hash
             }
             let block = bnr.block;
-            tracing::info!(number=%block.number(), hash=%block.hash(), "Recovering checkpoint");
+            //tracing::info!(number=%block.number(), hash=%block.hash(), "Recovering checkpoint");
             self.state = SyncState::Phase4((block.number(), block.hash()));
             let range = block.number()..=block.number();
             return self.request_passive_sync(range); // request 1 block only
@@ -581,7 +581,7 @@ impl Sync {
             let range = proposals.first().as_ref().unwrap().number()
                 ..=proposals.last().as_ref().unwrap().number();
             if self.db.contains_canonical_block(&ancestor_hash)? {
-                info!(?range, "InjectRecent : received");
+                //info!(?range, "InjectRecent : received");
                 self.inject_proposals(proposals)?;
             } else {
                 debug!(?range, "InjectRecent: skipped");
@@ -765,9 +765,9 @@ impl Sync {
 
         if let Some(response) = response {
             if !response.is_empty() {
-                info!(length = response.len(), %from,
-                    "PassiveResponse : received",
-                );
+                // info!(length = response.len(), %from,
+                //     "PassiveResponse : received",
+                // );
                 // self.blocks_downloaded = self.blocks_downloaded.saturating_add(response.len());
                 self.peers
                     .done_with_peer(self.in_flight.pop_front(), DownGrade::None);
@@ -804,7 +804,7 @@ impl Sync {
         }
 
         if let Some(peer_info) = self.peers.get_next_peer() {
-            info!(?range, from = %peer_info.peer_id, "PassiveSync : requesting");
+            //info!(?range, from = %peer_info.peer_id, "PassiveSync : requesting");
             let message = ExternalMessage::PassiveSyncRequest(RequestBlocksByHash {
                 request_at: SystemTime::now(),
                 count: range.count(),
@@ -841,9 +841,9 @@ impl Sync {
         // Only process a full response
         if let Some(response) = response {
             if !response.is_empty() {
-                info!(?range, %from,
-                    "MultiBlockResponse : received",
-                );
+                // info!(?range, %from,
+                //     "MultiBlockResponse : received",
+                // );
                 self.blocks_downloaded = self.blocks_downloaded.saturating_add(response.len());
                 self.peers
                     .done_with_peer(self.in_flight.pop_front(), DownGrade::None);
@@ -996,9 +996,9 @@ impl Sync {
                     .finalize();
 
                 // Fire request, to the original peer that sent the segment metadata
-                info!(?range, from = %peer_info.peer_id,
-                    "MissingBlocks : requesting",
-                );
+                // info!(?range, from = %peer_info.peer_id,
+                //     "MissingBlocks : requesting",
+                // );
 
                 self.state = SyncState::Phase2((checksum, range, block));
 
@@ -1068,7 +1068,7 @@ impl Sync {
             .get_block_and_receipts_and_transactions(BlockFilter::MaxCanonicalByHeight)?
             .unwrap();
 
-        info!(%from, number = %brt.block.number(), "BlockRequest : received");
+        //info!(%from, number = %brt.block.number(), "BlockRequest : received");
 
         // send cached response
         if let Some(prop) = self.cache_probe_response.as_ref()
@@ -1136,9 +1136,9 @@ impl Sync {
                         if response.len() == self.max_batch_size
                             || *range.start() <= self.started_at
                         {
-                            info!(?range, from = %peer_id,
-                                "ActiveResponse : received",
-                            );
+                            // info!(?range, from = %peer_id,
+                            //     "ActiveResponse : received",
+                            // );
                             let peer = peer.clone();
 
                             self.peers

@@ -1012,10 +1012,10 @@ impl Network {
             for message in messages {
                 self.resend_message.send(message).unwrap();
             }
-            trace!(
-                "{}",
-                format_message(&self.nodes, source, destination, &message)
-            );
+            // trace!(
+            //     "{}",
+            //     format_message(&self.nodes, source, destination, &message)
+            // );
 
             self.handle_message((source, destination, message))
         }
@@ -1023,7 +1023,7 @@ impl Network {
 
     fn handle_message(&mut self, message: StreamMessage) {
         let (source, destination, ref contents) = message;
-        info!(%source, ?destination);
+        // info!(%source, ?destination);
         let sender_node = self
             .nodes
             .iter()
@@ -1144,7 +1144,7 @@ impl Network {
                 }
             }
             AnyMessage::External(external_message) => {
-                info!(%external_message, "external");
+                //info!(%external_message, "external");
 
                 let cbor_size =
                     cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024), &external_message)
@@ -1252,7 +1252,7 @@ impl Network {
                 }
             }
             AnyMessage::Response { channel, message } => {
-                info!(%message, ?channel, "response");
+                //info!(%message, ?channel, "response");
 
                 let cbor_size = cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024), &message)
                     .unwrap()

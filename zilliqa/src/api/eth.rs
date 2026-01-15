@@ -1195,7 +1195,7 @@ fn fee_history(params: Params, node: &Arc<Node>) -> Result<FeeHistory> {
         (number, node.config.consensus.gas_price, node.db.clone())
     };
     if newest_block_number < block_count {
-        warn!("block_count is greater than newest_block");
+        //warn!("block_count is greater than newest_block");
         block_count = newest_block_number;
     }
 

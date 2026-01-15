@@ -867,6 +867,9 @@ impl Consensus {
         proposal: Proposal,
         during_sync: bool,
     ) -> Result<Option<NetworkMessage>> {
+
+        // let tmp = self.state.committee()?;
+        // error!("Commitee before receiving proposal: {:?}", tmp);
         self.cleanup_votes()?;
 
         let (block, transactions) = proposal.into_parts();
@@ -1010,6 +1013,9 @@ impl Consensus {
             //     ..block.header
             // };
             let stakers = self.state.get_stakers(block.header)?;
+
+            // let tmp = self.state.committee()?;
+            // error!("Commitee after receiving proposal: {:?}", tmp);
 
             if !stakers.iter().any(|v| *v == self.public_key()) {
                 self.in_committee(false)?;
@@ -1303,6 +1309,25 @@ impl Consensus {
             );
             return Ok(None);
         }
+
+        let executed_block_header = block.header;
+
+        let committee = self
+            .state
+            .at_root(block.state_root_hash().into())
+            .get_stakers(executed_block_header)?;
+
+        let leader = self.leader_at_block(&block, block_view + 1).unwrap();
+        error!(
+            "Checking in vote leader for height: {} and block_view: {}, view: {}, leader: {:?}, myself: {:?}, commitee len: {}, state_root_hash: {:?}",
+            block.number(),
+            block.view(),
+            block_view + 1,
+            leader.peer_id,
+            self.peer_id(),
+            committee.len(),
+            block.state_root_hash()
+        );
 
         let executed_block_header = block.header;
 
@@ -1812,7 +1837,7 @@ impl Consensus {
             return Ok(None);
         };
 
-        error!(proposal_hash = ?final_block.hash(), ?final_block.header.view, ?final_block.header.number, txns = final_block.transactions.len(), "######### proposing block");
+        error!(proposal_hash = ?final_block.hash(), ?final_block.header.view, ?final_block.header.number, myself = ?self.peer_id(), "######### proposing block");
 
         Ok(Some((
             None,
@@ -2539,11 +2564,6 @@ impl Consensus {
         }
 
         // Derive the proposer from the block's view
-        error!(
-            "Checking in proposal leader for parent height: {} and view: {}",
-            parent.number(),
-            block.view()
-        );
         let Some(proposer) = self.leader_at_block(&parent, block.view()) else {
             return Err(anyhow!(
                 "Failed to find leader. Block number {}, Parent number {}",
@@ -2551,6 +2571,21 @@ impl Consensus {
                 parent.number(),
             ));
         };
+
+        let committee = self
+            .state
+            .at_root(parent.state_root_hash().into())
+            .get_stakers(parent.header)?;
+
+        error!(
+            "Checking in proposal leader for parent height: {} and view: {}, leader: {:?}, commitee len: {}, state_root_hash: {:?}",
+            parent.number(),
+            block.view(),
+            proposer.peer_id,
+            committee.len(),
+            parent.state_root_hash()
+        );
+
 
         // Verify the proposer's signature on the block
         let verified = proposer
@@ -2560,7 +2595,7 @@ impl Consensus {
         let committee = self
             .state
             .at_root(parent.state_root_hash().into())
-            .get_stakers(block.header)?;
+            .get_stakers(parent.header)?;
 
         if verified.is_err() {
             tracing::error!(?block, "Unable to verify block");
@@ -2578,7 +2613,7 @@ impl Consensus {
             &block.header.qc.cosigned,
             &committee,
             parent.state_root_hash(),
-            block,
+            &parent,
         )?;
 
         // Verify the block's QC signature - note the parent should be the committee the QC
@@ -2590,7 +2625,7 @@ impl Consensus {
                 &agg.cosigned,
                 &committee,
                 parent.state_root_hash(),
-                block,
+                &parent,
             )?;
             // Verify the aggregate QC's signature
             self.batch_verify_agg_signature(agg, &committee)?;
@@ -2772,7 +2807,7 @@ impl Consensus {
     }
 
     fn set_finalized_view(&self, view: u64) -> Result<()> {
-        info!("Finalized view");
+        info!("Finalized view: {}", view);
         self.db.set_finalized_view(view)
     }
 

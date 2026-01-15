@@ -34,7 +34,7 @@ use revm_context::{ContextTr, TxEnv};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::{
     cfg::{Fork, ScillaExtLibsPath, ScillaExtLibsPathInScilla, ScillaExtLibsPathInZq2},
@@ -842,7 +842,7 @@ impl State {
         let from_addr = txn.signer;
         let txn = txn.tx.into_transaction();
 
-        info!(?hash, from = ?from_addr, to = ?txn.to_addr(), ?txn, "executing txn");
+        error!(?hash, from = ?from_addr, to = ?txn.to_addr(), ?txn, "executing txn");
 
         let blessed = BLESSED_TRANSACTIONS.iter().any(|elem| elem.hash == hash);
 
@@ -1153,21 +1153,27 @@ impl State {
             .collect()
     }
 
-    pub fn committee(&self) -> Result<()> {
-        let data = contracts::deposit::COMMITTEE.encode_input(&[])?;
+    pub fn committee(&self) -> Result<Vec<PeerId>> {
+        // let data = contracts::deposit::COMMITTEE.encode_input(&[])?;
+        //
+        // let result = self.call_contract(
+        //     Address::ZERO,
+        //     Some(contract_addr::DEPOSIT_PROXY),
+        //     data,
+        //     0,
+        //     BlockHeader::default(),
+        // )?;
+        // let committee = ensure_success(result)?;
+        // let committee = contracts::deposit::COMMITTEE.decode_output(&committee)?;
+        //
+        // warn!("committee: {committee:?}");
 
-        let result = self.call_contract(
-            Address::ZERO,
-            Some(contract_addr::DEPOSIT_PROXY),
-            data,
-            0,
-            BlockHeader::default(),
-        )?;
-        let committee = ensure_success(result)?;
-        let committee = contracts::deposit::COMMITTEE.decode_output(&committee)?;
-        debug!("committee: {committee:?}");
-
-        Ok(())
+        let stakers = self.get_stakers(BlockHeader::default())?;
+        let mut peer_ids = Vec::new();
+        for staker in stakers {
+            peer_ids.push(self.get_peer_id(staker)?.unwrap());
+        }
+        Ok(peer_ids)
     }
 
     pub fn get_stake(

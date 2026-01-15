@@ -7,7 +7,7 @@ use alloy::{
 use ethabi::Token;
 use primitive_types::H160;
 use rand::Rng;
-use tracing::{info, trace};
+use tracing::{error, info, trace};
 use zilliqa::{
     contracts,
     crypto::{BlsSignature, NodePublicKey, SecretKey},
@@ -528,6 +528,8 @@ async fn validators_can_unstake(mut network: Network) {
         stake,
     )
     .await;
+
+    error!("UNSTAKE DONE!");
 
     // wait until unstake block is finalised
     network
