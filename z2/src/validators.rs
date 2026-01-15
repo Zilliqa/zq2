@@ -242,7 +242,7 @@ impl SignerClient {
     pub async fn get_future_stake(&self, public_key: &NodePublicKey) -> Result<u128> {
         let client = self.get_signer().await?;
 
-        let data = contracts::deposit_v7::GET_FUTURE_STAKE
+        let data = contracts::deposit_v8::GET_FUTURE_STAKE
             .encode_input(&[Token::Bytes(public_key.as_bytes())])
             .unwrap();
         let tx = TransactionRequest::default()
@@ -250,7 +250,7 @@ impl SignerClient {
             .input(TransactionInput::both(data.into()));
         let output = client.call(tx).await.unwrap();
 
-        let future_stake = contracts::deposit_v7::GET_FUTURE_STAKE
+        let future_stake = contracts::deposit_v8::GET_FUTURE_STAKE
             .decode_output(&output)
             .unwrap()[0]
             .clone()

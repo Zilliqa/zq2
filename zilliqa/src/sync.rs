@@ -1191,6 +1191,7 @@ impl Sync {
         let mut block_hash = meta.qc.block_hash;
         let mut block_num = meta.number;
         for SyncBlockHeader { header: meta, .. } in response.iter() {
+            info!("RECEIVED meta block num: {}, view: {}, hash: {:?}. BLock num: {}, block_hash: {:?}", meta.number, meta.view, meta.hash, block_num, block_hash);
             // check that the block hash and number is as expected.
             if meta.hash != Hash::ZERO && block_hash == meta.hash && block_num == meta.number + 1 {
                 block_hash = meta.qc.block_hash;
