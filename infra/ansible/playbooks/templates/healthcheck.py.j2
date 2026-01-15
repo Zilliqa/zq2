@@ -228,9 +228,9 @@ def check_checkpoint_status():
             return jsonify({
                 "status": "critical",
                 "error": "Last checkpoint has not been produced",
-                "current_block": current_block,
-                "latest_checkpoint_block_production": latest_checkpoint_block["production"],
-                "latest_checkpoint_block_upload": latest_checkpoint_block["upload"],
+                "current_block": str(current_block),
+                "latest_checkpoint_block_production": str(latest_checkpoint_block["production"]),
+                "latest_checkpoint_block_upload": str(latest_checkpoint_block["upload"]),
                 "code": 500
             }), 500
 
@@ -238,9 +238,9 @@ def check_checkpoint_status():
         return jsonify({
             "status": "healthy",
             "message": "Last checkpoint has been produced correctly",
-            "current_block": current_block,
-            "latest_checkpoint_block_production": latest_checkpoint_block["production"],
-            "latest_checkpoint_block_upload": latest_checkpoint_block["upload"],
+            "current_block": str(current_block),
+            "latest_checkpoint_block_production": str(latest_checkpoint_block["production"]),
+            "latest_checkpoint_block_upload": str(latest_checkpoint_block["upload"]),
             "code": 200
         }), 200
 
