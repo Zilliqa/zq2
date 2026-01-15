@@ -247,7 +247,7 @@ const CURRENT_DB_VERSION: &str = "1";
 pub struct Db {
     pool: Arc<Pool<SqliteConnectionManager>>,
     kvdb: Arc<rocksdb::DB>,
-    height_tag: Arc<RwLock<[u8; 8]>>,
+    view_tag: Arc<RwLock<[u8; 8]>>,
     path: Option<Box<Path>>,
     /// The block height at which ZQ2 blocks begin.
     /// This value should be required only for proto networks to distinguise between ZQ1 and ZQ2 blocks.
@@ -349,10 +349,10 @@ impl Db {
         );
 
         let final_height = rdb
-            .get("height_tag")?
+            .get("view_tag")?
             .map(|b| u64::from_be_bytes(b.try_into().expect("must be 8-bytes")))
             .unwrap_or_default();
-        let height_tag = Arc::new(RwLock::new(
+        let view_tag = Arc::new(RwLock::new(
             u64::MAX.saturating_sub(final_height).to_be_bytes(),
         ));
 
@@ -362,7 +362,7 @@ impl Db {
             executable_blocks_height,
             kvdb: Arc::new(rdb),
             config,
-            height_tag,
+            view_tag,
         })
     }
 
@@ -804,7 +804,7 @@ impl Db {
         Ok(TrieStorage::new(
             self.pool.clone(),
             self.kvdb.clone(),
-            self.height_tag.clone(),
+            self.view_tag.clone(),
         ))
     }
 
@@ -828,6 +828,8 @@ impl Db {
         sqlite_tx
             .prepare_cached("INSERT INTO tip_info (finalized_view) VALUES (?1) ON CONFLICT DO UPDATE SET finalized_view = ?1")?
             .execute([view])?;
+        let view_tag = u64::MAX.saturating_sub(view).to_be_bytes();
+        *self.view_tag.write() = view_tag;
         Ok(())
     }
 

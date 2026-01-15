@@ -21,22 +21,23 @@ const ROCKSDB_CUTOVER_AT: &str = "cutover_at";
 pub struct TrieStorage {
     pool: Arc<Pool<SqliteConnectionManager>>,
     kvdb: Arc<rocksdb::DB>,
-    height_tag: Arc<RwLock<[u8; 8]>>, // reverse height tag, big-endian u64
+    view_tag: Arc<RwLock<[u8; 8]>>, // reverse height tag, big-endian u64
 }
 
 impl TrieStorage {
     pub fn new(
         pool: Arc<Pool<SqliteConnectionManager>>,
         kvdb: Arc<rocksdb::DB>,
-        height_tag: Arc<RwLock<[u8; 8]>>,
+        view_tag: Arc<RwLock<[u8; 8]>>,
     ) -> Self {
         Self {
             pool,
             kvdb,
-            height_tag,
+            view_tag,
         }
     }
 
+    // Writes a batch of key-value pairs to the database.
     pub fn write_batch(&self, keys: Vec<Vec<u8>>, values: Vec<Vec<u8>>) -> Result<()> {
         if keys.is_empty() {
             return Ok(());
@@ -45,15 +46,16 @@ impl TrieStorage {
         anyhow::ensure!(keys.len() == values.len(), "Keys != Values");
 
         let mut batch = WriteBatch::default();
-        let height_tag = self.height_tag.read();
+        let view_tag = self.view_tag.read();
         for (mut key, value) in keys.into_iter().zip(values.into_iter()) {
-            // height-tag keys; lexicographically sorted
-            key.extend_from_slice(height_tag.as_slice()); // suffix big-endian height tags
+            // tag keys; lexicographically sorted
+            key.extend_from_slice(view_tag.as_slice()); // suffix big-endian height tags
             batch.put(key.as_slice(), value.as_slice());
         }
         Ok(self.kvdb.write(batch)?)
     }
 
+    // Called at startup, and writes the initial cutover value once, if it is missing.
     pub fn init_state_trie(&self, _forks: Forks) -> Result<()> {
         let rdb = self.kvdb.clone();
         if rdb.get(ROCKSDB_CUTOVER_AT)?.is_none() {
@@ -161,10 +163,10 @@ impl TrieStorage {
     #[cfg(test)]
     // We set the height tag to the reverse height, due to the lexicographical order used by rocksdb.
     // This ensures that the higher/later keys always get hit first, improving performance.
-    fn inc_height_tag(&self, new_height: u64) -> Result<()> {
-        let mut height_tag = self.height_tag.write();
-        let new_height_tag = u64::MAX.saturating_sub(new_height).to_be_bytes();
-        *height_tag = new_height_tag;
+    fn inc_view_tag(&self, new_height: u64) -> Result<()> {
+        let mut view_tag = self.view_tag.write();
+        let new_view_tag = u64::MAX.saturating_sub(new_height).to_be_bytes();
+        *view_tag = new_view_tag;
         Ok(())
     }
 }
@@ -255,11 +257,11 @@ mod tests {
         // normal key read/write, w/o height-tags
         assert_eq!(trie_storage.get_migrate_at().unwrap(), u64::MAX); // default
 
-        trie_storage.inc_height_tag(u64::MAX).unwrap(); // ignored
+        trie_storage.inc_view_tag(u64::MAX).unwrap(); // ignored
         trie_storage.set_migrate_at(u64::MIN).unwrap();
         assert_eq!(trie_storage.get_migrate_at().unwrap(), u64::MIN); // new value
 
-        trie_storage.inc_height_tag(u64::MIN).unwrap(); // ignored
+        trie_storage.inc_view_tag(u64::MIN).unwrap(); // ignored
         trie_storage.set_migrate_at(u64::MAX).unwrap();
         assert_eq!(trie_storage.get_migrate_at().unwrap(), u64::MAX); // prev value
 
@@ -304,7 +306,7 @@ mod tests {
 
     #[test]
     // height-tag read/write works
-    fn height_tagging() {
+    fn view_tagging() {
         let sql = Arc::new(
             Pool::builder()
                 .build(SqliteConnectionManager::memory())
@@ -317,7 +319,7 @@ mod tests {
         let key_prefix = alloy::consensus::EMPTY_ROOT_HASH.0;
 
         // write/read lo value
-        trie_storage.inc_height_tag(u64::MIN).unwrap();
+        trie_storage.inc_view_tag(u64::MIN).unwrap();
         trie_storage
             .insert(key_prefix.as_slice(), b"min_value".to_vec())
             .unwrap();
@@ -325,7 +327,7 @@ mod tests {
         assert_eq!(value.unwrap(), b"min_value".to_vec());
 
         // write/read hi value
-        trie_storage.inc_height_tag(u64::MAX).unwrap();
+        trie_storage.inc_view_tag(u64::MAX).unwrap();
         trie_storage
             .insert(key_prefix.as_slice(), b"max_value".to_vec())
             .unwrap();
@@ -333,7 +335,7 @@ mod tests {
         assert_eq!(value.unwrap(), b"max_value".to_vec());
 
         // test
-        trie_storage.inc_height_tag(u64::MIN).unwrap();
+        trie_storage.inc_view_tag(u64::MIN).unwrap();
         trie_storage
             .insert(key_prefix.as_slice(), b"min_value".to_vec())
             .unwrap();
@@ -366,7 +368,7 @@ mod tests {
         assert_eq!(value, b"rdb_value".to_vec());
 
         // peak ahead tests
-        trie_storage.inc_height_tag(u64::MIN).unwrap();
+        trie_storage.inc_view_tag(u64::MIN).unwrap();
         trie_storage
             .insert(key_prefix.as_slice(), b"min_value".to_vec())
             .unwrap();
@@ -374,7 +376,7 @@ mod tests {
         assert_eq!(value, b"min_value".to_vec());
 
         // peak ahead ordering
-        trie_storage.inc_height_tag(u64::MAX).unwrap();
+        trie_storage.inc_view_tag(u64::MAX).unwrap();
         trie_storage
             .insert(key_prefix.as_slice(), b"max_value".to_vec())
             .unwrap();
