@@ -22,23 +22,24 @@ const ROCKSDB_CUTOVER_AT: &str = "cutover_at";
 pub struct TrieStorage {
     pool: Arc<Pool<SqliteConnectionManager>>,
     kvdb: Arc<rocksdb::DB>,
-    view_tag: Arc<RwLock<[u8; 8]>>, // reverse height tag, big-endian u64
+    tag: Arc<RwLock<[u8; 8]>>, // reverse tag, big-endian u64
 }
 
 impl TrieStorage {
     pub fn new(
         pool: Arc<Pool<SqliteConnectionManager>>,
         kvdb: Arc<rocksdb::DB>,
-        view_tag: Arc<RwLock<[u8; 8]>>,
+        tag: Arc<RwLock<[u8; 8]>>,
     ) -> Self {
-        Self {
-            pool,
-            kvdb,
-            view_tag,
-        }
+        Self { pool, kvdb, tag }
     }
 
     // This snapshot promotes the *active* keys to the latest tag, duplicating the values.
+    //
+    // By taking a snapshot of the trie storage, we ensure that the active keys are duplicated and promoted to the latest tag.
+    // This allows any older keys to be deprecated and eventually removed from storage during compaction.
+    // However, this also means that the storage will grow in size as the active keys are duplicated.
+    // So, it is crucial that compaction is triggered regularly to maintain a reasonable storage size.
     pub fn snapshot(&self, state_root_hash: Hash) -> Result<()> {
         let trie_storage = Arc::new(self.clone());
         // iterate over the entire state trie
@@ -65,24 +66,6 @@ impl TrieStorage {
         }
         state_trie.root_hash()?; // promote root
         Ok(())
-    }
-
-    // Writes a batch of key-value pairs to the database.
-    pub fn write_batch(&self, keys: Vec<Vec<u8>>, values: Vec<Vec<u8>>) -> Result<()> {
-        if keys.is_empty() {
-            return Ok(());
-        }
-
-        anyhow::ensure!(keys.len() == values.len(), "Keys != Values");
-
-        let mut batch = WriteBatch::default();
-        let view_tag = self.view_tag.read();
-        for (mut key, value) in keys.into_iter().zip(values.into_iter()) {
-            // tag keys; lexicographically sorted
-            key.extend_from_slice(view_tag.as_slice()); // suffix big-endian height tags
-            batch.put(key.as_slice(), value.as_slice());
-        }
-        Ok(self.kvdb.write(batch)?)
     }
 
     // Called at startup, and writes the initial cutover value once, if it is missing.
@@ -159,12 +142,42 @@ impl TrieStorage {
         Ok(())
     }
 
-    // This function retrieves the 'latest' key, at all times.
-    // Legacy keys do not have a height-tag and are iterated first due to lexicographical sorting used by rocksdb.
-    // We peek the next key to determine if the legacy key is the latest, or if a later height-tag key is present.
-    fn get_latest_value(&self, key_prefix: &[u8]) -> Result<Option<Vec<u8>>> {
+    // Writes a batch of key-value pairs to the database.
+    //
+    // This is the tagging scheme used. Each tag is a U64 in big-endian format.
+    // |user-key + tag|seqno|type|
+    // |<-----internal key------>|
+    //
+    // Since the tagging is only performed here, only Trie keys are tagged.
+    // The only other keys stored in this database are internal configuration.
+    fn write_batch(&self, keys: Vec<Vec<u8>>, values: Vec<Vec<u8>>) -> Result<()> {
+        if keys.is_empty() {
+            return Ok(());
+        }
+
+        anyhow::ensure!(keys.len() == values.len(), "Keys != Values");
+
+        let mut batch = WriteBatch::default();
+        let tag = self.tag.read();
+        for (mut key, value) in keys.into_iter().zip(values.into_iter()) {
+            // tag keys; lexicographically sorted
+            key.extend_from_slice(tag.as_slice()); // suffix big-endian tags
+            batch.put(key.as_slice(), value.as_slice());
+        }
+        Ok(self.kvdb.write(batch)?)
+    }
+
+    // This function retrieves the 'latest' value, at all times.
+    //
+    // Legacy keys do not have a tag and are ordered first due to lexicographical sorting used by rocksdb.
+    // We peek the next key to determine if the legacy key is the latest, or if a later tag key is present.
+    //
+    // This is the tagging scheme used. Each tag is a U64 in big-endian format.
+    // |user-key + tag|seqno|type|
+    // |<-----internal key------>|
+    fn get_latest(&self, key_prefix: &[u8]) -> Result<Option<Vec<u8>>> {
         let mut iter = self.kvdb.prefix_iterator(key_prefix);
-        // early return if prefix is not found
+        // early return if user-key/prefix is not found
         let Some(prefix) = iter.next() else {
             return Ok(None);
         };
@@ -173,30 +186,33 @@ impl TrieStorage {
             return Ok(None);
         }
 
+        // Given that the trie keys are *all* Keccak256 keys, the legacy keys are exactly 32-bytes (256-bits) long,
+        // while the new tag keys are exactly 40-bytes (320-bits) long. We do not expect any other key lengths.
         if key.len() == 40 {
-            // height-tag key, return the latest value
+            // latest tag key, return the latest value
             Ok(Some(value.to_vec()))
         } else if key.len() == 32 {
-            // legacy key - peek to see if a later height-tag key is present
+            // legacy key - peek to see if a later tag key is present
             if let Some(peek) = iter.next() {
                 let peek = peek?;
                 if peek.0.starts_with(key_prefix) {
-                    return Ok(Some(peek.1.to_vec()));
+                    return Ok(Some(peek.1.to_vec())); // tag key has newer value
                 }
             }
-            Ok(Some(value.to_vec())) // fall-thru value
+            // We do not perform lazy migration here to avoid write amplification.
+            Ok(Some(value.to_vec())) // fall-thru value; return legacy value
         } else {
-            unimplemented!("unsupported key");
+            unimplemented!("unsupported trie key length {} bytes", key.len());
         }
     }
 
     #[cfg(test)]
     // We set the height tag to the reverse height, due to the lexicographical order used by rocksdb.
     // This ensures that the higher/later keys always get hit first, improving performance.
-    fn inc_view_tag(&self, new_height: u64) -> Result<()> {
-        let mut view_tag = self.view_tag.write();
-        let new_view_tag = u64::MAX.saturating_sub(new_height).to_be_bytes();
-        *view_tag = new_view_tag;
+    fn inc_tag(&self, new_height: u64) -> Result<()> {
+        let mut tag = self.tag.write();
+        let new_tag = u64::MAX.saturating_sub(new_height).to_be_bytes();
+        *tag = new_tag;
         Ok(())
     }
 }
@@ -207,7 +223,7 @@ impl eth_trie::DB for TrieStorage {
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, Self::Error> {
         // L1 - rocksdb
         if let Some(value) = self
-            .get_latest_value(key)
+            .get_latest(key)
             .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?
         {
             return Ok(Some(value));
@@ -287,11 +303,11 @@ mod tests {
         // normal key read/write, w/o height-tags
         assert_eq!(trie_storage.get_migrate_at().unwrap(), u64::MAX); // default
 
-        trie_storage.inc_view_tag(u64::MAX).unwrap(); // ignored
+        trie_storage.inc_tag(u64::MAX).unwrap(); // ignored
         trie_storage.set_migrate_at(u64::MIN).unwrap();
         assert_eq!(trie_storage.get_migrate_at().unwrap(), u64::MIN); // new value
 
-        trie_storage.inc_view_tag(u64::MIN).unwrap(); // ignored
+        trie_storage.inc_tag(u64::MIN).unwrap(); // ignored
         trie_storage.set_migrate_at(u64::MAX).unwrap();
         assert_eq!(trie_storage.get_migrate_at().unwrap(), u64::MAX); // prev value
 
@@ -336,7 +352,7 @@ mod tests {
 
     #[test]
     // height-tag read/write works
-    fn view_tagging() {
+    fn tagging() {
         let sql = Arc::new(
             Pool::builder()
                 .build(SqliteConnectionManager::memory())
@@ -349,7 +365,7 @@ mod tests {
         let key_prefix = alloy::consensus::EMPTY_ROOT_HASH.0;
 
         // write/read lo value
-        trie_storage.inc_view_tag(u64::MIN).unwrap();
+        trie_storage.inc_tag(u64::MIN).unwrap();
         trie_storage
             .insert(key_prefix.as_slice(), b"min_value".to_vec())
             .unwrap();
@@ -357,7 +373,7 @@ mod tests {
         assert_eq!(value.unwrap(), b"min_value".to_vec());
 
         // write/read hi value
-        trie_storage.inc_view_tag(u64::MAX).unwrap();
+        trie_storage.inc_tag(u64::MAX).unwrap();
         trie_storage
             .insert(key_prefix.as_slice(), b"max_value".to_vec())
             .unwrap();
@@ -365,7 +381,7 @@ mod tests {
         assert_eq!(value.unwrap(), b"max_value".to_vec());
 
         // test
-        trie_storage.inc_view_tag(u64::MIN).unwrap();
+        trie_storage.inc_tag(u64::MIN).unwrap();
         trie_storage
             .insert(key_prefix.as_slice(), b"min_value".to_vec())
             .unwrap();
@@ -398,7 +414,7 @@ mod tests {
         assert_eq!(value, b"rdb_value".to_vec());
 
         // peak ahead tests
-        trie_storage.inc_view_tag(u64::MIN).unwrap();
+        trie_storage.inc_tag(u64::MIN).unwrap();
         trie_storage
             .insert(key_prefix.as_slice(), b"min_value".to_vec())
             .unwrap();
@@ -406,7 +422,7 @@ mod tests {
         assert_eq!(value, b"min_value".to_vec());
 
         // peak ahead ordering
-        trie_storage.inc_view_tag(u64::MAX).unwrap();
+        trie_storage.inc_tag(u64::MAX).unwrap();
         trie_storage
             .insert(key_prefix.as_slice(), b"max_value".to_vec())
             .unwrap();
