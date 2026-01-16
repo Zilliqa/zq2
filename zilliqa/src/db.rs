@@ -348,13 +348,16 @@ impl Db {
             rdb.latest_sequence_number()
         );
 
-        let final_height = rdb
-            .get("view_tag")?
-            .map(|b| u64::from_be_bytes(b.try_into().expect("must be 8-bytes")))
-            .unwrap_or_default();
-        let view_tag = Arc::new(RwLock::new(
-            u64::MAX.saturating_sub(final_height).to_be_bytes(),
-        ));
+        let final_view = pool
+            .get()?
+            .prepare_cached("SELECT finalized_view FROM tip_info")?
+            .query_row((), |row| row.get::<_, u64>(0))
+            .optional()?
+            .unwrap_or(u64::MIN);
+
+        // rocksdb sorts keys by lexicographical order.
+        // we reverse the values to ensure that the latest keys are ordered first.
+        let view_tag = u64::MAX.saturating_sub(final_view).to_be_bytes();
 
         Ok(Db {
             pool: Arc::new(pool),
@@ -362,7 +365,7 @@ impl Db {
             executable_blocks_height,
             kvdb: Arc::new(rdb),
             config,
-            view_tag,
+            view_tag: Arc::new(RwLock::new(view_tag)),
         })
     }
 
@@ -828,6 +831,8 @@ impl Db {
         sqlite_tx
             .prepare_cached("INSERT INTO tip_info (finalized_view) VALUES (?1) ON CONFLICT DO UPDATE SET finalized_view = ?1")?
             .execute([view])?;
+        // rocksdb sorts keys by lexicographical order.
+        // we reverse the values to ensure that the latest keys are ordered first.
         let view_tag = u64::MAX.saturating_sub(view).to_be_bytes();
         *self.view_tag.write() = view_tag;
         Ok(())
