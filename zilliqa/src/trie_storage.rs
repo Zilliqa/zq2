@@ -34,37 +34,84 @@ impl TrieStorage {
         Self { pool, kvdb, tag }
     }
 
-    // This snapshot promotes the *active* keys to the latest tag, duplicating the values.
+    // This snapshot promotes the *active* keys to the latest tag
     //
-    // By taking a snapshot of the trie storage, we ensure that the active keys are duplicated and promoted to the latest tag.
+    // By taking a snapshot of the trie storage, we ensure that the active keys are promoted to the latest tag.
     // This allows any older keys to be deprecated and eventually removed from storage during compaction.
     // However, this also means that the storage will grow in size as the active keys are duplicated.
     // So, it is crucial that compaction is triggered regularly to maintain a reasonable storage size.
     pub fn snapshot(&self, state_root_hash: Hash) -> Result<()> {
         let trie_storage = Arc::new(self.clone());
-        // iterate over the entire state trie
-        let mut state_trie = EthTrie::new(trie_storage.clone()).at_root(state_root_hash.into());
-        for akv in state_trie.iter() {
-            let (key, serialised_account) = akv?;
-            let mut keys = Vec::with_capacity(100);
-            let mut values = Vec::with_capacity(100);
-            {
-                // iterate over the entire account trie
-                let account_root = Account::try_from(serialised_account.as_slice())?.storage_root;
-                let mut account_trie = EthTrie::new(trie_storage.clone()).at_root(account_root);
-                for skv in account_trie.iter() {
-                    let (storage_key, storage_val) = skv?;
-                    keys.push(storage_key);
-                    values.push(storage_val);
-                }
-                keys.push(key);
-                values.push(serialised_account);
-                account_trie.root_hash()?; // promote root
+
+        let num_workers = crate::tokio_worker_count().max(2) / 2; // use N/2 threads
+        let (work_tx, work_rx) = crossbeam::channel::bounded::<(Vec<u8>, Vec<u8>)>(num_workers * 2); // 2 x Threads
+        tracing::info!("Snapshot with {num_workers} workers");
+        // This code looks similar to checkpoint.rs::save_ckpt() as a checkpoint is effectively a snapshot of the trie storage.
+        crossbeam::thread::scope(|s| {
+            let mut workers = Vec::with_capacity(num_workers);
+            for _ in 0..num_workers {
+                let work_rx = work_rx.clone();
+                let trie_storage = trie_storage.clone();
+                let worker = s.spawn(move |_s| -> Result<u64> {
+                    let mut count = u64::MIN;
+                    while let Ok((key, serialised_account)) = work_rx.recv() {
+                        // with some minimal capacity to reduce unnecessary duplication
+                        let mut keys = Vec::with_capacity(128);
+                        let mut values = Vec::with_capacity(128);
+
+                        // iterate over the entire account trie
+                        let account_root =
+                            Account::try_from(serialised_account.as_slice())?.storage_root;
+                        let mut account_trie =
+                            EthTrie::new(trie_storage.clone()).at_root(account_root);
+                        for skv in account_trie.iter() {
+                            let (storage_key, storage_val) = skv?;
+                            keys.push(storage_key);
+                            values.push(storage_val);
+                        }
+
+                        // write the account key-value itself
+                        keys.push(key);
+                        values.push(serialised_account);
+
+                        // promote the entire set of keys/values
+                        self.write_batch(keys, values)?;
+                        account_trie.root_hash()?; // promote account root
+                        count += 1;
+                    }
+                    Ok(count)
+                });
+                workers.push(worker);
             }
-            // promote the entire set of keys/values
-            self.write_batch(keys, values)?;
-        }
-        state_trie.root_hash()?; // promote root
+
+            // iterate over the entire state trie
+            let trie_storage = trie_storage.clone();
+            let producer = s.spawn(move |_s| -> Result<u64> {
+                let mut state_trie =
+                    EthTrie::new(trie_storage.clone()).at_root(state_root_hash.into());
+                let mut count = u64::MIN;
+                for akv in state_trie.iter() {
+                    let (key, serialised_account) = akv?;
+                    work_tx.send((key.to_vec(), serialised_account.to_vec()))?;
+                    count += 1;
+                }
+                drop(work_tx); // Close the work channel so Workers exit when done
+                state_trie.root_hash()?; // promote state root
+                Ok(count)
+            });
+
+            let producer_count = producer.join().expect("producer panicked").unwrap();
+            let mut consumer_count = u64::MIN;
+            for worker in workers {
+                let worker_count = worker.join().expect("worker panicked").unwrap();
+                consumer_count += worker_count;
+            }
+            assert_eq!(
+                producer_count, consumer_count,
+                "Missing snapshot {producer_count} != {consumer_count}"
+            );
+        })
+        .expect("Failed snapshot");
         Ok(())
     }
 
