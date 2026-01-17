@@ -84,7 +84,7 @@ tokio = { version = "1.49.0", features = [
 ] }
 tokio-stream = "0.1.18"
 toml = "0.9.11"
-tower = "0.5.2"
+tower = "0.5.3"
 tower-http = { version = "0.6.6", features = ["cors"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "json"] }
