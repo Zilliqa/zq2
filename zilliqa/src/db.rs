@@ -5,7 +5,10 @@ use std::{
     io::{Read, Seek, SeekFrom, Write},
     ops::RangeInclusive,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 
@@ -13,7 +16,6 @@ use alloy::primitives::Address;
 use anyhow::{Context, Result, anyhow};
 #[allow(unused_imports)]
 use eth_trie::{DB, EthTrie, MemoryDB, Trie};
-use parking_lot::RwLock;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rocksdb::{BlockBasedOptions, Cache, DBWithThreadMode, Options, SingleThreaded};
@@ -247,7 +249,7 @@ const CURRENT_DB_VERSION: &str = "1";
 pub struct Db {
     pool: Arc<Pool<SqliteConnectionManager>>,
     kvdb: Arc<rocksdb::DB>,
-    view_tag: Arc<RwLock<[u8; 8]>>,
+    view_tag: Arc<AtomicU64>,
     path: Option<Box<Path>>,
     /// The block height at which ZQ2 blocks begin.
     /// This value should be required only for proto networks to distinguise between ZQ1 and ZQ2 blocks.
@@ -358,7 +360,7 @@ impl Db {
 
         // rocksdb sorts keys by lexicographical order.
         // we reverse the values to ensure that the latest keys are ordered first.
-        let view_tag = u64::MAX.saturating_sub(final_view).to_be_bytes();
+        let view_tag = u64::MAX.saturating_sub(final_view);
 
         Ok(Db {
             pool: Arc::new(pool),
@@ -366,7 +368,7 @@ impl Db {
             executable_blocks_height,
             kvdb: Arc::new(rdb),
             config,
-            view_tag: Arc::new(RwLock::new(view_tag)),
+            view_tag: Arc::new(AtomicU64::new(view_tag)),
         })
     }
 
@@ -834,8 +836,8 @@ impl Db {
             .execute([view])?;
         // rocksdb sorts keys by lexicographical order.
         // we reverse the values to ensure that the latest keys are ordered first.
-        let view_tag = u64::MAX.saturating_sub(view).to_be_bytes();
-        *self.view_tag.write() = view_tag;
+        let view_tag = u64::MAX.saturating_sub(view);
+        self.view_tag.store(view_tag, Ordering::Relaxed);
         Ok(())
     }
 

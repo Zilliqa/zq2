@@ -1,8 +1,7 @@
-use std::sync::Arc;
+use std::sync::{Arc, atomic::AtomicU64};
 
 use anyhow::Result;
 use eth_trie::{EthTrie, Trie};
-use parking_lot::RwLock;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use revm::primitives::B256;
@@ -23,16 +22,20 @@ const ROCKSDB_CUTOVER_AT: &str = "cutover_at";
 pub struct TrieStorage {
     pool: Arc<Pool<SqliteConnectionManager>>,
     kvdb: Arc<rocksdb::DB>,
-    tag: Arc<RwLock<[u8; 8]>>, // reverse tag, big-endian u64
+    tag_ceil: Arc<AtomicU64>, // reverse tag, big-endian u64
 }
 
 impl TrieStorage {
     pub fn new(
         pool: Arc<Pool<SqliteConnectionManager>>,
         kvdb: Arc<rocksdb::DB>,
-        tag: Arc<RwLock<[u8; 8]>>,
+        tag_ceil: Arc<AtomicU64>,
     ) -> Self {
-        Self { pool, kvdb, tag }
+        Self {
+            pool,
+            kvdb,
+            tag_ceil,
+        }
     }
 
     // This snapshot promotes the *active* keys to the tag
@@ -146,7 +149,10 @@ impl TrieStorage {
         anyhow::ensure!(keys.len() == values.len(), "Keys != Values");
 
         let mut batch = WriteBatch::default();
-        let tag = self.tag.read();
+        let tag = self
+            .tag_ceil
+            .load(std::sync::atomic::Ordering::Relaxed)
+            .to_be_bytes();
         for (mut key, value) in keys.into_iter().zip(values.into_iter()) {
             // tag keys; lexicographically sorted
             key.extend_from_slice(tag.as_slice()); // suffix big-endian tags
@@ -163,7 +169,7 @@ impl TrieStorage {
     // This is the tagging scheme used. Each tag is a U64 in big-endian format.
     // |user-key + tag|seqno|type|
     // |<-----internal key------>|
-    fn get_latest(&self, key_prefix: &[u8]) -> Result<Option<Vec<u8>>> {
+    fn get_latest_tag_value(&self, key_prefix: &[u8]) -> Result<Option<(u64, Vec<u8>)>> {
         let mut iter = self.kvdb.prefix_iterator(key_prefix);
         // early return if user-key/prefix is not found
         let Some(prefix) = iter.next() else {
@@ -177,18 +183,20 @@ impl TrieStorage {
         // Given that the trie keys are *all* Keccak256 keys, the legacy keys are exactly 32-bytes (256-bits) long,
         // while the new tag keys are exactly 40-bytes (320-bits) long. We do not expect any other key lengths.
         if key.len() == 40 {
+            let tag = u64::from_be_bytes(key[32..].try_into().expect("must be 8-bytes"));
             // latest tag key, return the latest value
-            Ok(Some(value.to_vec()))
+            Ok(Some((tag, value.to_vec())))
         } else if key.len() == 32 {
             // legacy key - peek to see if a later tag key is present
             if let Some(peek) = iter.next() {
                 let peek = peek?;
                 if peek.0.starts_with(key_prefix) {
-                    return Ok(Some(peek.1.to_vec())); // tag key has newer value
+                    let tag = u64::from_be_bytes(peek.0[32..].try_into().expect("must be 8-bytes"));
+                    return Ok(Some((tag, peek.1.to_vec()))); // tag key has newer value
                 }
             }
             // We do not perform lazy migration here to avoid write amplification.
-            Ok(Some(value.to_vec())) // fall-thru value; return legacy value
+            Ok(Some((u64::MAX, value.to_vec()))) // fall-thru value; return legacy value
         } else {
             unimplemented!("unsupported trie key length {} bytes", key.len());
         }
@@ -198,9 +206,9 @@ impl TrieStorage {
     // We set the height tag to the reverse height, due to the lexicographical order used by rocksdb.
     // This ensures that the higher/later keys always get hit first, improving performance.
     fn inc_tag(&self, new_height: u64) -> Result<()> {
-        let mut tag = self.tag.write();
-        let new_tag = u64::MAX.saturating_sub(new_height).to_be_bytes();
-        *tag = new_tag;
+        let new_tag = u64::MAX.saturating_sub(new_height);
+        self.tag_ceil
+            .store(new_tag, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 }
@@ -210,8 +218,8 @@ impl eth_trie::DB for TrieStorage {
 
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, Self::Error> {
         // L1 - rocksdb
-        if let Some(value) = self
-            .get_latest(key)
+        if let Some((_tag, value)) = self
+            .get_latest_tag_value(key)
             .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?
         {
             return Ok(Some(value));
@@ -260,7 +268,7 @@ impl eth_trie::DB for TrieStorage {
     fn remove(&self, promote_key: &[u8]) -> Result<(), Self::Error> {
         // Since clear_trie_from_db() iterates over all db-level keys in the trie; this will end up
         // promoting the entire trie, from the db-level without iterating the trie-level keys.
-        if let Ok(Some(value)) = self.get_latest(promote_key) {
+        if let Ok(Some((_tag, value))) = self.get_latest_tag_value(promote_key) {
             self.write_batch(vec![promote_key.to_vec()], vec![value])
                 .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?
         }
@@ -292,7 +300,7 @@ mod tests {
                 .unwrap(),
         );
         let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
-        let tag = Arc::new(RwLock::new(u64::MAX.to_be_bytes()));
+        let tag = Arc::new(AtomicU64::new(u64::MAX));
         let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), tag.clone());
         let trie_storage = Arc::new(trie_storage);
 
@@ -330,7 +338,7 @@ mod tests {
                 .unwrap(),
         );
         let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
-        let tag = Arc::new(RwLock::new(u64::MAX.to_be_bytes()));
+        let tag = Arc::new(AtomicU64::new(u64::MAX));
         let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), tag);
 
         let key_prefix = alloy::consensus::EMPTY_ROOT_HASH.0;
@@ -360,7 +368,7 @@ mod tests {
                 .unwrap(),
         );
         let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
-        let tag = Arc::new(RwLock::new(u64::MAX.to_be_bytes()));
+        let tag = Arc::new(AtomicU64::new(u64::MAX));
         let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), tag);
 
         let key_prefix = alloy::consensus::EMPTY_ROOT_HASH.0;
@@ -394,7 +402,7 @@ mod tests {
                 .unwrap(),
         );
         let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
-        let tag = Arc::new(RwLock::new(u64::MAX.to_be_bytes()));
+        let tag = Arc::new(AtomicU64::new(u64::MAX));
         let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), tag);
 
         let key_prefix = alloy::consensus::EMPTY_ROOT_HASH.0;
@@ -437,7 +445,7 @@ mod tests {
                 .unwrap(),
         );
         let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
-        let tag = Arc::new(RwLock::new(u64::MAX.to_be_bytes()));
+        let tag = Arc::new(AtomicU64::new(u64::MAX));
         let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), tag);
 
         let key_prefix = alloy::consensus::EMPTY_ROOT_HASH.0;
@@ -478,7 +486,7 @@ mod tests {
                 .unwrap(),
         );
         let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
-        let tag = Arc::new(RwLock::new(u64::MAX.to_be_bytes()));
+        let tag = Arc::new(AtomicU64::new(u64::MAX));
         let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), tag.clone());
         let trie_storage = Arc::new(trie_storage);
 
