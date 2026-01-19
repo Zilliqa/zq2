@@ -480,4 +480,40 @@ mod tests {
         let iter = rdb.prefix_iterator(key_prefix.as_slice());
         assert_eq!(iter.count(), 3);
     }
+
+    #[test]
+    // writes to disk only happens on commit
+    fn write_on_commit() {
+        let sql = Arc::new(
+            Pool::builder()
+                .build(SqliteConnectionManager::memory())
+                .unwrap(),
+        );
+        let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
+        let tag = Arc::new(RwLock::new(u64::MAX.to_be_bytes()));
+        let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), tag.clone());
+        let trie_storage = Arc::new(trie_storage);
+
+        let key_prefix = alloy::consensus::EMPTY_ROOT_HASH.0;
+        let mut pmt = EthTrie::new(trie_storage.clone());
+
+        trie_storage.inc_tag(u64::MIN).unwrap();
+        pmt.insert(key_prefix.as_slice(), b"one_value").unwrap();
+        pmt.insert(key_prefix.as_slice(), b"two_value").unwrap();
+        pmt.insert(key_prefix.as_slice(), b"tri_value").unwrap();
+        let value = pmt.get(key_prefix.as_slice()).unwrap().unwrap();
+        assert_eq!(value, b"tri_value".to_vec());
+        pmt.root_hash().unwrap(); // write to disk
+
+        trie_storage.inc_tag(u64::MIN + 1).unwrap();
+        pmt.insert(key_prefix.as_slice(), b"for_value").unwrap();
+        trie_storage.inc_tag(u64::MIN + 2).unwrap();
+        pmt.insert(key_prefix.as_slice(), b"fiv_value").unwrap();
+        let value = pmt.get(key_prefix.as_slice()).unwrap().unwrap();
+        assert_eq!(value, b"fiv_value".to_vec());
+        pmt.root_hash().unwrap(); // write to disk
+
+        let iter = rdb.iterator(rocksdb::IteratorMode::Start);
+        assert_eq!(iter.count(), 2);
+    }
 }

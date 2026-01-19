@@ -350,8 +350,9 @@ impl Db {
 
         let final_view = pool
             .get()?
-            .prepare_cached("SELECT finalized_view FROM tip_info")?
-            .query_row((), |row| row.get::<_, u64>(0))
+            .query_row("SELECT finalized_view FROM tip_info", (), |row| {
+                row.get::<_, u64>(0)
+            })
             .optional()?
             .unwrap_or(u64::MIN);
 
