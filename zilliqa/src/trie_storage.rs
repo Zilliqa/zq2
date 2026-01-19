@@ -5,6 +5,7 @@ use eth_trie::{EthTrie, Trie};
 use parking_lot::RwLock;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
+use revm::primitives::B256;
 use rocksdb::WriteBatch;
 use rusqlite::OptionalExtension;
 
@@ -34,84 +35,24 @@ impl TrieStorage {
         Self { pool, kvdb, tag }
     }
 
-    // This snapshot promotes the *active* keys to the latest tag
+    // This snapshot promotes the *active* keys to the tag
     //
-    // By taking a snapshot of the trie storage, we ensure that the active keys are promoted to the latest tag.
-    // This allows any older keys to be deprecated and eventually removed from storage during compaction.
-    // However, this also means that the storage will grow in size as the active keys are duplicated.
-    // So, it is crucial that compaction is triggered regularly to maintain a reasonable storage size.
-    pub fn snapshot(&self, state_root_hash: Hash) -> Result<()> {
-        let trie_storage = Arc::new(self.clone());
-
-        let num_workers = crate::tokio_worker_count().max(2) / 2; // use N/2 threads
-        let (work_tx, work_rx) = crossbeam::channel::bounded::<(Vec<u8>, Vec<u8>)>(num_workers * 2); // 2 x Threads
-        tracing::info!("Snapshot with {num_workers} workers");
-        // This code looks similar to checkpoint.rs::save_ckpt() as a checkpoint is effectively a snapshot of the trie storage.
-        crossbeam::thread::scope(|s| {
-            let mut workers = Vec::with_capacity(num_workers);
-            for _ in 0..num_workers {
-                let work_rx = work_rx.clone();
-                let trie_storage = trie_storage.clone();
-                let worker = s.spawn(move |_s| -> Result<u64> {
-                    let mut count = u64::MIN;
-                    while let Ok((key, serialised_account)) = work_rx.recv() {
-                        // with some minimal capacity to reduce unnecessary duplication
-                        let mut keys = Vec::with_capacity(128);
-                        let mut values = Vec::with_capacity(128);
-
-                        // iterate over the entire account trie
-                        let account_root =
-                            Account::try_from(serialised_account.as_slice())?.storage_root;
-                        let mut account_trie =
-                            EthTrie::new(trie_storage.clone()).at_root(account_root);
-                        for skv in account_trie.iter() {
-                            let (storage_key, storage_val) = skv?;
-                            keys.push(storage_key);
-                            values.push(storage_val);
-                        }
-
-                        // write the account key-value itself
-                        keys.push(key);
-                        values.push(serialised_account);
-
-                        // promote the entire set of keys/values
-                        self.write_batch(keys, values)?;
-                        account_trie.root_hash()?; // promote account root
-                        count += 1;
-                    }
-                    Ok(count)
-                });
-                workers.push(worker);
-            }
-
-            // iterate over the entire state trie
-            let trie_storage = trie_storage.clone();
-            let producer = s.spawn(move |_s| -> Result<u64> {
-                let mut state_trie =
-                    EthTrie::new(trie_storage.clone()).at_root(state_root_hash.into());
-                let mut count = u64::MIN;
-                for akv in state_trie.iter() {
-                    let (key, serialised_account) = akv?;
-                    work_tx.send((key.to_vec(), serialised_account.to_vec()))?;
-                    count += 1;
-                }
-                drop(work_tx); // Close the work channel so Workers exit when done
-                state_trie.root_hash()?; // promote state root
-                Ok(count)
-            });
-
-            let producer_count = producer.join().expect("producer panicked").unwrap();
-            let mut consumer_count = u64::MIN;
-            for worker in workers {
-                let worker_count = worker.join().expect("worker panicked").unwrap();
-                consumer_count += worker_count;
-            }
-            assert_eq!(
-                producer_count, consumer_count,
-                "Missing snapshot {producer_count} != {consumer_count}"
-            );
-        })
-        .expect("Failed snapshot");
+    // This works on duplicating the underlying db-level keys, not the trie-level keys.
+    // e.g. 500 trie-level random keys takes ~150 db-level keys.
+    //
+    // Previously, no deletion of keys was allowed in the state database. So, it is safe to repurpose clear_trie_from_db() to
+    // promote the trie, rather than delete it.
+    pub fn snapshot(trie_storage: Arc<TrieStorage>, state_root_hash: B256) -> Result<()> {
+        let mut state_trie = EthTrie::new(trie_storage.clone()).at_root(state_root_hash.into());
+        for akv in state_trie.iter() {
+            let (_key, serialised_account) = akv?;
+            let account_root = Account::try_from(serialised_account.as_slice())?.storage_root;
+            let mut account_trie = EthTrie::new(trie_storage.clone()).at_root(account_root);
+            // repurpose clear_trie_from_db() to promote the account trie
+            account_trie.clear_trie_from_db()?;
+        }
+        // repurpose clear_trie_from_db() to promote the state trie
+        state_trie.clear_trie_from_db()?;
         Ok(())
     }
 
@@ -315,13 +256,21 @@ impl eth_trie::DB for TrieStorage {
             .map_err(|e| eth_trie::TrieError::DB(e.to_string()))
     }
 
-    fn remove(&self, _key: &[u8]) -> Result<(), Self::Error> {
-        // we keep old state to function as an archive node, therefore no-op
+    // This is only called from clear_trie_from_db().
+    fn remove(&self, promote_key: &[u8]) -> Result<(), Self::Error> {
+        // Since clear_trie_from_db() iterates over all db-level keys in the trie; this will end up
+        // promoting the entire trie, from the db-level without iterating the trie-level keys.
+        if let Ok(Some(value)) = self.get_latest(promote_key) {
+            self.write_batch(vec![promote_key.to_vec()], vec![value])
+                .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?
+        }
         Ok(())
     }
 
-    fn remove_batch(&self, _: &[Vec<u8>]) -> Result<(), Self::Error> {
-        // we keep old state to function as an archive node, therefore no-op
+    // This is only called from commit()
+    fn remove_batch(&self, _intermediate_keys: &[Vec<u8>]) -> Result<(), Self::Error> {
+        // We do not delete anything due to archival.
+        // TODO: Possibly remove intermediate keys.
         Ok(())
     }
 }
@@ -331,7 +280,46 @@ mod tests {
     use eth_trie::DB;
     use tempfile::tempdir;
 
+    use crate::crypto::SecretKey;
+
     use super::*;
+
+    #[test]
+    fn basic_snapshot() {
+        let sql = Arc::new(
+            Pool::builder()
+                .build(SqliteConnectionManager::memory())
+                .unwrap(),
+        );
+        let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
+        let tag = Arc::new(RwLock::new(u64::MAX.to_be_bytes()));
+        let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), tag.clone());
+        let trie_storage = Arc::new(trie_storage);
+
+        let mut pmt = EthTrie::new(trie_storage.clone());
+        pmt.root_hash().unwrap(); // create one 'empty' record
+        assert_eq!(rdb.iterator(rocksdb::IteratorMode::Start).count(), 1);
+
+        // create 10 random accounts
+        let account = Account::default();
+        let value = bincode::serde::encode_to_vec(account, bincode::config::legacy()).unwrap();
+        for _ in 0..10 {
+            let key = SecretKey::new().unwrap().as_bytes();
+            pmt.insert(key.as_slice(), value.as_slice()).unwrap();
+        }
+
+        trie_storage.inc_tag(u64::MIN).unwrap();
+        let root_hash = pmt.root_hash().unwrap(); // write to disk
+        let old_count = rdb.iterator(rocksdb::IteratorMode::Start).count();
+        assert!(old_count > 1);
+
+        trie_storage.inc_tag(u64::MAX).unwrap();
+        TrieStorage::snapshot(trie_storage.clone(), root_hash).unwrap();
+        assert_eq!(
+            rdb.iterator(rocksdb::IteratorMode::Start).count(),
+            old_count * 2
+        );
+    }
 
     #[test]
     // basic read/write
