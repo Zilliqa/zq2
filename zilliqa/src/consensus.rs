@@ -1313,31 +1313,27 @@ impl Consensus {
             return Ok(None);
         }
 
-        //let executed_block_header = block.header;
-
         let executed_block = BlockHeader {
             number: block.header.number + 1,
             ..Default::default()
         };
 
-        let committee = self
-            .state
-            .at_root(block.state_root_hash().into())
-            .get_stakers(executed_block)?;
-
-        let leader = self.leader_at_block(&block, block_view + 1).unwrap();
-        error!(
-            "Checking in vote leader for height: {} and block_view: {}, view: {}, leader: {:?}, myself: {:?}, commitee len: {}, state_root_hash: {:?}",
-            block.number(),
-            block.view(),
-            block_view + 1,
-            leader.peer_id,
-            self.peer_id(),
-            committee.len(),
-            block.state_root_hash()
-        );
-
-        //let executed_block_header = block.header;
+        // let committee = self
+        //     .state
+        //     .at_root(block.state_root_hash().into())
+        //     .get_stakers(executed_block)?;
+        //
+        // let leader = self.leader_at_block(&block, block_view + 1).unwrap();
+        // error!(
+        //     "Checking in vote leader for height: {} and block_view: {}, view: {}, leader: {:?}, myself: {:?}, commitee len: {}, state_root_hash: {:?}",
+        //     block.number(),
+        //     block.view(),
+        //     block_view + 1,
+        //     leader.peer_id,
+        //     self.peer_id(),
+        //     committee.len(),
+        //     block.state_root_hash()
+        // );
 
         let committee = self
             .state
@@ -2023,6 +2019,13 @@ impl Consensus {
             new_view_vote.cosigned.set(index, true);
             new_view_vote.signatures.push(new_view.signature);
 
+            let Ok(Some(parent)) = self.get_block(&new_view.qc.block_hash) else {
+                return Err(anyhow!(
+                    "parent block not found: {:?}",
+                    new_view.qc.block_hash
+                ));
+            };
+
             // Update state to root pointed by voted block (in meantime it might have changed!)
             self.state.set_to_root(parent.state_root_hash().into());
             let Some(weight) = self.state.get_stake(new_view.public_key, executed_block)? else {
@@ -2376,8 +2379,7 @@ impl Consensus {
                 ..Default::default()
             };
             for view in (parent.view() + 1..current.view()).rev() {
-                let fork = self.state.forks.get(block_header.number);
-                if let Ok(leader) = state_at.leader(view, block_header, fork) {
+                if let Ok(leader) = state_at.leader(view, block_header, self.state.forks.get(block_header.number)) {
                     if view == parent.view() + 1 {
                         trace!(
                             view,
@@ -2579,19 +2581,19 @@ impl Consensus {
             ));
         };
 
-        let committee = self
-            .state
-            .at_root(parent.state_root_hash().into())
-            .get_stakers(block.header)?;
-
-        error!(
-            "Checking in proposal leader for parent height: {} and view: {}, leader: {:?}, commitee len: {}, state_root_hash: {:?}",
-            parent.number(),
-            block.view(),
-            proposer.peer_id,
-            committee.len(),
-            parent.state_root_hash()
-        );
+        // let committee = self
+        //     .state
+        //     .at_root(parent.state_root_hash().into())
+        //     .get_stakers(block.header)?;
+        //
+        // error!(
+        //     "Checking in proposal leader for parent height: {} and view: {}, leader: {:?}, commitee len: {}, state_root_hash: {:?}",
+        //     parent.number(),
+        //     block.view(),
+        //     proposer.peer_id,
+        //     committee.len(),
+        //     parent.state_root_hash()
+        // );
 
         // Verify the proposer's signature on the block
         let verified = proposer
@@ -2619,7 +2621,7 @@ impl Consensus {
             &block.header.qc.cosigned,
             &committee,
             parent.state_root_hash(),
-            &block,
+            block,
         )?;
 
         // Verify the block's QC signature - note the parent should be the committee the QC
