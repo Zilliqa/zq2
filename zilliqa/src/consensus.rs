@@ -1840,7 +1840,7 @@ impl Consensus {
             }
             return Ok(None);
         };
-        error!(proposal_hash = ?final_block.hash(), ?final_block.header.view, ?final_block.header.number, qc = ?final_block.header.qc.cosigned, myself = ?self.peer_id(), "######### proposing block");
+        info!(proposal_hash = ?final_block.hash(), ?final_block.header.view, ?final_block.header.number, qc = ?final_block.header.qc.cosigned, myself = ?self.peer_id(), "######### proposing block");
 
         Ok(Some((
             None,

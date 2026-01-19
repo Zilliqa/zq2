@@ -842,7 +842,7 @@ impl State {
         let from_addr = txn.signer;
         let txn = txn.tx.into_transaction();
 
-        error!(?hash, from = ?from_addr, to = ?txn.to_addr(), ?txn, "executing txn");
+        info!(?hash, from = ?from_addr, to = ?txn.to_addr(), ?txn, "executing txn");
 
         let blessed = BLESSED_TRANSACTIONS.iter().any(|elem| elem.hash == hash);
 
