@@ -982,12 +982,12 @@ impl TransactionPool {
     ) -> TxAddResult {
         // check for duplicates
         if self.core.hash_to_txn_map.contains_key(&txn.hash) {
-            // tracing::warn!(
-            //     "Transaction with this hash is already in the pool. Txn hash: {:?}, from: {:?}, account nonce: {:?}",
-            //     txn.hash,
-            //     txn.signer,
-            //     account.nonce,
-            // );
+            tracing::warn!(
+                "Transaction with this hash is already in the pool. Txn hash: {:?}, from: {:?}, account nonce: {:?}",
+                txn.hash,
+                txn.signer,
+                account.nonce,
+            );
             self.update_with_account(&txn.signer, account);
             return TxAddResult::Duplicate(txn.hash);
         }

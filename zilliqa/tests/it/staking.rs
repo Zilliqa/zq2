@@ -7,7 +7,7 @@ use alloy::{
 use ethabi::Token;
 use primitive_types::H160;
 use rand::Rng;
-use tracing::{error, info, trace};
+use tracing::{info, trace};
 use zilliqa::{
     contracts,
     crypto::{BlsSignature, NodePublicKey, SecretKey},

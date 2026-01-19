@@ -871,8 +871,6 @@ impl Consensus {
         proposal: Proposal,
         during_sync: bool,
     ) -> Result<Option<NetworkMessage>> {
-        // let tmp = self.state.committee()?;
-        // error!("Commitee before receiving proposal: {:?}", tmp);
         self.cleanup_votes()?;
 
         let (block, transactions) = proposal.into_parts();
@@ -1016,9 +1014,6 @@ impl Consensus {
                 ..block.header
             };
             let stakers = self.state.get_stakers(next_block_header)?;
-
-            // let tmp = self.state.committee()?;
-            // error!("Commitee after receiving proposal: {:?}", tmp);
 
             if !stakers.iter().any(|v| *v == self.public_key()) {
                 self.in_committee(false)?;
@@ -1317,23 +1312,6 @@ impl Consensus {
             number: block.header.number + 1,
             ..Default::default()
         };
-
-        // let committee = self
-        //     .state
-        //     .at_root(block.state_root_hash().into())
-        //     .get_stakers(executed_block)?;
-        //
-        // let leader = self.leader_at_block(&block, block_view + 1).unwrap();
-        // error!(
-        //     "Checking in vote leader for height: {} and block_view: {}, view: {}, leader: {:?}, myself: {:?}, commitee len: {}, state_root_hash: {:?}",
-        //     block.number(),
-        //     block.view(),
-        //     block_view + 1,
-        //     leader.peer_id,
-        //     self.peer_id(),
-        //     committee.len(),
-        //     block.state_root_hash()
-        // );
 
         let committee = self
             .state
@@ -1840,7 +1818,7 @@ impl Consensus {
             }
             return Ok(None);
         };
-        info!(proposal_hash = ?final_block.hash(), ?final_block.header.view, ?final_block.header.number, qc = ?final_block.header.qc.cosigned, myself = ?self.peer_id(), "######### proposing block");
+        info!(proposal_hash = ?final_block.hash(), ?final_block.header.view, ?final_block.header.number, txns = final_block.transactions.len(), "######### proposing block");
 
         Ok(Some((
             None,
@@ -2006,7 +1984,6 @@ impl Consensus {
                 new_view.qc.block_hash
             ));
         };
-
         let executed_block = BlockHeader {
             number: parent.header.number + 1,
             ..Default::default()
@@ -2025,7 +2002,6 @@ impl Consensus {
                     new_view.qc.block_hash
                 ));
             };
-
             // Update state to root pointed by voted block (in meantime it might have changed!)
             self.state.set_to_root(parent.state_root_hash().into());
             let Some(weight) = self.state.get_stake(new_view.public_key, executed_block)? else {
@@ -2580,20 +2556,6 @@ impl Consensus {
                 parent.number(),
             ));
         };
-
-        // let committee = self
-        //     .state
-        //     .at_root(parent.state_root_hash().into())
-        //     .get_stakers(block.header)?;
-        //
-        // error!(
-        //     "Checking in proposal leader for parent height: {} and view: {}, leader: {:?}, commitee len: {}, state_root_hash: {:?}",
-        //     parent.number(),
-        //     block.view(),
-        //     proposer.peer_id,
-        //     committee.len(),
-        //     parent.state_root_hash()
-        // );
 
         // Verify the proposer's signature on the block
         let verified = proposer
