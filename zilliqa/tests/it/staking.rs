@@ -529,8 +529,6 @@ async fn validators_can_unstake(mut network: Network) {
     )
     .await;
 
-    error!("UNSTAKE DONE!");
-
     // wait until unstake block is finalised
     network
         .run_until_block_finalized(unstake_block, 100)

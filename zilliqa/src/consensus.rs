@@ -678,7 +678,11 @@ impl Consensus {
                 .unwrap()
                 .ok_or_else(|| anyhow!("missing block"))?;
             // Get the list of stakers for the next block.
-            let stakers = self.state.get_stakers(block.header)?;
+            let next_block_header = BlockHeader {
+                number: block.number() + 1,
+                ..block.header
+            };
+            let stakers = self.state.get_stakers(next_block_header)?;
             // If we're in the genesis committee, vote again.
             if stakers.iter().any(|v| *v == self.public_key()) {
                 info!(
@@ -867,7 +871,6 @@ impl Consensus {
         proposal: Proposal,
         during_sync: bool,
     ) -> Result<Option<NetworkMessage>> {
-
         // let tmp = self.state.committee()?;
         // error!("Commitee before receiving proposal: {:?}", tmp);
         self.cleanup_votes()?;
@@ -1007,12 +1010,12 @@ impl Consensus {
                 // supermajority.
             }
 
-            // // Get the list of stakers for the next block.
-            // let next_block_header = BlockHeader {
-            //     number: block.number() + 1,
-            //     ..block.header
-            // };
-            let stakers = self.state.get_stakers(block.header)?;
+            // Get the list of stakers for the next block.
+            let next_block_header = BlockHeader {
+                number: block.number() + 1,
+                ..block.header
+            };
+            let stakers = self.state.get_stakers(next_block_header)?;
 
             // let tmp = self.state.committee()?;
             // error!("Commitee after receiving proposal: {:?}", tmp);
@@ -1310,12 +1313,17 @@ impl Consensus {
             return Ok(None);
         }
 
-        let executed_block_header = block.header;
+        //let executed_block_header = block.header;
+
+        let executed_block = BlockHeader {
+            number: block.header.number + 1,
+            ..Default::default()
+        };
 
         let committee = self
             .state
             .at_root(block.state_root_hash().into())
-            .get_stakers(executed_block_header)?;
+            .get_stakers(executed_block)?;
 
         let leader = self.leader_at_block(&block, block_view + 1).unwrap();
         error!(
@@ -1329,12 +1337,12 @@ impl Consensus {
             block.state_root_hash()
         );
 
-        let executed_block_header = block.header;
+        //let executed_block_header = block.header;
 
         let committee = self
             .state
             .at_root(block.state_root_hash().into())
-            .get_stakers(executed_block_header)?;
+            .get_stakers(executed_block)?;
 
         // verify the sender's signature on block_hash
         let Some((index, _)) = committee
@@ -1362,12 +1370,12 @@ impl Consensus {
             votes.cosigned.set(index, true);
             // Update state to root pointed by voted block (in meantime it might have changed!)
             let state = self.state.at_root(block.state_root_hash().into());
-            let Some(weight) = state.get_stake(vote.public_key, executed_block_header)? else {
+            let Some(weight) = state.get_stake(vote.public_key, executed_block)? else {
                 return Err(anyhow!("vote from validator without stake"));
             };
             votes.cosigned_weight += weight.get();
 
-            let total_weight = self.total_weight(&committee, executed_block_header);
+            let total_weight = self.total_weight(&committee, executed_block);
             votes.supermajority_reached = votes.cosigned_weight * 3 > total_weight * 2;
 
             trace!(
@@ -1836,8 +1844,7 @@ impl Consensus {
             }
             return Ok(None);
         };
-
-        error!(proposal_hash = ?final_block.hash(), ?final_block.header.view, ?final_block.header.number, myself = ?self.peer_id(), "######### proposing block");
+        error!(proposal_hash = ?final_block.hash(), ?final_block.header.view, ?final_block.header.number, qc = ?final_block.header.qc.cosigned, myself = ?self.peer_id(), "######### proposing block");
 
         Ok(Some((
             None,
@@ -2575,7 +2582,7 @@ impl Consensus {
         let committee = self
             .state
             .at_root(parent.state_root_hash().into())
-            .get_stakers(parent.header)?;
+            .get_stakers(block.header)?;
 
         error!(
             "Checking in proposal leader for parent height: {} and view: {}, leader: {:?}, commitee len: {}, state_root_hash: {:?}",
@@ -2586,7 +2593,6 @@ impl Consensus {
             parent.state_root_hash()
         );
 
-
         // Verify the proposer's signature on the block
         let verified = proposer
             .public_key
@@ -2595,7 +2601,7 @@ impl Consensus {
         let committee = self
             .state
             .at_root(parent.state_root_hash().into())
-            .get_stakers(parent.header)?;
+            .get_stakers(block.header)?;
 
         if verified.is_err() {
             tracing::error!(?block, "Unable to verify block");
@@ -2613,7 +2619,7 @@ impl Consensus {
             &block.header.qc.cosigned,
             &committee,
             parent.state_root_hash(),
-            &parent,
+            &block,
         )?;
 
         // Verify the block's QC signature - note the parent should be the committee the QC
@@ -2625,7 +2631,7 @@ impl Consensus {
                 &agg.cosigned,
                 &committee,
                 parent.state_root_hash(),
-                &parent,
+                &block,
             )?;
             // Verify the aggregate QC's signature
             self.batch_verify_agg_signature(agg, &committee)?;
