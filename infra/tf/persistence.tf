@@ -101,12 +101,12 @@ resource "google_compute_resource_policy" "persistence_snapshots_schedule" {
     }
 
     retention_policy {
-      max_retention_days = 14
+      max_retention_days = 7
       on_source_disk_delete = "APPLY_RETENTION_POLICY"
     }
 
     snapshot_properties {
-      guest_flush = true
+      guest_flush = false
       storage_locations = [var.region]
       chain_name = var.chain_name
       labels = local.labels
