@@ -432,7 +432,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-stream",
- "tower 0.5.2",
+ "tower 0.5.3",
  "tracing",
  "wasmtimer",
 ]
@@ -477,7 +477,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-stream",
- "tower 0.5.2",
+ "tower 0.5.3",
  "tracing",
  "url",
  "wasmtimer",
@@ -674,7 +674,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.17",
  "tokio",
- "tower 0.5.2",
+ "tower 0.5.3",
  "tracing",
  "url",
  "wasmtimer",
@@ -693,7 +693,7 @@ dependencies = [
  "hyper-tls",
  "hyper-util",
  "serde_json",
- "tower 0.5.2",
+ "tower 0.5.3",
  "tracing",
  "url",
 ]
@@ -4830,7 +4830,7 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "tokio-stream",
- "tower 0.5.2",
+ "tower 0.5.3",
  "tracing",
  "wasm-bindgen-futures",
 ]
@@ -4879,7 +4879,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.17",
  "tokio",
- "tower 0.5.2",
+ "tower 0.5.3",
  "url",
 ]
 
@@ -4919,7 +4919,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tokio-util",
- "tower 0.5.2",
+ "tower 0.5.3",
  "tracing",
 ]
 
@@ -4956,7 +4956,7 @@ dependencies = [
  "jsonrpsee-client-transport",
  "jsonrpsee-core 0.25.1",
  "jsonrpsee-types 0.25.1",
- "tower 0.5.2",
+ "tower 0.5.3",
 ]
 
 [[package]]
@@ -4969,7 +4969,7 @@ dependencies = [
  "jsonrpsee-client-transport",
  "jsonrpsee-core 0.25.1",
  "jsonrpsee-types 0.25.1",
- "tower 0.5.2",
+ "tower 0.5.3",
  "url",
 ]
 
@@ -7415,7 +7415,7 @@ dependencies = [
  "sync_wrapper",
  "tokio",
  "tokio-rustls",
- "tower 0.5.2",
+ "tower 0.5.3",
  "tower-http",
  "tower-service",
  "url",
@@ -7456,7 +7456,7 @@ dependencies = [
  "sync_wrapper",
  "tokio",
  "tokio-rustls",
- "tower 0.5.2",
+ "tower 0.5.3",
  "tower-http",
  "tower-service",
  "url",
@@ -7490,7 +7490,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tokio-util",
- "tower 0.5.2",
+ "tower 0.5.3",
  "tracing",
 ]
 
@@ -9446,7 +9446,7 @@ dependencies = [
  "sync_wrapper",
  "tokio",
  "tokio-stream",
- "tower 0.5.2",
+ "tower 0.5.3",
  "tower-layer",
  "tower-service",
  "tracing",
@@ -9480,9 +9480,9 @@ dependencies = [
 
 [[package]]
 name = "tower"
-version = "0.5.2"
+version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d039ad9159c98b70ecfd540b2573b97f7f52c3e8d9f8ad57a24b916a536975f9"
+checksum = "ebe5ef63511595f1344e2d5cfa636d973292adc0eec1f0ad45fae9f0851ab1d4"
 dependencies = [
  "futures-core",
  "futures-util",
@@ -9510,7 +9510,7 @@ dependencies = [
  "http-body",
  "iri-string",
  "pin-project-lite",
- "tower 0.5.2",
+ "tower 0.5.3",
  "tower-layer",
  "tower-service",
 ]
@@ -10997,7 +10997,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "toml",
- "tower 0.5.2",
+ "tower 0.5.3",
  "tower-http",
  "tracing",
  "tracing-subscriber 0.3.22",
