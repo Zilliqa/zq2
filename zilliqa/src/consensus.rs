@@ -2355,7 +2355,11 @@ impl Consensus {
                 ..Default::default()
             };
             for view in (parent.view() + 1..current.view()).rev() {
-                if let Ok(leader) = state_at.leader(view, block_header, self.state.forks.get(block_header.number)) {
+                if let Ok(leader) = state_at.leader(
+                    view,
+                    block_header,
+                    self.state.forks.get(block_header.number),
+                ) {
                     if view == parent.view() + 1 {
                         trace!(
                             view,
@@ -2595,7 +2599,7 @@ impl Consensus {
                 &agg.cosigned,
                 &committee,
                 parent.state_root_hash(),
-                &block,
+                block,
             )?;
             // Verify the aggregate QC's signature
             self.batch_verify_agg_signature(agg, &committee)?;

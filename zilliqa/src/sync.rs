@@ -841,9 +841,9 @@ impl Sync {
         // Only process a full response
         if let Some(response) = response {
             if !response.is_empty() {
-                // info!(?range, %from,
-                //     "MultiBlockResponse : received",
-                // );
+                info!(?range, %from,
+                    "MultiBlockResponse : received",
+                );
                 self.blocks_downloaded = self.blocks_downloaded.saturating_add(response.len());
                 self.peers
                     .done_with_peer(self.in_flight.pop_front(), DownGrade::None);
