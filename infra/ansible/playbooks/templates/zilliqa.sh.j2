@@ -33,7 +33,7 @@ start() {
 }
 
 stop() {
-    docker ps --filter "name=zilliqa-" --format "{{'{{'}}.ID{{'}}'}}" | xargs -r docker stop -t 60 --signal SIGINT
+    docker ps --filter "name=zilliqa-" --format "{{'{{'}}.ID{{'}}'}}" | xargs -r docker stop -t 600 --signal SIGTERM
 }
 
 case ${1} in

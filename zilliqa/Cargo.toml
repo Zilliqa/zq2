@@ -23,7 +23,7 @@ fake_time = []
 
 [build-dependencies]
 anyhow = { version = "1.0.100", features = ["backtrace"] }
-vergen-git2 = { version = "1.0.2", features = [] }
+vergen-git2 = { version = "9.1.0", features = [] }
 
 [dependencies]
 anyhow = { version = "1.0.100", features = ["backtrace"] }
@@ -54,7 +54,7 @@ opentelemetry-otlp = { version = "0.31.0", default-features = true, features = [
     "metrics",
 ] }
 paste = "1.0.15"
-prost = "0.14.1"
+prost = "0.14.3"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 revm = { version = "29.0.0", features = [
@@ -69,7 +69,7 @@ revm-context = "9.1.0"
 rusqlite = { version = "0.37.0", features = ["bundled", "trace"] }
 serde = { version = "1.0.228", features = ["derive", "rc"] }
 serde_bytes = "0.11.19"
-serde_json = { version = "1.0.148", features = [
+serde_json = { version = "1.0.149", features = [
     "raw_value",
     "arbitrary_precision",
 ] }
@@ -82,9 +82,9 @@ tokio = { version = "1.49.0", features = [
     "signal",
     "sync",
 ] }
-tokio-stream = "0.1.17"
-toml = "0.9.10"
-tower = "0.5.2"
+tokio-stream = "0.1.18"
+toml = "0.9.11"
+tower = "0.5.3"
 tower-http = { version = "0.6.6", features = ["cors"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "json"] }
@@ -108,14 +108,15 @@ sled = { version = "0.34.7", features = ["no_logs"] }
 r2d2 = "0.8.10"
 r2d2_sqlite = "0.31.0"
 rocksdb = { version = "0.24.0", default-features = false, features = ["bindgen-runtime", "jemalloc", "snappy"] }
-zip = { version = "7.0.0", default-features = false, features = ["zstd"] }
+zip = { version = "7.1.0", default-features = false, features = ["zstd"] }
 eth_trie = { git = "https://github.com/Zilliqa/eth-trie.rs.git", branch = "zilliqa-revm" }
 arc-swap = "1.8.0"
 redis = { version = "0.32.7", features = ["keep-alive", "r2d2", "tcp_nodelay"], default-features = false }
-alloy = { version = "1.1.3", default-features = false, features = ["consensus", "dyn-abi", "eips", "json-abi", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types"] }
+alloy = { version = "1.4.3", default-features = false, features = ["consensus", "dyn-abi", "eips", "json-abi", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types"] }
+crossbeam = "0.8.4"
 
 [dev-dependencies]
-alloy = { version = "1.1.3", default-features = false, features = ["consensus", "dyn-abi", "eips", "json-abi", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types", "pubsub", "json-rpc", "contract", "signer-local"] }
+alloy = { version = "1.4.3", default-features = false, features = ["consensus", "dyn-abi", "eips", "json-abi", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types", "pubsub", "json-rpc", "contract", "signer-local"] }
 async-trait = "0.1.88"
 criterion = "0.5.1"
 fs_extra = "1.3.0"
@@ -124,7 +125,7 @@ pprof = { version = "0.15.0", default-features = false, features = [
     "criterion",
     "flamegraph",
 ] }
-primitive-types = { version = "0.12.2" }
+primitive-types = { version = "0.14.0", features = ["serde"] }
 zilliqa = { path = ".", default-features = false, features = [
     "fake_response_channel",
     "fake_time",

@@ -198,6 +198,7 @@ impl Chain {
                 "validator_jailing": false,
                 "scilla_empty_maps_are_encoded_correctly": false,
                 "cancun_active": false,
+                "scilla_call_gas_exempt_addrs_v2": [],
                 "randao_support": false,
             })),
             Chain::Zq2Mainnet => Some(json!({
@@ -237,6 +238,7 @@ impl Chain {
                 "validator_jailing": false,
                 "scilla_empty_maps_are_encoded_correctly": false,
                 "cancun_active": false,
+                "scilla_call_gas_exempt_addrs_v2": [],
                 "randao_support": false,
             })),
             _ => None,
@@ -289,6 +291,11 @@ impl Chain {
                 json!({ "at_height": 23685219, "scilla_empty_maps_are_encoded_correctly": true}),
                 // estimated: 2026-01-14T11.00.00Z
                 json!({ "at_height": 23685219, "cancun_active": true}),
+                json!({
+                    "at_height": 23685219,
+                    "scilla_call_gas_exempt_addrs_v2": [
+                    ],
+                }),
                 // estimated: arbitrary high block number no reachable before next fork
                 json!({ "at_height": 99999999, "randao_support": true}),
             ]),
@@ -339,6 +346,12 @@ impl Chain {
                 json!({ "at_height": 99999999, "scilla_empty_maps_are_encoded_correctly": true}),
                 // estimated: arbitrary high block number no reachable before next fork
                 json!({ "at_height": 99999999, "cancun_active": true}),
+                json!({
+                    "at_height": 99999999,
+                    "scilla_call_gas_exempt_addrs_v2": [
+                        "0x0F8aeCCaCA7FEE297cC2aBf7fFC9a81e7122A727",
+                    ],
+                }),
                 // estimated: arbitrary high block number no reachable before next fork
                 json!({ "at_height": 99999999, "randao_support": true}),
             ]),
