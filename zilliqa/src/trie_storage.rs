@@ -16,8 +16,8 @@ use crate::{cfg::Forks, crypto::Hash, state::Account};
 pub struct TrieStorage {
     pool: Arc<Pool<SqliteConnectionManager>>,
     kvdb: Arc<rocksdb::DB>,
-    tag_ceil: Arc<AtomicU64>,  // reverse tag, big-endian u64
-    tag_floor: Arc<AtomicU64>, // reverse tag, big-endian u64
+    tag_ceil: Arc<AtomicU64>, // reverse tag, big-endian u64
+    snapshot_tag: [u8; 8],
 }
 
 impl TrieStorage {
@@ -25,13 +25,14 @@ impl TrieStorage {
         pool: Arc<Pool<SqliteConnectionManager>>,
         kvdb: Arc<rocksdb::DB>,
         tag_ceil: Arc<AtomicU64>,
+        snapshot_tag: Option<u64>,
     ) -> Self {
-        let tag_floor = Arc::new(AtomicU64::new(u64::MAX));
+        let snapshot_tag = snapshot_tag.unwrap_or(u64::MAX).to_be_bytes();
         Self {
             pool,
             kvdb,
             tag_ceil,
-            tag_floor,
+            snapshot_tag,
         }
     }
 
@@ -274,11 +275,7 @@ impl eth_trie::DB for TrieStorage {
         // Since clear_trie_from_db() iterates over all db-level keys in the trie; this will end up
         // promoting the entire trie, from the db-level without iterating the trie-level keys.
         if let Ok(Some((_tag, value))) = self.get_tag_value(promote_key) {
-            let tag = self
-                .tag_floor
-                .load(std::sync::atomic::Ordering::Relaxed)
-                .to_be_bytes();
-            self.write_batch(vec![promote_key.to_vec()], vec![value], tag)
+            self.write_batch(vec![promote_key.to_vec()], vec![value], self.snapshot_tag)
                 .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?
         }
         Ok(())
@@ -310,7 +307,7 @@ mod tests {
         );
         let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
         let tag = Arc::new(AtomicU64::new(u64::MAX));
-        let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), tag.clone());
+        let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), tag.clone(), None);
         let trie_storage = Arc::new(trie_storage);
 
         let mut pmt = EthTrie::new(trie_storage.clone());
@@ -348,7 +345,7 @@ mod tests {
         );
         let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
         let tag = Arc::new(AtomicU64::new(u64::MAX));
-        let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), tag);
+        let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), tag.clone(), None);
 
         let key_prefix = alloy::consensus::EMPTY_ROOT_HASH.0;
 
@@ -378,7 +375,7 @@ mod tests {
         );
         let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
         let tag = Arc::new(AtomicU64::new(u64::MAX));
-        let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), tag);
+        let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), tag.clone(), None);
 
         let key_prefix = alloy::consensus::EMPTY_ROOT_HASH.0;
         let conn = sql.get().unwrap();
@@ -412,7 +409,7 @@ mod tests {
         );
         let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
         let tag = Arc::new(AtomicU64::new(u64::MAX));
-        let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), tag);
+        let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), tag.clone(), None);
 
         let key_prefix = alloy::consensus::EMPTY_ROOT_HASH.0;
 
@@ -455,7 +452,7 @@ mod tests {
         );
         let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
         let tag = Arc::new(AtomicU64::new(u64::MAX));
-        let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), tag);
+        let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), tag.clone(), None);
 
         let key_prefix = alloy::consensus::EMPTY_ROOT_HASH.0;
         rdb.put(key_prefix.as_slice(), b"rdb_value".to_vec())
@@ -496,7 +493,7 @@ mod tests {
         );
         let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
         let tag = Arc::new(AtomicU64::new(u64::MAX));
-        let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), tag.clone());
+        let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), tag.clone(), None);
         let trie_storage = Arc::new(trie_storage);
 
         let key_prefix = alloy::consensus::EMPTY_ROOT_HASH.0;
