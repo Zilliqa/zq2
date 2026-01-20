@@ -17,6 +17,7 @@ use tracing::{debug, error, info, trace, warn};
 use crate::{
     api::types::eth::{SyncingMeta, SyncingStruct},
     cfg::NodeConfig,
+    constants::MIN_PRUNE_INTERVAL,
     crypto::Hash,
     data_access,
     db::{BlockFilter, Db},
@@ -2012,10 +2013,3 @@ impl SyncSegments {
         Ok(())
     }
 }
-
-// FIXME: Find a better way to do this, other than checking for debug/release build.
-// For the purpose of testing, we need a smaller prune interval to ensure that the test cases run faster.
-#[cfg(feature = "fake_time")]
-pub const MIN_PRUNE_INTERVAL: u64 = 10;
-#[cfg(not(feature = "fake_time"))]
-pub const MIN_PRUNE_INTERVAL: u64 = 300;

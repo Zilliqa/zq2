@@ -113,6 +113,12 @@ pub const LAG_BEHIND_CURRENT_VIEW: u64 = 50;
 #[cfg(feature = "fake_time")]
 pub const LAG_BEHIND_CURRENT_VIEW: u64 = 10;
 
+// For the purpose of testing, we need a smaller prune interval to ensure that the test cases run faster.
+#[cfg(feature = "fake_time")]
+pub const MIN_PRUNE_INTERVAL: u64 = 10;
+#[cfg(not(feature = "fake_time"))]
+pub const MIN_PRUNE_INTERVAL: u64 = 300;
+
 // Percentiles: P50: 414.93 P75: 497.53 P99: 576.82 P99.9: 579.79 P99.99: 12678.76
 pub const ROCKSDB_BLOCK_SIZE: usize = 1 << 12;
 /// Special storage keys

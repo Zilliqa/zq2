@@ -4,7 +4,7 @@ use alloy::{
     rpc::types::TransactionRequest,
 };
 use fs_extra::file::CopyOptions;
-use zilliqa::{cfg::Checkpoint, crypto::Hash, sync::MIN_PRUNE_INTERVAL};
+use zilliqa::{cfg::Checkpoint, constants::MIN_PRUNE_INTERVAL, crypto::Hash};
 
 use crate::{Network, NewNodeOptions};
 
