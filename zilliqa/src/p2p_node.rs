@@ -483,6 +483,11 @@ impl P2pNode {
                                 self.swarm.behaviour_mut().gossipsub.unsubscribe(&Self::validator_topic(shard_id));
                             }
                         }
+                        InternalMessage::SnapshotTrie(trie, hash, view) => {
+                            self.task_threads.spawn(async move {
+                                db::snapshot_trie(trie, hash, view)
+                            });
+                        }
                     }
                 },
                 message = self.request_responses_receiver.next() => {

@@ -18,6 +18,7 @@ use anyhow::{Context, Result, anyhow};
 use eth_trie::{DB, EthTrie, MemoryDB, Trie};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
+use revm::primitives::B256;
 use rocksdb::{
     BlockBasedOptions, Cache, CompactionDecision, DBWithThreadMode, Options, SingleThreaded,
 };
@@ -259,8 +260,8 @@ pub struct Db {
     /// Clone of DbConfig
     pub config: DbConfig,
     /// State Pruning
-    tag_ceil: Arc<AtomicU64>, // always set to the finalised view height
-    tag_floor: Arc<AtomicU64>, // resets to u64::MAX at startup; gets set during prune.
+    tag_ceil: Arc<AtomicU64>, // always set to the finalised view height; set by Db::set_finalised_view()
+    tag_floor: Arc<AtomicU64>, // resets to u64::MAX at startup; gets set during prune.; set by Db::snapshot()
 }
 
 impl Db {
@@ -850,11 +851,13 @@ impl Db {
         Ok(Some((block, transactions, parent, view_history)))
     }
 
-    pub fn state_trie(&self, snapshot_tag: Option<u64>) -> Result<TrieStorage> {
+    pub fn state_trie(&self, snapshot_view: Option<u64>) -> Result<TrieStorage> {
+        let snapshot_tag = snapshot_view.map(|v| u64::MAX.saturating_sub(v));
         Ok(TrieStorage::new(
             self.pool.clone(),
             self.kvdb.clone(),
             self.tag_ceil.clone(),
+            self.tag_floor.clone(),
             snapshot_tag,
         ))
     }
@@ -1696,6 +1699,13 @@ pub fn get_checkpoint_filename<P: AsRef<Path> + Debug>(
     block: &Block,
 ) -> Result<PathBuf> {
     Ok(output_dir.as_ref().join(block.number().to_string()))
+}
+
+pub fn snapshot_trie(storage: TrieStorage, root_hash: B256, view: u64) -> Result<()> {
+    let trie = Arc::new(storage);
+    TrieStorage::snapshot(trie.clone(), root_hash)?;
+    trie.set_tag_floor(view); // update new floor
+    Ok(())
 }
 
 /// Build checkpoint and write to disk.
