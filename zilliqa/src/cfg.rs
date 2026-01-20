@@ -177,7 +177,7 @@ pub struct DbConfig {
     /// SQLite auto-checkpoint threshold; 0 to disable;
     #[serde(default = "sql_auto_checkpoint_default")]
     pub auto_checkpoint: usize,
-    /// Whether to enable state-sync/state-migration
+    /// Enable state-sync/state-migration
     #[serde(default)]
     pub state_sync: bool,
     /// RocksDB block cache size, in bytes.
@@ -192,6 +192,9 @@ pub struct DbConfig {
     /// RocksDB cache index/filters
     #[serde(default = "rocksdb_cache_index_filters_default")]
     pub rocksdb_cache_index_filters: bool,
+    /// Enable state-pruning
+    #[serde(default)]
+    pub state_prune: bool,
 }
 
 fn rocksdb_cache_index_filters_default() -> bool {
@@ -228,6 +231,7 @@ impl Default for DbConfig {
             rocksdb_compaction_period: rocksdb_compaction_period_default(),
             rocksdb_max_open_files: rocksdb_max_open_files_default(),
             rocksdb_cache_index_filters: rocksdb_cache_index_filters_default(),
+            state_prune: false,
         }
     }
 }

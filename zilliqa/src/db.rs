@@ -260,7 +260,7 @@ pub struct Db {
     pub config: DbConfig,
     /// State Pruning
     tag_ceil: Arc<AtomicU64>, // always set to the finalised view height
-    tag_floor: Arc<AtomicU64>, // always resets to u64::MAX at startup; will get set during prune.
+    tag_floor: Arc<AtomicU64>, // resets to u64::MAX at startup; gets set during prune.
 }
 
 impl Db {
@@ -316,6 +316,17 @@ impl Db {
         let connection = pool.get()?;
         Self::ensure_schema(&connection)?;
 
+        // rocksdb sorts keys by lexicographical order.
+        // we reverse the values to ensure that the latest keys are ordered first.
+        let tag_ceil = u64::MAX.saturating_sub(
+            pool.get()?
+                .query_row("SELECT finalized_view FROM tip_info", (), |row| {
+                    row.get::<_, u64>(0)
+                })
+                .optional()?
+                .unwrap_or(u64::MIN),
+        );
+
         // RocksDB configuration
         let mut block_opts = BlockBasedOptions::default();
         // reduce disk and memory usage - https://github.com/facebook/rocksdb/wiki/RocksDB-Bloom-Filter#ribbon-filter
@@ -347,25 +358,27 @@ impl Db {
         // Keys are only removed if they are older than the floor value, which is set during pruning.
         // So, after pruning, old and legacy keys are eventually removed when the background compaction runs.
         let tag_floor = Arc::new(AtomicU64::new(u64::MAX));
-        let floor = tag_floor.clone();
-        rdb_opts.set_compaction_filter(
-            "StateFilter",
-            move |_lvl, key, _value| -> CompactionDecision {
-                if key.len() == 40 {
-                    // remove tagged key, if the key is 'older' than the floor
-                    let tag = u64::from_be_bytes(key[32..].try_into().expect("8-bytes"));
-                    if tag > floor.load(Ordering::Relaxed) {
-                        return CompactionDecision::Remove;
+        if config.state_prune {
+            let floor = tag_floor.clone();
+            rdb_opts.set_compaction_filter(
+                "StateFilter",
+                move |_lvl, key, _value| -> CompactionDecision {
+                    if key.len() == 40 {
+                        // remove tagged key, if the key is 'older' than the floor
+                        let tag = u64::from_be_bytes(key[32..].try_into().expect("8-bytes"));
+                        if tag > floor.load(Ordering::Relaxed) {
+                            return CompactionDecision::Remove;
+                        }
+                    } else if key.len() == 32 {
+                        // remove legacy key, if already pruned
+                        if floor.load(Ordering::Relaxed) != u64::MAX {
+                            return CompactionDecision::Remove;
+                        }
                     }
-                } else if key.len() == 32 {
-                    // remove legacy key, if already pruned
-                    if floor.load(Ordering::Relaxed) != u64::MAX {
-                        return CompactionDecision::Remove;
-                    }
-                }
-                CompactionDecision::Keep // default to keep
-            },
-        );
+                    CompactionDecision::Keep // default to keep
+                },
+            );
+        }
 
         // Should be safe in single-threaded mode
         // https://docs.rs/rocksdb/latest/rocksdb/type.DB.html#limited-performance-implication-for-single-threaded-mode
@@ -380,18 +393,6 @@ impl Db {
             rdb.path().display(),
             rdb.latest_sequence_number()
         );
-
-        let final_view = pool
-            .get()?
-            .query_row("SELECT finalized_view FROM tip_info", (), |row| {
-                row.get::<_, u64>(0)
-            })
-            .optional()?
-            .unwrap_or(u64::MIN);
-
-        // rocksdb sorts keys by lexicographical order.
-        // we reverse the values to ensure that the latest keys are ordered first.
-        let tag_ceil = u64::MAX.saturating_sub(final_view);
 
         Ok(Db {
             pool: Arc::new(pool),
