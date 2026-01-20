@@ -150,6 +150,22 @@
       delegate_to: localhost
       become: false
 
+    - name: Build effective disk labels (include private-api if present)
+      ansible.builtin.set_fact:
+        effective_disk_labels: >-
+          {{
+            {
+              'node-name': inventory_hostname,
+              'role': (labels['role'] | default('unknown')),
+              'zq2-network': chain_name,
+              'goog-terraform-provisioned': 'true'
+            }
+            | combine(
+                (labels is defined and ('private-api' in labels))
+                | ternary({'private-api': labels['private-api']}, {})
+              )
+          }}
+
     - name: Restore data disk from snapshot
       google.cloud.gcp_compute_disk:
         name: "{{ inventory_hostname }}-data"
@@ -158,11 +174,7 @@
         type: "pd-ssd"
         source_snapshot:
           selfLink: "projects/{{ project_id }}/global/snapshots/{{ effective_snapshot_id }}"
-        labels:
-          node-name: "{{ inventory_hostname }}"
-          role: "{{ labels['role'] | default('unknown') }}"
-          zq2-network: "{{ chain_name }}"
-          goog-terraform-provisioned: "true"
+        labels: "{{ effective_disk_labels }}"
         state: present
         auth_kind: application
       delegate_to: localhost
