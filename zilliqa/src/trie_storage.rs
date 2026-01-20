@@ -22,7 +22,8 @@ const ROCKSDB_CUTOVER_AT: &str = "cutover_at";
 pub struct TrieStorage {
     pool: Arc<Pool<SqliteConnectionManager>>,
     kvdb: Arc<rocksdb::DB>,
-    tag_ceil: Arc<AtomicU64>, // reverse tag, big-endian u64
+    tag_ceil: Arc<AtomicU64>,  // reverse tag, big-endian u64
+    tag_floor: Arc<AtomicU64>, // reverse tag, big-endian u64
 }
 
 impl TrieStorage {
@@ -31,10 +32,12 @@ impl TrieStorage {
         kvdb: Arc<rocksdb::DB>,
         tag_ceil: Arc<AtomicU64>,
     ) -> Self {
+        let tag_floor = Arc::new(AtomicU64::new(u64::MAX));
         Self {
             pool,
             kvdb,
             tag_ceil,
+            tag_floor,
         }
     }
 
@@ -141,7 +144,7 @@ impl TrieStorage {
     //
     // Since the tagging is only performed here, only Trie keys are tagged.
     // The only other keys stored in this database are internal configuration.
-    fn write_batch(&self, keys: Vec<Vec<u8>>, values: Vec<Vec<u8>>) -> Result<()> {
+    fn write_batch(&self, keys: Vec<Vec<u8>>, values: Vec<Vec<u8>>, tag: [u8; 8]) -> Result<()> {
         if keys.is_empty() {
             return Ok(());
         }
@@ -149,10 +152,6 @@ impl TrieStorage {
         anyhow::ensure!(keys.len() == values.len(), "Keys != Values");
 
         let mut batch = WriteBatch::default();
-        let tag = self
-            .tag_ceil
-            .load(std::sync::atomic::Ordering::Relaxed)
-            .to_be_bytes();
         for (mut key, value) in keys.into_iter().zip(values.into_iter()) {
             // tag keys; lexicographically sorted
             key.extend_from_slice(tag.as_slice()); // suffix big-endian tags
@@ -169,7 +168,7 @@ impl TrieStorage {
     // This is the tagging scheme used. Each tag is a U64 in big-endian format.
     // |user-key + tag|seqno|type|
     // |<-----internal key------>|
-    fn get_latest_tag_value(&self, key_prefix: &[u8]) -> Result<Option<(u64, Vec<u8>)>> {
+    fn get_tag_value(&self, key_prefix: &[u8]) -> Result<Option<(u64, Vec<u8>)>> {
         let mut iter = self.kvdb.prefix_iterator(key_prefix);
         // early return if user-key/prefix is not found
         let Some(prefix) = iter.next() else {
@@ -219,7 +218,7 @@ impl eth_trie::DB for TrieStorage {
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, Self::Error> {
         // L1 - rocksdb
         if let Some((_tag, value)) = self
-            .get_latest_tag_value(key)
+            .get_tag_value(key)
             .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?
         {
             return Ok(Some(value));
@@ -238,7 +237,11 @@ impl eth_trie::DB for TrieStorage {
 
         if let Some(value) = value {
             // lazy migration
-            self.write_batch(vec![key.to_vec()], vec![value.clone()])
+            let tag = self
+                .tag_ceil
+                .load(std::sync::atomic::Ordering::Relaxed)
+                .to_be_bytes();
+            self.write_batch(vec![key.to_vec()], vec![value.clone()], tag)
                 .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?;
             return Ok(Some(value));
         }
@@ -248,13 +251,21 @@ impl eth_trie::DB for TrieStorage {
 
     #[inline]
     fn insert(&self, key: &[u8], value: Vec<u8>) -> Result<(), Self::Error> {
-        self.write_batch(vec![key.to_vec()], vec![value])
+        let tag = self
+            .tag_ceil
+            .load(std::sync::atomic::Ordering::Relaxed)
+            .to_be_bytes();
+        self.write_batch(vec![key.to_vec()], vec![value], tag)
             .map_err(|e| eth_trie::TrieError::DB(e.to_string()))
     }
 
     #[inline]
     fn insert_batch(&self, keys: Vec<Vec<u8>>, values: Vec<Vec<u8>>) -> Result<(), Self::Error> {
-        self.write_batch(keys, values)
+        let tag = self
+            .tag_ceil
+            .load(std::sync::atomic::Ordering::Relaxed)
+            .to_be_bytes();
+        self.write_batch(keys, values, tag)
             .map_err(|e| eth_trie::TrieError::DB(e.to_string()))
     }
 
@@ -268,8 +279,12 @@ impl eth_trie::DB for TrieStorage {
     fn remove(&self, promote_key: &[u8]) -> Result<(), Self::Error> {
         // Since clear_trie_from_db() iterates over all db-level keys in the trie; this will end up
         // promoting the entire trie, from the db-level without iterating the trie-level keys.
-        if let Ok(Some((_tag, value))) = self.get_latest_tag_value(promote_key) {
-            self.write_batch(vec![promote_key.to_vec()], vec![value])
+        if let Ok(Some((_tag, value))) = self.get_tag_value(promote_key) {
+            let tag = self
+                .tag_floor
+                .load(std::sync::atomic::Ordering::Relaxed)
+                .to_be_bytes();
+            self.write_batch(vec![promote_key.to_vec()], vec![value], tag)
                 .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?
         }
         Ok(())
