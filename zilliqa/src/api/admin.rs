@@ -41,6 +41,7 @@ pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc
             ("admin_syncing", syncing, HandlerType::Fast),
             ("admin_missedViews", missed_views, HandlerType::Fast),
             ("admin_importViewHistory", import_history, HandlerType::Slow),
+            ("admin_snapshot", snapshot, HandlerType::Fast),
         ]
     )
 }
@@ -248,6 +249,17 @@ pub struct CheckpointResponse {
     hash: String,
     /// Block number as hex.
     block: String,
+}
+
+fn snapshot(params: Params, node: &Arc<Node>) -> Result<u64> {
+    let mut params = params.sequence();
+    let block_id: BlockId = params.next()?;
+    let block = node
+        .get_block(block_id)?
+        .ok_or(anyhow!("Block {block_id} does not exist"))?;
+
+    node.consensus.read().snapshot_at(block.number())?;
+    Ok(block.view())
 }
 
 fn checkpoint(params: Params, node: &Arc<Node>) -> Result<CheckpointResponse> {

@@ -1702,9 +1702,11 @@ pub fn get_checkpoint_filename<P: AsRef<Path> + Debug>(
 }
 
 pub fn snapshot_trie(storage: TrieStorage, root_hash: B256, view: u64) -> Result<()> {
+    tracing::info!(%view, %root_hash,"Snapshot started");
     let trie = Arc::new(storage);
     TrieStorage::snapshot(trie.clone(), root_hash)?;
     trie.set_tag_floor(view); // update new floor
+    tracing::info!(%view, "Snapshot complete");
     Ok(())
 }
 

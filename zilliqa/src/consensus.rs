@@ -2455,6 +2455,22 @@ impl Consensus {
         Ok(())
     }
 
+    /// Trigger a snapshot, for debugging.
+    pub fn snapshot_at(&self, block_number: u64) -> Result<()> {
+        let block = self
+            .get_canonical_block_by_number(block_number)?
+            .ok_or(anyhow!("No such block number {block_number}"))?;
+        let root_hash = block.state_root_hash();
+        let view = block.view();
+        self.message_sender
+            .send_message_to_coordinator(InternalMessage::SnapshotTrie(
+                self.db.state_trie(Some(view))?,
+                root_hash.into(),
+                view,
+            ))?;
+        Ok(())
+    }
+
     /// Trigger a checkpoint, for debugging.
     /// Returns (file_name, block_hash). At some time after you call this function, hopefully a checkpoint will end up in the file
     pub fn checkpoint_at(&self, block_number: u64) -> Result<(String, String)> {
