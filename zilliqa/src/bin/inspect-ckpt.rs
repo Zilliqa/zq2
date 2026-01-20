@@ -108,7 +108,7 @@ async fn main() -> Result<()> {
 
     if let Some((block, _, _, view_history)) = zilliqa::checkpoint::load_ckpt(
         path.as_path(),
-        Arc::new(db.state_trie()?),
+        Arc::new(db.state_trie(None)?),
         args.id,
         &Hash::from_bytes(hex::decode(args.hash.as_bytes())?)?,
     )? {

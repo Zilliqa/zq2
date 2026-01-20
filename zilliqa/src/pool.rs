@@ -1291,7 +1291,7 @@ mod tests {
         let db = Db::new::<PathBuf>(None, 0, None, crate::cfg::DbConfig::default())?;
         let db = Arc::new(db);
 
-        State::new_with_genesis(db.state_trie()?, node_config, db.clone())
+        State::new_with_genesis(db.state_trie(None)?, node_config, db.clone())
     }
 
     fn create_acc(

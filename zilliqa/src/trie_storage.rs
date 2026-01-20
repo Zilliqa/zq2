@@ -16,8 +16,8 @@ use crate::{cfg::Forks, crypto::Hash, state::Account};
 pub struct TrieStorage {
     pool: Arc<Pool<SqliteConnectionManager>>,
     kvdb: Arc<rocksdb::DB>,
-    tag_ceil: Arc<AtomicU64>, // reverse tag, big-endian u64
-    snapshot_tag: [u8; 8],
+    tag_ceil: Arc<AtomicU64>, // used to tag every trie written to the database.
+    snapshot_tag: [u8; 8],    // only used to promote a trie.
 }
 
 impl TrieStorage {
@@ -25,9 +25,9 @@ impl TrieStorage {
         pool: Arc<Pool<SqliteConnectionManager>>,
         kvdb: Arc<rocksdb::DB>,
         tag_ceil: Arc<AtomicU64>,
-        snapshot_tag: Option<u64>,
+        snapshot_at: Option<u64>,
     ) -> Self {
-        let snapshot_tag = snapshot_tag.unwrap_or(u64::MAX).to_be_bytes();
+        let snapshot_tag = snapshot_at.unwrap_or(u64::MAX).to_be_bytes();
         Self {
             pool,
             kvdb,

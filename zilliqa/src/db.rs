@@ -796,7 +796,7 @@ impl Db {
         hash: &Hash,
         our_shard_id: u64,
     ) -> Result<Option<(Block, Vec<SignedTransaction>, Block, ViewHistory)>> {
-        let trie_storage = Arc::new(self.state_trie()?);
+        let trie_storage = Arc::new(self.state_trie(None)?);
         let state_trie = EthTrie::new(trie_storage.clone());
 
         // If no state trie exists and no blocks are known, then we are in a fresh database.
@@ -850,11 +850,12 @@ impl Db {
         Ok(Some((block, transactions, parent, view_history)))
     }
 
-    pub fn state_trie(&self) -> Result<TrieStorage> {
+    pub fn state_trie(&self, snapshot_tag: Option<u64>) -> Result<TrieStorage> {
         Ok(TrieStorage::new(
             self.pool.clone(),
             self.kvdb.clone(),
             self.tag_ceil.clone(),
+            snapshot_tag,
         ))
     }
 
@@ -1821,10 +1822,10 @@ mod tests {
         // Seed db with data
         let mut rng = ChaCha8Rng::seed_from_u64(0);
         let distribution = Uniform::new(1, 50);
-        let mut root_trie = EthTrie::new(Arc::new(db.state_trie().unwrap()));
+        let mut root_trie = EthTrie::new(Arc::new(db.state_trie(None).unwrap()));
         for _ in 0..100 {
             let account_address: [u8; 20] = rng.r#gen();
-            let mut account_trie = EthTrie::new(Arc::new(db.state_trie().unwrap()));
+            let mut account_trie = EthTrie::new(Arc::new(db.state_trie(None).unwrap()));
             let mut key = Vec::<u8>::with_capacity(50);
             let mut value = Vec::<u8>::with_capacity(50);
             for _ in 0..distribution.sample(&mut rng) {
@@ -1880,7 +1881,7 @@ mod tests {
             &checkpoint_block,
             &checkpoint_transactions,
             &checkpoint_parent,
-            db.state_trie().unwrap(),
+            db.state_trie(None).unwrap(),
             SHARD_ID,
             view_history,
             &checkpoint_path,

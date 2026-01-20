@@ -87,7 +87,7 @@ async fn main() -> Result<()> {
     println!("WRITE {} -> {}", dbpath.display(), args.output);
     zilliqa::checkpoint::save_ckpt(
         path.as_path(),
-        Arc::new(db.state_trie()?),
+        Arc::new(db.state_trie(None)?),
         &block,
         &transactions,
         &parent,
@@ -113,7 +113,7 @@ async fn main() -> Result<()> {
     println!("VERIFY {} -> {}", args.output, dbpath.display());
     zilliqa::checkpoint::load_ckpt(
         path.as_path(),
-        Arc::new(db.state_trie()?),
+        Arc::new(db.state_trie(None)?),
         args.id,
         &Hash::from_bytes(hex::decode(args.hash.as_bytes())?)?,
     )?;
