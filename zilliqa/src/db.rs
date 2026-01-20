@@ -30,7 +30,7 @@ use tracing::{debug, warn};
 
 use crate::{
     cfg::DbConfig,
-    constants::{ROCKSDB_BLOCK_SIZE, ROCKSDB_TAGGING_AT},
+    constants::ROCKSDB_BLOCK_SIZE,
     crypto::{BlsSignature, Hash},
     exec::{ScillaError, ScillaException, ScillaTransition},
     message::{AggregateQc, Block, BlockHeader, QuorumCertificate},
@@ -259,8 +259,8 @@ pub struct Db {
     /// Clone of DbConfig
     pub config: DbConfig,
     /// State Pruning
-    tag_ceil: Arc<AtomicU64>,
-    _tag_floor: AtomicU64,
+    tag_ceil: Arc<AtomicU64>, // always set to the finalised view height
+    tag_floor: Arc<AtomicU64>, // always resets to u64::MAX at startup; will get set during prune.
 }
 
 impl Db {
@@ -342,9 +342,30 @@ impl Db {
         rdb_opts.set_max_open_files(config.rocksdb_max_open_files); // prevent opening too many files at a time
 
         // Implement compaction logic
-        rdb_opts.set_compaction_filter("StateFilter", |_lvl, _key, _value| -> CompactionDecision {
-            CompactionDecision::Keep
-        });
+        //
+        // Defaults to keeping keys during compaction.
+        // Keys are only removed if they are older than the floor value, which is set during pruning.
+        // So, after pruning, old and legacy keys are eventually removed when the background compaction runs.
+        let tag_floor = Arc::new(AtomicU64::new(u64::MAX));
+        let floor = tag_floor.clone();
+        rdb_opts.set_compaction_filter(
+            "StateFilter",
+            move |_lvl, key, _value| -> CompactionDecision {
+                if key.len() == 40 {
+                    // remove tagged key, if the key is 'older' than the floor
+                    let tag = u64::from_be_bytes(key[32..].try_into().expect("8-bytes"));
+                    if tag > floor.load(Ordering::Relaxed) {
+                        return CompactionDecision::Remove;
+                    }
+                } else if key.len() == 32 {
+                    // remove legacy key, if already pruned
+                    if floor.load(Ordering::Relaxed) != u64::MAX {
+                        return CompactionDecision::Remove;
+                    }
+                }
+                CompactionDecision::Keep // default to keep
+            },
+        );
 
         // Should be safe in single-threaded mode
         // https://docs.rs/rocksdb/latest/rocksdb/type.DB.html#limited-performance-implication-for-single-threaded-mode
@@ -371,10 +392,6 @@ impl Db {
         // rocksdb sorts keys by lexicographical order.
         // we reverse the values to ensure that the latest keys are ordered first.
         let tag_ceil = u64::MAX.saturating_sub(final_view);
-        let tag_floor = rdb
-            .get(ROCKSDB_TAGGING_AT)?
-            .map(|v| u64::from_be_bytes(v.try_into().expect("must be 8-bytes")))
-            .unwrap_or(u64::MAX);
 
         Ok(Db {
             pool: Arc::new(pool),
@@ -383,8 +400,19 @@ impl Db {
             kvdb: Arc::new(rdb),
             config,
             tag_ceil: Arc::new(AtomicU64::new(tag_ceil)),
-            _tag_floor: AtomicU64::new(tag_floor),
+            tag_floor,
         })
+    }
+
+    // Increments the tag floor
+    //
+    // Only called from pruning - and must only 'raise' the floor i.e. reduce its value.
+    pub fn inc_tag_floor(&self, height: u64) {
+        let height = u64::MAX.saturating_sub(height); // reverse ordering
+        let floor = self.tag_floor.load(Ordering::Relaxed);
+        if height < floor {
+            self.tag_floor.store(height, Ordering::Relaxed);
+        }
     }
 
     fn ensure_schema(connection: &Connection) -> Result<()> {
