@@ -112,3 +112,10 @@ pub const MISSED_VIEW_THRESHOLD: usize = 3;
 pub const LAG_BEHIND_CURRENT_VIEW: u64 = 50;
 #[cfg(feature = "fake_time")]
 pub const LAG_BEHIND_CURRENT_VIEW: u64 = 10;
+
+// Percentiles: P50: 414.93 P75: 497.53 P99: 576.82 P99.9: 579.79 P99.99: 12678.76
+pub const ROCKSDB_BLOCK_SIZE: usize = 1 << 12;
+/// Special storage keys
+pub const ROCKSDB_MIGRATE_AT: &str = "migrate_at";
+pub const ROCKSDB_CUTOVER_AT: &str = "cutover_at";
+pub const ROCKSDB_TAGGING_AT: &str = "tagging_at";

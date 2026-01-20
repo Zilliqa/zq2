@@ -18,7 +18,9 @@ use anyhow::{Context, Result, anyhow};
 use eth_trie::{DB, EthTrie, MemoryDB, Trie};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rocksdb::{BlockBasedOptions, Cache, DBWithThreadMode, Options, SingleThreaded};
+use rocksdb::{
+    BlockBasedOptions, Cache, CompactionDecision, DBWithThreadMode, Options, SingleThreaded,
+};
 use rusqlite::{
     Connection, OptionalExtension, Row, ToSql, named_params,
     types::{FromSql, FromSqlError, ToSqlOutput},
@@ -28,13 +30,14 @@ use tracing::{debug, warn};
 
 use crate::{
     cfg::DbConfig,
+    constants::{ROCKSDB_BLOCK_SIZE, ROCKSDB_TAGGING_AT},
     crypto::{BlsSignature, Hash},
     exec::{ScillaError, ScillaException, ScillaTransition},
     message::{AggregateQc, Block, BlockHeader, QuorumCertificate},
     precompiles::ViewHistory,
     time::SystemTime,
     transaction::{EvmGas, Log, SignedTransaction, TransactionReceipt, VerifiedTransaction},
-    trie_storage::{BLOCK_SIZE, TrieStorage},
+    trie_storage::TrieStorage,
 };
 
 const MAX_KEYS_IN_SINGLE_QUERY: usize = 32765;
@@ -249,13 +252,15 @@ const CURRENT_DB_VERSION: &str = "1";
 pub struct Db {
     pool: Arc<Pool<SqliteConnectionManager>>,
     kvdb: Arc<rocksdb::DB>,
-    view_tag: Arc<AtomicU64>,
     path: Option<Box<Path>>,
     /// The block height at which ZQ2 blocks begin.
     /// This value should be required only for proto networks to distinguise between ZQ1 and ZQ2 blocks.
     executable_blocks_height: Option<u64>,
     /// Clone of DbConfig
     pub config: DbConfig,
+    /// State Pruning
+    tag_ceil: Arc<AtomicU64>,
+    _tag_floor: AtomicU64,
 }
 
 impl Db {
@@ -315,7 +320,7 @@ impl Db {
         let mut block_opts = BlockBasedOptions::default();
         // reduce disk and memory usage - https://github.com/facebook/rocksdb/wiki/RocksDB-Bloom-Filter#ribbon-filter
         block_opts.set_ribbon_filter(10.0);
-        block_opts.set_block_size(BLOCK_SIZE);
+        block_opts.set_block_size(ROCKSDB_BLOCK_SIZE);
         block_opts.set_optimize_filters_for_memory(true); // reduce memory wastage with JeMalloc
         // Mitigate OOM
         block_opts.set_cache_index_and_filter_blocks(config.rocksdb_cache_index_filters);
@@ -324,9 +329,9 @@ impl Db {
         block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
         block_opts.set_partition_filters(true);
         block_opts.set_index_type(rocksdb::BlockBasedIndexType::TwoLevelIndexSearch);
-        block_opts.set_metadata_block_size(BLOCK_SIZE);
+        block_opts.set_metadata_block_size(ROCKSDB_BLOCK_SIZE);
 
-        let cache = Cache::new_hyper_clock_cache(config.rocksdb_cache_size, BLOCK_SIZE); // set this to the block size
+        let cache = Cache::new_hyper_clock_cache(config.rocksdb_cache_size, ROCKSDB_BLOCK_SIZE); // set this to the block size
         block_opts.set_block_cache(&cache);
 
         let mut rdb_opts = Options::default();
@@ -335,6 +340,11 @@ impl Db {
         rdb_opts.set_periodic_compaction_seconds(config.rocksdb_compaction_period);
         // Mitigate OOM
         rdb_opts.set_max_open_files(config.rocksdb_max_open_files); // prevent opening too many files at a time
+
+        // Implement compaction logic
+        rdb_opts.set_compaction_filter("StateFilter", |_lvl, _key, _value| -> CompactionDecision {
+            CompactionDecision::Keep
+        });
 
         // Should be safe in single-threaded mode
         // https://docs.rs/rocksdb/latest/rocksdb/type.DB.html#limited-performance-implication-for-single-threaded-mode
@@ -360,7 +370,11 @@ impl Db {
 
         // rocksdb sorts keys by lexicographical order.
         // we reverse the values to ensure that the latest keys are ordered first.
-        let view_tag = u64::MAX.saturating_sub(final_view);
+        let tag_ceil = u64::MAX.saturating_sub(final_view);
+        let tag_floor = rdb
+            .get(ROCKSDB_TAGGING_AT)?
+            .map(|v| u64::from_be_bytes(v.try_into().expect("must be 8-bytes")))
+            .unwrap_or(u64::MAX);
 
         Ok(Db {
             pool: Arc::new(pool),
@@ -368,7 +382,8 @@ impl Db {
             executable_blocks_height,
             kvdb: Arc::new(rdb),
             config,
-            view_tag: Arc::new(AtomicU64::new(view_tag)),
+            tag_ceil: Arc::new(AtomicU64::new(tag_ceil)),
+            _tag_floor: AtomicU64::new(tag_floor),
         })
     }
 
@@ -810,7 +825,7 @@ impl Db {
         Ok(TrieStorage::new(
             self.pool.clone(),
             self.kvdb.clone(),
-            self.view_tag.clone(),
+            self.tag_ceil.clone(),
         ))
     }
 
@@ -836,8 +851,8 @@ impl Db {
             .execute([view])?;
         // rocksdb sorts keys by lexicographical order.
         // we reverse the values to ensure that the latest keys are ordered first.
-        let view_tag = u64::MAX.saturating_sub(view);
-        self.view_tag.store(view_tag, Ordering::Relaxed);
+        let tag_ceil = u64::MAX.saturating_sub(view);
+        self.tag_ceil.store(tag_ceil, Ordering::Relaxed);
         Ok(())
     }
 

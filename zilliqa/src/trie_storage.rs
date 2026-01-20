@@ -8,14 +8,8 @@ use revm::primitives::B256;
 use rocksdb::WriteBatch;
 use rusqlite::OptionalExtension;
 
+use crate::constants::{ROCKSDB_CUTOVER_AT, ROCKSDB_MIGRATE_AT};
 use crate::{cfg::Forks, crypto::Hash, state::Account};
-
-// Percentiles: P50: 414.93 P75: 497.53 P99: 576.82 P99.9: 579.79 P99.99: 12678.76
-pub const BLOCK_SIZE: usize = 1 << 12;
-
-/// Special storage keys
-const ROCKSDB_MIGRATE_AT: &str = "migrate_at";
-const ROCKSDB_CUTOVER_AT: &str = "cutover_at";
 
 /// An implementor of [eth_trie::DB] which uses a [rocksdb::DB]/[rusqlite::Connection] to persist data.
 #[derive(Debug, Clone)]
