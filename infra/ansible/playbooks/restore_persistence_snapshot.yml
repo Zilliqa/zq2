@@ -45,16 +45,14 @@
         latest_labeled_snapshot: >-
           {{ (snapshots_info.resources | default([])
               | selectattr('labels', 'defined')
-              | selectattr('labels.network', 'defined')
-              | selectattr('labels.network', 'equalto', network_filter_value)
-              | selectattr('labels.backup', 'defined')
-              | selectattr('labels.backup', 'equalto', 'true')
+              | selectattr('labels.zq2-network', 'defined')
+              | selectattr('labels.zq2-network', 'equalto', network_filter_value)
               | sort(attribute='creationTimestamp')) | last | default(None) }}
       when: not use_requested_snapshot | bool
 
     - name: Abort if no labeled snapshot found for fallback
       ansible.builtin.fail:
-        msg: "No snapshots found with labels network='{{ network_filter_value }}' and backup='true' in project {{ project_id }}."
+        msg: "No snapshots found with labels zq2-network='{{ network_filter_value }}' in project {{ project_id }}."
       when:
         - not use_requested_snapshot | bool
         - latest_labeled_snapshot is not defined or latest_labeled_snapshot is none
