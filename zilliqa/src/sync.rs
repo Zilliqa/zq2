@@ -484,7 +484,7 @@ impl Sync {
                 continue; // skip if block has empty transactions root hash
             }
             let block = bnr.block;
-            tracing::info!(number=%block.number(), hash=%block.hash(), "Recovering checkpoint");
+            info!(number=%block.number(), hash=%block.hash(), "Recovering checkpoint");
             self.state = SyncState::Phase4((block.number(), block.hash()));
             let range = block.number()..=block.number();
             return self.request_passive_sync(range); // request 1 block only
@@ -581,7 +581,7 @@ impl Sync {
             let range = proposals.first().as_ref().unwrap().number()
                 ..=proposals.last().as_ref().unwrap().number();
             if self.db.contains_canonical_block(&ancestor_hash)? {
-                info!(?range, "InjectRecent : received");
+                //info!(?range, "InjectRecent : received");
                 self.inject_proposals(proposals)?;
             } else {
                 debug!(?range, "InjectRecent: skipped");

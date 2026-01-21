@@ -960,17 +960,17 @@ impl Node {
         state.call_contract(from_addr, to_addr, data, amount, block.header)
     }
 
-    pub fn get_proposer_reward_address(&self, header: BlockHeader) -> Result<Option<Address>> {
+    pub fn get_proposer_reward_address(&self, block: &Block) -> Result<Option<Address>> {
         // Return the zero address for the genesis block. There was no reward for it.
-        if header.view == 0 {
+        if block.header.view == 0 {
             return Ok(None);
         }
 
         let parent = self
-            .get_block(header.qc.block_hash)?
-            .ok_or_else(|| anyhow!("missing parent: {}", header.qc.block_hash))?;
+            .get_block(block.parent_hash())?
+            .ok_or_else(|| anyhow!("missing parent: {}", block.parent_hash()))?;
 
-        let Some(proposer) = self.consensus.read().leader_at_block(&parent, header.view) else {
+        let Some(proposer) = self.consensus.read().leader_at_block(&parent, block.view(), "api_get_proposer_reward_address") else {
             return Ok(None);
         };
 

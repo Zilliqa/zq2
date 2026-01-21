@@ -14,6 +14,7 @@ use alloy::primitives::{Address, Bytes, U256, address, hex};
 use anyhow::{Context, Result, anyhow};
 use eth_trie::{EthTrie, Trie};
 use ethabi::Token;
+use itertools::Itertools;
 use jsonrpsee::types::ErrorObjectOwned;
 use libp2p::PeerId;
 use parking_lot::RwLock;
@@ -548,9 +549,6 @@ impl State {
         base_fee_and_nonce_check: BaseFeeAndNonceCheck,
         extra_opts: ExtraOpts,
     ) -> Result<(ResultAndState, HashMap<Address, PendingAccount>)> {
-        let mut padded_view_number = [0u8; 32];
-        padded_view_number[24..].copy_from_slice(&current_block.view.to_be_bytes());
-
         let fork = self.forks.get(current_block.number);
         //let fork = self.forks.get(current_block.number).clone();
         // if the view number is lower than min view of the node's missed view history and
@@ -617,6 +615,8 @@ impl State {
         };
         let pending_state = PendingState::new(self.clone(), fork.clone());
 
+        let randao_mix_hash = current_block.mix_hash.unwrap_or(Hash::EMPTY);
+
         let evm_ctx = new_zq2_evm_ctx(pending_state, external_context)
             .with_cfg({
                 let mut cfg = CfgEnv::new_with_spec(spec_id);
@@ -644,7 +644,7 @@ impl State {
                 gas_limit: self.block_gas_limit.0,
                 basefee: self.gas_price.try_into()?,
                 difficulty: U256::from(1),
-                prevrandao: Some(Hash::builder().with(padded_view_number).finalize().into()),
+                prevrandao: Some(randao_mix_hash.0.into()),
                 blob_excess_gas_and_price,
                 beneficiary: Default::default(),
             });
@@ -1096,8 +1096,27 @@ impl State {
             .map_or(Ok(0), |v| Ok(v.as_u128()))
     }
 
-    pub fn leader(&self, view: u64, current_block: BlockHeader) -> Result<NodePublicKey> {
-        let data = contracts::deposit::LEADER_AT_VIEW.encode_input(&[Token::Uint(view.into())])?;
+    pub fn leader(
+        &self,
+        view: u64,
+        current_block: BlockHeader,
+        fork: &Fork,
+        caller: &str,
+    ) -> Result<NodePublicKey> {
+        // let current_block = BlockHeader {
+        //     mix_hash: Some(Hash::ZERO),
+        //     ..current_block
+        // };
+        let data = {
+            if fork.randao_support {
+                contracts::deposit::LEADER_AT_VIEW_WITH_RANDAO
+                    .encode_input(&[Token::Uint(view.into())])?
+                //contracts::deposit::LEADER_AT_VIEW.encode_input(&[Token::Uint(view.into())])?
+            } else {
+                contracts::deposit::LEADER_AT_VIEW.encode_input(&[Token::Uint(view.into())])?
+            }
+        };
+
 
         let result = self.call_contract(
             Address::ZERO,
@@ -1108,10 +1127,26 @@ impl State {
         )?;
         let leader = ensure_success(result)?;
 
+
+        let pub_key = NodePublicKey::from_bytes(
+            &contracts::deposit::LEADER_AT_VIEW.decode_output(&leader)?[0]
+                .clone()
+                .into_bytes()
+                .unwrap(),
+        );
+
+        let pub_key_compare = pub_key.unwrap();
+
+        let peer_id = self.get_peer_id(pub_key_compare.clone()).unwrap().unwrap();
+        let stakers = self.get_stakers(current_block)?;
+        let idx = stakers.iter().find_position(|&pk| pk.as_bytes().eq(&pub_key_compare.as_bytes())).unwrap().0;
+
+
+        info!("Calling leader at view: {}, block_number: {}, leader: {:?}, randao: {:?}, caller: {}. idx: {:?}", view, current_block.number, peer_id, current_block.mix_hash, caller, idx);
+
+
         NodePublicKey::from_bytes(
-            &contracts::deposit::LEADER_AT_VIEW
-                .decode_output(&leader)
-                .unwrap()[0]
+            &contracts::deposit::LEADER_AT_VIEW.decode_output(&leader)?[0]
                 .clone()
                 .into_bytes()
                 .unwrap(),

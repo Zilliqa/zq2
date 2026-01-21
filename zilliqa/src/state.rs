@@ -251,6 +251,26 @@ impl State {
                 deposit_v7_reinitialise_data_opt,
             )?;
         }
+
+        if let Some(deposit_v8_deploy_config) = &config.contract_upgrades.deposit_v8
+            && deposit_v8_deploy_config.height == block_header.number
+        {
+            let deposit_v8_contract = Lazy::<Contract>::force(&contracts::deposit_v8::CONTRACT);
+            let reinitialise_params_opt = deposit_v8_deploy_config.reinitialise_params.clone();
+            let deposit_v8_reinitialise_data_opt = match reinitialise_params_opt {
+                Some(reinitialise_params) => Some(
+                    contracts::deposit_v8::REINITIALIZE_2.encode_input(&[Token::Uint(
+                        reinitialise_params.withdrawal_period.into(),
+                    )])?,
+                ),
+                None => None,
+            };
+            self.upgrade_deposit_contract(
+                block_header,
+                deposit_v8_contract,
+                deposit_v8_reinitialise_data_opt,
+            )?;
+        }
         Ok(())
     }
 
