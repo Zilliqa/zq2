@@ -267,7 +267,11 @@ contract Deposit is UUPSUpgradeable {
     function leaderAtViewWithRandao(
         uint256 viewNumber
     ) public view returns (bytes memory stakerKey) {
-        uint256 randomness = uint256(keccak256(bytes.concat(bytes32(block.prevrandao), bytes32(viewNumber))));
+        uint256 randomness = uint256(
+            keccak256(
+                bytes.concat(bytes32(block.prevrandao), bytes32(viewNumber))
+            )
+        );
         uint256 bitmap;
         uint256 number = committee().stakerKeys.length;
         // representing stakers in a bitmap is very efficient
