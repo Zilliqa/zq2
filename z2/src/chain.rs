@@ -320,14 +320,14 @@ impl Chain {
                 json!({ "at_height": 7000000, "inject_access_list": true, "use_max_gas_priority_fee": true}),
                 // estimated: 2025-09-15T12.00.00Z
                 json!({ "at_height": 10153271, "failed_zil_transfers_to_eoa_proper_fee_deduction": true}),
-                // estimated: 2025-11-17T07:18:28Z
+                // estimated: 2025-02-05T10:00:00Z
                 json!({ "at_height": 13514400, "validator_jailing": true}),
-                // estimated: arbitrary high block number no reachable before next fork
-                json!({ "at_height": 99999999, "scilla_empty_maps_are_encoded_correctly": true}),
-                // estimated: arbitrary high block number no reachable before next fork
-                json!({ "at_height": 99999999, "cancun_active": true}),
+                // estimated: 2025-02-05T10:00:00Z
+                json!({ "at_height": 19486411, "scilla_empty_maps_are_encoded_correctly": true}),
+                // estimated: 2025-02-05T10:00:00Z
+                json!({ "at_height": 19486411, "cancun_active": true}),
                 json!({
-                    "at_height": 99999999,
+                    "at_height": 19486411,
                     "scilla_call_gas_exempt_addrs_v2": [
                         "0x0F8aeCCaCA7FEE297cC2aBf7fFC9a81e7122A727",
                     ],
