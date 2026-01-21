@@ -14,7 +14,7 @@ enable_faucet: true
 ubuntu_version: "24.04"
 
 # Docker images
-zq2_image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zq2:v0.19.0
+zq2_image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zq2:v0.20.0
 otterscan_image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/otterscan:v1.0.7
 spout_image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/eth-spout:main
 stats_dashboard_image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zilstats-server:v0.1.0
