@@ -14,6 +14,7 @@ use alloy::primitives::{Address, Bytes, U256, address, hex};
 use anyhow::{Context, Result, anyhow};
 use eth_trie::{EthTrie, Trie};
 use ethabi::Token;
+use itertools::Itertools;
 use jsonrpsee::types::ErrorObjectOwned;
 use libp2p::PeerId;
 use parking_lot::RwLock;
@@ -1100,7 +1101,12 @@ impl State {
         view: u64,
         current_block: BlockHeader,
         fork: &Fork,
+        caller: &str,
     ) -> Result<NodePublicKey> {
+        // let current_block = BlockHeader {
+        //     mix_hash: Some(Hash::ZERO),
+        //     ..current_block
+        // };
         let data = {
             if fork.randao_support {
                 contracts::deposit::LEADER_AT_VIEW_WITH_RANDAO
@@ -1111,6 +1117,7 @@ impl State {
             }
         };
 
+
         let result = self.call_contract(
             Address::ZERO,
             Some(contract_addr::DEPOSIT_PROXY),
@@ -1119,6 +1126,24 @@ impl State {
             current_block,
         )?;
         let leader = ensure_success(result)?;
+
+
+        let pub_key = NodePublicKey::from_bytes(
+            &contracts::deposit::LEADER_AT_VIEW.decode_output(&leader)?[0]
+                .clone()
+                .into_bytes()
+                .unwrap(),
+        );
+
+        let pub_key_compare = pub_key.unwrap();
+
+        let peer_id = self.get_peer_id(pub_key_compare.clone()).unwrap().unwrap();
+        let stakers = self.get_stakers(current_block)?;
+        let idx = stakers.iter().find_position(|&pk| pk.as_bytes().eq(&pub_key_compare.as_bytes())).unwrap().0;
+
+
+        info!("Calling leader at view: {}, block_number: {}, leader: {:?}, randao: {:?}, caller: {}. idx: {:?}", view, current_block.number, peer_id, current_block.mix_hash, caller, idx);
+
 
         NodePublicKey::from_bytes(
             &contracts::deposit::LEADER_AT_VIEW.decode_output(&leader)?[0]
