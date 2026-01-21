@@ -317,17 +317,6 @@ impl Db {
         let connection = pool.get()?;
         Self::ensure_schema(&connection)?;
 
-        // rocksdb sorts keys by lexicographical order.
-        // we reverse the values to ensure that the latest keys are ordered first.
-        let tag_ceil = u64::MAX.saturating_sub(
-            pool.get()?
-                .query_row("SELECT finalized_view FROM tip_info", (), |row| {
-                    row.get::<_, u64>(0)
-                })
-                .optional()?
-                .unwrap_or(u64::MIN),
-        );
-
         // RocksDB configuration
         let mut block_opts = BlockBasedOptions::default();
         // reduce disk and memory usage - https://github.com/facebook/rocksdb/wiki/RocksDB-Bloom-Filter#ribbon-filter
@@ -354,11 +343,12 @@ impl Db {
         rdb_opts.set_max_open_files(config.rocksdb_max_open_files); // prevent opening too many files at a time
 
         // Implement compaction logic
-        //
+        let tag_ceil = Arc::new(AtomicU64::new(u64::MAX));
+        let tag_floor = Arc::new(AtomicU64::new(u64::MAX));
+
         // Defaults to keeping keys during compaction.
         // Keys are only removed if they are older than the floor value, which is set during pruning.
         // So, after pruning, old and legacy keys are eventually removed when the background compaction runs.
-        let tag_floor = Arc::new(AtomicU64::new(u64::MAX));
         if config.state_prune {
             let floor = tag_floor.clone();
             rdb_opts.set_compaction_filter(
@@ -401,7 +391,7 @@ impl Db {
             executable_blocks_height,
             kvdb: Arc::new(rdb),
             config,
-            tag_ceil: Arc::new(AtomicU64::new(tag_ceil)),
+            tag_ceil,
             tag_floor,
         })
     }
@@ -882,10 +872,6 @@ impl Db {
         sqlite_tx
             .prepare_cached("INSERT INTO tip_info (finalized_view) VALUES (?1) ON CONFLICT DO UPDATE SET finalized_view = ?1")?
             .execute([view])?;
-        // rocksdb sorts keys by lexicographical order.
-        // we reverse the values to ensure that the latest keys are ordered first.
-        let tag_ceil = u64::MAX.saturating_sub(view);
-        self.tag_ceil.store(tag_ceil, Ordering::Relaxed);
         Ok(())
     }
 
@@ -1704,8 +1690,11 @@ pub fn get_checkpoint_filename<P: AsRef<Path> + Debug>(
 pub fn snapshot_trie(storage: TrieStorage, root_hash: B256, view: u64) -> Result<()> {
     tracing::info!(%view, %root_hash,"Snapshot started");
     let trie = Arc::new(storage);
+    // future blocks will be processed at the new height
+    trie.set_tag_ceil(view);
     TrieStorage::snapshot(trie.clone(), root_hash)?;
-    trie.set_tag_floor(view); // update new floor
+    // now, blocks below this will be compacted from here onward.
+    trie.set_tag_floor(view);
     tracing::info!(%view, "Snapshot complete");
     Ok(())
 }

@@ -66,6 +66,11 @@ impl TrieStorage {
         self.tag_floor.store(tag_floor, Ordering::Relaxed);
     }
 
+    pub fn set_tag_ceil(&self, view: u64) {
+        let tag_ceil = u64::MAX.saturating_sub(view);
+        self.tag_ceil.store(tag_ceil, Ordering::Relaxed);
+    }
+
     // Called at startup, and writes the initial cutover value once, if it is missing.
     pub fn init_state_trie(&self, _forks: Forks) -> Result<()> {
         let rdb = self.kvdb.clone();
@@ -316,8 +321,13 @@ mod tests {
         );
         let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
         let tag = Arc::new(AtomicU64::new(u64::MAX));
-        let trie_storage =
-            TrieStorage::new(sql.clone(), rdb.clone(), tag.clone(), tag.clone(), None);
+        let trie_storage = TrieStorage::new(
+            sql.clone(),
+            rdb.clone(),
+            tag.clone(),
+            tag.clone(),
+            Some(u64::MIN),
+        );
         let trie_storage = Arc::new(trie_storage);
 
         let mut pmt = EthTrie::new(trie_storage.clone());
