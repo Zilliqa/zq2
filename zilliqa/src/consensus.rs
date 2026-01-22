@@ -288,14 +288,14 @@ impl Consensus {
         let mut state = if let Some(latest_block) = &latest_block {
             trace!("Loading state from latest block");
             State::new_at_root(
-                db.state_trie(None)?,
+                db.state_trie()?,
                 latest_block.state_root_hash().into(),
                 config.clone(),
                 db.clone(),
             )
         } else {
             trace!("Constructing new state from genesis");
-            State::new_with_genesis(db.state_trie(None)?, config.clone(), db.clone())
+            State::new_with_genesis(db.state_trie()?, config.clone(), db.clone())
         }?;
 
         let (ckpt_block, ckpt_transactions, ckpt_parent) =
@@ -419,7 +419,7 @@ impl Consensus {
                     consensus.add_block(None, genesis.clone())?;
                 }
                 // Initialize state trie storage
-                consensus.db.state_trie(None)?.init_state_trie(forks)?;
+                consensus.db.state_trie()?.init_state_trie(forks)?;
             }
             // treat genesis as finalized
             consensus.set_finalized_view(latest_block_view)?;
@@ -571,15 +571,12 @@ impl Consensus {
             }
             // set starting point for state-sync/state-migration
             if state_sync {
-                consensus
-                    .db
-                    .state_trie(None)?
-                    .set_migrate_at(block.number())?;
+                consensus.db.state_trie()?.set_migrate_at(block.number())?;
             }
         }
 
         // Initialize state trie storage
-        consensus.db.state_trie(None)?.init_state_trie(forks)?;
+        consensus.db.state_trie()?.init_state_trie(forks)?;
 
         // If timestamp of when current high_qc was written exists then use it to estimate the minimum number of blocks the network has moved on since shut down
         // This is useful in scenarios in which consensus has failed since this node went down
@@ -2445,7 +2442,7 @@ impl Consensus {
                     Box::new(block),
                     transactions,
                     Box::new(parent),
-                    self.db.state_trie(None)?.clone(),
+                    self.db.state_trie()?.clone(),
                     self.state.view_history.read().clone(),
                     checkpoint_path,
                 ),
@@ -2464,7 +2461,7 @@ impl Consensus {
         let view = block.view();
         self.message_sender
             .send_message_to_coordinator(InternalMessage::SnapshotTrie(
-                self.db.state_trie(Some(view))?,
+                self.db.state_trie()?,
                 root_hash.into(),
                 view,
             ))?;
@@ -2521,7 +2518,7 @@ impl Consensus {
                 Box::new(block),
                 transactions,
                 Box::new(parent),
-                self.db.state_trie(None)?,
+                self.db.state_trie()?,
                 view_history,
                 checkpoint_dir,
             ))?;
@@ -3683,7 +3680,7 @@ impl Consensus {
 
     /// Migrate the state of one block - writing new state to RocksDB; returns true if done.
     pub fn migrate_state_trie(&mut self) -> Result<bool> {
-        let state_trie = self.db.state_trie(None)?;
+        let state_trie = self.db.state_trie()?;
         let mut migrate_at = state_trie.get_migrate_at()?;
         if migrate_at == u64::MAX {
             return Ok(true); // done

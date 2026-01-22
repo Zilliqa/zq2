@@ -135,7 +135,7 @@ async fn state_sync(mut network: Network) {
         network
             .node_at(idx)
             .db
-            .state_trie(None)
+            .state_trie()
             .unwrap()
             .get_migrate_at()
             .unwrap(),
@@ -167,7 +167,7 @@ async fn state_sync(mut network: Network) {
         network
             .node_at(idx)
             .db
-            .state_trie(None)
+            .state_trie()
             .unwrap()
             .get_migrate_at()
             .unwrap(),
@@ -182,7 +182,7 @@ async fn state_sync(mut network: Network) {
         network
             .node_at(idx)
             .db
-            .state_trie(None)
+            .state_trie()
             .unwrap()
             .get_migrate_at()
             .unwrap(),

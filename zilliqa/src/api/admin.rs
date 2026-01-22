@@ -57,7 +57,7 @@ struct SyncInfo {
 
 fn syncing(_params: Params, node: &Arc<Node>) -> Result<SyncInfo> {
     let block_range = node.consensus.read().get_block_range()?;
-    let trie = node.db.state_trie(None)?;
+    let trie = node.db.state_trie()?;
     let cutover_at = trie.get_cutover_at()?;
     let migrate_at = trie.get_migrate_at()?;
     Ok(SyncInfo {

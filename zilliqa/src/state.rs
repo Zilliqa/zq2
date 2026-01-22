@@ -707,7 +707,7 @@ mod tests {
         let db = Arc::new(db);
         let config = NodeConfig::default();
 
-        let mut state = State::new(db.state_trie(None).unwrap(), &config, db).unwrap();
+        let mut state = State::new(db.state_trie().unwrap(), &config, db).unwrap();
 
         let deposit_init_addr = state.deploy_initial_deposit_contract(&config).unwrap();
 

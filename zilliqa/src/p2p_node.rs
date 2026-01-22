@@ -485,7 +485,10 @@ impl P2pNode {
                         }
                         InternalMessage::SnapshotTrie(trie, hash, view) => {
                             self.task_threads.spawn(async move {
-                                db::snapshot_trie(trie, hash, view)
+                                if let Err(e) = db::snapshot_trie(trie, hash, view) {
+                                    tracing::error!("Snapshot failed: {e:?}");
+                                }
+                                Ok(())
                             });
                         }
                     }

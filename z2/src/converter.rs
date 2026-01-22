@@ -147,7 +147,7 @@ fn convert_scilla_state(
         contract_values.push((field_name.to_owned(), (indices, value)));
     }
 
-    let db = Arc::new(zq2_db.state_trie(None)?);
+    let db = Arc::new(zq2_db.state_trie()?);
     let mut contract_trie = EthTrie::new(db.clone()).at_root(EMPTY_ROOT_HASH);
 
     for (key_name, (indices, value)) in contract_values {
@@ -183,7 +183,7 @@ fn convert_evm_state(zq1_db: &zq1::Db, zq2_db: &Db, address: Address) -> Result<
 
     let evm_prefix = "_evm_storage".as_bytes();
 
-    let db = Arc::new(zq2_db.state_trie(None)?);
+    let db = Arc::new(zq2_db.state_trie()?);
     let mut contract_trie = EthTrie::new(db.clone()).at_root(EMPTY_ROOT_HASH);
 
     for elem in storage_entries_iter {
@@ -350,7 +350,7 @@ pub async fn convert_persistence(
     let zq2_db = Arc::new(zq2_db);
     let node_config = &zq2_config.nodes[0];
     let mut state = State::new_with_genesis(
-        zq2_db.clone().state_trie(None)?,
+        zq2_db.clone().state_trie()?,
         node_config.clone(),
         zq2_db.clone(),
     )?;

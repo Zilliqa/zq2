@@ -181,7 +181,7 @@ pub fn load_trusted_checkpoint_v1<P: AsRef<Path>>(
         return Err(anyhow!("Invalid checkpoint file"));
     };
 
-    let trie_storage = Arc::new(db.state_trie(None)?);
+    let trie_storage = Arc::new(db.state_trie()?);
     let state_trie = EthTrie::new(trie_storage.clone());
 
     // INITIAL CHECKPOINT LOAD

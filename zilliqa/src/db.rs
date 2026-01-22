@@ -31,7 +31,7 @@ use tracing::{debug, warn};
 
 use crate::{
     cfg::DbConfig,
-    constants::ROCKSDB_BLOCK_SIZE,
+    constants::{ROCKSDB_BLOCK_SIZE, ROCKSDB_TAGGING_AT},
     crypto::{BlsSignature, Hash},
     exec::{ScillaError, ScillaException, ScillaTransition},
     message::{AggregateQc, Block, BlockHeader, QuorumCertificate},
@@ -343,8 +343,7 @@ impl Db {
         rdb_opts.set_max_open_files(config.rocksdb_max_open_files); // prevent opening too many files at a time
 
         // Implement compaction logic
-        let tag_ceil = Arc::new(AtomicU64::new(u64::MAX));
-        let tag_floor = Arc::new(AtomicU64::new(u64::MAX));
+        let tag_floor = Arc::new(AtomicU64::new(u64::MAX)); // default to no compaction
 
         // Defaults to keeping keys during compaction.
         // Keys are only removed if they are older than the floor value, which is set during pruning.
@@ -361,7 +360,7 @@ impl Db {
                             return CompactionDecision::Remove;
                         }
                     } else if key.len() == 32 {
-                        // remove legacy key, if already pruned
+                        // remove legacy key, if already pruned once
                         if floor.load(Ordering::Relaxed) != u64::MAX {
                             return CompactionDecision::Remove;
                         }
@@ -384,6 +383,12 @@ impl Db {
             rdb.path().display(),
             rdb.latest_sequence_number()
         );
+
+        // *** Must use the latest tag for keys. ***
+        let last_tag = rdb.get(ROCKSDB_TAGGING_AT)?.map_or(u64::MAX, |v| {
+            u64::from_be_bytes(v.try_into().expect("8-bytes"))
+        });
+        let tag_ceil = Arc::new(AtomicU64::new(last_tag));
 
         Ok(Db {
             pool: Arc::new(pool),
@@ -787,7 +792,7 @@ impl Db {
         hash: &Hash,
         our_shard_id: u64,
     ) -> Result<Option<(Block, Vec<SignedTransaction>, Block, ViewHistory)>> {
-        let trie_storage = Arc::new(self.state_trie(None)?);
+        let trie_storage = Arc::new(self.state_trie()?);
         let state_trie = EthTrie::new(trie_storage.clone());
 
         // If no state trie exists and no blocks are known, then we are in a fresh database.
@@ -841,14 +846,12 @@ impl Db {
         Ok(Some((block, transactions, parent, view_history)))
     }
 
-    pub fn state_trie(&self, snapshot_view: Option<u64>) -> Result<TrieStorage> {
-        let snapshot_tag = snapshot_view.map(|v| u64::MAX.saturating_sub(v));
+    pub fn state_trie(&self) -> Result<TrieStorage> {
         Ok(TrieStorage::new(
             self.pool.clone(),
             self.kvdb.clone(),
             self.tag_ceil.clone(),
             self.tag_floor.clone(),
-            snapshot_tag,
         ))
     }
 
@@ -1688,14 +1691,14 @@ pub fn get_checkpoint_filename<P: AsRef<Path> + Debug>(
 }
 
 pub fn snapshot_trie(storage: TrieStorage, root_hash: B256, view: u64) -> Result<()> {
-    tracing::info!(%view, %root_hash,"Snapshot started");
     let trie = Arc::new(storage);
     // future blocks will be processed at the new height
-    trie.set_tag_ceil(view);
+    trie.set_tag_ceil(view)?;
+    tracing::info!(%view, %root_hash, "Snapshot started");
     TrieStorage::snapshot(trie.clone(), root_hash)?;
-    // now, blocks below this will be compacted from here onward.
-    trie.set_tag_floor(view);
     tracing::info!(%view, "Snapshot complete");
+    // now, blocks below this will be compacted from here onward.
+    trie.set_tag_floor(view)?;
     Ok(())
 }
 
@@ -1823,10 +1826,10 @@ mod tests {
         // Seed db with data
         let mut rng = ChaCha8Rng::seed_from_u64(0);
         let distribution = Uniform::new(1, 50);
-        let mut root_trie = EthTrie::new(Arc::new(db.state_trie(None).unwrap()));
+        let mut root_trie = EthTrie::new(Arc::new(db.state_trie().unwrap()));
         for _ in 0..100 {
             let account_address: [u8; 20] = rng.r#gen();
-            let mut account_trie = EthTrie::new(Arc::new(db.state_trie(None).unwrap()));
+            let mut account_trie = EthTrie::new(Arc::new(db.state_trie().unwrap()));
             let mut key = Vec::<u8>::with_capacity(50);
             let mut value = Vec::<u8>::with_capacity(50);
             for _ in 0..distribution.sample(&mut rng) {
@@ -1882,7 +1885,7 @@ mod tests {
             &checkpoint_block,
             &checkpoint_transactions,
             &checkpoint_parent,
-            db.state_trie(None).unwrap(),
+            db.state_trie().unwrap(),
             SHARD_ID,
             view_history,
             &checkpoint_path,
