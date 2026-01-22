@@ -106,7 +106,7 @@ resource "google_compute_resource_policy" "persistence_snapshots_schedule" {
     }
 
     snapshot_properties {
-      guest_flush = false
+      guest_flush = true
       storage_locations = [var.region]
       chain_name = var.chain_name
       labels = local.labels

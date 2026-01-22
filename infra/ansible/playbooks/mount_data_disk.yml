@@ -77,3 +77,67 @@
         msg: "Data disk not found on this node, skipping mount configuration"
       when: not data_disk_device.stat.exists
 
+    - name: Ensure Google snapshots directory exists
+      ansible.builtin.file:
+        path: /etc/google/snapshots
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
+      when: data_disk_device.stat.exists
+
+    - name: Create pre-snapshot script
+      ansible.builtin.copy:
+        dest: /etc/google/snapshots/pre.sh
+        content: |
+          #!/bin/bash
+          sudo fsfreeze -f /data
+        mode: '0755'
+        owner: root
+        group: root
+      when: data_disk_device.stat.exists
+
+    - name: Create post-snapshot script
+      ansible.builtin.copy:
+        dest: /etc/google/snapshots/post.sh
+        content: |
+          #!/bin/bash
+          sudo fsfreeze -u /data
+        mode: '0755'
+        owner: root
+        group: root
+      when: data_disk_device.stat.exists
+
+    - name: Ensure /etc/default directory exists
+      ansible.builtin.file:
+        path: /etc/default
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
+      when: data_disk_device.stat.exists
+
+    - name: Configure application consistent snapshots
+      ansible.builtin.blockinfile:
+        path: /etc/default/instance_configs.cfg
+        create: yes
+        mode: '0644'
+        owner: root
+        group: root
+        marker: "# {mark} ANSIBLE MANAGED BLOCK - Snapshots Configuration"
+        insertafter: EOF
+        block: |
+          [Snapshots]
+          enabled = {{ gcp_snapshot_enabled | default('true') }}
+          timeout_in_seconds = {{ gcp_snapshot_timeout | default('300') }}
+      when: data_disk_device.stat.exists
+      register: snapshot_config
+
+    - name: Restart Google Guest Agent to apply snapshot settings
+      ansible.builtin.systemd:
+        name: google-guest-agent.service
+        state: restarted
+      when:
+        - data_disk_device.stat.exists
+        - snapshot_config.changed
+
