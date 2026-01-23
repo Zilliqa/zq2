@@ -2412,41 +2412,58 @@ impl Consensus {
             }
         }
 
-        if self.block_is_first_in_epoch(block.number())
-            && !block.is_genesis()
-            && self.config.do_checkpoints
-            && self.epoch_is_checkpoint(self.epoch_number(block.number()))
-            && let Some(checkpoint_path) = self.db.get_checkpoint_dir()?
-        {
-            let parent = self
-                .db
-                .get_block(block.parent_hash().into())?
-                .ok_or(anyhow!(
-                    "Trying to checkpoint block, but we don't have its parent"
-                ))?;
-            let transactions: Vec<SignedTransaction> = block
-                .transactions
-                .iter()
-                .map(|txn_hash| {
-                    let tx = self.db.get_transaction(txn_hash)?.ok_or(anyhow!(
-                        "failed to fetch transaction {} for checkpoint parent {}",
-                        txn_hash,
-                        parent.hash()
+        if self.block_is_first_in_epoch(block.number()) && !block.is_genesis() {
+            if self.config.do_checkpoints
+                && self.epoch_is_checkpoint(self.epoch_number(block.number()))
+                && let Some(checkpoint_path) = self.db.get_checkpoint_dir()?
+            {
+                let parent = self
+                    .db
+                    .get_block(block.parent_hash().into())?
+                    .ok_or(anyhow!(
+                        "Trying to checkpoint block, but we don't have its parent"
                     ))?;
-                    Ok::<_, anyhow::Error>(tx.tx)
-                })
-                .collect::<Result<Vec<SignedTransaction>>>()?;
+                let transactions: Vec<SignedTransaction> = block
+                    .transactions
+                    .iter()
+                    .map(|txn_hash| {
+                        let tx = self.db.get_transaction(txn_hash)?.ok_or(anyhow!(
+                            "failed to fetch transaction {} for checkpoint parent {}",
+                            txn_hash,
+                            parent.hash()
+                        ))?;
+                        Ok::<_, anyhow::Error>(tx.tx)
+                    })
+                    .collect::<Result<Vec<SignedTransaction>>>()?;
 
-            self.message_sender.send_message_to_coordinator(
-                InternalMessage::ExportBlockCheckpoint(
-                    Box::new(block),
-                    transactions,
-                    Box::new(parent),
-                    self.db.state_trie()?.clone(),
-                    self.state.view_history.read().clone(),
-                    checkpoint_path,
-                ),
-            )?;
+                self.message_sender.send_message_to_coordinator(
+                    InternalMessage::ExportBlockCheckpoint(
+                        Box::new(block),
+                        transactions,
+                        Box::new(parent),
+                        self.db.state_trie()?.clone(),
+                        self.state.view_history.read().clone(),
+                        checkpoint_path,
+                    ),
+                )?;
+            }
+
+            // FIXME: Determine how often to snapshot
+            if self.config.db.state_prune {
+                let range = self.db.available_range()?; // get the lowest block
+                if let Some(block) = self.db.get_block(BlockFilter::Height(*range.start()))? {
+                    let trie_storage = self.db.state_trie()?;
+                    // we must transition the tag_ceil value between blocks, to avoid parts of the state being tag differently
+                    trie_storage.set_tag_ceil(block.view())?;
+                    self.message_sender.send_message_to_coordinator(
+                        InternalMessage::SnapshotTrie(
+                            trie_storage,
+                            block.state_root_hash().into(),
+                            block.view(),
+                        ),
+                    )?;
+                };
+            }
         }
 
         Ok(())

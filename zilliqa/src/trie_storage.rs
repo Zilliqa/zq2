@@ -60,20 +60,24 @@ impl TrieStorage {
 
     // Set the tag floor to the given view
     pub fn set_tag_floor(&self, view: u64) -> Result<()> {
-        let tag_floor = u64::MAX.saturating_sub(view); // reverse-ordered
+        let new_tag = u64::MAX.saturating_sub(view); // reverse-ordered
+        let tag_floor = self.tag_floor.load(Ordering::Relaxed);
+        anyhow::ensure!(new_tag <= tag_floor, "{new_tag} <= {tag_floor}");
         let tag_ceil = self.tag_ceil.load(Ordering::Relaxed);
-        anyhow::ensure!(tag_floor >= tag_ceil, "Tag {tag_floor} < {tag_ceil}");
-        self.tag_floor.store(tag_floor, Ordering::Relaxed);
+        anyhow::ensure!(new_tag >= tag_ceil, "{new_tag} >= {tag_ceil}");
+        self.tag_floor.store(new_tag, Ordering::Relaxed);
         Ok(())
     }
 
     // Set the tag to the given view
     pub fn set_tag_ceil(&self, view: u64) -> Result<()> {
-        let tag_ceil = u64::MAX.saturating_sub(view); // reverse-ordered
+        let new_tag = u64::MAX.saturating_sub(view); // reverse-ordered
+        let tag_ceil = self.tag_ceil.load(Ordering::Relaxed);
+        anyhow::ensure!(new_tag <= tag_ceil, "{new_tag} <= {tag_ceil}");
         let tag_floor = self.tag_floor.load(Ordering::Relaxed);
-        anyhow::ensure!(tag_ceil < tag_floor, "Tag {tag_ceil} >= {tag_floor}");
-        self.kvdb.put(ROCKSDB_TAGGING_AT, tag_ceil.to_be_bytes())?;
-        self.tag_ceil.store(tag_ceil, Ordering::Relaxed);
+        anyhow::ensure!(new_tag <= tag_floor, "{new_tag} < {tag_floor}");
+        self.kvdb.put(ROCKSDB_TAGGING_AT, new_tag.to_be_bytes())?;
+        self.tag_ceil.store(new_tag, Ordering::Relaxed);
         Ok(())
     }
 
