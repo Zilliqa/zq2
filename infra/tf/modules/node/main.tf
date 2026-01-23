@@ -50,8 +50,7 @@ resource "google_compute_disk" "data" {
  
   lifecycle {
     ignore_changes = [
-      snapshot, 
-      terraform_labels
+      snapshot
     ]
   }
 }
