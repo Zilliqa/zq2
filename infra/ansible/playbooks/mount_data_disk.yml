@@ -140,4 +140,3 @@
       when:
         - data_disk_device.stat.exists
         - snapshot_config.changed
-
