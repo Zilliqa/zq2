@@ -1359,9 +1359,8 @@ fn encode_zilliqa_transaction(txn: &TxZilliqa, pub_key: schnorr::PublicKey) -> V
 
 #[cfg(test)]
 mod tests {
-    use crate::transaction::total_scilla_gas_price;
-
     use super::*;
+    use crate::transaction::total_scilla_gas_price;
 
     #[test]
     fn test_total_scilla_gas_price() {
