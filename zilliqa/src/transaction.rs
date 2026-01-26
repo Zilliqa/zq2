@@ -83,6 +83,8 @@ pub enum ValidationOutcome {
     GasPriceTooLow,
     /// Invalid amount
     InvalidAmount,
+    /// Gas price too high
+    GasPriceTooHigh,
 }
 
 impl ValidationOutcome {
@@ -139,6 +141,7 @@ impl ValidationOutcome {
                 "Total number of slots for all senders has been exceeded".to_string()
             }
             Self::GasPriceTooLow => "Provided gas price is too low".to_string(),
+            Self::GasPriceTooHigh => "Provided gas price is too high".to_string(),
             Self::InvalidAmount => "Invalid amount".to_string(),
         }
     }
@@ -308,9 +311,10 @@ impl SignedTransaction {
             SignedTransaction::Eip2930 { tx, .. } => tx.gas_price,
             // We ignore the priority fee and just use the maximum fee.
             SignedTransaction::Eip1559 { tx, .. } => tx.max_fee_per_gas,
-            SignedTransaction::Zilliqa { tx, .. } => {
-                tx.gas_price.get().expect("TODO") / (EVM_GAS_PER_SCILLA_GAS as u128)
-            }
+            SignedTransaction::Zilliqa { tx, .. } => tx
+                .gas_price
+                .get()
+                .map_or(u128::MAX, |p| p / (EVM_GAS_PER_SCILLA_GAS as u128)),
             SignedTransaction::Intershard { tx, .. } => tx.gas_price,
         }
     }
@@ -525,7 +529,7 @@ impl SignedTransaction {
         let result = ValidationOutcome::Success
             .and_then(|| self.validate_input_size())?
             .and_then(|| self.validate_gas_limit(block_gas_limit))?
-            .and_then(|| self.validate_gas_price(min_gas_price))?
+            .and_then(|| self.validate_gas_price(min_gas_price, token_supply))?
             .and_then(|| self.validate_chain_id(eth_chain_id))?
             .and_then(|| self.validate_sender_account(account))?
             .and_then(|| self.validate_amount(token_supply))?;
@@ -647,10 +651,17 @@ impl SignedTransaction {
         Ok(ValidationOutcome::Success)
     }
 
-    fn validate_gas_price(&self, min_gas_price: u128) -> Result<ValidationOutcome> {
+    fn validate_gas_price(
+        &self,
+        min_gas_price: u128,
+        token_supply: u128,
+    ) -> Result<ValidationOutcome> {
         let gas_price = self.gas_price_per_evm_gas();
         if gas_price < min_gas_price {
             return Ok(ValidationOutcome::GasPriceTooLow);
+        }
+        if gas_price > token_supply {
+            return Ok(ValidationOutcome::GasPriceTooHigh);
         }
         Ok(ValidationOutcome::Success)
     }
