@@ -630,6 +630,10 @@ impl State {
                     BaseFeeAndNonceCheck::Validate => false,
                     BaseFeeAndNonceCheck::Ignore => true,
                 };
+                cfg.disable_balance_check = match base_fee_and_nonce_check {
+                    BaseFeeAndNonceCheck::Validate => false,
+                    BaseFeeAndNonceCheck::Ignore => true,
+                };
                 cfg
             })
             .with_block(BlockEnv {
