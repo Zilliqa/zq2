@@ -160,9 +160,7 @@ where
             .expect("RpcHeaderExt must be present");
 
         if ext.remote_key.is_some() || ext.remote_ip.is_none() {
-            // Bypass by KEY/IP
-            tracing::debug!(ip=?ext.remote_ip, key=?ext.remote_key, "RPC bypass");
-            return ResponseFuture::future(self.inner.call(req));
+            return ResponseFuture::future(self.inner.call(req)); // Bypass by KEY/IP
         };
         let key = ext
             .remote_ip
@@ -187,6 +185,7 @@ where
             .ok(); // ignore errors
 
         if matches!(state, RateState::Deny { .. }) {
+            tracing::warn!(ip=%key, id=%req.id, method=%req.method, "RPC limited");
             return ResponseFuture::ready(MethodResponse::error(
                 req.id,
                 ErrorObject::borrowed(RPC_ERROR_CODE, RPC_ERROR_MESSAGE, None),
@@ -208,9 +207,7 @@ where
             .expect("RpcHeaderExt must be present");
 
         if ext.remote_key.is_some() || ext.remote_ip.is_none() {
-            // Bypass by KEY/IP
-            tracing::debug!(ip=?ext.remote_ip, key=?ext.remote_key, "RPC bypass");
-            return self.inner.batch(batch);
+            return self.inner.batch(batch); // Bypass by KEY/IP
         };
         let key = ext
             .remote_ip
@@ -234,6 +231,7 @@ where
                         self.check_credit_limit(state, &self.default_quota, req.method_name());
                     state = balance;
                     if matches!(state, RateState::Deny { .. }) {
+                        tracing::warn!(ip=%key, id=%req.id, method=%req.method, "RPC limited");
                         *entry = Err(BatchEntryErr::new(
                             req.id.clone(),
                             ErrorObject::borrowed(RPC_ERROR_CODE, RPC_ERROR_MESSAGE, None),

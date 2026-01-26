@@ -706,7 +706,7 @@ impl ChainNode {
             json!({
                 // arbitrarily chosen
                 "default_quota": {
-                    "balance": 4_000,
+                    "balance": 40_000,
                     "period": 1,
                 },
                 "port": 4201,
