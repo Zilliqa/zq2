@@ -63,6 +63,10 @@
       when:
         - not use_requested_snapshot | bool
         - latest_labeled_snapshot is defined and latest_labeled_snapshot is not none
+
+    - name: Debug effective snapshot id
+      ansible.builtin.debug:
+        msg: "Using snapshot: {{ effective_snapshot_id }}"
   
     - name: Check if Zilliqa service exists
       ansible.builtin.stat:
@@ -248,6 +252,13 @@
         msg: "Data disk not found on this node, skipping mount configuration"
       when: not data_disk_device.stat.exists
 
+    - name: Start Zilliqa service with daemon reload
+      ansible.builtin.systemd:
+        name: zilliqa
+        state: started
+        enabled: yes
+        daemon_reload: yes
+
     - name: Warm up data disk by sequential read
       ansible.builtin.command:
         argv:
@@ -264,10 +275,3 @@
         - data_disk_path.stdout | length > 0
       changed_when: false
       failed_when: false
-
-    - name: Start Zilliqa service with daemon reload
-      ansible.builtin.systemd:
-        name: zilliqa
-        state: started
-        enabled: yes
-        daemon_reload: yes
