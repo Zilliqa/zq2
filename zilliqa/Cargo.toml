@@ -60,6 +60,7 @@ rand_chacha = "0.3.1"
 revm = { version = "29.0.0", features = [
     "optional_eip3607",
     "optional_no_base_fee",
+    "optional_balance_check"
 ] }
 revm-inspectors = { version = "0.30.1", features = ["js-tracer"] }
 revm-precompile = "27.0.0"
