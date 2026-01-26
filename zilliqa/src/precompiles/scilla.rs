@@ -632,15 +632,18 @@ fn scilla_call_precompile(
     // However, we deduct the amount from the sender's account in scilla_call()
     // Therefore, we need to transfer the amount back to the sender's account from the precompile address
 
-    if effective_value.get() > 0 {
+    let effective_value_get = effective_value
+        .get()
+        .map_err(|e| PrecompileErrors::Fatal { msg: e.to_string() })?;
+    if effective_value_get > 0 {
         let evm_state = ctx.journal_mut().evm_state_mut();
         let precompile_acc = evm_state.get_mut(&input.target_address).unwrap();
         precompile_acc.info.balance = precompile_acc
             .info
             .balance
-            .saturating_sub(U256::from(effective_value.get()));
+            .saturating_sub(U256::from(effective_value_get));
         let sender_acc = evm_state.get_mut(&sender).unwrap();
-        sender_acc.info.balance += U256::from(effective_value.get());
+        sender_acc.info.balance += U256::from(effective_value_get);
     }
 
     let empty_state =
