@@ -81,6 +81,8 @@ pub enum ValidationOutcome {
     TotalNumberOfSlotsExceeded,
     /// Gas price is too low
     GasPriceTooLow,
+    /// Invalid amount
+    InvalidAmount,
 }
 
 impl ValidationOutcome {
@@ -137,6 +139,7 @@ impl ValidationOutcome {
                 "Total number of slots for all senders has been exceeded".to_string()
             }
             Self::GasPriceTooLow => "Provided gas price is too low".to_string(),
+            Self::InvalidAmount => "Invalid amount".to_string(),
         }
     }
 }
@@ -511,6 +514,7 @@ impl SignedTransaction {
         account: &Account,
         block_gas_limit: EvmGas,
         min_gas_price: u128,
+        token_supply: u128,
         eth_chain_id: u64,
     ) -> Result<ValidationOutcome> {
         let hash = self.calculate_hash();
@@ -523,8 +527,18 @@ impl SignedTransaction {
             .and_then(|| self.validate_gas_limit(block_gas_limit))?
             .and_then(|| self.validate_gas_price(min_gas_price))?
             .and_then(|| self.validate_chain_id(eth_chain_id))?
-            .and_then(|| self.validate_sender_account(account))?;
+            .and_then(|| self.validate_sender_account(account))?
+            .and_then(|| self.validate_amount(token_supply))?;
         Ok(result)
+    }
+
+    fn validate_amount(&self, token_supply: u128) -> Result<ValidationOutcome> {
+        if let Ok(amount) = self.zil_amount().get()
+            && amount < token_supply
+        {
+            return Ok(ValidationOutcome::Success);
+        }
+        Ok(ValidationOutcome::InvalidAmount)
     }
 
     fn validate_input_size(&self) -> Result<ValidationOutcome> {

@@ -2086,6 +2086,7 @@ impl Consensus {
             &early_account,
             self.config.consensus.eth_block_gas_limit,
             self.config.consensus.gas_price.0,
+            self.config.consensus.total_native_token_supply.0,
             eth_chain_id,
         )?;
         if !validation_result.is_ok() {
@@ -3267,6 +3268,7 @@ impl Consensus {
                                     &acc,
                                     self.config.consensus.eth_block_gas_limit,
                                     self.config.consensus.gas_price.0,
+                                    self.config.consensus.total_native_token_supply.0,
                                     self.config.eth_chain_id,
                                 ) else {
                                     warn!(
