@@ -96,7 +96,7 @@ blsful = { git = "https://github.com/Zilliqa/agora-blsful", branch = "update-bls
 bech32 = "0.11.1"
 cfg-if = "1.0.4"
 serde_repr = "0.1.20"
-thiserror = "2.0.17"
+thiserror = "2.0.18"
 opentelemetry-semantic-conventions = { version = "0.31.0", features = [
     "semconv_experimental",
 ] }
