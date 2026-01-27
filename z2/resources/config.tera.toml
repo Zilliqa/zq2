@@ -38,13 +38,13 @@ consensus.epochs_per_checkpoint=24
 sync.ignore_passive = true
 {%- endif %}
 {%- if role == "private-api" %}
-db.rocksdb_cache_size = 4294967296
+db.rocksdb_cache_size = 3758096384
 db.rocksdb_cache_index_filters = true
 sync.ignore_passive = true
 max_missed_view_age = 1000000000000
 {%- endif %}
 {%- if role == "api" %}
-db.rocksdb_cache_size = 4294967296
+db.rocksdb_cache_size = 3758096384
 db.rocksdb_cache_index_filters = true
 max_missed_view_age = 1000000000000
 {%- endif %}
@@ -52,7 +52,7 @@ max_missed_view_age = 1000000000000
 max_missed_view_age = 1000000000000
 {%- endif %}
 {%- if role == "checkpoint" %}
-db.rocksdb_cache_size = 4294967296
+db.rocksdb_cache_size = 3758096384
 db.rocksdb_cache_index_filters = true
 max_missed_view_age = 1000000000000
 {%- endif %}
