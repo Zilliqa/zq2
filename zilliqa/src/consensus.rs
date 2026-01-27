@@ -2413,47 +2413,18 @@ impl Consensus {
         }
 
         if self.block_is_first_in_epoch(block.number()) && !block.is_genesis() {
-            // Do checkpoints
-            if self.config.do_checkpoints
-                && self.epoch_is_checkpoint(self.epoch_number(block.number()))
-                && let Some(checkpoint_path) = self.db.get_checkpoint_dir()?
-            {
-                let parent = self
-                    .db
-                    .get_block(block.parent_hash().into())?
-                    .ok_or(anyhow!(
-                        "Trying to checkpoint block, but we don't have its parent"
-                    ))?;
-                let transactions: Vec<SignedTransaction> = block
-                    .transactions
-                    .iter()
-                    .map(|txn_hash| {
-                        let tx = self.db.get_transaction(txn_hash)?.ok_or(anyhow!(
-                            "failed to fetch transaction {} for checkpoint parent {}",
-                            txn_hash,
-                            parent.hash()
-                        ))?;
-                        Ok::<_, anyhow::Error>(tx.tx)
-                    })
-                    .collect::<Result<Vec<SignedTransaction>>>()?;
-
-                self.message_sender.send_message_to_coordinator(
-                    InternalMessage::ExportBlockCheckpoint(
-                        Box::new(block),
-                        transactions,
-                        Box::new(parent),
-                        self.db.state_trie()?.clone(),
-                        self.state.view_history.read().clone(),
-                        checkpoint_path,
-                    ),
-                )?;
-            }
-
             // Do snapshots
             if self.config.db.state_prune {
+                // generally, do them at epoch boundaries to avoid state inconsistencies.
                 let range = self.db.available_range()?;
-                // generally, do them at epoch boundaries to avoid state inconsistencies
                 self.snapshot_at(*range.start())?;
+            }
+            // Do checkpoints
+            if self.config.do_checkpoints
+                && self.db.get_checkpoint_dir()?.is_some()
+                && self.epoch_is_checkpoint(self.epoch_number(block.number()))
+            {
+                self.checkpoint_at(block.number())?;
             }
         }
 

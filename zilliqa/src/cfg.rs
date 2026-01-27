@@ -390,6 +390,11 @@ impl NodeConfig {
             self.max_missed_view_age >= MISSED_VIEW_WINDOW,
             "max_missed_view_age must be at least {MISSED_VIEW_WINDOW}"
         );
+        // checkpoint nodes, do not prune
+        anyhow::ensure!(
+            !self.do_checkpoints | !self.db.state_prune,
+            "checkpoint nodes cannot prune state"
+        );
         Ok(())
     }
 }
