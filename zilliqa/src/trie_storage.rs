@@ -3,6 +3,7 @@ use std::sync::{Arc, atomic::AtomicU64};
 
 use anyhow::Result;
 use eth_trie::{EthTrie, Trie};
+use parking_lot::Mutex;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use revm::primitives::B256;
@@ -20,6 +21,7 @@ pub struct TrieStorage {
     // the tag_* values are stored in the reverse height order i.e. u64::MAX is genesis.
     tag_ceil: Arc<AtomicU64>, // used to tag every trie written to the database.
     tag_floor: Arc<AtomicU64>, // used only to increment the tag floor
+    pub tag_lock: Arc<Mutex<u64>>, // used to lock the snapshot process
 }
 
 impl TrieStorage {
@@ -28,24 +30,26 @@ impl TrieStorage {
         kvdb: Arc<rocksdb::DB>,
         tag_ceil: Arc<AtomicU64>,
         tag_floor: Arc<AtomicU64>,
+        tag_lock: Arc<Mutex<u64>>,
     ) -> Self {
         Self {
             pool,
             kvdb,
             tag_ceil,
             tag_floor,
+            tag_lock,
         }
     }
 
     // This snapshot promotes the *active* keys to the tag
     //
-    // This works on duplicating the underlying db-level keys, not the trie-level keys.
-    // e.g. 500 trie-level random keys takes ~150 db-level keys.
+    // This works on duplicating the underlying db-level keys, not the pmt-level keys.
+    // e.g. 500 pmt-level random keys takes ~150 db-level keys.
     //
     // Previously, no deletion of keys was allowed in the state database. So, it is safe to repurpose clear_trie_from_db() to
     // promote the trie, rather than delete it.
     pub fn snapshot(trie_storage: Arc<TrieStorage>, state_root_hash: B256) -> Result<()> {
-        let mut state_trie = EthTrie::new(trie_storage.clone()).at_root(state_root_hash.into());
+        let mut state_trie = EthTrie::new(trie_storage.clone()).at_root(state_root_hash);
         for akv in state_trie.iter() {
             let (_key, serialised_account) = akv?;
             let account_root = Account::try_from(serialised_account.as_slice())?.storage_root;
@@ -332,7 +336,14 @@ mod tests {
         );
         let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
         let tag = Arc::new(AtomicU64::new(u64::MAX));
-        let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), tag.clone(), tag.clone());
+        let lock = Arc::new(Mutex::new(u64::MIN));
+        let trie_storage = TrieStorage::new(
+            sql.clone(),
+            rdb.clone(),
+            tag.clone(),
+            tag.clone(),
+            lock.clone(),
+        );
         let trie_storage = Arc::new(trie_storage);
 
         let mut pmt = EthTrie::new(trie_storage.clone());
@@ -370,8 +381,14 @@ mod tests {
         );
         let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
         let tag = Arc::new(AtomicU64::new(u64::MAX));
-        let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), tag.clone(), tag.clone());
-
+        let lock = Arc::new(Mutex::new(u64::MIN));
+        let trie_storage = TrieStorage::new(
+            sql.clone(),
+            rdb.clone(),
+            tag.clone(),
+            tag.clone(),
+            lock.clone(),
+        );
         let key_prefix = alloy::consensus::EMPTY_ROOT_HASH.0;
 
         // normal key read/write, w/o height-tags
@@ -400,7 +417,14 @@ mod tests {
         );
         let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
         let tag = Arc::new(AtomicU64::new(u64::MAX));
-        let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), tag.clone(), tag.clone());
+        let lock = Arc::new(Mutex::new(u64::MIN));
+        let trie_storage = TrieStorage::new(
+            sql.clone(),
+            rdb.clone(),
+            tag.clone(),
+            tag.clone(),
+            lock.clone(),
+        );
 
         let key_prefix = alloy::consensus::EMPTY_ROOT_HASH.0;
         let conn = sql.get().unwrap();
@@ -434,7 +458,14 @@ mod tests {
         );
         let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
         let tag = Arc::new(AtomicU64::new(u64::MAX));
-        let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), tag.clone(), tag.clone());
+        let lock = Arc::new(Mutex::new(u64::MIN));
+        let trie_storage = TrieStorage::new(
+            sql.clone(),
+            rdb.clone(),
+            tag.clone(),
+            tag.clone(),
+            lock.clone(),
+        );
 
         let key_prefix = alloy::consensus::EMPTY_ROOT_HASH.0;
 
@@ -477,11 +508,17 @@ mod tests {
         );
         let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
         let tag = Arc::new(AtomicU64::new(u64::MAX));
-        let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), tag.clone(), tag.clone());
+        let lock = Arc::new(Mutex::new(u64::MIN));
+        let trie_storage = TrieStorage::new(
+            sql.clone(),
+            rdb.clone(),
+            tag.clone(),
+            tag.clone(),
+            lock.clone(),
+        );
 
         let key_prefix = alloy::consensus::EMPTY_ROOT_HASH.0;
-        rdb.put(key_prefix.as_slice(), b"rdb_value".to_vec())
-            .unwrap();
+        rdb.put(key_prefix.as_slice(), b"rdb_value").unwrap();
 
         // read legacy value
         let value = trie_storage.get(key_prefix.as_slice()).unwrap().unwrap();
@@ -518,7 +555,14 @@ mod tests {
         );
         let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
         let tag = Arc::new(AtomicU64::new(u64::MAX));
-        let trie_storage = TrieStorage::new(sql.clone(), rdb.clone(), tag.clone(), tag.clone());
+        let lock = Arc::new(Mutex::new(u64::MIN));
+        let trie_storage = TrieStorage::new(
+            sql.clone(),
+            rdb.clone(),
+            tag.clone(),
+            tag.clone(),
+            lock.clone(),
+        );
         let trie_storage = Arc::new(trie_storage);
 
         let key_prefix = alloy::consensus::EMPTY_ROOT_HASH.0;
@@ -532,9 +576,9 @@ mod tests {
         assert_eq!(value, b"tri_value".to_vec());
         pmt.root_hash().unwrap(); // write to disk
 
-        trie_storage.inc_tag(u64::MIN + 1).unwrap();
+        trie_storage.inc_tag(1).unwrap();
         pmt.insert(key_prefix.as_slice(), b"for_value").unwrap();
-        trie_storage.inc_tag(u64::MIN + 2).unwrap();
+        trie_storage.inc_tag(2).unwrap();
         pmt.insert(key_prefix.as_slice(), b"fiv_value").unwrap();
         let value = pmt.get(key_prefix.as_slice()).unwrap().unwrap();
         assert_eq!(value, b"fiv_value".to_vec());

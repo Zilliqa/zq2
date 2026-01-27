@@ -14,8 +14,8 @@ use std::{
 
 use alloy::primitives::Address;
 use anyhow::{Context, Result, anyhow};
-#[allow(unused_imports)]
-use eth_trie::{DB, EthTrie, MemoryDB, Trie};
+use eth_trie::EthTrie;
+use parking_lot::Mutex;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use revm::primitives::B256;
@@ -262,6 +262,7 @@ pub struct Db {
     /// State Pruning
     tag_ceil: Arc<AtomicU64>, // always set to the finalised view height; set by Db::set_finalised_view()
     tag_floor: Arc<AtomicU64>, // resets to u64::MAX at startup; gets set during prune.; set by Db::snapshot()
+    pub tag_lock: Arc<Mutex<u64>>, // used to lock the snapshot process
 }
 
 impl Db {
@@ -388,7 +389,8 @@ impl Db {
         let last_tag = rdb.get(ROCKSDB_TAGGING_AT)?.map_or(u64::MAX, |v| {
             u64::from_be_bytes(v.try_into().expect("8-bytes"))
         });
-        let tag_ceil = Arc::new(AtomicU64::new(last_tag));
+        let tag_ceil = Arc::new(AtomicU64::new(last_tag)); // stores the reverse view
+        let tag_lock = Arc::new(Mutex::new(u64::MAX.saturating_sub(last_tag))); // stores the view
 
         Ok(Db {
             pool: Arc::new(pool),
@@ -398,6 +400,7 @@ impl Db {
             config,
             tag_ceil,
             tag_floor,
+            tag_lock,
         })
     }
 
@@ -852,6 +855,7 @@ impl Db {
             self.kvdb.clone(),
             self.tag_ceil.clone(),
             self.tag_floor.clone(),
+            self.tag_lock.clone(),
         ))
     }
 
@@ -1690,16 +1694,28 @@ pub fn get_checkpoint_filename<P: AsRef<Path> + Debug>(
     Ok(output_dir.as_ref().join(block.number().to_string()))
 }
 
+// Performs a snapshot of the state trie.
+//
+// Promotes the tag of each node to the given view. This process may take hours to complete.
+// The `tag_lock` ensures that only one snapshot is in progress at a time.
+// The previous state trie will be eventually pruned during compaction.
 pub fn snapshot_trie(storage: TrieStorage, root_hash: B256, view: u64) -> Result<()> {
     let trie = Arc::new(storage);
-    // future blocks will be processed at the new height
-    trie.set_tag_ceil(view)?;
-    tracing::info!(%view, %root_hash, "Snapshot started");
-    TrieStorage::snapshot(trie.clone(), root_hash)?;
-    tracing::info!(%view, "Snapshot complete");
-    // now, blocks below this will be compacted from here onward.
-    trie.set_tag_floor(view)?;
-    Ok(())
+    if let Some(tag_lock) = trie.tag_lock.try_lock_for(Duration::from_secs(30)) {
+        if *tag_lock == view {
+            tracing::info!(%view, %root_hash, "Snapshot: start");
+            TrieStorage::snapshot(trie.clone(), root_hash)?;
+            tracing::info!(%view, "Snapshot: complete");
+            trie.set_tag_floor(view)?;
+            // blocks below this will be compacted from here onward.
+            return Ok(());
+        } else {
+            tracing::warn!("Snapshot: tag mismatch {tag_lock} != {view}");
+        }
+    } else {
+        tracing::warn!("Snapshot: failed to acquire lock");
+    }
+    Ok(()) // not fatal, it can be retried later.
 }
 
 /// Build checkpoint and write to disk.
@@ -1736,6 +1752,7 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
 #[cfg(test)]
 mod tests {
     use alloy::consensus::EMPTY_ROOT_HASH;
+    use eth_trie::Trie as _;
     use rand::{
         Rng, SeedableRng,
         distributions::{Distribution, Uniform},
