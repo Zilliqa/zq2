@@ -69,6 +69,7 @@ resource "google_compute_backend_service" "api" {
   load_balancing_scheme = "EXTERNAL_MANAGED"
   enable_cdn            = false
   session_affinity      = "CLIENT_IP"
+  timeout_sec           = var.api.load_balancer_timeout
 
   dynamic "backend" {
     for_each = var.api.detach_load_balancer ? {} : google_compute_instance_group.api

@@ -66,13 +66,14 @@ variable "apps" {
 variable "api" {
   description = "(Optional) The configuration of the api nodes"
   type = object({
-    boot_disk_size       = optional(number, 100)
-    data_disk_size       = optional(number, 100)
-    instance_type        = optional(string, "e2-standard-2")
-    provisioning_model   = optional(string, "STANDARD")
-    generate_external_ip = optional(bool, false)
-    detach_load_balancer = optional(bool, false)
-    rate_limit           = optional(number, 1000000)
+    boot_disk_size        = optional(number, 100)
+    data_disk_size        = optional(number, 100)
+    instance_type         = optional(string, "e2-standard-2")
+    provisioning_model    = optional(string, "STANDARD")
+    generate_external_ip  = optional(bool, false)
+    detach_load_balancer  = optional(bool, false)
+    load_balancer_timeout = optional(number, 30)
+    rate_limit            = optional(number, 1000000)
     alternative_ssl_domains = optional(object({
       api    = optional(list(string), [])
       health = optional(list(string), [])
