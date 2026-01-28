@@ -3,7 +3,7 @@ FROM rust:1.92.0-slim-bookworm as builder
 ARG is_release=false
 RUN apt update -y && \
     apt upgrade -y && \
-    apt install -y protobuf-compiler libclang-dev build-essential libssl-dev pkg-config
+    apt install -y protobuf-compiler libclang-dev build-essential libssl-dev liburing-dev pkg-config
 
 RUN apt autoremove
 
@@ -27,7 +27,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 FROM ubuntu:24.04
 
 RUN apt update -y && \
-    apt install -y build-essential libev-dev libgmp-dev curl
+    apt install -y build-essential libev-dev libgmp-dev curl liburing2
 
 COPY --chmod=777 ./infra/run.sh /run.sh
 COPY --from=builder /zilliqa/build/zilliqa /zilliqa

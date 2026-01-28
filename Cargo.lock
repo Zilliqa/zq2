@@ -5548,6 +5548,7 @@ dependencies = [
  "cc",
  "libc",
  "libz-sys",
+ "pkg-config",
  "tikv-jemalloc-sys",
 ]
 
