@@ -38,9 +38,7 @@ use tracing::{debug, info, trace, warn};
 
 use crate::{
     cfg::{Fork, ScillaExtLibsPath, ScillaExtLibsPathInScilla, ScillaExtLibsPathInZq2},
-    constants,
-    constants::EVM_MIN_GAS_UNITS,
-    contracts,
+    constants, contracts,
     crypto::{Hash, NodePublicKey},
     error::ensure_success,
     evm::{SPEC_ID_CANCUN, SPEC_ID_SHANGHAI, ZQ2Evm, ZQ2EvmContext, new_zq2_evm_ctx},
@@ -1298,7 +1296,7 @@ impl State {
                 to_addr,
                 gas_price,
                 max_priority_fee_per_gas,
-                EVM_MIN_GAS_UNITS,
+                constants::EVM_MIN_GAS_UNITS,
                 value,
                 data.clone(),
                 None,
@@ -1311,7 +1309,7 @@ impl State {
             )
             && result.0.result.is_success()
         {
-            return Ok(EVM_MIN_GAS_UNITS.0);
+            return Ok(constants::EVM_MIN_GAS_UNITS.0);
         }
 
         let mut max = self.max_gas_for_caller(from_addr, value, gas_price, gas)?.0;
