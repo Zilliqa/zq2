@@ -1290,13 +1290,14 @@ impl State {
         }
 
         // For simple transfer try running with the default gas limit (21k) first
-        if is_simple_transfer
-            && let Ok(result) = self.apply_transaction_evm(
+        if is_simple_transfer {
+            let gas = gas.unwrap_or(constants::EVM_MIN_GAS_UNITS);
+            if let Ok(result) = self.apply_transaction_evm(
                 from_addr,
                 to_addr,
                 gas_price,
                 max_priority_fee_per_gas,
-                constants::EVM_MIN_GAS_UNITS,
+                gas,
                 value,
                 data.clone(),
                 None,
@@ -1306,10 +1307,10 @@ impl State {
                 false,
                 BaseFeeAndNonceCheck::Ignore,
                 extra_opts,
-            )
-            && result.0.result.is_success()
-        {
-            return Ok(constants::EVM_MIN_GAS_UNITS.0);
+            ) && result.0.result.is_success()
+            {
+                return Ok(constants::EVM_MIN_GAS_UNITS.0);
+            }
         }
 
         let mut max = self.max_gas_for_caller(from_addr, value, gas_price, gas)?.0;
@@ -1914,8 +1915,8 @@ pub fn store_external_libraries(
                 let file_path = ext_libs_path.join(&lib.name);
 
                 fs::write(&file_path, code).with_context(|| {
-                    format!("Failed to write the contract code to {:?}. library name: {}, library address: {}", file_path, lib.name, lib.address)
-                })?;
+                        format!("Failed to write the contract code to {:?}. library name: {}, library address: {}", file_path, lib.name, lib.address)
+                    })?;
             }
         }
     }
