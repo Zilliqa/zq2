@@ -1373,7 +1373,7 @@ async fn test_send_transaction_errors(mut network: Network) {
             .value(U256::from(200 * gas_price * gas))
             .nonce(547);
         let (code, msg) = send_transaction_get_error(&wallet, tx).await;
-        assert_eq!(code, -32603);
+        assert_eq!(code, -32602);
         assert!(msg.to_lowercase().contains("funds"));
     }
 }

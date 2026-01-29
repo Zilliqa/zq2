@@ -1282,6 +1282,37 @@ impl State {
     ) -> Result<u64> {
         let gas_price = gas_price.unwrap_or(self.gas_price);
 
+        let mut is_simple_transfer = false;
+        if data.is_empty()
+            && let Some(dest_addr) = to_addr
+        {
+            is_simple_transfer = self.get_account(dest_addr)?.code.is_eoa()
+        }
+
+        // For simple transfer try running with the default gas limit (21k) first
+        if is_simple_transfer {
+            let gas = gas.unwrap_or(constants::EVM_MIN_GAS_UNITS);
+            if let Ok(result) = self.apply_transaction_evm(
+                from_addr,
+                to_addr,
+                gas_price,
+                max_priority_fee_per_gas,
+                gas,
+                value,
+                data.clone(),
+                None,
+                access_list.clone(),
+                current_block,
+                inspector::noop(),
+                false,
+                BaseFeeAndNonceCheck::Ignore,
+                extra_opts,
+            ) && result.0.result.is_success()
+            {
+                return Ok(constants::EVM_MIN_GAS_UNITS.0);
+            }
+        }
+
         let mut max = self.max_gas_for_caller(from_addr, value, gas_price, gas)?.0;
 
         let upper_bound = max;
@@ -1884,8 +1915,8 @@ pub fn store_external_libraries(
                 let file_path = ext_libs_path.join(&lib.name);
 
                 fs::write(&file_path, code).with_context(|| {
-                    format!("Failed to write the contract code to {:?}. library name: {}, library address: {}", file_path, lib.name, lib.address)
-                })?;
+                        format!("Failed to write the contract code to {:?}. library name: {}, library address: {}", file_path, lib.name, lib.address)
+                    })?;
             }
         }
     }
