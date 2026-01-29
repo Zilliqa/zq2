@@ -1282,11 +1282,12 @@ impl State {
     ) -> Result<u64> {
         let gas_price = gas_price.unwrap_or(self.gas_price);
 
-        let mut is_simple_transfer = false;
-        if data.is_empty()
+        let is_simple_transfer = if data.is_empty()
             && let Some(dest_addr) = to_addr
         {
-            is_simple_transfer = self.get_account(dest_addr)?.code.is_eoa()
+            self.get_account(dest_addr)?.code.is_eoa()
+        } else {
+            false
         }
 
         // For simple transfer try running with the default gas limit (21k) first
