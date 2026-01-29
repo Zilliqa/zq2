@@ -38,7 +38,9 @@ use tracing::{debug, info, trace, warn};
 
 use crate::{
     cfg::{Fork, ScillaExtLibsPath, ScillaExtLibsPathInScilla, ScillaExtLibsPathInZq2},
-    constants, contracts,
+    constants,
+    constants::EVM_MIN_GAS_UNITS,
+    contracts,
     crypto::{Hash, NodePublicKey},
     error::ensure_success,
     evm::{SPEC_ID_CANCUN, SPEC_ID_SHANGHAI, ZQ2Evm, ZQ2EvmContext, new_zq2_evm_ctx},
@@ -1281,6 +1283,36 @@ impl State {
         extra_opts: ExtraOpts,
     ) -> Result<u64> {
         let gas_price = gas_price.unwrap_or(self.gas_price);
+
+        let mut is_simple_transfer = false;
+        if data.is_empty()
+            && let Some(dest_addr) = to_addr
+        {
+            is_simple_transfer = self.get_account(dest_addr)?.code.is_eoa()
+        }
+
+        // For simple transfer try running with the default gas limit (21k) first
+        if is_simple_transfer
+            && let Ok(result) = self.apply_transaction_evm(
+                from_addr,
+                to_addr,
+                gas_price,
+                max_priority_fee_per_gas,
+                EVM_MIN_GAS_UNITS,
+                value,
+                data.clone(),
+                None,
+                access_list.clone(),
+                current_block,
+                inspector::noop(),
+                false,
+                BaseFeeAndNonceCheck::Ignore,
+                extra_opts,
+            )
+            && result.0.result.is_success()
+        {
+            return Ok(EVM_MIN_GAS_UNITS.0);
+        }
 
         let mut max = self.max_gas_for_caller(from_addr, value, gas_price, gas)?.0;
 
