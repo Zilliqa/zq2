@@ -1288,7 +1288,7 @@ impl State {
             self.get_account(dest_addr)?.code.is_eoa()
         } else {
             false
-        }
+        };
 
         // For simple transfer try running with the default gas limit (21k) first
         if is_simple_transfer {
