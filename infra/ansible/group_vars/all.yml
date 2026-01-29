@@ -27,7 +27,6 @@
 # enable_faucet: true
 
 # # Persistence Configuration
-# persistence_url: ""
 # checkpoint_url: ""
 
 # # KMS Configuration
