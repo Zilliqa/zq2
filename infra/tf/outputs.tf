@@ -25,14 +25,9 @@ output "validator_external_ip" {
   value       = module.validators.external_ip
 }
 
-output "checkpoint_external_ip" {
-  description = "The provisioned bootstrap external IPs"
-  value       = module.checkpoints.external_ip
-}
-
-output "persistence_external_ip" {
-  description = "The provisioned bootstrap external IPs"
-  value       = module.persistences.external_ip
+output "opsnode_external_ip" {
+  description = "The provisioned opsnode external IPs"
+  value       = module.opsnodes.external_ip
 }
 
 output "private_api_external_ip" {
@@ -43,13 +38,12 @@ output "private_api_external_ip" {
 }
 
 output "instances_map" {
-  description = "Merged map of all instances from bootstraps, validators, apis, checkpoints, persistences, and private_apis modules"
+  description = "Merged map of all instances from bootstraps, validators, apis, opsnodes, and private_apis modules"
   value = merge(
     module.bootstraps.instances,
     module.validators.instances,
     module.apis.instances,
-    module.checkpoints.instances,
-    module.persistences.instances,
+    module.opsnodes.instances,
     merge([for private_api in module.private_apis : private_api.instances]...)
   )
 }
