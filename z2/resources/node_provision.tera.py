@@ -16,7 +16,7 @@ templatefile() vars:
 - checkpoint_url, the ZQ2 checkpoint URL used for recover the validator nodes
 - persistence_url, the ZQ2 persistence URL used for recover the network
 - docker_image, the ZQ2 docker image (incl. version)
-- role, the node role: api, checkpoint, persistence, private-api or bootstrap
+- role, the node role: api, opsnode, private-api or bootstrap
 - enable_kms, a flag to enable the KMS decryption for the keys
 - log_level, the ZQ2 network service log level
 - project_id, id of the GCP project
@@ -53,8 +53,7 @@ if NODE_NAME in [
     "zq2-testnet-validator-ase1-0",
     "zq2-mainnet-api-ase1-0",
     "zq2-mainnet-bootstrap-ase1-0",
-    "zq2-mainnet-checkpoint-ase1-0",
-    "zq2-mainnet-persistence-ase1-0",
+    "zq2-mainnet-opsnode-ase1-0",
     "zq2-mainnet-apps-ase1-0",
 ]:
     LOG_LEVEL = "zilliqa=trace"
@@ -186,7 +185,7 @@ def go(role):
     log("Running as {0}".format(os.getuid()))
     login_registry()
     match role:
-        case "api" | "checkpoint" | "persistence" | "private-api" :
+        case "api" | "opsnode" | "private-api" :
             log("Configuring a not validator node")
             pull_zq2_image()
             stop_zq2()

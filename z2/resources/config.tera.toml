@@ -27,8 +27,8 @@ consensus.contract_upgrades = {{ contract_upgrades }}
 consensus.new_view_broadcast_interval = { secs = {{ new_view_broadcast_interval }}, nanos = 0 }
 {%- endif %}
 
-{%- if role == "checkpoint" %}
-# Checkpoint configuration
+{%- if role == "opsnode" %}
+# Checkpoint configuration (opsnode)
 do_checkpoints=true
 consensus.blocks_per_epoch=3600
 consensus.epochs_per_checkpoint=24
@@ -48,10 +48,7 @@ db.rocksdb_cache_size = 3758096384
 db.rocksdb_cache_index_filters = true
 max_missed_view_age = 1000000000000
 {%- endif %}
-{%- if role == "persistence" %}
-max_missed_view_age = 1000000000000
-{%- endif %}
-{%- if role == "checkpoint" %}
+{%- if role == "opsnode" %}
 db.rocksdb_cache_size = 3758096384
 db.rocksdb_cache_index_filters = true
 max_missed_view_age = 1000000000000

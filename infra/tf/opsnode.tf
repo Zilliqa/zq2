@@ -1,14 +1,14 @@
 ################################################################################
-# ZQ2 GCP Terraform checkpoint resources
+# ZQ2 GCP Terraform opsnode resources (checkpoint + persistence combined)
 ################################################################################
 
-module "checkpoints" {
+module "opsnodes" {
   source = "./modules/node"
 
-  config     = var.checkpoint
+  config     = var.opsnode
   chain_name = var.chain_name
 
-  role         = "checkpoint"
+  role         = "opsnode"
   labels       = local.labels
   network_tags = []
 
@@ -17,14 +17,16 @@ module "checkpoints" {
   }
 
   service_account_iam = local.default_service_account_iam
+
+  snapshot_schedule_policy_name = google_compute_resource_policy.opsnode_snapshots_schedule.name
 }
 
-resource "google_compute_instance_group" "checkpoint" {
-  for_each = toset(module.checkpoints.zones)
+resource "google_compute_instance_group" "opsnode" {
+  for_each = toset(module.opsnodes.zones)
 
-  name      = "${var.chain_name}-checkpoint-${each.key}"
+  name      = "${var.chain_name}-opsnode-${each.key}"
   zone      = each.key
-  instances = [for instance in module.checkpoints.instances : instance.self_link if instance.zone == each.key]
+  instances = [for instance in module.opsnodes.instances : instance.self_link if instance.zone == each.key]
 
   named_port {
     name = "jsonrpc"
@@ -32,18 +34,22 @@ resource "google_compute_instance_group" "checkpoint" {
   }
 }
 
+################################################################################
+# CHECKPOINT BUCKET + CDN
+################################################################################
+
 resource "google_storage_bucket" "checkpoint" {
   name     = join("-", compact([var.chain_name, "checkpoint"]))
   project  = var.project_id
   location = var.region
   labels   = local.labels
 
-  force_destroy               = var.checkpoint.bucket_force_destroy
+  force_destroy               = var.opsnode.bucket_force_destroy
   uniform_bucket_level_access = true
   public_access_prevention    = "inherited"
 
   versioning {
-    enabled = var.checkpoint.bucket_versioning
+    enabled = var.opsnode.bucket_versioning
   }
 
   # Delete objects 30 days after creation
@@ -80,7 +86,7 @@ resource "google_storage_bucket_iam_binding" "checkpoint_bucket_admins" {
   bucket = google_storage_bucket.checkpoint.name
   role   = "roles/storage.objectAdmin"
   members = [
-    for name, instance in module.checkpoints.instances :
+    for name, instance in module.opsnodes.instances :
     "serviceAccount:${instance.service_account}"
   ]
 }
@@ -131,7 +137,7 @@ resource "google_compute_managed_ssl_certificate" "checkpoint" {
   managed {
     domains = concat(
       [format("checkpoints.%s", var.subdomain)],
-      var.checkpoint.alternative_ssl_domains.default
+      var.opsnode.alternative_ssl_domains.default
     )
   }
 }
@@ -175,4 +181,83 @@ resource "google_compute_global_forwarding_rule" "checkpoint_https" {
   port_range            = "443"
   target                = google_compute_target_https_proxy.checkpoint.id
   ip_address            = data.google_compute_global_address.checkpoint.address
+}
+
+################################################################################
+# PERSISTENCE BUCKET
+################################################################################
+
+resource "google_storage_bucket" "persistence" {
+  name     = join("-", compact([var.chain_name, "persistence"]))
+  project  = var.project_id
+  location = var.region
+  labels   = local.labels
+
+  force_destroy               = var.persistence_bucket_force_destroy
+  uniform_bucket_level_access = true
+  public_access_prevention    = "inherited"
+
+  versioning {
+    enabled = var.persistence_bucket_versioning
+  }
+
+  # Delete noncurrent (deleted) file versions after 7 days
+  lifecycle_rule {
+    action {
+      type = "Delete"
+    }
+    condition {
+      days_since_noncurrent_time = 7
+      send_age_if_zero           = false
+    }
+  }
+}
+
+resource "google_storage_bucket_iam_binding" "persistence_bucket_admins" {
+  bucket = google_storage_bucket.persistence.name
+  role   = "roles/storage.objectAdmin"
+  members = concat(
+    flatten([
+      [for name, instance in module.bootstraps.instances : "serviceAccount:${instance.service_account}"],
+      [for name, instance in module.validators.instances : "serviceAccount:${instance.service_account}"],
+      [for name, instance in module.apis.instances : "serviceAccount:${instance.service_account}"],
+      [for name, instance in module.opsnodes.instances : "serviceAccount:${instance.service_account}"]
+    ]),
+    flatten([
+      for private_api in module.private_apis : [
+        for name, instance in private_api.instances : "serviceAccount:${instance.service_account}"
+      ]
+    ])
+  )
+}
+
+################################################################################
+# OPSNODE SNAPSHOTS SCHEDULE
+################################################################################
+
+resource "google_compute_resource_policy" "opsnode_snapshots_schedule" {
+  name        = "${var.chain_name}-opsnode-snapshots-schedule"
+  region      = var.region
+  description = "${var.chain_name} - Opsnode snapshots schedule"
+
+  snapshot_schedule_policy {
+    schedule {
+      hourly_schedule {
+        hours_in_cycle = 1
+        start_time     = "03:00"
+      }
+    }
+
+    retention_policy {
+      max_retention_days    = 7
+      on_source_disk_delete = "APPLY_RETENTION_POLICY"
+    }
+
+    snapshot_properties {
+      guest_flush       = true
+      storage_locations = [var.region]
+      chain_name        = var.chain_name
+      labels            = local.labels
+    }
+  }
 }

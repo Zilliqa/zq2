@@ -1,6 +1,6 @@
 ---
 - name: Install and configure Checkpoints
-  hosts: role_checkpoint
+  hosts: role_opsnode
   become: true
   tags:
     - install
