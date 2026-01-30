@@ -24,10 +24,6 @@ node_exporter_image: prom/node-exporter:v1.9.0
 
 # Persistence Configuration
 persistence_snapshot_id: ""
-persistence_interval_blocks: 10800
-persistence_max_item_to_keep: 50
-persistence_dir: "/data"
-persistence_url: ""
 checkpoint_url: ""
 
 # KMS Configuration
