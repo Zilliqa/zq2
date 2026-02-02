@@ -5,8 +5,7 @@ roles:
   - validator
   - api
   - apps
-  - checkpoint
-  - persistence
+  - opsnode
   - private-api
 versions:
-  zq2: v0.20.0
+  zq2: v0.20.1

@@ -90,10 +90,8 @@ pub enum NodeRole {
     PrivateApi,
     /// Virtual machine apps
     Apps,
-    /// Virtual machine checkpoint
-    Checkpoint,
-    /// Virtual machine persistence
-    Persistence,
+    /// Virtual machine opsnode (checkpoint + persistence)
+    Opsnode,
     /// Virtual machine sentry
     Sentry,
 }
@@ -106,9 +104,8 @@ impl FromStr for NodeRole {
             "api" => Ok(NodeRole::Api),
             "apps" => Ok(NodeRole::Apps),
             "validator" => Ok(NodeRole::Validator),
-            "checkpoint" => Ok(NodeRole::Checkpoint),
+            "opsnode" => Ok(NodeRole::Opsnode),
             "private-api" => Ok(NodeRole::PrivateApi),
-            "persistence" => Ok(NodeRole::Persistence),
             "sentry" => Ok(NodeRole::Sentry),
             _ => Err(anyhow!("Node role not supported")),
         }
@@ -122,9 +119,8 @@ impl fmt::Display for NodeRole {
             NodeRole::Api => write!(f, "api"),
             NodeRole::Apps => write!(f, "apps"),
             NodeRole::Validator => write!(f, "validator"),
-            NodeRole::Checkpoint => write!(f, "checkpoint"),
+            NodeRole::Opsnode => write!(f, "opsnode"),
             NodeRole::PrivateApi => write!(f, "private-api"),
-            NodeRole::Persistence => write!(f, "persistence"),
             NodeRole::Sentry => write!(f, "sentry"),
         }
     }
@@ -764,10 +760,10 @@ impl ChainNode {
         let private_api = json!({ "port": 4202, "enabled_apis": ["admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] });
         let api_servers = json!([public_api, private_api]);
 
-        // Enable Otterscan indices on API and persistence nodes.
+        // Enable Otterscan indices on API and opsnode nodes.
         let enable_ots_indices = self.role == NodeRole::Api
             || self.role == NodeRole::PrivateApi
-            || self.role == NodeRole::Persistence;
+            || self.role == NodeRole::Opsnode;
 
         let mut ctx = Context::new();
         ctx.insert("role", &role_name);

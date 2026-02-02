@@ -47,7 +47,7 @@ resource "google_compute_disk" "data" {
   size = each.value.data_disk_size
 
   labels = merge(local.labels, { "node-name" = each.value.resource_name })
- 
+
   lifecycle {
     ignore_changes = [
       snapshot
