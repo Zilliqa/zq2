@@ -25,7 +25,7 @@ impl RpcCreditStore {
 
         // spin up redis connection pool
         let pool = uri.as_ref().and_then(|url| {
-            let num_workers = crate::tokio_worker_count().max(4) as u32;
+            let num_workers = crate::available_threads().max(4) as u32;
             Pool::builder()
                 .max_size(num_workers * 2)
                 .min_idle(Some(1))
