@@ -340,6 +340,10 @@ impl Db {
         rdb_opts.set_level_compaction_dynamic_level_bytes(true);
         rdb_opts.set_target_file_size_base(config.rocksdb_target_file_size);
         rdb_opts.set_max_bytes_for_level_base(config.rocksdb_target_file_size << 2);
+        // Reduce storage
+        rdb_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+        rdb_opts.set_bottommost_compression_type(rocksdb::DBCompressionType::Zstd);
+        rdb_opts.set_bottommost_zstd_max_train_bytes(0, true);
 
         // Should be safe in single-threaded mode
         // https://docs.rs/rocksdb/latest/rocksdb/type.DB.html#limited-performance-implication-for-single-threaded-mode
