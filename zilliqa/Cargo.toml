@@ -115,6 +115,7 @@ arc-swap = "1.8.0"
 redis = { version = "0.32.7", features = ["keep-alive", "r2d2", "tcp_nodelay"], default-features = false }
 alloy = { version = "1.4.3", default-features = false, features = ["consensus", "dyn-abi", "eips", "json-abi", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types"] }
 crossbeam = "0.8.4"
+lru = "0.16.3"
 
 [dev-dependencies]
 alloy = { version = "1.4.3", default-features = false, features = ["consensus", "dyn-abi", "eips", "json-abi", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types", "pubsub", "json-rpc", "contract", "signer-local"] }

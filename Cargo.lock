@@ -10958,6 +10958,7 @@ dependencies = [
  "jsonrpsee 0.25.1",
  "k256",
  "libp2p",
+ "lru 0.16.3",
  "lz4",
  "once_cell",
  "opentelemetry",
