@@ -376,31 +376,32 @@ impl NodeConfig {
             }
         }
 
+        // deprecated settings
         anyhow::ensure!(
             self.state_cache_size == state_cache_size_default(),
             "state_cache_size is deprecated. Use db.rocksdb_cache_size and db.rocksdb_state_cache_size instead."
         );
-
+        // sync/prune settings
         anyhow::ensure!(
             self.sync.base_height == u64_max() || self.sync.prune_interval == u64_max(),
-            "base_height and prune_interval cannot be set at the same time"
+            "sync.base_height and sync.prune_interval cannot be set at the same time"
         );
-        // when set, >> 15 to avoid pruning forks; > 256 to be EVM-safe; arbitrarily picked.
         anyhow::ensure!(
             self.sync.prune_interval >= MIN_PRUNE_INTERVAL,
-            "prune_interval must be at least {MIN_PRUNE_INTERVAL}",
+            "sync.prune_interval must be at least {MIN_PRUNE_INTERVAL}",
         );
-        // 10 is a reasonable minimum for a node to be useful.
+        anyhow::ensure!(
+            self.sync.prune_interval == u64::MAX || !self.do_checkpoints,
+            "state_prune and do_checkpoints cannot be set at the same time"
+        );
         anyhow::ensure!(
             self.sync.block_request_batch_size >= 10,
             "block_request_batch_size must be at least 10"
         );
-        // 1000 would saturate a typical node.
         anyhow::ensure!(
             self.sync.max_blocks_in_flight <= 1000,
             "max_blocks_in_flight must be at most 1000"
         );
-        // the minimum required for the next leader selection
         anyhow::ensure!(
             self.max_missed_view_age >= MISSED_VIEW_WINDOW,
             "max_missed_view_age must be at least {MISSED_VIEW_WINDOW}"

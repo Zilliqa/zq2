@@ -2415,44 +2415,55 @@ impl Consensus {
             }
         }
 
-        if self.block_is_first_in_epoch(block.number())
-            && !block.is_genesis()
-            && self.config.do_checkpoints
-            && self.epoch_is_checkpoint(self.epoch_number(block.number()))
-            && let Some(checkpoint_path) = self.db.get_checkpoint_dir()?
-        {
-            let parent = self
-                .db
-                .get_block(block.parent_hash().into())?
-                .ok_or(anyhow!(
-                    "Trying to checkpoint block, but we don't have its parent"
-                ))?;
-            let transactions: Vec<SignedTransaction> = block
-                .transactions
-                .iter()
-                .map(|txn_hash| {
-                    let tx = self.db.get_transaction(txn_hash)?.ok_or(anyhow!(
-                        "failed to fetch transaction {} for checkpoint parent {}",
-                        txn_hash,
-                        parent.hash()
-                    ))?;
-                    Ok::<_, anyhow::Error>(tx.tx)
-                })
-                .collect::<Result<Vec<SignedTransaction>>>()?;
-
-            self.message_sender.send_message_to_coordinator(
-                InternalMessage::ExportBlockCheckpoint(
-                    Box::new(block),
-                    transactions,
-                    Box::new(parent),
-                    self.db.state_trie()?.clone(),
-                    self.state.view_history.read().clone(),
-                    checkpoint_path,
-                ),
-            )?;
+        if self.block_is_first_in_epoch(block.number()) && !block.is_genesis() {
+            // Do snapshots
+            if self.config.sync.prune_interval != u64::MAX {
+                // do at block boundaries to avoid state inconsistencies.
+                // do at epoch boundaries to reduce size amplification.
+                let range = self.db.available_range()?;
+                self.snapshot_at(*range.start(), block.view())?;
+            };
+            // Do checkpoints
+            if self.config.do_checkpoints
+                && self.db.get_checkpoint_dir()?.is_some()
+                && self.epoch_is_checkpoint(self.epoch_number(block.number()))
+            {
+                self.checkpoint_at(block.number())?;
+            }
         }
 
         Ok(())
+    }
+
+    /// Trigger a snapshot
+    pub fn snapshot_at(&self, block_number: u64, new_ceil: u64) -> Result<()> {
+        // skip if there is a snapshot in progress.
+        let Some(mut tag_lock) = self.db.tag_lock.try_lock() else {
+            return Ok(());
+        };
+        // error if the lowest block does not exist
+        let Some(block) = self.get_canonical_block_by_number(block_number)? else {
+            return Err(anyhow::format_err!("Snapshot: missing block"));
+        };
+        // skip if the lowest block unsafe to snapshot
+        // 'unsafe' means that the block exists in a tag range that could be pruned away during compaction.
+        if block.view() < *tag_lock {
+            return Ok(());
+        }
+
+        let trie_storage = self.db.state_trie()?;
+        // raise the ceiling to the new tag, promoting all new state
+        let old_ceil = trie_storage.set_tag_ceil(new_ceil)?;
+        // store the previous tag, which is the next floor.
+        *tag_lock = old_ceil;
+
+        // trigger snapshot
+        self.message_sender
+            .send_message_to_coordinator(InternalMessage::PromoteTrie(
+                trie_storage,
+                block.state_root_hash().into(),
+                block_number,
+            ))
     }
 
     /// Trigger a checkpoint, for debugging.
