@@ -2412,44 +2412,46 @@ impl Consensus {
             }
         }
 
-        if self.block_is_first_in_epoch(block.number())
-            && !block.is_genesis()
-            && self.config.do_checkpoints
-            && self.epoch_is_checkpoint(self.epoch_number(block.number()))
-            && let Some(checkpoint_path) = self.db.get_checkpoint_dir()?
-        {
-            let parent = self
-                .db
-                .get_block(block.parent_hash().into())?
-                .ok_or(anyhow!(
-                    "Trying to checkpoint block, but we don't have its parent"
-                ))?;
-            let transactions: Vec<SignedTransaction> = block
-                .transactions
-                .iter()
-                .map(|txn_hash| {
-                    let tx = self.db.get_transaction(txn_hash)?.ok_or(anyhow!(
-                        "failed to fetch transaction {} for checkpoint parent {}",
-                        txn_hash,
-                        parent.hash()
-                    ))?;
-                    Ok::<_, anyhow::Error>(tx.tx)
-                })
-                .collect::<Result<Vec<SignedTransaction>>>()?;
-
-            self.message_sender.send_message_to_coordinator(
-                InternalMessage::ExportBlockCheckpoint(
-                    Box::new(block),
-                    transactions,
-                    Box::new(parent),
-                    self.db.state_trie()?.clone(),
-                    self.state.view_history.read().clone(),
-                    checkpoint_path,
-                ),
-            )?;
+        if self.block_is_first_in_epoch(block.number()) && !block.is_genesis() {
+            // Do snapshots
+            if self.config.db.state_prune {
+                // generally, do them at epoch boundaries to avoid state inconsistencies.
+                let range = self.db.available_range()?;
+                self.snapshot_at(*range.start())?;
+            }
+            // Do checkpoints
+            if self.config.do_checkpoints
+                && self.db.get_checkpoint_dir()?.is_some()
+                && self.epoch_is_checkpoint(self.epoch_number(block.number()))
+            {
+                self.checkpoint_at(block.number())?;
+            }
         }
 
         Ok(())
+    }
+
+    /// Trigger a snapshot
+    pub fn snapshot_at(&self, block_number: u64) -> Result<()> {
+        // skip if there is a snapshot in progress.
+        if let Some(mut tag_lock) = self.db.tag_lock.try_lock() {
+            // skip if the lowest block does not exist
+            if let Some(block) = self.get_canonical_block_by_number(block_number)? {
+                let trie_storage = self.db.state_trie()?;
+                trie_storage.set_tag_ceil(block.view())?; // raise the ceiling
+                *tag_lock = block.view();
+                self.message_sender
+                    .send_message_to_coordinator(InternalMessage::SnapshotTrie(
+                        trie_storage,
+                        block.state_root_hash().into(),
+                        block.view(),
+                    ))
+            } else {
+                Err(anyhow::format_err!("Snapshot: missing block"))
+            }
+        } else {
+            Err(anyhow::format_err!("Snapshot: in progress"))
+        }
     }
 
     /// Trigger a checkpoint, for debugging.

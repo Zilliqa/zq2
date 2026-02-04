@@ -18,7 +18,7 @@ use crate::{cfg::Forks, crypto::Hash, state::Account};
 /// Special storage keys
 const ROCKSDB_MIGRATE_AT: &str = "migrate_at";
 const ROCKSDB_CUTOVER_AT: &str = "cutover_at";
-const ROCKSDB_TAGGING_AT: &str = "tagging_at";
+pub const ROCKSDB_TAGGING_AT: &str = "tagging_at";
 
 /// An implementor of [eth_trie::DB] which uses a [rocksdb::DB]/[rusqlite::Connection] to persist data.
 #[derive(Debug, Clone)]
@@ -130,7 +130,7 @@ impl TrieStorage {
     // This is the tagging scheme used. Each tag is a U64 in big-endian format.
     // |user-key + tag|seqno|type|
     // |<-----internal key------>|
-    fn get_tag_value(&self, key_prefix: &[u8]) -> Result<Option<(u64, Vec<u8>)>> {
+    fn get_tag_value(&self, key_prefix: &[u8]) -> Result<Option<([u8; 8], Vec<u8>)>> {
         let mut iter = self.kvdb.prefix_iterator(key_prefix);
         // early return if user-key/prefix is not found
         let Some(prefix) = iter.next() else {
@@ -142,9 +142,9 @@ impl TrieStorage {
         }
 
         // Given that the trie keys are *all* Keccak256 keys, the legacy keys are exactly 32-bytes (256-bits) long,
-        // while the new tag keys are exactly 40-bytes (320-bits) long. We do not expect any other key lengths.
+        // while the new tag keys are exactly 40-bytes (320-bits) long. We do not expect any other trie-key lengths.
         if key.len() == 40 {
-            let tag = u64::from_be_bytes(key[32..].try_into().expect("must be 8-bytes"));
+            let tag = key[32..40].try_into().expect("must be 8-bytes");
             // latest tag key, return the latest value
             Ok(Some((tag, value.to_vec())))
         } else if key.len() == 32 {
@@ -152,12 +152,12 @@ impl TrieStorage {
             if let Some(peek) = iter.next() {
                 let peek = peek?;
                 if peek.0.starts_with(key_prefix) {
-                    let tag = u64::from_be_bytes(peek.0[32..].try_into().expect("must be 8-bytes"));
+                    let tag = peek.0[32..40].try_into().expect("must be 8-bytes");
                     return Ok(Some((tag, peek.1.to_vec()))); // tag key has newer value
                 }
             }
             // We do not perform lazy migration here to avoid write amplification.
-            Ok(Some((u64::MAX, value.to_vec()))) // fall-thru value; return legacy value
+            Ok(Some((u64::MAX.to_be_bytes(), value.to_vec()))) // fall-thru value; return legacy value
         } else {
             unimplemented!("unsupported trie key length {} bytes", key.len());
         }
@@ -237,8 +237,14 @@ impl TrieStorage {
     }
 
     #[cfg(test)]
-    // We set the height tag to the reverse height, due to the lexicographical order used by rocksdb.
-    // This ensures that the higher/later keys always get hit first, improving performance.
+    // test artifacts
+    fn clear_cache(&self) -> Result<()> {
+        self.cache.write().clear();
+        Ok(())
+    }
+
+    #[cfg(test)]
+    // test artifacts
     fn inc_tag(&self, new_height: u64) -> Result<()> {
         let new_tag = u64::MAX.saturating_sub(new_height);
         self.tag_ceil
@@ -316,19 +322,19 @@ impl eth_trie::DB for TrieStorage {
             .map_err(|e| eth_trie::TrieError::DB(e.to_string()))
     }
 
+    // only called from clear_trie_from_db().
     fn remove(&self, promote_key: &[u8]) -> Result<(), Self::Error> {
         // Since clear_trie_from_db() iterates over all db-level keys in the trie; this will end up
         // promoting the entire trie, from the db-level without iterating the trie-level keys.
-        if let Ok(Some((_tag, value))) = self.get_tag_value(promote_key) {
-            let tag = self.tag_ceil.load(Ordering::Relaxed).to_be_bytes();
-            self.write_batch(vec![promote_key.to_vec()], vec![value], tag)
+        if let Ok(Some((_old_tag, value))) = self.get_tag_value(promote_key) {
+            let new_tag = self.tag_ceil.load(Ordering::Relaxed).to_be_bytes();
+            self.write_batch(vec![promote_key.to_vec()], vec![value], new_tag)
                 .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?
         }
         Ok(())
     }
 
     fn remove_batch(&self, _: &[Vec<u8>]) -> Result<(), Self::Error> {
-        // We do not delete anything due to archival.
         // TODO: Possibly remove intermediate keys.
         Ok(())
     }
@@ -493,15 +499,7 @@ mod tests {
 
         let key_prefix = alloy::consensus::EMPTY_ROOT_HASH.0;
 
-        // write/read lo value
-        trie_storage.inc_tag(u64::MIN).unwrap();
-        trie_storage
-            .insert(key_prefix.as_slice(), b"min_value".to_vec())
-            .unwrap();
-        let value = trie_storage.get(key_prefix.as_slice()).unwrap();
-        assert_eq!(value.unwrap(), b"min_value".to_vec());
-
-        // write/read hi value
+        // write/read hi value, cached
         trie_storage.inc_tag(u64::MAX).unwrap();
         trie_storage
             .insert(key_prefix.as_slice(), b"max_value".to_vec())
@@ -509,11 +507,16 @@ mod tests {
         let value = trie_storage.get(key_prefix.as_slice()).unwrap();
         assert_eq!(value.unwrap(), b"max_value".to_vec());
 
-        // test
+        // write/read lo value, cached
         trie_storage.inc_tag(u64::MIN).unwrap();
         trie_storage
             .insert(key_prefix.as_slice(), b"min_value".to_vec())
             .unwrap();
+        let value = trie_storage.get(key_prefix.as_slice()).unwrap();
+        assert_eq!(value.unwrap(), b"min_value".to_vec());
+
+        // read highest value, bypassing cache.
+        trie_storage.clear_cache().unwrap();
         let value = trie_storage.get(key_prefix.as_slice()).unwrap();
         assert_eq!(value.unwrap(), b"max_value".to_vec());
 
@@ -555,6 +558,7 @@ mod tests {
         trie_storage
             .insert(key_prefix.as_slice(), b"min_value".to_vec())
             .unwrap();
+        trie_storage.clear_cache().unwrap();
         let value = trie_storage.get(key_prefix.as_slice()).unwrap().unwrap();
         assert_eq!(value, b"min_value".to_vec());
 
@@ -563,6 +567,7 @@ mod tests {
         trie_storage
             .insert(key_prefix.as_slice(), b"max_value".to_vec())
             .unwrap();
+        trie_storage.clear_cache().unwrap();
         let value = trie_storage.get(key_prefix.as_slice()).unwrap().unwrap();
         assert_eq!(value, b"max_value".to_vec());
 
@@ -600,6 +605,7 @@ mod tests {
         pmt.insert(key_prefix.as_slice(), b"one_value").unwrap();
         pmt.insert(key_prefix.as_slice(), b"two_value").unwrap();
         pmt.insert(key_prefix.as_slice(), b"tri_value").unwrap();
+        trie_storage.clear_cache().unwrap();
         let value = pmt.get(key_prefix.as_slice()).unwrap().unwrap();
         assert_eq!(value, b"tri_value".to_vec());
         pmt.root_hash().unwrap(); // write to disk
@@ -608,6 +614,7 @@ mod tests {
         pmt.insert(key_prefix.as_slice(), b"for_value").unwrap();
         trie_storage.inc_tag(2).unwrap();
         pmt.insert(key_prefix.as_slice(), b"fiv_value").unwrap();
+        trie_storage.clear_cache().unwrap();
         let value = pmt.get(key_prefix.as_slice()).unwrap().unwrap();
         assert_eq!(value, b"fiv_value".to_vec());
         pmt.root_hash().unwrap(); // write to disk

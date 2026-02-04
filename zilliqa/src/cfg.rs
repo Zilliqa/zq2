@@ -171,6 +171,9 @@ pub struct DbConfig {
     /// SQLite auto-checkpoint threshold; 0 to disable;
     #[serde(default = "sql_auto_checkpoint_default")]
     pub auto_checkpoint: usize,
+    /// Whether to enable state-pruning
+    #[serde(default)]
+    pub state_prune: bool,
     /// Whether to enable state-sync/state-migration
     #[serde(default)]
     pub state_sync: bool,
@@ -239,6 +242,7 @@ impl Default for DbConfig {
             conn_cache_size: sql_cache_size_default(),
             auto_checkpoint: sql_auto_checkpoint_default(),
             state_sync: false,
+            state_prune: false,
             rocksdb_cache_size: rocksdb_cache_size_default(),
             rocksdb_compaction_period: rocksdb_compaction_period_default(),
             rocksdb_max_open_files: rocksdb_max_open_files_default(),

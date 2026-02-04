@@ -6,7 +6,7 @@ use std::{
     num::NonZeroUsize,
     ops::RangeInclusive,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, atomic::AtomicU64},
     time::Duration,
 };
 
@@ -15,9 +15,10 @@ use anyhow::{Context, Result, anyhow};
 #[allow(unused_imports)]
 use eth_trie::{DB, EthTrie, MemoryDB, Trie};
 use lru::LruCache;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
+use revm::primitives::B256;
 use rocksdb::{BlockBasedOptions, Cache, DBWithThreadMode, Options, SingleThreaded};
 use rusqlite::{
     Connection, OptionalExtension, Row, ToSql, named_params,
@@ -34,7 +35,7 @@ use crate::{
     precompiles::ViewHistory,
     time::SystemTime,
     transaction::{EvmGas, Log, SignedTransaction, TransactionReceipt, VerifiedTransaction},
-    trie_storage::TrieStorage,
+    trie_storage::{ROCKSDB_TAGGING_AT, TrieStorage},
 };
 
 const MAX_KEYS_IN_SINGLE_QUERY: usize = 32765;
@@ -256,6 +257,10 @@ pub struct Db {
     executable_blocks_height: Option<u64>,
     /// Clone of DbConfig
     pub config: DbConfig,
+    /// State Pruning
+    tag_ceil: Arc<AtomicU64>, // always set to the finalised view height; set by Db::set_finalised_view()
+    tag_floor: Arc<AtomicU64>, // resets to u64::MAX at startup; gets set during prune.; set by Db::snapshot()
+    pub tag_lock: Arc<Mutex<u64>>, // used to lock the snapshot process
 }
 
 impl Db {
@@ -363,6 +368,14 @@ impl Db {
         let cache =
             LruCache::new(NonZeroUsize::new(config.rocksdb_state_cache_size / 500).unwrap());
 
+        // *** Must use the latest tag for keys. ***
+        let last_tag = rdb.get(ROCKSDB_TAGGING_AT)?.map_or(u64::MAX, |v| {
+            u64::from_be_bytes(v.try_into().expect("8-bytes"))
+        });
+        let tag_ceil = Arc::new(AtomicU64::new(last_tag)); // stores the reverse view
+        let tag_lock = Arc::new(Mutex::new(u64::MAX.saturating_sub(last_tag))); // stores the view
+        let tag_floor = Arc::new(AtomicU64::new(u64::MAX)); // default to no compaction
+
         Ok(Db {
             pool: Arc::new(pool),
             path,
@@ -370,6 +383,9 @@ impl Db {
             kvdb: Arc::new(rdb),
             cache: Arc::new(RwLock::new(cache)),
             config,
+            tag_ceil,
+            tag_floor,
+            tag_lock,
         })
     }
 
@@ -812,6 +828,9 @@ impl Db {
             self.pool.clone(),
             self.kvdb.clone(),
             self.cache.clone(),
+            self.tag_ceil.clone(),
+            self.tag_floor.clone(),
+            self.tag_lock.clone(),
         ))
     }
 
@@ -1641,6 +1660,30 @@ impl Db {
     pub fn get_total_transaction_count(&self) -> Result<usize> {
         Ok(0)
     }
+}
+
+// Performs a snapshot of the state trie.
+//
+// Promotes the tag of each node to the given view. This process may take hours to complete.
+// The `tag_lock` ensures that only one snapshot is in progress at a time.
+// The previous state trie will be eventually pruned during compaction.
+pub fn snapshot_trie(storage: TrieStorage, root_hash: B256, view: u64) -> Result<()> {
+    let trie = Arc::new(storage);
+    if let Some(tag_lock) = trie.tag_lock.try_lock_for(Duration::from_secs(30)) {
+        if *tag_lock == view {
+            tracing::info!(%view, %root_hash, "Snapshot: start");
+            TrieStorage::snapshot(trie.clone(), root_hash)?;
+            tracing::info!(%view, "Snapshot: complete");
+            trie.set_tag_floor(view)?;
+            // blocks below this will be compacted from here onward.
+            return Ok(());
+        } else {
+            tracing::warn!("Snapshot: tag mismatch {tag_lock} != {view}");
+        }
+    } else {
+        tracing::warn!("Snapshot: failed to acquire lock");
+    }
+    Ok(()) // not fatal, it can be retried later.
 }
 
 pub fn get_checkpoint_filename<P: AsRef<Path> + Debug>(
