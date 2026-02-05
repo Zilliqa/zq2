@@ -2434,24 +2434,31 @@ impl Consensus {
     /// Trigger a snapshot
     pub fn snapshot_at(&self, block_number: u64) -> Result<()> {
         // skip if there is a snapshot in progress.
-        if let Some(mut tag_lock) = self.db.tag_lock.try_lock() {
-            // skip if the lowest block does not exist
-            if let Some(block) = self.get_canonical_block_by_number(block_number)? {
-                let trie_storage = self.db.state_trie()?;
-                trie_storage.set_tag_ceil(block.view())?; // raise the ceiling
-                *tag_lock = block.view();
-                self.message_sender
-                    .send_message_to_coordinator(InternalMessage::SnapshotTrie(
-                        trie_storage,
-                        block.state_root_hash().into(),
-                        block.view(),
-                    ))
-            } else {
-                Err(anyhow::format_err!("Snapshot: missing block"))
-            }
-        } else {
-            Err(anyhow::format_err!("Snapshot: in progress"))
+        let Some(mut tag_lock) = self.db.tag_lock.try_lock() else {
+            return Ok(());
+        };
+        // error if the lowest block does not exist
+        let Some(block) = self.get_canonical_block_by_number(block_number)? else {
+            return Err(anyhow::format_err!("Snapshot: missing block"));
+        };
+        // skip if the lowest block is below previous tag
+        if block.view() < *tag_lock {
+            return Ok(());
         }
+
+        let trie_storage = self.db.state_trie()?;
+        // raise the ceiling to the finalised view
+        let new_ceil = self.get_finalized_view()?;
+        let old_ceil = trie_storage.set_tag_ceil(new_ceil)?;
+        *tag_lock = old_ceil;
+
+        // trigger snapshot
+        self.message_sender
+            .send_message_to_coordinator(InternalMessage::SnapshotTrie(
+                trie_storage,
+                block.state_root_hash().into(),
+                block_number,
+            ))
     }
 
     /// Trigger a checkpoint, for debugging.

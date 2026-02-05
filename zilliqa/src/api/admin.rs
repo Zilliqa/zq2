@@ -419,6 +419,6 @@ fn snapshot(params: Params, node: &Arc<Node>) -> Result<u64> {
         .get_block(block_id)?
         .ok_or(anyhow!("Block {block_id} does not exist"))?;
 
-    node.consensus.read().snapshot_at(block.number())?;
+    // node.consensus.read().snapshot_at(block.number())?;
     Ok(block.view())
 }

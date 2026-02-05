@@ -1662,27 +1662,18 @@ impl Db {
     }
 }
 
-// Performs a snapshot of the state trie.
-//
-// Promotes the tag of each node to the given view. This process may take hours to complete.
-// The `tag_lock` ensures that only one snapshot is in progress at a time.
-// The previous state trie will be eventually pruned during compaction.
-pub fn snapshot_trie(storage: TrieStorage, root_hash: B256, view: u64) -> Result<()> {
+/// Performs a snapshot of the state trie.
+///
+/// Promotes the tag of each node to the given view. This process may take hours to complete.
+/// The `tag_lock` ensures that only one snapshot is in progress at a time.
+/// The previous state trie will be eventually pruned during compaction.
+pub fn snapshot_trie(storage: TrieStorage, root_hash: B256, block_number: u64) -> Result<()> {
     let trie = Arc::new(storage);
-    if let Some(tag_lock) = trie.tag_lock.try_lock_for(Duration::from_secs(30)) {
-        if *tag_lock == view {
-            tracing::info!(%view, %root_hash, "Snapshot: start");
-            TrieStorage::snapshot(trie.clone(), root_hash)?;
-            tracing::info!(%view, "Snapshot: complete");
-            trie.set_tag_floor(view)?;
-            // blocks below this will be compacted from here onward.
-            return Ok(());
-        } else {
-            tracing::warn!("Snapshot: tag mismatch {tag_lock} != {view}");
-        }
-    } else {
-        tracing::warn!("Snapshot: failed to acquire lock");
-    }
+    let tag_lock = trie.tag_lock.lock();
+    tracing::info!(%root_hash, %block_number, "Snapshot: start");
+    TrieStorage::snapshot(trie.clone(), root_hash)?;
+    tracing::info!(%root_hash, %block_number, "Snapshot: complete");
+    trie.set_tag_floor(*tag_lock)?;
     Ok(()) // not fatal, it can be retried later.
 }
 
