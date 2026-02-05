@@ -912,7 +912,7 @@ impl Consensus {
         }
 
         if let Err(e) = self.check_block(&block, during_sync) {
-            warn!(?e, "invalid block proposal received!");
+            warn!(error=%e, "Invalid block proposal received!"); // drop stack trace; the preceeding log message will have details.
             return Ok(None);
         }
 
@@ -2521,10 +2521,7 @@ impl Consensus {
         }
 
         let Some(parent) = self.get_block(&block.parent_hash())? else {
-            warn!(
-                "Missing parent block while trying to check validity of block number {}",
-                block.number()
-            );
+            warn!("Missing parent of block number {}", block.number());
             return Err(MissingBlockError::from(block.parent_hash()).into());
         };
 
