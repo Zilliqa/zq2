@@ -27,9 +27,9 @@ pub struct TrieStorage {
     kvdb: Arc<rocksdb::DB>,
     cache: Arc<RwLock<LruCache<Vec<u8>, Vec<u8>>>>,
     // the tag_* values are stored in the reverse height order i.e. u64::MAX is genesis.
-    tag_ceil: Arc<AtomicU64>, // used to tag every trie written to the database.
-    tag_floor: Arc<AtomicU64>, // used only to increment the tag floor
-    pub tag_lock: Arc<Mutex<u64>>, // used to lock the snapshot process
+    tag_ceil: Arc<AtomicU64>, // used to tag every write to the state database; reverse-ordered.
+    tag_floor: Arc<AtomicU64>, // used to mark the compaction boundary; reverse-ordered.
+    pub tag_lock: Arc<Mutex<u64>>, // used to lock the snapshot process; forward-ordered.
 }
 
 impl TrieStorage {
@@ -72,37 +72,41 @@ impl TrieStorage {
         Ok(())
     }
 
-    /// Set the tag floor to the given view
+    /// Set the tag floor to the given view, returning previous tag
+    ///
+    /// This ensures that: floor != ceil && new_floor 'increments' old_floor.
     pub fn set_tag_floor(&self, view: u64) -> Result<u64> {
         let new_tag = u64::MAX.saturating_sub(view); // reverse-ordered
         let tag_floor = self.tag_floor.load(Ordering::Relaxed);
         anyhow::ensure!(new_tag <= tag_floor, "{new_tag} <= {tag_floor}");
         let tag_ceil = self.tag_ceil.load(Ordering::Relaxed);
-        anyhow::ensure!(new_tag >= tag_ceil, "{new_tag} >= {tag_ceil}");
+        anyhow::ensure!(new_tag > tag_ceil, "{new_tag} > {tag_ceil}");
         self.tag_floor.store(new_tag, Ordering::Relaxed);
         Ok(u64::MAX.saturating_sub(tag_floor))
     }
 
     /// Set the tag to the given view, returning the previous tag
+    ///
+    /// This ensures that: floor != ceil && new_ceil 'increments' old_ceil.
     pub fn set_tag_ceil(&self, view: u64) -> Result<u64> {
         let new_tag = u64::MAX.saturating_sub(view); // reverse-ordered
         let tag_ceil = self.tag_ceil.load(Ordering::Relaxed);
         anyhow::ensure!(new_tag <= tag_ceil, "{new_tag} <= {tag_ceil}");
         let tag_floor = self.tag_floor.load(Ordering::Relaxed);
-        anyhow::ensure!(new_tag <= tag_floor, "{new_tag} < {tag_floor}");
+        anyhow::ensure!(new_tag < tag_floor, "{new_tag} < {tag_floor}");
         self.kvdb.put(ROCKSDB_TAGGING_AT, new_tag.to_be_bytes())?;
         self.tag_ceil.store(new_tag, Ordering::Relaxed);
         Ok(u64::MAX.saturating_sub(tag_ceil))
     }
 
-    // Writes a batch of key-value pairs to the database.
+    /// Writes a batch of key-value pairs to the database.
+    ///
+    /// Since the tagging is only performed here, only Trie keys are tagged, leaving other keys untagged.
+    /// The other keys stored in this database are e.g. internal settings.
     //
     // This is the tagging scheme used. Each tag is a U64 in big-endian format.
     // |user-key + tag|seqno|type|
     // |<-----internal key------>|
-    //
-    // Since the tagging is only performed here, only Trie keys are tagged.
-    // The only other keys stored in this database are internal configuration.
     fn write_batch(&self, keys: Vec<Vec<u8>>, values: Vec<Vec<u8>>, tag: [u8; 8]) -> Result<()> {
         if keys.is_empty() {
             return Ok(());
@@ -122,10 +126,10 @@ impl TrieStorage {
         Ok(self.kvdb.write(batch)?)
     }
 
-    // This function retrieves the 'latest' value, at all times.
-    //
-    // Legacy keys do not have a tag and are ordered first due to lexicographical sorting used by rocksdb.
-    // We peek the next key to determine if the legacy key is the latest, or if a later tag key is present.
+    /// This function retrieves the 'latest' value, at all times.
+    ///
+    /// Legacy keys do not have a tag and are ordered first due to lexicographical sorting used by rocksdb.
+    /// We peek the next key to determine if the legacy key is the latest, or if a later tag key is present.
     //
     // This is the tagging scheme used. Each tag is a U64 in big-endian format.
     // |user-key + tag|seqno|type|
