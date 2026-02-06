@@ -321,72 +321,14 @@ impl Db {
         let connection = pool.get()?;
         Self::ensure_schema(&connection)?;
 
-        // RocksDB configuration
-        let mut block_opts = BlockBasedOptions::default();
-        // reduce disk and memory usage - https://github.com/facebook/rocksdb/wiki/RocksDB-Bloom-Filter#ribbon-filter
-        block_opts.set_ribbon_filter(10.0);
-        block_opts.set_optimize_filters_for_memory(true); // reduce memory wastage with JeMalloc
-        // Mitigate OOM
-        block_opts.set_cache_index_and_filter_blocks(config.rocksdb_cache_index_filters);
-        // Improve cache utilisation
-        block_opts.set_pin_top_level_index_and_filter(true);
-        block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
-        block_opts.set_index_type(rocksdb::BlockBasedIndexType::TwoLevelIndexSearch);
-        block_opts.set_partition_filters(true);
-        block_opts.set_block_size(config.rocksdb_block_size);
-        block_opts.set_metadata_block_size(config.rocksdb_block_size);
-
-        let cache =
-            Cache::new_hyper_clock_cache(config.rocksdb_cache_size, config.rocksdb_block_size);
-        block_opts.set_block_cache(&cache);
-
-        let mut rdb_opts = Options::default();
-        rdb_opts.create_if_missing(true);
-        rdb_opts.set_block_based_table_factory(&block_opts);
-        rdb_opts.set_periodic_compaction_seconds(config.rocksdb_compaction_period);
-        // Mitigate OOM - prevent opening too many files at a time
-        rdb_opts.set_max_open_files(config.rocksdb_max_open_files);
-        // Reduce reads
-        rdb_opts.set_level_compaction_dynamic_level_bytes(true);
-        rdb_opts.set_target_file_size_base(config.rocksdb_target_file_size);
-        rdb_opts.set_max_bytes_for_level_base(config.rocksdb_target_file_size << 2);
-        // Reduce storage
-        rdb_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
-        rdb_opts.set_bottommost_compression_type(rocksdb::DBCompressionType::Zstd);
-        rdb_opts.set_bottommost_zstd_max_train_bytes(0, true);
-
-        // Keys are only removed if they are older than the floor value, which is set during snapshot.
-        // After pruning, old and legacy keys are eventually removed when the background compaction runs.
         let tag_floor = Arc::new(AtomicU64::new(u64::MAX)); // default to no compaction
-        if config.state_prune {
-            let floor = tag_floor.clone(); // shared with Db and TrieStorage.
-            rdb_opts.set_compaction_filter(
-                "StateFilterV1",
-                move |_lvl, key, _value| -> CompactionDecision {
-                    match key.len() {
-                        // remove tagged key, if the key is 'older' than the floor
-                        40 if u64::from_be_bytes(key[32..40].try_into().unwrap())
-                            > floor.load(Ordering::Relaxed) =>
-                        {
-                            CompactionDecision::Remove
-                        }
-                        // remove any legacy key, if snapshot already taken
-                        32 if floor.load(Ordering::Relaxed) != u64::MAX => {
-                            CompactionDecision::Remove
-                        }
-                        // default to keep, all other keys
-                        _ => CompactionDecision::Keep,
-                    }
-                },
-            );
-        }
-
         // Should be safe in single-threaded mode
         // https://docs.rs/rocksdb/latest/rocksdb/type.DB.html#limited-performance-implication-for-single-threaded-mode
         let rdb_path = path.as_ref().map_or_else(
             || tempfile::tempdir().unwrap().path().join("state.rocksdb"),
             |p| p.join("state.rocksdb"),
         );
+        let rdb_opts = Self::init_rocksdb(config.clone(), tag_floor.clone());
         let rdb = DBWithThreadMode::<SingleThreaded>::open(&rdb_opts, rdb_path)?;
 
         tracing::info!(
@@ -408,10 +350,10 @@ impl Db {
 
         Ok(Db {
             pool: Arc::new(pool),
-            path,
-            executable_blocks_height,
             kvdb: Arc::new(rdb),
             cache: Arc::new(RwLock::new(cache)),
+            path,
+            executable_blocks_height,
             config,
             tag_ceil,
             tag_floor,
@@ -695,6 +637,69 @@ impl Db {
             //.execute(rusqlite::params![view, leader])?;
             .execute((view, leader))?;
         Ok(())
+    }
+
+    fn init_rocksdb(config: DbConfig, tag_floor: Arc<AtomicU64>) -> rocksdb::Options {
+        // RocksDB configuration
+        let mut block_opts = BlockBasedOptions::default();
+        // reduce disk and memory usage - https://github.com/facebook/rocksdb/wiki/RocksDB-Bloom-Filter#ribbon-filter
+        block_opts.set_ribbon_filter(10.0);
+        block_opts.set_optimize_filters_for_memory(true); // reduce memory wastage with JeMalloc
+        // Mitigate OOM
+        block_opts.set_cache_index_and_filter_blocks(config.rocksdb_cache_index_filters);
+        // Improve cache utilisation
+        block_opts.set_pin_top_level_index_and_filter(true);
+        block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
+        block_opts.set_index_type(rocksdb::BlockBasedIndexType::TwoLevelIndexSearch);
+        block_opts.set_partition_filters(true);
+        block_opts.set_block_size(config.rocksdb_block_size);
+        block_opts.set_metadata_block_size(config.rocksdb_block_size);
+
+        let cache =
+            Cache::new_hyper_clock_cache(config.rocksdb_cache_size, config.rocksdb_block_size);
+        block_opts.set_block_cache(&cache);
+
+        let mut rdb_opts = Options::default();
+        rdb_opts.create_if_missing(true);
+        rdb_opts.set_block_based_table_factory(&block_opts);
+        rdb_opts.set_periodic_compaction_seconds(config.rocksdb_compaction_period);
+        // Mitigate OOM - prevent opening too many files at a time
+        rdb_opts.set_max_open_files(config.rocksdb_max_open_files);
+        // Reduce reads
+        rdb_opts.set_level_compaction_dynamic_level_bytes(true);
+        rdb_opts.set_target_file_size_base(config.rocksdb_target_file_size);
+        rdb_opts.set_max_bytes_for_level_base(config.rocksdb_target_file_size << 2);
+        // Reduce storage
+        rdb_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+        rdb_opts.set_bottommost_compression_type(rocksdb::DBCompressionType::Zstd);
+        rdb_opts.set_bottommost_zstd_max_train_bytes(0, true);
+
+        // Keys are only removed if they are older than the floor value, which is set during snapshot.
+        // After pruning, old and legacy keys are eventually removed when the background compaction runs.
+        if config.state_prune {
+            let floor = tag_floor.clone(); // shared with Db and TrieStorage.
+            rdb_opts.set_compaction_filter(
+                "StateFilterV1",
+                move |_lvl, key, _value| -> CompactionDecision {
+                    match key.len() {
+                        // remove tagged key, if the key is 'older' than the floor
+                        40 if u64::from_be_bytes(key[32..40].try_into().unwrap())
+                            > floor.load(Ordering::Relaxed) =>
+                        {
+                            CompactionDecision::Remove
+                        }
+                        // remove any legacy key, if snapshot already taken
+                        32 if floor.load(Ordering::Relaxed) != u64::MAX => {
+                            CompactionDecision::Remove
+                        }
+                        // default to keep, all other keys
+                        _ => CompactionDecision::Keep,
+                    }
+                },
+            );
+        }
+
+        rdb_opts
     }
 
     // SQLite performance tweaks
