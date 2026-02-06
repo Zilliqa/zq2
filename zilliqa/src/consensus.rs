@@ -2415,9 +2415,10 @@ impl Consensus {
         if self.block_is_first_in_epoch(block.number()) && !block.is_genesis() {
             // Do snapshots
             if self.config.db.state_prune {
-                // generally, do them at epoch boundaries to avoid state inconsistencies.
+                // do at block boundaries to avoid state inconsistencies.
+                // do at epoch boundaries to reduce size amplification.
                 let range = self.db.available_range()?;
-                self.snapshot_at(*range.start())?;
+                self.snapshot_at(*range.start(), block.view())?;
             }
             // Do checkpoints
             if self.config.do_checkpoints
@@ -2432,7 +2433,7 @@ impl Consensus {
     }
 
     /// Trigger a snapshot
-    pub fn snapshot_at(&self, block_number: u64) -> Result<()> {
+    pub fn snapshot_at(&self, block_number: u64, new_ceil: u64) -> Result<()> {
         // skip if there is a snapshot in progress.
         let Some(mut tag_lock) = self.db.tag_lock.try_lock() else {
             return Ok(());
@@ -2441,15 +2442,16 @@ impl Consensus {
         let Some(block) = self.get_canonical_block_by_number(block_number)? else {
             return Err(anyhow::format_err!("Snapshot: missing block"));
         };
-        // skip if the lowest block is below previous tag
+        // skip if the lowest block unsafe to snapshot
+        // 'unsafe' means that the block exists in a tag range that could be pruned away during compaction.
         if block.view() < *tag_lock {
             return Ok(());
         }
 
         let trie_storage = self.db.state_trie()?;
-        // raise the ceiling to the finalised view
-        let new_ceil = self.get_finalized_view()?;
+        // raise the ceiling to the new tag, promoting all new state
         let old_ceil = trie_storage.set_tag_ceil(new_ceil)?;
+        // store the previous tag, which is the next floor.
         *tag_lock = old_ceil;
 
         // trigger snapshot

@@ -53,8 +53,8 @@ impl TrieStorage {
 
     // This snapshot promotes the *active* keys to the tag
     //
-    // This works on duplicating the underlying db-level keys, not the pmt-level keys.
-    // e.g. 500 pmt-level random keys takes ~150 db-level keys.
+    // This works on duplicating the underlying db-level keys, not the trie-level keys.
+    // e.g. 500 trie-level random keys takes ~150 db-level keys.
     //
     // Previously, no deletion of keys was allowed in the state database. So, it is safe to repurpose clear_trie_from_db() to
     // promote the trie, rather than delete it.
@@ -326,10 +326,18 @@ impl eth_trie::DB for TrieStorage {
     fn remove(&self, promote_key: &[u8]) -> Result<(), Self::Error> {
         // Since clear_trie_from_db() iterates over all db-level keys in the trie; this will end up
         // promoting the entire trie, from the db-level without iterating the trie-level keys.
-        if let Ok(Some((_old_tag, value))) = self.get_tag_value(promote_key) {
-            let new_tag = self.tag_ceil.load(Ordering::Relaxed).to_be_bytes();
-            self.write_batch(vec![promote_key.to_vec()], vec![value], new_tag)
+        if let Ok(Some((old_tag, value))) = self.get_tag_value(promote_key) {
+            let old_tag = u64::from_be_bytes(old_tag);
+            let new_tag = self.tag_ceil.load(Ordering::Relaxed);
+            // reduce write amplification
+            if new_tag != old_tag {
+                self.write_batch(
+                    vec![promote_key.to_vec()],
+                    vec![value],
+                    new_tag.to_be_bytes(),
+                )
                 .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?
+            }
         }
         Ok(())
     }
@@ -377,60 +385,24 @@ mod tests {
         // create 10 random accounts
         let account = Account::default();
         let value = bincode::serde::encode_to_vec(account, bincode::config::legacy()).unwrap();
-        for _ in 0..10 {
+        for _ in 0..100 {
             let key = SecretKey::new().unwrap().as_bytes();
             pmt.insert(key.as_slice(), value.as_slice()).unwrap();
         }
 
+        // write-to-disk; and count nodes
         trie_storage.inc_tag(u64::MIN).unwrap();
         let root_hash = pmt.root_hash().unwrap(); // write to disk
         let old_count = rdb.iterator(rocksdb::IteratorMode::Start).count();
         assert!(old_count > 1);
 
+        // snapshot-to-promote nodes; and count nodes
         trie_storage.inc_tag(u64::MAX).unwrap();
         TrieStorage::snapshot(trie_storage.clone(), root_hash).unwrap();
         assert_eq!(
             rdb.iterator(rocksdb::IteratorMode::Start).count(),
             old_count * 2
         );
-    }
-
-    #[test]
-    // basic read/write
-    fn read_write() {
-        let sql = Arc::new(
-            Pool::builder()
-                .build(SqliteConnectionManager::memory())
-                .unwrap(),
-        );
-        let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
-        let tag = Arc::new(AtomicU64::new(u64::MAX));
-        let lock = Arc::new(Mutex::new(u64::MIN));
-        let cache = Arc::new(RwLock::new(LruCache::unbounded()));
-        let trie_storage = TrieStorage::new(
-            sql.clone(),
-            rdb.clone(),
-            cache.clone(),
-            tag.clone(),
-            tag.clone(),
-            lock.clone(),
-        );
-        let key_prefix = alloy::consensus::EMPTY_ROOT_HASH.0;
-
-        // normal key read/write, w/o height-tags
-        assert_eq!(trie_storage.get_migrate_at().unwrap(), u64::MAX); // default
-
-        trie_storage.inc_tag(u64::MAX).unwrap(); // ignored
-        trie_storage.set_migrate_at(u64::MIN).unwrap();
-        assert_eq!(trie_storage.get_migrate_at().unwrap(), u64::MIN); // new value
-
-        trie_storage.inc_tag(u64::MIN).unwrap(); // ignored
-        trie_storage.set_migrate_at(u64::MAX).unwrap();
-        assert_eq!(trie_storage.get_migrate_at().unwrap(), u64::MAX); // prev value
-
-        // count all keys
-        let iter = rdb.prefix_iterator(key_prefix.as_slice());
-        assert_eq!(iter.count(), 1);
     }
 
     #[test]

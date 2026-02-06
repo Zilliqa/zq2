@@ -373,7 +373,7 @@ impl Db {
             u64::from_be_bytes(v.try_into().expect("8-bytes"))
         });
         let tag_ceil = Arc::new(AtomicU64::new(last_tag)); // stores the reverse view
-        let tag_lock = Arc::new(Mutex::new(u64::MAX.saturating_sub(last_tag))); // stores the view
+        let tag_lock = Arc::new(Mutex::new(u64::MAX.saturating_sub(last_tag))); // stores the equivalent view
         let tag_floor = Arc::new(AtomicU64::new(u64::MAX)); // default to no compaction
 
         Ok(Db {
