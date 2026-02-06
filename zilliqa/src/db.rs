@@ -682,13 +682,13 @@ impl Db {
                 "StateFilterV1",
                 move |_lvl, key, _value| -> CompactionDecision {
                     match key.len() {
-                        // remove tagged key, if the key is 'older' than the floor
+                        // 40-bytes: remove tagged key, if the key is 'older' than the floor
                         40 if u64::from_be_bytes(key[32..40].try_into().unwrap())
                             > floor.load(Ordering::Relaxed) =>
                         {
                             CompactionDecision::Remove
                         }
-                        // remove any legacy key, if snapshot already taken
+                        // 32-bytes: remove legacy key, if snapshot already taken
                         32 if floor.load(Ordering::Relaxed) != u64::MAX => {
                             CompactionDecision::Remove
                         }

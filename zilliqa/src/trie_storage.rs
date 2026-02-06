@@ -51,10 +51,10 @@ impl TrieStorage {
         }
     }
 
-    // This snapshot promotes the *active* keys to the tag
-    //
-    // This works on duplicating the underlying db-level keys, not the trie-level keys.
-    // e.g. 500 trie-level random keys takes ~150 db-level keys.
+    /// This snapshot promotes the *active* keys to the tag
+    ///
+    /// This works on duplicating the underlying db-level keys, not the trie-level keys.
+    /// e.g. 500 trie-level random keys takes ~150 db-level keys.
     //
     // Previously, no deletion of keys was allowed in the state database. So, it is safe to repurpose clear_trie_from_db() to
     // promote the trie, rather than delete it.
@@ -329,19 +329,14 @@ impl eth_trie::DB for TrieStorage {
     // only called from clear_trie_from_db().
     fn remove(&self, promote_key: &[u8]) -> Result<(), Self::Error> {
         // Since clear_trie_from_db() iterates over all db-level keys in the trie; this will end up
-        // promoting the entire trie, from the db-level without iterating the trie-level keys.
-        if let Ok(Some((old_tag, value))) = self.get_tag_value(promote_key) {
-            let old_tag = u64::from_be_bytes(old_tag);
-            let new_tag = self.tag_ceil.load(Ordering::Relaxed);
-            // reduce write amplification
-            if new_tag != old_tag {
-                self.write_batch(
-                    vec![promote_key.to_vec()],
-                    vec![value],
-                    new_tag.to_be_bytes(),
-                )
-                .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?
-            }
+        // promoting the trie at the db-level, without iterating the trie-level keys.
+        if let Ok(Some((_old_tag, value))) = self.get_tag_value(promote_key) {
+            self.write_batch(
+                vec![promote_key.to_vec()],
+                vec![value],
+                self.tag_ceil.load(Ordering::Relaxed).to_be_bytes(),
+            )
+            .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?
         }
         Ok(())
     }
