@@ -6,7 +6,10 @@ use std::{
     num::NonZeroUsize,
     ops::RangeInclusive,
     path::{Path, PathBuf},
-    sync::{Arc, atomic::AtomicU64},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 
@@ -19,7 +22,9 @@ use parking_lot::{Mutex, RwLock};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use revm::primitives::B256;
-use rocksdb::{BlockBasedOptions, Cache, DBWithThreadMode, Options, SingleThreaded};
+use rocksdb::{
+    BlockBasedOptions, Cache, CompactionDecision, DBWithThreadMode, Options, SingleThreaded,
+};
 use rusqlite::{
     Connection, OptionalExtension, Row, ToSql, named_params,
     types::{FromSql, FromSqlError, ToSqlOutput},
@@ -350,6 +355,32 @@ impl Db {
         rdb_opts.set_bottommost_compression_type(rocksdb::DBCompressionType::Zstd);
         rdb_opts.set_bottommost_zstd_max_train_bytes(0, true);
 
+        // Keys are only removed if they are older than the floor value, which is set during snapshot.
+        // After pruning, old and legacy keys are eventually removed when the background compaction runs.
+        let tag_floor = Arc::new(AtomicU64::new(u64::MAX)); // default to no compaction
+        if config.state_prune {
+            let floor = tag_floor.clone(); // shared with Db and TrieStorage.
+            rdb_opts.set_compaction_filter(
+                "StateFilterV1",
+                move |_lvl, key, _value| -> CompactionDecision {
+                    match key.len() {
+                        // remove tagged key, if the key is 'older' than the floor
+                        40 if u64::from_be_bytes(key[32..40].try_into().unwrap())
+                            > floor.load(Ordering::Relaxed) =>
+                        {
+                            CompactionDecision::Remove
+                        }
+                        // remove any legacy key, if snapshot already taken
+                        32 if floor.load(Ordering::Relaxed) != u64::MAX => {
+                            CompactionDecision::Remove
+                        }
+                        // default to keep, all other keys
+                        _ => CompactionDecision::Keep,
+                    }
+                },
+            );
+        }
+
         // Should be safe in single-threaded mode
         // https://docs.rs/rocksdb/latest/rocksdb/type.DB.html#limited-performance-implication-for-single-threaded-mode
         let rdb_path = path.as_ref().map_or_else(
@@ -374,7 +405,6 @@ impl Db {
         });
         let tag_ceil = Arc::new(AtomicU64::new(last_tag)); // stores the reverse view
         let tag_lock = Arc::new(Mutex::new(u64::MAX.saturating_sub(last_tag))); // stores the equivalent view
-        let tag_floor = Arc::new(AtomicU64::new(u64::MAX)); // default to no compaction
 
         Ok(Db {
             pool: Arc::new(pool),

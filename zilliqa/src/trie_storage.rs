@@ -148,7 +148,7 @@ impl TrieStorage {
         // Given that the trie keys are *all* Keccak256 keys, the legacy keys are exactly 32-bytes (256-bits) long,
         // while the new tag keys are exactly 40-bytes (320-bits) long. We do not expect any other trie-key lengths.
         if key.len() == 40 {
-            let tag = key[32..40].try_into().expect("must be 8-bytes");
+            let tag = key[32..40].try_into().unwrap();
             // latest tag key, return the latest value
             Ok(Some((tag, value.to_vec())))
         } else if key.len() == 32 {
@@ -156,7 +156,7 @@ impl TrieStorage {
             if let Some(peek) = iter.next() {
                 let peek = peek?;
                 if peek.0.starts_with(key_prefix) {
-                    let tag = peek.0[32..40].try_into().expect("must be 8-bytes");
+                    let tag = peek.0[32..].try_into().expect("8-bytes");
                     return Ok(Some((tag, peek.1.to_vec()))); // tag key has newer value
                 }
             }
@@ -190,7 +190,7 @@ impl TrieStorage {
         Ok(self
             .kvdb
             .get(ROCKSDB_MIGRATE_AT)?
-            .map(|v| u64::from_be_bytes(v.try_into().expect("must be 8-bytes")))
+            .map(|v| u64::from_be_bytes(v.try_into().expect("8-bytes")))
             .unwrap_or(u64::MAX)) // default to no state-sync
     }
 
@@ -199,7 +199,7 @@ impl TrieStorage {
         Ok(self
             .kvdb
             .get(ROCKSDB_CUTOVER_AT)?
-            .map(|v| u64::from_be_bytes(v.try_into().expect("must be 8-bytes")))
+            .map(|v| u64::from_be_bytes(v.try_into().expect("8-bytes")))
             .unwrap_or_default())
     }
 
