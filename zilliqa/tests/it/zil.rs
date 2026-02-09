@@ -1,7 +1,7 @@
 use std::{ops::DerefMut, str::FromStr};
 
 use alloy::{
-    hex::FromHex,
+    hex::{self, FromHex},
     primitives::{Address, B256, TxHash, U256, keccak256},
     providers::{Provider as _, WalletProvider},
     rpc::types::TransactionRequest,

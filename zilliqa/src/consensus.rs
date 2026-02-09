@@ -12,7 +12,10 @@ use std::{
     time::Duration,
 };
 
-use alloy::primitives::{Address, U256};
+use alloy::{
+    hex,
+    primitives::{Address, U256},
+};
 use anyhow::{Context, Result, anyhow};
 use bitvec::{bitarr, order::Msb0};
 use dashmap::DashMap;

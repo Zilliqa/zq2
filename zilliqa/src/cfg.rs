@@ -1,6 +1,6 @@
 use std::{collections::HashMap, ops::Deref, str::FromStr, time::Duration};
 
-use alloy::{primitives::Address, rlp::Encodable};
+use alloy::{hex, primitives::Address, rlp::Encodable};
 use anyhow::{Result, anyhow};
 use libp2p::{Multiaddr, PeerId};
 use rand::{Rng, distributions::Alphanumeric};
