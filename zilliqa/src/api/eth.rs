@@ -5,6 +5,7 @@ use std::{collections::HashMap, sync::Arc};
 use alloy::{
     consensus::{TxEip1559, TxEip2930, TxLegacy, transaction::RlpEcdsaDecodableTx},
     eips::{BlockId, BlockNumberOrTag, RpcBlockHash},
+    hex,
     primitives::{Address, B256, U64, U256},
     rpc::types::{
         FeeHistory, FilteredParams, TransactionRequest,

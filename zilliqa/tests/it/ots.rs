@@ -2,6 +2,7 @@ use std::str::FromStr;
 
 use alloy::{
     eips::BlockId,
+    hex,
     primitives::{Address, BlockHash, TxHash, U64, U256},
     providers::{Provider, WalletProvider},
     rpc::types::TransactionRequest,

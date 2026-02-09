@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use alloy::{
     eips::eip2930::{AccessList, AccessListItem},
+    hex,
     primitives::{Address, B256, B512},
 };
 use anyhow::{Result, anyhow};

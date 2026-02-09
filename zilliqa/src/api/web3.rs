@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use alloy::hex;
 use anyhow::{Result, anyhow};
 use jsonrpsee::{RpcModule, types::Params};
 use sha3::{Digest, Keccak256};

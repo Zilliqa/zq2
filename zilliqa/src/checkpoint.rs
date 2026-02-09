@@ -5,6 +5,7 @@ use std::{
     sync::Arc,
 };
 
+use alloy::hex;
 use anyhow::{Result, anyhow, ensure};
 use eth_trie::{DB, EthTrie, MemoryDB, Trie};
 use lz4::Decoder;

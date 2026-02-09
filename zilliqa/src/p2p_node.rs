@@ -6,6 +6,7 @@ use std::{
     time::Duration,
 };
 
+use alloy::hex;
 use anyhow::{Result, anyhow};
 use arc_swap::ArcSwap;
 use cfg_if::cfg_if;

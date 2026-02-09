@@ -4,7 +4,7 @@ use std::{
 };
 
 use alloy::{
-    hex::FromHex,
+    hex::{self, FromHex},
     primitives::{Address, B256},
 };
 use anyhow::{Result, anyhow};

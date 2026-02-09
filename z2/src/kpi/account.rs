@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use alloy::{network::EthereumWallet, primitives::Address, signers::local::PrivateKeySigner};
+use alloy::{hex, network::EthereumWallet, primitives::Address, signers::local::PrivateKeySigner};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 

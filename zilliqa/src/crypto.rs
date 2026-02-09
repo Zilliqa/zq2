@@ -6,7 +6,10 @@
 
 use std::fmt::Display;
 
-use alloy::primitives::{Address, B256};
+use alloy::{
+    hex,
+    primitives::{Address, B256},
+};
 use anyhow::{Context, Result, anyhow};
 use blsful::{
     AggregateSignature, Bls12381G2, Bls12381G2Impl, MultiPublicKey, MultiSignature, PublicKey,

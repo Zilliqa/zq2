@@ -492,7 +492,7 @@ pub struct GetAccountResult {
 
 #[cfg(test)]
 mod tests {
-    use alloy::primitives::B256;
+    use alloy::{hex, primitives::B256};
 
     use super::Log;
 

@@ -10,6 +10,7 @@
 ///
 use std::{path::PathBuf, sync::Arc, time::Instant};
 
+use alloy::hex;
 use anyhow::Result;
 use clap::Parser;
 use tempfile::tempdir;
