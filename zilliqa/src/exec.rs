@@ -1117,7 +1117,6 @@ impl State {
             }
         };
 
-
         let result = self.call_contract(
             Address::ZERO,
             Some(contract_addr::DEPOSIT_PROXY),
@@ -1126,7 +1125,6 @@ impl State {
             current_block,
         )?;
         let leader = ensure_success(result)?;
-
 
         let pub_key = NodePublicKey::from_bytes(
             &contracts::deposit::LEADER_AT_VIEW.decode_output(&leader)?[0]
@@ -1139,11 +1137,16 @@ impl State {
 
         let peer_id = self.get_peer_id(pub_key_compare.clone()).unwrap().unwrap();
         let stakers = self.get_stakers(current_block)?;
-        let idx = stakers.iter().find_position(|&pk| pk.as_bytes().eq(&pub_key_compare.as_bytes())).unwrap().0;
+        let idx = stakers
+            .iter()
+            .find_position(|&pk| pk.as_bytes().eq(&pub_key_compare.as_bytes()))
+            .unwrap()
+            .0;
 
-
-        info!("Calling leader at view: {}, block_number: {}, leader: {:?}, randao: {:?}, caller: {}. idx: {:?}", view, current_block.number, peer_id, current_block.mix_hash, caller, idx);
-
+        info!(
+            "Calling leader at view: {}, block_number: {}, stakers: {}, leader: {:?}, randao: {:?}, caller: {}. idx: {:?}",
+            view, current_block.number, stakers.len(), peer_id, current_block.mix_hash, caller, idx
+        );
 
         NodePublicKey::from_bytes(
             &contracts::deposit::LEADER_AT_VIEW.decode_output(&leader)?[0]
