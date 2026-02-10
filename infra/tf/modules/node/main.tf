@@ -136,6 +136,7 @@ resource "google_compute_instance" "this" {
     {
       "enable-guest-attributes" = "TRUE"
       "enable-osconfig"         = "TRUE"
+      "block-project-ssh-keys"  = "TRUE"
     },
     var.metadata,
   )
