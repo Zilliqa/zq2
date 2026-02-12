@@ -40,7 +40,7 @@ use crate::{
     precompiles::ViewHistory,
     time::SystemTime,
     transaction::{EvmGas, Log, SignedTransaction, TransactionReceipt, VerifiedTransaction},
-    trie_storage::{ROCKSDB_TAGGING_AT, TrieStorage},
+    trie_storage::{LEGACY_KEY_LEN, ROCKSDB_TAGGING_AT, TAGGED_KEY_LEN, TrieStorage},
 };
 
 const MAX_KEYS_IN_SINGLE_QUERY: usize = 32765;
@@ -263,9 +263,9 @@ pub struct Db {
     /// Clone of DbConfig
     pub config: DbConfig,
     /// State Pruning
-    tag_ceil: Arc<AtomicU64>, // always set to the finalised view height; set by Db::set_finalised_view()
-    tag_floor: Arc<AtomicU64>, // resets to u64::MAX at startup; gets set during prune.; set by Db::snapshot()
-    pub tag_lock: Arc<Mutex<u64>>, // used to lock the snapshot process
+    rev_ceil: Arc<AtomicU64>, // always set to the finalised view height; set by Db::set_finalised_view()
+    rev_floor: Arc<AtomicU64>, // resets to u64::MAX at startup; gets set by Db::snapshot()
+    pub tag_view: Arc<Mutex<u64>>, // used to lock the promotion process
 }
 
 impl Db {
@@ -321,14 +321,13 @@ impl Db {
         let connection = pool.get()?;
         Self::ensure_schema(&connection)?;
 
-        let tag_floor = Arc::new(AtomicU64::new(u64::MAX)); // default to no compaction
         // Should be safe in single-threaded mode
         // https://docs.rs/rocksdb/latest/rocksdb/type.DB.html#limited-performance-implication-for-single-threaded-mode
         let rdb_path = path.as_ref().map_or_else(
             || tempfile::tempdir().unwrap().path().join("state.rocksdb"),
             |p| p.join("state.rocksdb"),
         );
-        let rdb_opts = Self::init_rocksdb(config.clone(), tag_floor.clone());
+        let (rdb_opts, rev_floor) = Self::init_rocksdb(config.clone());
         let rdb = DBWithThreadMode::<SingleThreaded>::open(&rdb_opts, rdb_path)?;
 
         tracing::info!(
@@ -341,12 +340,12 @@ impl Db {
         let cache =
             LruCache::new(NonZeroUsize::new(config.rocksdb_state_cache_size / 500).unwrap());
 
-        // *** Must use the latest tag for keys. ***
+        // Use the last known tag for keys.
         let last_tag = rdb.get(ROCKSDB_TAGGING_AT)?.map_or(u64::MAX, |v| {
             u64::from_be_bytes(v.try_into().expect("8-bytes"))
         });
-        let tag_ceil = Arc::new(AtomicU64::new(last_tag)); // stores the reverse view
-        let tag_lock = Arc::new(Mutex::new(u64::MAX.saturating_sub(last_tag))); // stores the equivalent view
+        let rev_ceil = Arc::new(AtomicU64::new(last_tag)); // stores the reverse view
+        let tag_view = Arc::new(Mutex::new(u64::MAX.saturating_sub(last_tag))); // stores the equivalent view
 
         Ok(Db {
             pool: Arc::new(pool),
@@ -355,9 +354,9 @@ impl Db {
             path,
             executable_blocks_height,
             config,
-            tag_ceil,
-            tag_floor,
-            tag_lock,
+            rev_ceil,
+            rev_floor,
+            tag_view,
         })
     }
 
@@ -639,7 +638,7 @@ impl Db {
         Ok(())
     }
 
-    fn init_rocksdb(config: DbConfig, tag_floor: Arc<AtomicU64>) -> rocksdb::Options {
+    fn init_rocksdb(config: DbConfig) -> (rocksdb::Options, Arc<AtomicU64>) {
         // RocksDB configuration
         let mut block_opts = BlockBasedOptions::default();
         // reduce disk and memory usage - https://github.com/facebook/rocksdb/wiki/RocksDB-Bloom-Filter#ribbon-filter
@@ -674,28 +673,36 @@ impl Db {
         rdb_opts.set_bottommost_compression_type(rocksdb::DBCompressionType::Zstd);
         rdb_opts.set_bottommost_zstd_max_train_bytes(0, true);
 
-        // Keys are only removed if they are older than the floor value, which is set during snapshot.
-        // After pruning, old and legacy keys are eventually removed when the background compaction runs.
-        let floor = tag_floor.clone();
-        rdb_opts.set_compaction_filter(
-            "StatePruneFilter",
-            move |_lvl, key, _value| -> CompactionDecision {
-                match key.len() {
-                    // 40-bytes: remove tagged key, if the key is 'older' than the floor
-                    40 if u64::from_be_bytes(key[32..40].try_into().unwrap())
-                        > floor.load(Ordering::Relaxed) =>
-                    {
-                        CompactionDecision::Remove
+        let tag_floor = Arc::new(AtomicU64::new(u64::MAX));
+        // Use the default compaction filter, unless pruning is enabled
+        if config.state_prune {
+            let rev_floor = tag_floor.clone();
+            let tag_floor = rev_floor.load(Ordering::Relaxed);
+            tracing::info!(tag_floor, "StatePruneFilter");
+            // Keys are only removed if they are older than the floor value, which is set during snapshot.
+            // After pruning, old and legacy keys are eventually removed when the background compaction runs.
+            rdb_opts.set_compaction_filter(
+                "StatePruneFilter",
+                move |_lvl, key, _value| -> CompactionDecision {
+                    match key.len() {
+                        // 40-bytes: remove tagged key, if the key is 'older' than the floor
+                        TAGGED_KEY_LEN
+                            if u64::from_be_bytes(key[32..40].try_into().unwrap())
+                                > rev_floor.load(Ordering::Relaxed) =>
+                        {
+                            CompactionDecision::Remove
+                        }
+                        // 32-bytes: remove legacy key, if snapshot already taken
+                        LEGACY_KEY_LEN if rev_floor.load(Ordering::Relaxed) != u64::MAX => {
+                            CompactionDecision::Remove
+                        }
+                        // default to keep, all other keys
+                        _ => CompactionDecision::Keep,
                     }
-                    // 32-bytes: remove legacy key, if snapshot already taken
-                    32 if floor.load(Ordering::Relaxed) != u64::MAX => CompactionDecision::Remove,
-                    // default to keep, all other keys
-                    _ => CompactionDecision::Keep,
-                }
-            },
-        );
-
-        rdb_opts
+                },
+            );
+        }
+        (rdb_opts, tag_floor)
     }
 
     // SQLite performance tweaks
@@ -859,9 +866,10 @@ impl Db {
             self.pool.clone(),
             self.kvdb.clone(),
             self.cache.clone(),
-            self.tag_ceil.clone(),
-            self.tag_floor.clone(),
-            self.tag_lock.clone(),
+            self.rev_ceil.clone(),
+            self.rev_floor.clone(),
+            self.tag_view.clone(),
+            self.config.state_prune,
         ))
     }
 
@@ -1693,21 +1701,22 @@ impl Db {
     }
 }
 
-/// Promote the state trie.
+/// Snapshot the state trie.
 ///
 /// Promotes the tag of each node to the given view. This process may take a while to complete.
 /// The `tag_lock` ensures that only one snapshot is in progress at a time.
 /// The previous state trie will be eventually pruned during compaction.
-pub fn promote_trie(storage: TrieStorage, root_hash: B256, block_number: u64) -> Result<()> {
+pub fn snapshot_trie(storage: TrieStorage, root_hash: B256, block_number: u64) -> Result<()> {
     let trie = Arc::new(storage);
-    let tag_lock = trie.tag_lock.lock();
-    tracing::info!(%root_hash, block_number, "Promote: start");
-    TrieStorage::promote(trie.clone(), root_hash)?;
-    tracing::info!(%root_hash, block_number, "Promote: done");
-    let old_floor = trie.set_tag_floor(*tag_lock)?;
-    if old_floor != 0 {
+    let tag_lock = trie.tag_view.lock();
+    let new_tag = *tag_lock;
+    tracing::info!(%root_hash, block_number, new_tag, "Snapshot: start");
+    TrieStorage::snapshot(trie.clone(), root_hash)?;
+    let old_tag = trie.set_tag_floor(new_tag)?;
+    if old_tag != 0 {
         trie.drop_sql_state_trie()?; // delete SQL database
     }
+    tracing::info!(%root_hash, block_number, new_tag, old_tag, "Snapshot: done");
     Ok(()) // not fatal, it can be retried later.
 }
 
