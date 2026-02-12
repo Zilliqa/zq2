@@ -107,11 +107,11 @@ impl TransactionApplyResult {
             ) => output.address().copied(),
             TransactionApplyResult::Evm(_) => None,
             TransactionApplyResult::Scilla((
-                ScillaResult {
-                    contract_address, ..
-                },
-                _,
-            )) => *contract_address,
+                                               ScillaResult {
+                                                   contract_address, ..
+                                               },
+                                               _,
+                                           )) => *contract_address,
         }
     }
 
@@ -166,15 +166,15 @@ impl TransactionApplyResult {
                 Vec::new(),
             ),
             TransactionApplyResult::Scilla((
-                ScillaResult {
-                    logs,
-                    transitions,
-                    errors,
-                    exceptions,
-                    ..
-                },
-                _,
-            )) => (
+                                               ScillaResult {
+                                                   logs,
+                                                   transitions,
+                                                   errors,
+                                                   exceptions,
+                                                   ..
+                                               },
+                                               _,
+                                           )) => (
                 logs.into_iter().map(Log::Scilla).collect(),
                 transitions,
                 errors,
@@ -1143,9 +1143,20 @@ impl State {
             .unwrap()
             .0;
 
+        let mut stakers_sums = Vec::new();
+        let cumm_stake: u128 = stakers.iter().map(|pk| {
+            let val = self.get_stake(*pk, current_block).unwrap().unwrap().get();
+            stakers_sums.push(val);
+            val
+        }).sum::<_>();
+
+        if current_block.mix_hash.is_none() {
+            info!("Mix hash is None");
+        }
+
         info!(
-            "Calling leader at view: {}, block_number: {}, stakers: {}, leader: {:?}, randao: {:?}, caller: {}. idx: {:?}",
-            view, current_block.number, stakers.len(), peer_id, current_block.mix_hash, caller, idx
+            "Calling leader at view: {}, block_number: {}, cumm_Stake: {:?}, leader: {:?}, randao: {:?}, caller: {}. idx: {:?}",
+            view, current_block.number, cumm_stake, hex::encode(pub_key_compare.as_bytes()), current_block.mix_hash, caller, idx
         );
 
         NodePublicKey::from_bytes(

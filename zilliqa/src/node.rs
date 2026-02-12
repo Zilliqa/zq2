@@ -970,8 +970,11 @@ impl Node {
             .get_block(block.parent_hash())?
             .ok_or_else(|| anyhow!("missing parent: {}", block.parent_hash()))?;
 
+        let grandparent_mix_hash = self.get_block(parent.parent_hash()).ok().flatten().and_then(|block| block.header.mix_hash);
+
         let Some(proposer) = self.consensus.read().leader_at_block(
             &parent,
+            grandparent_mix_hash,
             block.view(),
             "api_get_proposer_reward_address",
         ) else {

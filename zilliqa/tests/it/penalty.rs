@@ -26,6 +26,8 @@ async fn jailed_node_must_not_propose_blocks(mut network: Network) {
     network.disconnect_node(0);
     let jailed_leader = network.get_node(0).consensus.read().public_key();
 
+    tracing::error!("Disconnected leader: {:?}", hex::encode(jailed_leader.as_bytes()));
+
     // wait until the node is jailed
     // note that if there is only one node that is not proposing blocks, it will always be the first among the jailed nodes
     network
