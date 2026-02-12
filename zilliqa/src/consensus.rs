@@ -391,7 +391,7 @@ impl Consensus {
             secret_key,
             config,
             sync,
-            message_sender,
+            message_sender: message_sender.clone(),
             reset_timeout,
             votes: DashMap::new(),
             buffered_votes: DashMap::new(),
@@ -579,7 +579,8 @@ impl Consensus {
         }
 
         // Initialize state trie storage
-        consensus.db.state_trie()?.init_state_trie(forks)?;
+        let state_trie = consensus.db.state_trie()?;
+        state_trie.init_state_trie(forks)?;
 
         // If timestamp of when current high_qc was written exists then use it to estimate the minimum number of blocks the network has moved on since shut down
         // This is useful in scenarios in which consensus has failed since this node went down
@@ -2438,7 +2439,7 @@ impl Consensus {
     /// Trigger a snapshot
     pub fn snapshot_at(&self, block_number: u64, new_ceil: u64) -> Result<()> {
         // skip if there is a snapshot in progress.
-        let Some(mut tag_lock) = self.db.tag_lock.try_lock() else {
+        let Some(mut tag_lock) = self.db.tag_view.try_lock() else {
             return Ok(());
         };
         // error if the lowest block does not exist
@@ -2456,10 +2457,11 @@ impl Consensus {
         let old_ceil = trie_storage.set_tag_ceil(new_ceil)?;
         // store the previous tag, which is the next floor.
         *tag_lock = old_ceil;
+        tracing::info!(block_number, new_ceil, old_ceil, "Snapshot: trigger");
 
         // trigger snapshot
         self.message_sender
-            .send_message_to_coordinator(InternalMessage::PromoteTrie(
+            .send_message_to_coordinator(InternalMessage::SnapshotTrie(
                 trie_storage,
                 block.state_root_hash().into(),
                 block_number,

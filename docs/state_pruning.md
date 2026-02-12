@@ -45,11 +45,11 @@ This ensures that the timestamp is always monotonically increasing per block.
 > By default RocksDB will ensure that compaction is triggered at least once every 30-days; but you can configure this behaviour by setting the `db.rocksdb_compaction_period` option.
 
 At each epoch, the node increments its internal timestamp *ceiling*, which will result in any new state being tagged with a higher timestamp.
-Also, the node will trigger a background operation to *promote* all pre-existing state that should be retained, by duplicating the entire state-trie with the higher timestamp.
-This operation may take some time to complete, but the node will only allow one such operation at a time.
+Also, the node will trigger a background operation to *promote* all active state that should be retained, by duplicating the entire state-trie with the higher timestamp.
+This operation may take some time to complete, possibly several epochs, and the node will only allow one such operation at a time.
 After the operation is complete, the node increments its internal timestamp *floor*; and any state with a timestamp below the *floor* will eventually be compacted away.
 
-### Conditions
+#### Conditions
 
 The conditions for the *ceiling* and the *floor* are that:
 - The *ceiling* is always incremented i.e. new ceiling > old ceiling.
@@ -59,5 +59,11 @@ The conditions for the *ceiling* and the *floor* are that:
 
 The promotion operation will only be triggered if the lowest block view is greater than the current *ceiling*.
 This condition ensures the safety that, the only states pruned are those that are absolutely no longer needed, since the block no longer exists in the SQL database.
-This also means that the node may retain slightly more state than it actually needs.
-Considering the amount of state that can be pruned, this tiny bit of extra state is negligible.
+This also means that the node may retain more state than it actually needs.
+Considering the amount of state saved through pruning, this bit of extra state is negligible.
+
+### Key Migration
+
+For nodes that disable pruning, the existing keys need to be migrated to the new tagged-keys.
+This process is done lazily, as nodes are being read from time to time.
+Whenever a legacy-key node is read from the database, the key is migrated to the new tagged-key format and deleted.

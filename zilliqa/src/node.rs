@@ -211,11 +211,16 @@ impl Node {
             .consensus
             .get_forks()?
             .find_height_fork_first_activated(ForkName::ExecutableBlocks);
+
+        // FIXME: This is a hack, we should factorise pruning logic out of sync/db.
+        let mut db_config = config.db.clone();
+        db_config.state_prune = config.sync.prune_interval != u64::MAX;
+
         let db = Arc::new(Db::new(
             config.data_dir.as_ref(),
             config.eth_chain_id,
             executable_blocks_height,
-            config.db.clone(),
+            db_config,
         )?);
         let node = Node {
             config: config.clone(),

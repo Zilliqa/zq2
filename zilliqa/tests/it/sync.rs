@@ -35,6 +35,7 @@ async fn prune_interval(mut network: Network) {
 
     tracing::info!(number, "Added pruned node.");
 
+    // run for a bit to allow state pruning to kick in
     network
         .run_until_block_finalized(MIN_PRUNE_INTERVAL * 3, 1000)
         .await
