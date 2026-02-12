@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -40,7 +40,7 @@ use crate::{
     precompiles::ViewHistory,
     time::SystemTime,
     transaction::{EvmGas, Log, SignedTransaction, TransactionReceipt, VerifiedTransaction},
-    trie_storage::{ROCKSDB_TAGGING_AT, TrieStorage},
+    trie_storage::{LATEST_KEY_LEN, LEGACY_KEY_LEN, ROCKSDB_TAGGING_AT, TrieStorage},
 };
 
 const MAX_KEYS_IN_SINGLE_QUERY: usize = 32765;
@@ -265,7 +265,6 @@ pub struct Db {
     /// State Pruning
     rev_ceil: Arc<AtomicU64>, // always set to the finalised view height; set by Db::set_finalised_view()
     rev_floor: Arc<AtomicU64>, // resets to u64::MAX at startup; gets set during prune.; set by Db::snapshot()
-    del_legacy: Arc<AtomicBool>,
     pub tag_view: Arc<Mutex<u64>>, // used to lock the snapshot process
 }
 
@@ -322,15 +321,13 @@ impl Db {
         let connection = pool.get()?;
         Self::ensure_schema(&connection)?;
 
-        let rev_floor = Arc::new(AtomicU64::new(u64::MAX));
-        let del_legacy = Arc::new(AtomicBool::new(false));
         // Should be safe in single-threaded mode
         // https://docs.rs/rocksdb/latest/rocksdb/type.DB.html#limited-performance-implication-for-single-threaded-mode
         let rdb_path = path.as_ref().map_or_else(
             || tempfile::tempdir().unwrap().path().join("state.rocksdb"),
             |p| p.join("state.rocksdb"),
         );
-        let rdb_opts = Self::init_rocksdb(config.clone(), rev_floor.clone(), del_legacy.clone());
+        let (rdb_opts, rev_floor) = Self::init_rocksdb(config.clone());
         let rdb = DBWithThreadMode::<SingleThreaded>::open(&rdb_opts, rdb_path)?;
 
         tracing::info!(
@@ -343,10 +340,14 @@ impl Db {
         let cache =
             LruCache::new(NonZeroUsize::new(config.rocksdb_state_cache_size / 500).unwrap());
 
-        // *** Must use the latest tag for keys. ***
-        let last_tag = rdb.get(ROCKSDB_TAGGING_AT)?.map_or(u64::MAX, |v| {
-            u64::from_be_bytes(v.try_into().expect("8-bytes"))
-        });
+        // Use the last known tag for keys.
+        // Defaults to MAX - 1, to work well with TrieStorage::migrate_legacy().
+        // MAX is reserved for use by the background legacy migration process.
+        let last_tag = rdb
+            .get(ROCKSDB_TAGGING_AT)?
+            .map_or(u64::MAX.saturating_sub(1), |v| {
+                u64::from_be_bytes(v.try_into().expect("8-bytes"))
+            });
         let rev_ceil = Arc::new(AtomicU64::new(last_tag)); // stores the reverse view
         let tag_view = Arc::new(Mutex::new(u64::MAX.saturating_sub(last_tag))); // stores the equivalent view
 
@@ -360,7 +361,6 @@ impl Db {
             rev_ceil,
             rev_floor,
             tag_view,
-            del_legacy,
         })
     }
 
@@ -642,11 +642,7 @@ impl Db {
         Ok(())
     }
 
-    fn init_rocksdb(
-        config: DbConfig,
-        tag_floor: Arc<AtomicU64>,
-        del_legacy: Arc<AtomicBool>,
-    ) -> rocksdb::Options {
+    fn init_rocksdb(config: DbConfig) -> (rocksdb::Options, Arc<AtomicU64>) {
         // RocksDB configuration
         let mut block_opts = BlockBasedOptions::default();
         // reduce disk and memory usage - https://github.com/facebook/rocksdb/wiki/RocksDB-Bloom-Filter#ribbon-filter
@@ -681,29 +677,34 @@ impl Db {
         rdb_opts.set_bottommost_compression_type(rocksdb::DBCompressionType::Zstd);
         rdb_opts.set_bottommost_zstd_max_train_bytes(0, true);
 
-        // Keys are only removed if they are older than the floor value, which is set during snapshot.
-        // After pruning, old and legacy keys are eventually removed when the background compaction runs.
-        let tag_floor = tag_floor.clone();
-        let del_legacy = del_legacy.clone();
-        rdb_opts.set_compaction_filter(
-            "StatePruneFilter",
-            move |_lvl, key, _value| -> CompactionDecision {
-                match key.len() {
-                    // 40-bytes: remove tagged key, if the key is 'older' than the floor
-                    40 if u64::from_be_bytes(key[32..40].try_into().unwrap())
-                        > tag_floor.load(Ordering::Relaxed) =>
-                    {
-                        CompactionDecision::Remove
+        let tag_floor = Arc::new(AtomicU64::new(u64::MAX));
+        // Use the default compaction filter, unless pruning is enabled
+        if config.state_prune {
+            let rev_floor = tag_floor.clone();
+            // Keys are only removed if they are older than the floor value, which is set during snapshot.
+            // After pruning, old and legacy keys are eventually removed when the background compaction runs.
+            rdb_opts.set_compaction_filter(
+                "StatePruneFilter",
+                move |_lvl, key, _value| -> CompactionDecision {
+                    match key.len() {
+                        // 40-bytes: remove tagged key, if the key is 'older' than the floor
+                        LATEST_KEY_LEN
+                            if u64::from_be_bytes(key[32..40].try_into().unwrap())
+                                > rev_floor.load(Ordering::Relaxed) =>
+                        {
+                            CompactionDecision::Remove
+                        }
+                        // 32-bytes: remove legacy key, if snapshot already taken
+                        LEGACY_KEY_LEN if rev_floor.load(Ordering::Relaxed) != u64::MAX => {
+                            CompactionDecision::Remove
+                        }
+                        // default to keep, all other keys
+                        _ => CompactionDecision::Keep,
                     }
-                    // 32-bytes: remove legacy key, if snapshot already taken
-                    32 if del_legacy.load(Ordering::Relaxed) => CompactionDecision::Remove,
-                    // default to keep, all other keys
-                    _ => CompactionDecision::Keep,
-                }
-            },
-        );
-
-        rdb_opts
+                },
+            );
+        }
+        (rdb_opts, tag_floor)
     }
 
     // SQLite performance tweaks
@@ -870,7 +871,6 @@ impl Db {
             self.rev_ceil.clone(),
             self.rev_floor.clone(),
             self.tag_view.clone(),
-            self.del_legacy.clone(),
         ))
     }
 

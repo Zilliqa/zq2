@@ -1,6 +1,9 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, AtomicU64, Ordering},
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    usize,
 };
 
 use anyhow::Result;
@@ -18,7 +21,10 @@ use crate::{cfg::Forks, crypto::Hash, state::Account};
 /// Special storage keys
 const ROCKSDB_MIGRATE_AT: &str = "migrate_at";
 const ROCKSDB_CUTOVER_AT: &str = "cutover_at";
+const ROCKSDB_CONTENT_AT: &str = "content_at";
 pub const ROCKSDB_TAGGING_AT: &str = "tagging_at";
+pub const LEGACY_KEY_LEN: usize = 32;
+pub const LATEST_KEY_LEN: usize = 40;
 
 /// An implementor of [eth_trie::DB] which uses a [rocksdb::DB]/[rusqlite::Connection] to persist data.
 #[derive(Debug, Clone)]
@@ -29,7 +35,6 @@ pub struct TrieStorage {
     // the tag_* values are stored in the reverse height order i.e. u64::MAX is genesis.
     rev_ceil: Arc<AtomicU64>, // used to tag every write to the state database; reverse-ordered.
     rev_floor: Arc<AtomicU64>, // used to mark the compaction boundary; reverse-ordered.
-    del_legacy: Arc<AtomicBool>,
     pub tag_view: Arc<Mutex<u64>>, // used to lock the snapshot process; forward-ordered.
 }
 
@@ -41,7 +46,6 @@ impl TrieStorage {
         rev_ceil: Arc<AtomicU64>,
         rev_floor: Arc<AtomicU64>,
         tag_view: Arc<Mutex<u64>>,
-        del_legacy: Arc<AtomicBool>,
     ) -> Self {
         Self {
             pool,
@@ -50,7 +54,6 @@ impl TrieStorage {
             rev_ceil,
             rev_floor,
             tag_view,
-            del_legacy,
         }
     }
 
@@ -60,7 +63,57 @@ impl TrieStorage {
             .get()
             .unwrap()
             .execute("DELETE FROM state_trie", [])?; // TRUNCATE
-        self.del_legacy.store(true, Ordering::Relaxed); // allow deletion of rocksdb keys
+        Ok(())
+    }
+
+    const CHUNK_SIZE: usize = 1_000;
+    /// One-off migrate all rocksdb legacy keys to the latest keys.
+    ///
+    /// This function migrates legacy keys from RocksDB to the latest format.
+    /// It iterates through all keys in the database, identifies legacy keys,
+    /// and migrates them to the new format.
+    ///
+    // It is possible that some keys may have been lazily migrated during normal operations.
+    // This function ensures that any such keys are migrated in a way that does not hide nor
+    // impact the reading of newer keys.
+    pub fn migrate_legacy(&self) -> Result<()> {
+        // skip if done.
+        if self.kvdb.get(ROCKSDB_CONTENT_AT)?.is_some() {
+            return Ok(());
+        }
+
+        // Since the default database tag is MAX - 1, using MAX here ensures that,
+        // this key does not hide any newer keys (all < MAX).
+        let tag = u64::MAX.to_be_bytes();
+
+        // pre-allocate and re-use memory buffer.
+        let mut keys = Vec::with_capacity(Self::CHUNK_SIZE);
+        let mut values = Vec::with_capacity(Self::CHUNK_SIZE);
+
+        // iterate thru all keys, migrating legacy keys.
+        for kv in self.kvdb.iterator(rocksdb::IteratorMode::Start) {
+            let (key, value) = kv?;
+            // migrate legacy keys, overwriting any previous migration.
+            if key.len() == LEGACY_KEY_LEN {
+                keys.push(key.to_vec());
+                values.push(value.to_vec());
+                // chunking
+                if keys.len() == Self::CHUNK_SIZE {
+                    self.write_batch(
+                        std::mem::take(&mut keys),
+                        std::mem::take(&mut values),
+                        tag, // this will not override any newer values
+                        true,
+                    )?;
+                }
+            }
+        }
+        // last chunk
+        if !keys.is_empty() {
+            self.write_batch(keys, values, tag, true)?;
+        }
+        self.kvdb
+            .put(ROCKSDB_CONTENT_AT, usize::MAX.to_be_bytes())?;
         Ok(())
     }
 
@@ -120,7 +173,13 @@ impl TrieStorage {
     // This is the tagging scheme used. Each tag is a U64 in big-endian format.
     // |user-key + tag|seqno|type|
     // |<-----internal key------>|
-    fn write_batch(&self, keys: Vec<Vec<u8>>, values: Vec<Vec<u8>>, tag: [u8; 8]) -> Result<()> {
+    fn write_batch(
+        &self,
+        keys: Vec<Vec<u8>>,
+        values: Vec<Vec<u8>>,
+        tag: [u8; 8],
+        migration: bool,
+    ) -> Result<()> {
         if keys.is_empty() {
             return Ok(());
         }
@@ -134,7 +193,13 @@ impl TrieStorage {
             let mut tag_key = key.clone();
             tag_key.extend_from_slice(tag.as_slice()); // suffix big-endian tags
             batch.put(tag_key.as_slice(), value.as_slice());
-            cache.put(key, value);
+
+            // for legacy migration skip the cache and tombstone the key.
+            if !migration {
+                cache.put(key, value);
+            } else {
+                batch.delete(key.as_slice());
+            }
         }
         Ok(self.kvdb.write(batch)?)
     }
@@ -160,16 +225,16 @@ impl TrieStorage {
 
         // Given that the trie keys are *all* Keccak256 keys, the legacy keys are exactly 32-bytes (256-bits) long,
         // while the new tag keys are exactly 40-bytes (320-bits) long. We do not expect any other trie-key lengths.
-        if key.len() == 40 {
-            let tag = key[32..40].try_into().unwrap();
+        if key.len() == LATEST_KEY_LEN {
+            let tag = key[LEGACY_KEY_LEN..].try_into().unwrap();
             // latest tag key, return the latest value
             Ok(Some((tag, value.to_vec())))
-        } else if key.len() == 32 {
+        } else if key.len() == LEGACY_KEY_LEN {
             // legacy key - peek to see if a later tag key is present
             if let Some(peek) = iter.next() {
                 let peek = peek?;
                 if peek.0.starts_with(key_prefix) {
-                    let tag = peek.0[32..].try_into().expect("8-bytes");
+                    let tag = peek.0[LEGACY_KEY_LEN..].try_into().expect("8-bytes");
                     return Ok(Some((tag, peek.1.to_vec()))); // tag key has newer value
                 }
             }
@@ -298,7 +363,7 @@ impl eth_trie::DB for TrieStorage {
                 .rev_ceil
                 .load(std::sync::atomic::Ordering::Relaxed)
                 .to_be_bytes();
-            self.write_batch(vec![key.to_vec()], vec![value.clone()], tag)
+            self.write_batch(vec![key.to_vec()], vec![value.clone()], tag, false)
                 .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?;
             return Ok(Some(value));
         }
@@ -312,7 +377,7 @@ impl eth_trie::DB for TrieStorage {
             .rev_ceil
             .load(std::sync::atomic::Ordering::Relaxed)
             .to_be_bytes();
-        self.write_batch(vec![key.to_vec()], vec![value], tag)
+        self.write_batch(vec![key.to_vec()], vec![value], tag, false)
             .map_err(|e| eth_trie::TrieError::DB(e.to_string()))
     }
 
@@ -322,7 +387,7 @@ impl eth_trie::DB for TrieStorage {
             .rev_ceil
             .load(std::sync::atomic::Ordering::Relaxed)
             .to_be_bytes();
-        self.write_batch(keys, values, tag)
+        self.write_batch(keys, values, tag, false)
             .map_err(|e| eth_trie::TrieError::DB(e.to_string()))
     }
 
@@ -344,6 +409,7 @@ impl eth_trie::DB for TrieStorage {
                     .load(Ordering::Relaxed)
                     .saturating_add(1) // push it one-down, to keep only 1 snapshot on-disk.
                     .to_be_bytes(),
+                false,
             )
             .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?
         }
@@ -379,7 +445,6 @@ mod tests {
         let tag = Arc::new(AtomicU64::new(u64::MAX));
         let lock = Arc::new(Mutex::new(u64::MIN));
         let cache = Arc::new(RwLock::new(LruCache::unbounded()));
-        let del = Arc::new(AtomicBool::new(true));
         let trie_storage = TrieStorage::new(
             sql.clone(),
             rdb.clone(),
@@ -387,7 +452,6 @@ mod tests {
             tag.clone(),
             tag.clone(),
             lock.clone(),
-            del.clone(),
         );
         let trie_storage = Arc::new(trie_storage);
         (sql, rdb, cache, trie_storage)

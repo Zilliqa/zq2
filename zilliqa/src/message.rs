@@ -396,6 +396,8 @@ pub enum InternalMessage {
     UnsubscribeFromGossipSubTopic(GossipSubTopic),
     /// Snapshot a trie at a given point
     PromoteTrie(TrieStorage, B256, u64),
+    /// Migrate the legacy trie to the new trie
+    MigrateTrie(TrieStorage),
 }
 
 #[derive(Debug, Clone)]
@@ -424,6 +426,9 @@ impl Display for InternalMessage {
             }
             InternalMessage::PromoteTrie(_storage, hash, view) => {
                 write!(f, "PromoteTrie({hash:?}) {view})")
+            }
+            InternalMessage::MigrateTrie(_storage) => {
+                write!(f, "MigrateTrie")
             }
         }
     }
