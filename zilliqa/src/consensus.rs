@@ -2438,7 +2438,7 @@ impl Consensus {
     /// Trigger a snapshot
     pub fn snapshot_at(&self, block_number: u64, new_ceil: u64) -> Result<()> {
         // skip if there is a snapshot in progress.
-        let Some(mut tag_lock) = self.db.tag_lock.try_lock() else {
+        let Some(mut tag_lock) = self.db.tag_view.try_lock() else {
             return Ok(());
         };
         // error if the lowest block does not exist

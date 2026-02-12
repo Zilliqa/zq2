@@ -1,6 +1,6 @@
 use std::sync::{
     Arc,
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
 
 use anyhow::Result;
@@ -27,9 +27,10 @@ pub struct TrieStorage {
     kvdb: Arc<rocksdb::DB>,
     cache: Arc<RwLock<LruCache<Vec<u8>, Vec<u8>>>>,
     // the tag_* values are stored in the reverse height order i.e. u64::MAX is genesis.
-    tag_ceil: Arc<AtomicU64>, // used to tag every write to the state database; reverse-ordered.
-    tag_floor: Arc<AtomicU64>, // used to mark the compaction boundary; reverse-ordered.
-    pub tag_lock: Arc<Mutex<u64>>, // used to lock the snapshot process; forward-ordered.
+    rev_ceil: Arc<AtomicU64>, // used to tag every write to the state database; reverse-ordered.
+    rev_floor: Arc<AtomicU64>, // used to mark the compaction boundary; reverse-ordered.
+    del_legacy: Arc<AtomicBool>,
+    pub tag_view: Arc<Mutex<u64>>, // used to lock the snapshot process; forward-ordered.
 }
 
 impl TrieStorage {
@@ -37,24 +38,29 @@ impl TrieStorage {
         pool: Arc<Pool<SqliteConnectionManager>>,
         kvdb: Arc<rocksdb::DB>,
         cache: Arc<RwLock<LruCache<Vec<u8>, Vec<u8>>>>,
-        tag_ceil: Arc<AtomicU64>,
-        tag_floor: Arc<AtomicU64>,
-        tag_lock: Arc<Mutex<u64>>,
+        rev_ceil: Arc<AtomicU64>,
+        rev_floor: Arc<AtomicU64>,
+        tag_view: Arc<Mutex<u64>>,
+        del_legacy: Arc<AtomicBool>,
     ) -> Self {
         Self {
             pool,
             kvdb,
             cache,
-            tag_ceil,
-            tag_floor,
-            tag_lock,
+            rev_ceil,
+            rev_floor,
+            tag_view,
+            del_legacy,
         }
     }
 
     /// Truncate the state_trie table
     pub fn drop_sql_state_trie(&self) -> Result<()> {
-        let sql = self.pool.get().unwrap();
-        sql.execute("DELETE FROM state_trie", [])?; // TRUNCATE
+        self.pool
+            .get()
+            .unwrap()
+            .execute("DELETE FROM state_trie", [])?; // TRUNCATE
+        self.del_legacy.store(true, Ordering::Relaxed); // allow deletion of rocksdb keys
         Ok(())
     }
 
@@ -84,11 +90,11 @@ impl TrieStorage {
     /// This ensures that: floor != ceil && new_floor 'increments' old_floor.
     pub fn set_tag_floor(&self, view: u64) -> Result<u64> {
         let new_tag = u64::MAX.saturating_sub(view); // reverse-ordered
-        let tag_floor = self.tag_floor.load(Ordering::Relaxed);
+        let tag_floor = self.rev_floor.load(Ordering::Relaxed);
         anyhow::ensure!(new_tag <= tag_floor, "{new_tag} <= {tag_floor}");
-        let tag_ceil = self.tag_ceil.load(Ordering::Relaxed);
+        let tag_ceil = self.rev_ceil.load(Ordering::Relaxed);
         anyhow::ensure!(new_tag > tag_ceil, "{new_tag} > {tag_ceil}");
-        self.tag_floor.store(new_tag, Ordering::Relaxed);
+        self.rev_floor.store(new_tag, Ordering::Relaxed);
         Ok(u64::MAX.saturating_sub(tag_floor))
     }
 
@@ -97,12 +103,12 @@ impl TrieStorage {
     /// This ensures that: floor != ceil && new_ceil 'increments' old_ceil.
     pub fn set_tag_ceil(&self, view: u64) -> Result<u64> {
         let new_tag = u64::MAX.saturating_sub(view); // reverse-ordered
-        let tag_ceil = self.tag_ceil.load(Ordering::Relaxed);
+        let tag_ceil = self.rev_ceil.load(Ordering::Relaxed);
         anyhow::ensure!(new_tag <= tag_ceil, "{new_tag} <= {tag_ceil}");
-        let tag_floor = self.tag_floor.load(Ordering::Relaxed);
+        let tag_floor = self.rev_floor.load(Ordering::Relaxed);
         anyhow::ensure!(new_tag < tag_floor, "{new_tag} < {tag_floor}");
         self.kvdb.put(ROCKSDB_TAGGING_AT, new_tag.to_be_bytes())?;
-        self.tag_ceil.store(new_tag, Ordering::Relaxed);
+        self.rev_ceil.store(new_tag, Ordering::Relaxed);
         Ok(u64::MAX.saturating_sub(tag_ceil))
     }
 
@@ -249,16 +255,9 @@ impl TrieStorage {
 
     #[cfg(test)]
     // test artifacts
-    fn clear_cache(&self) -> Result<()> {
-        self.cache.write().clear();
-        Ok(())
-    }
-
-    #[cfg(test)]
-    // test artifacts
     fn inc_tag(&self, new_height: u64) -> Result<()> {
         let new_tag = u64::MAX.saturating_sub(new_height);
-        self.tag_ceil
+        self.rev_ceil
             .store(new_tag, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
@@ -268,8 +267,8 @@ impl eth_trie::DB for TrieStorage {
     type Error = eth_trie::TrieError;
 
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, Self::Error> {
-        // L1 - Lru mem
-        if let Some(value) = self.cache.write().get(key) {
+        // L1 - pseudo-lru
+        if let Some(value) = self.cache.read().peek(key) {
             return Ok(Some(value.clone()));
         }
 
@@ -296,7 +295,7 @@ impl eth_trie::DB for TrieStorage {
         if let Some(value) = value {
             // lazy migration
             let tag = self
-                .tag_ceil
+                .rev_ceil
                 .load(std::sync::atomic::Ordering::Relaxed)
                 .to_be_bytes();
             self.write_batch(vec![key.to_vec()], vec![value.clone()], tag)
@@ -310,7 +309,7 @@ impl eth_trie::DB for TrieStorage {
     #[inline]
     fn insert(&self, key: &[u8], value: Vec<u8>) -> Result<(), Self::Error> {
         let tag = self
-            .tag_ceil
+            .rev_ceil
             .load(std::sync::atomic::Ordering::Relaxed)
             .to_be_bytes();
         self.write_batch(vec![key.to_vec()], vec![value], tag)
@@ -320,7 +319,7 @@ impl eth_trie::DB for TrieStorage {
     #[inline]
     fn insert_batch(&self, keys: Vec<Vec<u8>>, values: Vec<Vec<u8>>) -> Result<(), Self::Error> {
         let tag = self
-            .tag_ceil
+            .rev_ceil
             .load(std::sync::atomic::Ordering::Relaxed)
             .to_be_bytes();
         self.write_batch(keys, values, tag)
@@ -341,7 +340,7 @@ impl eth_trie::DB for TrieStorage {
             self.write_batch(
                 vec![promote_key.to_vec()],
                 vec![value],
-                self.tag_ceil
+                self.rev_ceil
                     .load(Ordering::Relaxed)
                     .saturating_add(1) // push it one-down, to keep only 1 snapshot on-disk.
                     .to_be_bytes(),
@@ -365,8 +364,12 @@ mod tests {
     use super::*;
     use crate::crypto::SecretKey;
 
-    #[test]
-    fn basic_snapshot() {
+    fn setup() -> (
+        Arc<Pool<SqliteConnectionManager>>,
+        Arc<rocksdb::DB>,
+        Arc<RwLock<LruCache<Vec<u8>, Vec<u8>>>>,
+        Arc<TrieStorage>,
+    ) {
         let sql = Arc::new(
             Pool::builder()
                 .build(SqliteConnectionManager::memory())
@@ -376,6 +379,7 @@ mod tests {
         let tag = Arc::new(AtomicU64::new(u64::MAX));
         let lock = Arc::new(Mutex::new(u64::MIN));
         let cache = Arc::new(RwLock::new(LruCache::unbounded()));
+        let del = Arc::new(AtomicBool::new(true));
         let trie_storage = TrieStorage::new(
             sql.clone(),
             rdb.clone(),
@@ -383,8 +387,15 @@ mod tests {
             tag.clone(),
             tag.clone(),
             lock.clone(),
+            del.clone(),
         );
         let trie_storage = Arc::new(trie_storage);
+        (sql, rdb, cache, trie_storage)
+    }
+
+    #[test]
+    fn basic_snapshot() {
+        let (_, rdb, _, trie_storage) = setup();
 
         let mut pmt = EthTrie::new(trie_storage.clone());
         pmt.root_hash().unwrap(); // create one 'empty' record
@@ -416,23 +427,7 @@ mod tests {
     #[test]
     // lazy migration from sqlite to rocksdb, works.
     fn lazy_migration() {
-        let sql = Arc::new(
-            Pool::builder()
-                .build(SqliteConnectionManager::memory())
-                .unwrap(),
-        );
-        let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
-        let tag = Arc::new(AtomicU64::new(u64::MAX));
-        let lock = Arc::new(Mutex::new(u64::MIN));
-        let cache = Arc::new(RwLock::new(LruCache::unbounded()));
-        let trie_storage = TrieStorage::new(
-            sql.clone(),
-            rdb.clone(),
-            cache.clone(),
-            tag.clone(),
-            tag.clone(),
-            lock.clone(),
-        );
+        let (sql, rdb, _, trie_storage) = setup();
 
         let key_prefix = alloy::consensus::EMPTY_ROOT_HASH.0;
         let conn = sql.get().unwrap();
@@ -459,23 +454,7 @@ mod tests {
     #[test]
     // height-tag read/write works
     fn tagging() {
-        let sql = Arc::new(
-            Pool::builder()
-                .build(SqliteConnectionManager::memory())
-                .unwrap(),
-        );
-        let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
-        let tag = Arc::new(AtomicU64::new(u64::MAX));
-        let lock = Arc::new(Mutex::new(u64::MIN));
-        let cache = Arc::new(RwLock::new(LruCache::unbounded()));
-        let trie_storage = TrieStorage::new(
-            sql.clone(),
-            rdb.clone(),
-            cache.clone(),
-            tag.clone(),
-            tag.clone(),
-            lock.clone(),
-        );
+        let (_, rdb, cache, trie_storage) = setup();
 
         let key_prefix = alloy::consensus::EMPTY_ROOT_HASH.0;
 
@@ -496,7 +475,7 @@ mod tests {
         assert_eq!(value.unwrap(), b"min_value".to_vec());
 
         // read highest value, bypassing cache.
-        trie_storage.clear_cache().unwrap();
+        cache.write().clear();
         let value = trie_storage.get(key_prefix.as_slice()).unwrap();
         assert_eq!(value.unwrap(), b"max_value".to_vec());
 
@@ -508,23 +487,7 @@ mod tests {
     #[test]
     // peek ahead works
     fn peek_ahead() {
-        let sql = Arc::new(
-            Pool::builder()
-                .build(SqliteConnectionManager::memory())
-                .unwrap(),
-        );
-        let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
-        let tag = Arc::new(AtomicU64::new(u64::MAX));
-        let lock = Arc::new(Mutex::new(u64::MIN));
-        let cache = Arc::new(RwLock::new(LruCache::unbounded()));
-        let trie_storage = TrieStorage::new(
-            sql.clone(),
-            rdb.clone(),
-            cache.clone(),
-            tag.clone(),
-            tag.clone(),
-            lock.clone(),
-        );
+        let (_, rdb, cache, trie_storage) = setup();
 
         let key_prefix = alloy::consensus::EMPTY_ROOT_HASH.0;
         rdb.put(key_prefix.as_slice(), b"rdb_value").unwrap();
@@ -538,7 +501,7 @@ mod tests {
         trie_storage
             .insert(key_prefix.as_slice(), b"min_value".to_vec())
             .unwrap();
-        trie_storage.clear_cache().unwrap();
+        cache.write().clear();
         let value = trie_storage.get(key_prefix.as_slice()).unwrap().unwrap();
         assert_eq!(value, b"min_value".to_vec());
 
@@ -547,7 +510,7 @@ mod tests {
         trie_storage
             .insert(key_prefix.as_slice(), b"max_value".to_vec())
             .unwrap();
-        trie_storage.clear_cache().unwrap();
+        cache.write().clear();
         let value = trie_storage.get(key_prefix.as_slice()).unwrap().unwrap();
         assert_eq!(value, b"max_value".to_vec());
 
@@ -559,24 +522,7 @@ mod tests {
     #[test]
     // writes to disk only happens on commit
     fn write_on_commit() {
-        let sql = Arc::new(
-            Pool::builder()
-                .build(SqliteConnectionManager::memory())
-                .unwrap(),
-        );
-        let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
-        let tag = Arc::new(AtomicU64::new(u64::MAX));
-        let lock = Arc::new(Mutex::new(u64::MIN));
-        let cache = Arc::new(RwLock::new(LruCache::unbounded()));
-        let trie_storage = TrieStorage::new(
-            sql.clone(),
-            rdb.clone(),
-            cache.clone(),
-            tag.clone(),
-            tag.clone(),
-            lock.clone(),
-        );
-        let trie_storage = Arc::new(trie_storage);
+        let (_, rdb, cache, trie_storage) = setup();
 
         let key_prefix = alloy::consensus::EMPTY_ROOT_HASH.0;
         let mut pmt = EthTrie::new(trie_storage.clone());
@@ -585,7 +531,7 @@ mod tests {
         pmt.insert(key_prefix.as_slice(), b"one_value").unwrap();
         pmt.insert(key_prefix.as_slice(), b"two_value").unwrap();
         pmt.insert(key_prefix.as_slice(), b"tri_value").unwrap();
-        trie_storage.clear_cache().unwrap();
+        cache.write().clear();
         let value = pmt.get(key_prefix.as_slice()).unwrap().unwrap();
         assert_eq!(value, b"tri_value".to_vec());
         pmt.root_hash().unwrap(); // write to disk
@@ -594,7 +540,7 @@ mod tests {
         pmt.insert(key_prefix.as_slice(), b"for_value").unwrap();
         trie_storage.inc_tag(2).unwrap();
         pmt.insert(key_prefix.as_slice(), b"fiv_value").unwrap();
-        trie_storage.clear_cache().unwrap();
+        cache.write().clear();
         let value = pmt.get(key_prefix.as_slice()).unwrap().unwrap();
         assert_eq!(value, b"fiv_value".to_vec());
         pmt.root_hash().unwrap(); // write to disk
