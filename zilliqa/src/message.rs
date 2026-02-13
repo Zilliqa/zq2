@@ -389,6 +389,7 @@ pub enum InternalMessage {
         TrieStorage,
         ViewHistory,
         Box<Path>,
+        Box<Block>,
     ),
     /// Notify p2p cordinator to subscribe to a particular gossipsub topic
     SubscribeToGossipSubTopic(GossipSubTopic),

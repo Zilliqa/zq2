@@ -466,9 +466,9 @@ impl P2pNode {
                         InternalMessage::LaunchLink(_) | InternalMessage::IntershardCall(_) => {
                             self.send_to(&Self::shard_id_to_topic(destination, None).hash(), |c| c.local_messages.send((source, message)))?;
                         }
-                        InternalMessage::ExportBlockCheckpoint(block, transactions, parent, trie_storage, view_history, path) => {
+                        InternalMessage::ExportBlockCheckpoint(block, transactions, parent, trie_storage, view_history, path, grandparent) => {
                             self.task_threads.spawn(async move {
-                                db::checkpoint_block_with_state(&block, &transactions, &parent, trie_storage, source, view_history, path)
+                                db::checkpoint_block_with_state(&block, &transactions, &parent, trie_storage, source, view_history, &grandparent, path)
                             });
                         }
                         InternalMessage::SubscribeToGossipSubTopic(topic) => {

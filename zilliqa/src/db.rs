@@ -744,7 +744,7 @@ impl Db {
         path: PathBuf,
         hash: &Hash,
         our_shard_id: u64,
-    ) -> Result<Option<(Block, Vec<SignedTransaction>, Block, ViewHistory)>> {
+    ) -> Result<Option<(Block, Vec<SignedTransaction>, Block, ViewHistory, Block)>> {
         let trie_storage = Arc::new(self.state_trie()?);
         let state_trie = EthTrie::new(trie_storage.clone());
 
@@ -754,27 +754,37 @@ impl Db {
             && self.get_highest_canonical_block_number()?.is_none()
         {
             tracing::info!(%hash, "Restoring checkpoint");
-            let (block, transactions, parent, view_history) = crate::checkpoint::load_ckpt(
-                path.as_path(),
-                trie_storage.clone(),
-                our_shard_id,
-                hash,
-            )?
-            .expect("does not return None");
+            let (block, transactions, parent, view_history, grandparent) =
+                crate::checkpoint::load_ckpt(
+                    path.as_path(),
+                    trie_storage.clone(),
+                    our_shard_id,
+                    hash,
+                )?
+                .expect("does not return None");
 
             let parent_ref: &Block = &parent; // for moving into the closure
+            let grandparent_ref: &Block = &grandparent;
             self.with_sqlite_tx(move |tx| {
                 self.insert_block_with_db_tx(tx, parent_ref)?;
                 self.set_finalized_view_with_db_tx(tx, parent_ref.view())?;
                 self.set_high_qc_with_db_tx(tx, block.header.qc)?;
                 self.set_view_with_db_tx(tx, parent_ref.view() + 1, false)?;
+                self.insert_block_with_db_tx(tx, grandparent_ref)?;
                 Ok(())
             })?;
 
-            return Ok(Some((block, transactions, parent, view_history)));
+            return Ok(Some((
+                block,
+                transactions,
+                parent,
+                view_history,
+                grandparent,
+            )));
         }
 
-        let (block, transactions, parent) = crate::checkpoint::load_ckpt_blocks(path.as_path())?;
+        let (block, transactions, parent, grandparent) =
+            crate::checkpoint::load_ckpt_blocks(path.as_path())?;
 
         // Populated database; check if the parent block exists in the DB.
         let Some(ckpt_parent) = self.get_transactionless_block(parent.hash().into())? else {
@@ -784,6 +794,17 @@ impl Db {
             ckpt_parent.parent_hash() == parent.parent_hash(),
             "Critical checkpoint error"
         );
+
+        // Populated database; check if the parent block exists in the DB.
+        let ckpt_grandparent = self
+            .get_transactionless_block(grandparent.hash().into())?
+            .unwrap_or(Block::genesis(Hash::ZERO));
+        if ckpt_grandparent.state_root_hash() != Hash::ZERO {
+            anyhow::ensure!(
+                ckpt_grandparent.parent_hash() == grandparent.parent_hash(),
+                "Critical checkpoint error"
+            );
+        }
 
         let view_history = crate::checkpoint::load_ckpt_history(path.as_path())?;
 
@@ -796,7 +817,13 @@ impl Db {
             &ckpt_parent.state_root_hash(),
         )?;
 
-        Ok(Some((block, transactions, parent, view_history)))
+        Ok(Some((
+            block,
+            transactions,
+            parent,
+            view_history,
+            grandparent,
+        )))
     }
 
     pub fn state_trie(&self) -> Result<TrieStorage> {
@@ -849,7 +876,7 @@ impl Db {
         voted: bool,
     ) -> Result<bool> {
         let res = sqlite_tx
-            .prepare_cached("INSERT INTO tip_info (view, voted_in_view) VALUES (?1, ?2) ON CONFLICT(_single_row) DO UPDATE SET view = ?1, voted_in_view = ?2 WHERE tip_info.view IS NULL OR tip_info.view < ?1",)?
+            .prepare_cached("INSERT INTO tip_info (view, voted_in_view) VALUES (?1, ?2) ON CONFLICT(_single_row) DO UPDATE SET view = ?1, voted_in_view = ?2 WHERE tip_info.view IS NULL OR tip_info.view < ?1")?
             .execute((view, voted))?;
         Ok(res != 0)
     }
@@ -920,9 +947,9 @@ impl Db {
         sqlite_tx: &Connection,
         high_qc: QuorumCertificate,
     ) -> Result<()> {
-        sqlite_tx.prepare_cached("INSERT INTO tip_info (high_qc, high_qc_updated_at) VALUES (:high_qc, :timestamp) ON CONFLICT DO UPDATE SET high_qc = :high_qc, high_qc_updated_at = :timestamp",)?
-        .execute(
-            named_params! {
+        sqlite_tx.prepare_cached("INSERT INTO tip_info (high_qc, high_qc_updated_at) VALUES (:high_qc, :timestamp) ON CONFLICT DO UPDATE SET high_qc = :high_qc, high_qc_updated_at = :timestamp")?
+            .execute(
+                named_params! {
                 ":high_qc": high_qc,
                 ":timestamp": SystemTimeSqlable(SystemTime::now())
             })?;
@@ -1165,7 +1192,7 @@ impl Db {
     ) -> Result<()> {
         sqlite_tx.prepare_cached("INSERT INTO blocks
         (block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg, randao_reveal, mix_hash, is_canonical)
-    VALUES (:block_hash, :view, :height, :qc, :signature, :state_root_hash, :transactions_root_hash, :receipts_root_hash, :timestamp, :gas_used, :gas_limit, :agg, :randao_reveal, :mix_hash, TRUE)",)?.execute(
+    VALUES (:block_hash, :view, :height, :qc, :signature, :state_root_hash, :transactions_root_hash, :receipts_root_hash, :timestamp, :gas_used, :gas_limit, :agg, :randao_reveal, :mix_hash, TRUE)", )?.execute(
             named_params! {
                 ":block_hash": hash,
                 ":view": block.header.view,
@@ -1277,8 +1304,8 @@ impl Db {
                 },
                 agg: row.get(11)?,
                 transactions: vec![],
-            })
-        )?.collect::<Result<Vec<_>, _>>()?;
+            }),
+            )?.collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     }
 
@@ -1352,55 +1379,55 @@ impl Db {
         Ok(match filter {
             BlockFilter::Hash(hash) => {
                 self.pool.get()?.prepare_cached(concat!(
-                    "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg, randao_reveal, mix_hash FROM blocks ",
-                    "WHERE block_hash = ?1"
-                ),)?.query_row([hash], make_block).optional()?
+                "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg, randao_reveal, mix_hash FROM blocks ",
+                "WHERE block_hash = ?1"
+                ), )?.query_row([hash], make_block).optional()?
             }
             BlockFilter::View(view) => {
                 self.pool.get()?.prepare_cached(concat!(
-                    "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg, randao_reveal, mix_hash FROM blocks ",
-                    "WHERE view = ?1"
-                ),)?.query_row([view], make_block).optional()?
+                "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg, randao_reveal, mix_hash FROM blocks ",
+                "WHERE view = ?1"
+                ), )?.query_row([view], make_block).optional()?
             }
             BlockFilter::Height(height) => {
                 self.pool.get()?.prepare_cached(concat!(
-                    "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg, randao_reveal, mix_hash FROM blocks ",
-                    "WHERE height = ?1 AND is_canonical = TRUE"
-                ),)?.query_row([height], make_block).optional()?
+                "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg, randao_reveal, mix_hash FROM blocks ",
+                "WHERE height = ?1 AND is_canonical = TRUE"
+                ), )?.query_row([height], make_block).optional()?
             }
             // Compound SQL queries below, due to - https://github.com/Zilliqa/zq2/issues/2629
             BlockFilter::MaxCanonicalByHeight => {
                 self.pool.get()?.prepare_cached(concat!(
-                    "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg, randao_reveal, mix_hash FROM blocks ",
-                    "WHERE is_canonical = true AND height = (SELECT MAX(height) FROM blocks WHERE is_canonical = TRUE)"
-                ),)?.query_row([], make_block).optional()?
+                "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg, randao_reveal, mix_hash FROM blocks ",
+                "WHERE is_canonical = true AND height = (SELECT MAX(height) FROM blocks WHERE is_canonical = TRUE)"
+                ), )?.query_row([], make_block).optional()?
             }
             BlockFilter::MaxHeight => {
                 self.pool.get()?.prepare_cached(concat!(
-                    "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg, randao_reveal, mix_hash FROM blocks ",
-                    "WHERE height = (SELECT MAX(height) FROM blocks) LIMIT 1"
-                ),)?.query_row([], make_block).optional()?
+                "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg, randao_reveal, mix_hash FROM blocks ",
+                "WHERE height = (SELECT MAX(height) FROM blocks) LIMIT 1"
+                ), )?.query_row([], make_block).optional()?
             }
             BlockFilter::Finalized => {
                 if let Some(result) = self.pool.get()?.prepare_cached(concat!(
-                    "SELECT block_hash, blocks.view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg, randao_reveal, mix_hash FROM blocks ",
-                    "INNER JOIN tip_info ON blocks.view = tip_info.finalized_view"
-                ),)?.query_row([], make_block).optional()? {
+                "SELECT block_hash, blocks.view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg, randao_reveal, mix_hash FROM blocks ",
+                "INNER JOIN tip_info ON blocks.view = tip_info.finalized_view"
+                ), )?.query_row([], make_block).optional()? {
                     Some(result)
-                }else{
+                } else {
                     self.get_transactionless_block(BlockFilter::Height(0))?
                 }
-            },
+            }
             BlockFilter::HighQC => {
-                if let Some(high_qc) = self.get_high_qc()?{
+                if let Some(high_qc) = self.get_high_qc()? {
                     self.pool.get()?.prepare_cached(concat!(
-                        "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg, randao_reveal, mix_hash FROM blocks ",
-                        "WHERE block_hash = ?1"
-                    ),)?.query_row([high_qc.block_hash], make_block).optional()?
-                }else {
+                    "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg, randao_reveal, mix_hash FROM blocks ",
+                    "WHERE block_hash = ?1"
+                    ), )?.query_row([high_qc.block_hash], make_block).optional()?
+                } else {
                     self.get_transactionless_block(BlockFilter::Height(0))?
                 }
-            },
+            }
         })
     }
 
@@ -1550,7 +1577,7 @@ impl Db {
     ) -> Result<()> {
         sqlite_tx.prepare_cached("INSERT OR IGNORE INTO receipts
                 (tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions)
-            VALUES (:tx_hash, :block_hash, :tx_index, :success, :gas_used, :cumulative_gas_used, :contract_address, :logs, :transitions, :accepted, :errors, :exceptions)",)?.execute(
+            VALUES (:tx_hash, :block_hash, :tx_index, :success, :gas_used, :cumulative_gas_used, :contract_address, :logs, :transitions, :accepted, :errors, :exceptions)", )?.execute(
             named_params! {
                 ":tx_hash": receipt.tx_hash,
                 ":block_hash": receipt.block_hash,
@@ -1655,6 +1682,7 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
     state_trie_storage: TrieStorage,
     shard_id: u64,
     view_history: ViewHistory,
+    grandparent: &Block,
     output_dir: P,
 ) -> Result<()> {
     fs::create_dir_all(&output_dir)?;
@@ -1668,6 +1696,7 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
         parent,
         shard_id,
         view_history,
+        grandparent,
     )?;
 
     // rename file when done
@@ -1798,15 +1827,36 @@ mod tests {
         }
 
         let state_hash = root_trie.root_hash().unwrap();
-        let checkpoint_parent = Block::genesis(state_hash.into());
-        // bit of a hack to generate a successor block
-        let mut qc2 = QuorumCertificate::genesis();
-        qc2.block_hash = checkpoint_parent.hash();
-        qc2.view = 1;
-        let checkpoint_block = Block::from_qc(
+
+        let checkpoint_grandparent = Block::genesis(Hash::ZERO);
+        let mut qc1 = QuorumCertificate::genesis();
+        qc1.block_hash = checkpoint_grandparent.hash();
+        qc1.view = 1;
+        let checkpoint_parent = Block::from_qc(
             SecretKey::new().unwrap(),
             1,
             1,
+            qc1,
+            None,
+            state_hash.into(),
+            EMPTY_ROOT_HASH.into(),
+            EMPTY_ROOT_HASH.into(),
+            vec![],
+            SystemTime::now(),
+            EvmGas(0),
+            EvmGas(0),
+            Some(BlsSignature::identity()),
+            Some(EMPTY_ROOT_HASH.into()),
+        );
+
+        // bit of a hack to generate a successor block
+        let mut qc2 = QuorumCertificate::genesis();
+        qc2.block_hash = checkpoint_parent.hash();
+        qc2.view = 2;
+        let checkpoint_block = Block::from_qc(
+            SecretKey::new().unwrap(),
+            2,
+            2,
             qc2,
             None,
             state_hash.into(),
@@ -1834,12 +1884,13 @@ mod tests {
             db.state_trie().unwrap(),
             SHARD_ID,
             view_history,
+            &checkpoint_grandparent,
             &checkpoint_path,
         )
         .unwrap();
 
         // now load the checkpoint
-        let (block, transactions, parent, view_history) = db
+        let (block, transactions, parent, view_history, grandparent) = db
             .load_trusted_checkpoint(
                 checkpoint_path.join(checkpoint_block.number().to_string()),
                 &checkpoint_block.hash(),
@@ -1850,6 +1901,7 @@ mod tests {
         assert_eq!(checkpoint_block, block);
         assert_eq!(checkpoint_transactions, transactions);
         assert_eq!(checkpoint_parent, parent);
+        assert_eq!(checkpoint_grandparent, grandparent);
         if let Some((view, _)) = view_history.missed_views.front() {
             assert!(*view >= view_history.min_view);
         } else {
@@ -1857,7 +1909,7 @@ mod tests {
         }
 
         // load the checkpoint again, to ensure idempotency
-        let (block, transactions, parent, view_history) = db
+        let (block, transactions, parent, view_history, grandparent) = db
             .load_trusted_checkpoint(
                 checkpoint_path.join(checkpoint_block.number().to_string()),
                 &checkpoint_block.hash(),
@@ -1868,6 +1920,7 @@ mod tests {
         assert_eq!(checkpoint_block, block);
         assert_eq!(checkpoint_transactions, transactions);
         assert_eq!(checkpoint_parent, parent);
+        assert_eq!(checkpoint_grandparent, grandparent);
         if let Some((view, _)) = view_history.missed_views.front() {
             assert!(*view >= view_history.min_view);
         } else {

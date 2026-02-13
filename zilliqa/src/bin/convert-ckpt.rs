@@ -13,7 +13,7 @@ use std::{path::PathBuf, sync::Arc, time::Instant};
 use anyhow::Result;
 use clap::Parser;
 use tempfile::tempdir;
-use zilliqa::{crypto::Hash, db::Db, precompiles::ViewHistory};
+use zilliqa::{crypto::Hash, db::Db, message::Block, precompiles::ViewHistory};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -93,6 +93,7 @@ async fn main() -> Result<()> {
         &parent,
         args.id,
         ViewHistory::default(),
+        &Block::genesis(Hash::ZERO),
     )?;
     println!("WRITE {:?}", now.elapsed());
 

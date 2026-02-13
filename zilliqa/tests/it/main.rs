@@ -1117,6 +1117,7 @@ impl Network {
                         trie_storage,
                         view_history,
                         output,
+                        grandparent,
                     ) => {
                         assert!(
                             self.do_checkpoints,
@@ -1131,6 +1132,7 @@ impl Network {
                             trie_storage.clone(),
                             *source_shard,
                             view_history.clone(),
+                            grandparent,
                             output,
                         )
                         .unwrap();

@@ -248,7 +248,7 @@ fn load_ckpt_meta(path: &Path, chain_id: u64, block_hash: &Hash) -> Result<Check
     Ok(meta)
 }
 
-pub fn load_ckpt_blocks(path: &Path) -> Result<(Block, Vec<SignedTransaction>, Block)> {
+pub fn load_ckpt_blocks(path: &Path) -> Result<(Block, Vec<SignedTransaction>, Block, Block)> {
     let mut zipreader = zip::ZipArchive::new(std::fs::File::open(path)?)?;
     ensure!(
         zipreader.comment() == CKPT_VERSION.as_bytes(),
@@ -279,6 +279,28 @@ pub fn load_ckpt_blocks(path: &Path) -> Result<(Block, Vec<SignedTransaction>, B
     };
     ensure!(block.parent_hash() == parent.hash(), "Parent hash mismatch");
 
+    let grandparent = {
+        if let Ok(mut file) = zipreader.by_name("grandparent.bincode") {
+            let grandparent: crate::message::Block =
+                bincode::serde::decode_from_std_read(&mut file, BIN_CONFIG)?;
+            ensure!(
+                grandparent.verify_hash().is_ok(),
+                "Grandparent hash {} invalid",
+                grandparent.hash()
+            );
+            grandparent
+        } else {
+            Block::genesis(Hash::ZERO)
+        }
+    };
+
+    if grandparent.state_root_hash() != Hash::ZERO {
+        ensure!(
+            parent.parent_hash() == grandparent.hash(),
+            "Parent hash mismatch"
+        );
+    }
+
     // Verify transactions list
     let transactions = {
         let mut file = zipreader.by_name("transactions.bincode")?;
@@ -296,7 +318,7 @@ pub fn load_ckpt_blocks(path: &Path) -> Result<(Block, Vec<SignedTransaction>, B
         );
         transactions
     };
-    Ok((block, transactions, parent))
+    Ok((block, transactions, parent, grandparent))
 }
 
 pub fn load_ckpt_state(
@@ -395,9 +417,9 @@ pub fn load_ckpt(
     trie_storage: Arc<TrieStorage>,
     chain_id: u64,
     block_hash: &Hash,
-) -> Result<Option<(Block, Vec<SignedTransaction>, Block, ViewHistory)>> {
+) -> Result<Option<(Block, Vec<SignedTransaction>, Block, ViewHistory, Block)>> {
     let meta = load_ckpt_meta(path, chain_id, block_hash)?;
-    let (block, transactions, parent) = load_ckpt_blocks(path)?;
+    let (block, transactions, parent, grandparent) = load_ckpt_blocks(path)?;
     let (account_count, record_count) =
         load_ckpt_state(path, trie_storage.clone(), &parent.state_root_hash())?;
 
@@ -413,7 +435,13 @@ pub fn load_ckpt(
     let view_history = load_ckpt_history(path)?;
 
     tracing::info!(account=%account_count, record=%record_count, "Loaded"); // final update
-    Ok(Some((block, transactions, parent, view_history)))
+    Ok(Some((
+        block,
+        transactions,
+        parent,
+        view_history,
+        grandparent,
+    )))
 }
 
 #[derive(Debug)]
@@ -432,6 +460,7 @@ pub fn save_ckpt(
     parent: &Block,
     chain_id: u64,
     view_history: ViewHistory,
+    grandparent: &Block,
 ) -> Result<()> {
     // parent
     ensure!(
@@ -458,6 +487,10 @@ pub fn save_ckpt(
         .compression_method(zip::CompressionMethod::Zstd);
 
     let mut zipwriter = zip::ZipWriter::new(zipfile);
+
+    // write grandparent.json
+    zipwriter.start_file("grandparent.bincode", options)?;
+    bincode::serde::encode_into_std_write(grandparent, &mut zipwriter, BIN_CONFIG)?;
 
     // write history.json
     zipwriter.start_file("history.bincode", options)?;

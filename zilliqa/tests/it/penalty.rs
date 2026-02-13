@@ -26,7 +26,10 @@ async fn jailed_node_must_not_propose_blocks(mut network: Network) {
     network.disconnect_node(0);
     let jailed_leader = network.get_node(0).consensus.read().public_key();
 
-    tracing::error!("Disconnected leader: {:?}", hex::encode(jailed_leader.as_bytes()));
+    tracing::error!(
+        "Disconnected leader: {:?}",
+        hex::encode(jailed_leader.as_bytes())
+    );
 
     // wait until the node is jailed
     // note that if there is only one node that is not proposing blocks, it will always be the first among the jailed nodes
@@ -43,7 +46,7 @@ async fn jailed_node_must_not_propose_blocks(mut network: Network) {
                     .filter(|&(view, _)| {
                         *view
                             >= current_view
-                            .saturating_sub(LAG_BEHIND_CURRENT_VIEW + MISSED_VIEW_WINDOW)
+                                .saturating_sub(LAG_BEHIND_CURRENT_VIEW + MISSED_VIEW_WINDOW)
                             && *view < current_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW)
                     })
                     .fold(HashMap::new(), |mut acc, (view, leader)| {
@@ -84,10 +87,10 @@ async fn jailed_node_must_not_propose_blocks(mut network: Network) {
                         .filter(|&(view, _)| {
                             *view
                                 >= current_block
-                                .view()
-                                .saturating_sub(LAG_BEHIND_CURRENT_VIEW + MISSED_VIEW_WINDOW)
+                                    .view()
+                                    .saturating_sub(LAG_BEHIND_CURRENT_VIEW + MISSED_VIEW_WINDOW)
                                 && *view
-                                < current_block.view().saturating_sub(LAG_BEHIND_CURRENT_VIEW)
+                                    < current_block.view().saturating_sub(LAG_BEHIND_CURRENT_VIEW)
                         })
                         .fold(HashMap::new(), |mut acc, (view, leader)| {
                             let id = (leader.as_bytes()[..3]).to_vec();
@@ -152,7 +155,7 @@ async fn jailed_node_must_not_cause_timeouts(mut network: Network) {
                     .filter(|&(view, _)| {
                         *view
                             >= current_view
-                            .saturating_sub(LAG_BEHIND_CURRENT_VIEW + MISSED_VIEW_WINDOW)
+                                .saturating_sub(LAG_BEHIND_CURRENT_VIEW + MISSED_VIEW_WINDOW)
                             && *view < current_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW)
                     })
                     .fold(HashMap::new(), |mut acc, (view, leader)| {
@@ -218,10 +221,10 @@ async fn jailed_node_must_not_cause_timeouts(mut network: Network) {
                         .filter(|&(view, _)| {
                             *view
                                 >= current_block
-                                .view()
-                                .saturating_sub(LAG_BEHIND_CURRENT_VIEW + MISSED_VIEW_WINDOW)
+                                    .view()
+                                    .saturating_sub(LAG_BEHIND_CURRENT_VIEW + MISSED_VIEW_WINDOW)
                                 && *view
-                                < current_block.view().saturating_sub(LAG_BEHIND_CURRENT_VIEW)
+                                    < current_block.view().saturating_sub(LAG_BEHIND_CURRENT_VIEW)
                         })
                         .fold(HashMap::new(), |mut acc, (view, leader)| {
                             let id = (leader.as_bytes()[..3]).to_vec();
