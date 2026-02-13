@@ -40,7 +40,7 @@ use crate::{
     precompiles::ViewHistory,
     time::SystemTime,
     transaction::{EvmGas, Log, SignedTransaction, TransactionReceipt, VerifiedTransaction},
-    trie_storage::{LATEST_KEY_LEN, LEGACY_KEY_LEN, ROCKSDB_TAGGING_AT, TrieStorage},
+    trie_storage::{LEGACY_KEY_LEN, ROCKSDB_TAGGING_AT, TAGGED_KEY_LEN, TrieStorage},
 };
 
 const MAX_KEYS_IN_SINGLE_QUERY: usize = 32765;
@@ -264,8 +264,8 @@ pub struct Db {
     pub config: DbConfig,
     /// State Pruning
     rev_ceil: Arc<AtomicU64>, // always set to the finalised view height; set by Db::set_finalised_view()
-    rev_floor: Arc<AtomicU64>, // resets to u64::MAX at startup; gets set during prune.; set by Db::snapshot()
-    pub tag_view: Arc<Mutex<u64>>, // used to lock the snapshot process
+    rev_floor: Arc<AtomicU64>, // resets to u64::MAX at startup; gets set by Db::snapshot()
+    pub tag_view: Arc<Mutex<u64>>, // used to lock the promotion process
 }
 
 impl Db {
@@ -341,13 +341,9 @@ impl Db {
             LruCache::new(NonZeroUsize::new(config.rocksdb_state_cache_size / 500).unwrap());
 
         // Use the last known tag for keys.
-        // Defaults to MAX - 1, to work well with TrieStorage::migrate_legacy().
-        // MAX is reserved for use by the background legacy migration process.
-        let last_tag = rdb
-            .get(ROCKSDB_TAGGING_AT)?
-            .map_or(u64::MAX.saturating_sub(1), |v| {
-                u64::from_be_bytes(v.try_into().expect("8-bytes"))
-            });
+        let last_tag = rdb.get(ROCKSDB_TAGGING_AT)?.map_or(u64::MAX, |v| {
+            u64::from_be_bytes(v.try_into().expect("8-bytes"))
+        });
         let rev_ceil = Arc::new(AtomicU64::new(last_tag)); // stores the reverse view
         let tag_view = Arc::new(Mutex::new(u64::MAX.saturating_sub(last_tag))); // stores the equivalent view
 
@@ -688,7 +684,7 @@ impl Db {
                 move |_lvl, key, _value| -> CompactionDecision {
                     match key.len() {
                         // 40-bytes: remove tagged key, if the key is 'older' than the floor
-                        LATEST_KEY_LEN
+                        TAGGED_KEY_LEN
                             if u64::from_be_bytes(key[32..40].try_into().unwrap())
                                 > rev_floor.load(Ordering::Relaxed) =>
                         {
@@ -871,6 +867,7 @@ impl Db {
             self.rev_ceil.clone(),
             self.rev_floor.clone(),
             self.tag_view.clone(),
+            self.config.state_prune,
         ))
     }
 
@@ -1702,17 +1699,17 @@ impl Db {
     }
 }
 
-/// Promote the state trie.
+/// Snapshot the state trie.
 ///
 /// Promotes the tag of each node to the given view. This process may take a while to complete.
 /// The `tag_lock` ensures that only one snapshot is in progress at a time.
 /// The previous state trie will be eventually pruned during compaction.
-pub fn promote_trie(storage: TrieStorage, root_hash: B256, block_number: u64) -> Result<()> {
+pub fn snapshot_trie(storage: TrieStorage, root_hash: B256, block_number: u64) -> Result<()> {
     let trie = Arc::new(storage);
     let tag_lock = trie.tag_view.lock();
-    tracing::info!(%root_hash, block_number, "Promote: start");
-    TrieStorage::promote(trie.clone(), root_hash)?;
-    tracing::info!(%root_hash, block_number, "Promote: done");
+    tracing::info!(%root_hash, block_number, "Snapshot: start");
+    TrieStorage::snapshot(trie.clone(), root_hash)?;
+    tracing::info!(%root_hash, block_number, "Snapshot: done");
     if trie.set_tag_floor(*tag_lock)? != 0 {
         trie.drop_sql_state_trie()?; // delete SQL database
     }

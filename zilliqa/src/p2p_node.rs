@@ -484,18 +484,10 @@ impl P2pNode {
                                 self.swarm.behaviour_mut().gossipsub.unsubscribe(&Self::validator_topic(shard_id));
                             }
                         }
-                        InternalMessage::PromoteTrie(trie, hash, view) => {
+                        InternalMessage::SnapshotTrie(trie, hash, view) => {
                             self.task_threads.spawn(async move {
-                                if let Err(e) = db::promote_trie(trie, hash, view) {
+                                if let Err(e) = db::snapshot_trie(trie, hash, view) {
                                     tracing::error!(error = %e, "Snapshot failed");
-                                }
-                                Ok(())
-                            });
-                        }
-                        InternalMessage::MigrateTrie(storage) => {
-                            self.task_threads.spawn(async move {
-                                if let Err(e) = storage.migrate_legacy() {
-                                    tracing::error!(error = %e, "Migration failed");
                                 }
                                 Ok(())
                             });

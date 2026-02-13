@@ -1,11 +1,9 @@
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
-    usize,
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
 };
 
+use alloy::primitives::KECCAK256_EMPTY;
 use anyhow::Result;
 use eth_trie::{EthTrie, Trie as _};
 use lru::LruCache;
@@ -21,10 +19,9 @@ use crate::{cfg::Forks, crypto::Hash, state::Account};
 /// Special storage keys
 const ROCKSDB_MIGRATE_AT: &str = "migrate_at";
 const ROCKSDB_CUTOVER_AT: &str = "cutover_at";
-const ROCKSDB_CONTENT_AT: &str = "content_at";
 pub const ROCKSDB_TAGGING_AT: &str = "tagging_at";
-pub const LEGACY_KEY_LEN: usize = 32;
-pub const LATEST_KEY_LEN: usize = 40;
+pub const LEGACY_KEY_LEN: usize = KECCAK256_EMPTY.0.len();
+pub const TAGGED_KEY_LEN: usize = KECCAK256_EMPTY.0.len() + std::mem::size_of::<AtomicU64>();
 
 /// An implementor of [eth_trie::DB] which uses a [rocksdb::DB]/[rusqlite::Connection] to persist data.
 #[derive(Debug, Clone)]
@@ -36,6 +33,7 @@ pub struct TrieStorage {
     rev_ceil: Arc<AtomicU64>, // used to tag every write to the state database; reverse-ordered.
     rev_floor: Arc<AtomicU64>, // used to mark the compaction boundary; reverse-ordered.
     pub tag_view: Arc<Mutex<u64>>, // used to lock the snapshot process; forward-ordered.
+    state_prune: bool,
 }
 
 impl TrieStorage {
@@ -46,6 +44,7 @@ impl TrieStorage {
         rev_ceil: Arc<AtomicU64>,
         rev_floor: Arc<AtomicU64>,
         tag_view: Arc<Mutex<u64>>,
+        state_prune: bool,
     ) -> Self {
         Self {
             pool,
@@ -54,6 +53,7 @@ impl TrieStorage {
             rev_ceil,
             rev_floor,
             tag_view,
+            state_prune,
         }
     }
 
@@ -66,65 +66,14 @@ impl TrieStorage {
         Ok(())
     }
 
-    const CHUNK_SIZE: usize = 1_000;
-    /// One-off migrate all rocksdb legacy keys to the latest keys.
-    ///
-    /// This function migrates legacy keys from RocksDB to the latest format.
-    /// It iterates through all keys in the database, identifies legacy keys,
-    /// and migrates them to the new format.
-    ///
-    // It is possible that some keys may have been lazily migrated during normal operations.
-    // This function ensures that any such keys are migrated in a way that does not hide nor
-    // impact the reading of newer keys.
-    pub fn migrate_legacy(&self) -> Result<()> {
-        // skip if done.
-        if self.kvdb.get(ROCKSDB_CONTENT_AT)?.is_some() {
-            return Ok(());
-        }
-
-        // Since the default database tag is MAX - 1, using MAX here ensures that,
-        // this key does not hide any newer keys (all < MAX).
-        let tag = u64::MAX.to_be_bytes();
-
-        // pre-allocate and re-use memory buffer.
-        let mut keys = Vec::with_capacity(Self::CHUNK_SIZE);
-        let mut values = Vec::with_capacity(Self::CHUNK_SIZE);
-
-        // iterate thru all keys, migrating legacy keys.
-        for kv in self.kvdb.iterator(rocksdb::IteratorMode::Start) {
-            let (key, value) = kv?;
-            // migrate legacy keys, overwriting any previous migration.
-            if key.len() == LEGACY_KEY_LEN {
-                keys.push(key.to_vec());
-                values.push(value.to_vec());
-                // chunking
-                if keys.len() == Self::CHUNK_SIZE {
-                    self.write_batch(
-                        std::mem::take(&mut keys),
-                        std::mem::take(&mut values),
-                        tag, // this will not override any newer values
-                        true,
-                    )?;
-                }
-            }
-        }
-        // last chunk
-        if !keys.is_empty() {
-            self.write_batch(keys, values, tag, true)?;
-        }
-        self.kvdb
-            .put(ROCKSDB_CONTENT_AT, usize::MAX.to_be_bytes())?;
-        Ok(())
-    }
-
     /// This snapshot promotes the *active* keys to the tag
     ///
     /// This works on duplicating the underlying db-level keys, not the trie-level keys.
     /// e.g. 500 trie-level random keys takes ~150 db-level keys.
     //
     // Previously, no deletion of keys was allowed in the state database. So, it is safe to repurpose clear_trie_from_db() to
-    // promote the trie, rather than delete it.
-    pub fn promote(trie_storage: Arc<TrieStorage>, state_root_hash: B256) -> Result<()> {
+    // snapshot-to-promote the trie, rather than delete it.
+    pub fn snapshot(trie_storage: Arc<TrieStorage>, state_root_hash: B256) -> Result<()> {
         let mut state_trie = EthTrie::new(trie_storage.clone()).at_root(state_root_hash);
         for akv in state_trie.iter() {
             let (_key, serialised_account) = akv?;
@@ -178,7 +127,7 @@ impl TrieStorage {
         keys: Vec<Vec<u8>>,
         values: Vec<Vec<u8>>,
         tag: [u8; 8],
-        migration: bool,
+        is_migration: bool,
     ) -> Result<()> {
         if keys.is_empty() {
             return Ok(());
@@ -188,17 +137,17 @@ impl TrieStorage {
 
         let mut batch = WriteBatch::default();
         let mut cache = self.cache.write();
-        for (key, value) in keys.into_iter().zip(values.into_iter()) {
+        for (key_prefix, value) in keys.into_iter().zip(values.into_iter()) {
             // tag keys; lexicographically sorted
-            let mut tag_key = key.clone();
+            let mut tag_key = key_prefix.clone();
             tag_key.extend_from_slice(tag.as_slice()); // suffix big-endian tags
             batch.put(tag_key.as_slice(), value.as_slice());
 
-            // for legacy migration skip the cache and tombstone the key.
-            if !migration {
-                cache.put(key, value);
+            // If migration, bypass cache, and delete the old key
+            if !is_migration {
+                cache.put(key_prefix, value);
             } else {
-                batch.delete(key.as_slice());
+                batch.delete(key_prefix.as_slice());
             }
         }
         Ok(self.kvdb.write(batch)?)
@@ -212,36 +161,48 @@ impl TrieStorage {
     // This is the tagging scheme used. Each tag is a U64 in big-endian format.
     // |user-key + tag|seqno|type|
     // |<-----internal key------>|
-    fn get_tag_value(&self, key_prefix: &[u8]) -> Result<Option<([u8; 8], Vec<u8>)>> {
+    fn get_tag_value(&self, key_prefix: &[u8]) -> Result<Option<Vec<u8>>> {
         let mut iter = self.kvdb.prefix_iterator(key_prefix);
         // early return if user-key/prefix is not found
-        let Some(prefix) = iter.next() else {
+        let Some((key, value)) = iter.next().transpose()? else {
             return Ok(None);
         };
-        let (key, value) = prefix?;
         if !key.starts_with(key_prefix) {
             return Ok(None);
         }
 
         // Given that the trie keys are *all* Keccak256 keys, the legacy keys are exactly 32-bytes (256-bits) long,
         // while the new tag keys are exactly 40-bytes (320-bits) long. We do not expect any other trie-key lengths.
-        if key.len() == LATEST_KEY_LEN {
-            let tag = key[LEGACY_KEY_LEN..].try_into().unwrap();
-            // latest tag key, return the latest value
-            Ok(Some((tag, value.to_vec())))
-        } else if key.len() == LEGACY_KEY_LEN {
-            // legacy key - peek to see if a later tag key is present
-            if let Some(peek) = iter.next() {
-                let peek = peek?;
-                if peek.0.starts_with(key_prefix) {
-                    let tag = peek.0[LEGACY_KEY_LEN..].try_into().expect("8-bytes");
-                    return Ok(Some((tag, peek.1.to_vec()))); // tag key has newer value
-                }
+        match key.len() {
+            TAGGED_KEY_LEN => {
+                // latest tag key, naturally the most recent due to lexicographical order.
+                Ok(Some(value.to_vec()))
             }
-            // We do not perform lazy migration here to avoid write amplification.
-            Ok(Some((u64::MAX.to_be_bytes(), value.to_vec()))) // fall-thru value; return legacy value
-        } else {
-            unimplemented!("unsupported trie key length {} bytes", key.len());
+            LEGACY_KEY_LEN => {
+                // legacy key - peek to see if a later tag key is present
+                if let Some((k, v)) = iter.next().transpose()?
+                    && k.starts_with(key_prefix)
+                {
+                    // Lazily delete the legacy key, if state_prune is false.
+                    if !self.state_prune {
+                        self.kvdb.delete(key)?;
+                    }
+                    return Ok(Some(v.to_vec())); // tag key has newer value
+                }
+                // Migration fall-thru.
+                // If state_prune is true, migration will naturally happen during promotion.
+                // Lazily migrate the key, if state_prune is false.
+                if !self.state_prune {
+                    self.write_batch(
+                        vec![key.to_vec()],
+                        vec![value.to_vec()],
+                        self.rev_ceil.load(Ordering::Relaxed).to_be_bytes(),
+                        true,
+                    )?;
+                }
+                Ok(Some(value.to_vec())) // fall-thru value; return legacy value
+            }
+            _ => unimplemented!("unsupported trie key length: {} bytes", key.len()),
         }
     }
 
@@ -338,7 +299,7 @@ impl eth_trie::DB for TrieStorage {
         }
 
         // L2 - rocksdb
-        if let Some((_tag, value)) = self
+        if let Some(value) = self
             .get_tag_value(key)
             .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?
         {
@@ -359,12 +320,13 @@ impl eth_trie::DB for TrieStorage {
 
         if let Some(value) = value {
             // lazy migration
-            let tag = self
-                .rev_ceil
-                .load(std::sync::atomic::Ordering::Relaxed)
-                .to_be_bytes();
-            self.write_batch(vec![key.to_vec()], vec![value.clone()], tag, false)
-                .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?;
+            self.write_batch(
+                vec![key.to_vec()],
+                vec![value.clone()],
+                self.rev_ceil.load(Ordering::Relaxed).to_be_bytes(),
+                false,
+            )
+            .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?;
             return Ok(Some(value));
         }
 
@@ -373,22 +335,28 @@ impl eth_trie::DB for TrieStorage {
 
     #[inline]
     fn insert(&self, key: &[u8], value: Vec<u8>) -> Result<(), Self::Error> {
-        let tag = self
-            .rev_ceil
-            .load(std::sync::atomic::Ordering::Relaxed)
-            .to_be_bytes();
-        self.write_batch(vec![key.to_vec()], vec![value], tag, false)
-            .map_err(|e| eth_trie::TrieError::DB(e.to_string()))
+        self.write_batch(
+            vec![key.to_vec()],
+            vec![value],
+            self.rev_ceil
+                .load(std::sync::atomic::Ordering::Relaxed)
+                .to_be_bytes(),
+            false,
+        )
+        .map_err(|e| eth_trie::TrieError::DB(e.to_string()))
     }
 
     #[inline]
     fn insert_batch(&self, keys: Vec<Vec<u8>>, values: Vec<Vec<u8>>) -> Result<(), Self::Error> {
-        let tag = self
-            .rev_ceil
-            .load(std::sync::atomic::Ordering::Relaxed)
-            .to_be_bytes();
-        self.write_batch(keys, values, tag, false)
-            .map_err(|e| eth_trie::TrieError::DB(e.to_string()))
+        self.write_batch(
+            keys,
+            values,
+            self.rev_ceil
+                .load(std::sync::atomic::Ordering::Relaxed)
+                .to_be_bytes(),
+            false,
+        )
+        .map_err(|e| eth_trie::TrieError::DB(e.to_string()))
     }
 
     fn flush(&self) -> Result<(), Self::Error> {
@@ -401,7 +369,7 @@ impl eth_trie::DB for TrieStorage {
     // promoting the trie at the db-level, without iterating the trie-level keys.
     // ** only called from clear_trie_from_db() **
     fn remove(&self, promote_key: &[u8]) -> Result<(), Self::Error> {
-        if let Ok(Some((_old_tag, value))) = self.get_tag_value(promote_key) {
+        if let Ok(Some(value)) = self.get_tag_value(promote_key) {
             self.write_batch(
                 vec![promote_key.to_vec()],
                 vec![value],
@@ -452,13 +420,14 @@ mod tests {
             tag.clone(),
             tag.clone(),
             lock.clone(),
+            false,
         );
         let trie_storage = Arc::new(trie_storage);
         (sql, rdb, cache, trie_storage)
     }
 
     #[test]
-    fn basic_snapshot() {
+    fn snapshot_doubles_the_nodes() {
         let (_, rdb, _, trie_storage) = setup();
 
         let mut pmt = EthTrie::new(trie_storage.clone());
@@ -481,7 +450,7 @@ mod tests {
 
         // snapshot-to-promote nodes; and count nodes
         trie_storage.inc_tag(u64::MAX).unwrap();
-        TrieStorage::promote(trie_storage.clone(), root_hash).unwrap();
+        TrieStorage::snapshot(trie_storage.clone(), root_hash).unwrap();
         assert_eq!(
             rdb.iterator(rocksdb::IteratorMode::Start).count(),
             old_count * 2
@@ -490,7 +459,7 @@ mod tests {
 
     #[test]
     // lazy migration from sqlite to rocksdb, works.
-    fn lazy_migration() {
+    fn lazy_migration_from_sqlite() {
         let (sql, rdb, _, trie_storage) = setup();
 
         let key_prefix = alloy::consensus::EMPTY_ROOT_HASH.0;
@@ -517,7 +486,7 @@ mod tests {
 
     #[test]
     // height-tag read/write works
-    fn tagging() {
+    fn key_tagging_works() {
         let (_, rdb, cache, trie_storage) = setup();
 
         let key_prefix = alloy::consensus::EMPTY_ROOT_HASH.0;
@@ -550,7 +519,7 @@ mod tests {
 
     #[test]
     // peek ahead works
-    fn peek_ahead() {
+    fn peek_ahead_and_migration() {
         let (_, rdb, cache, trie_storage) = setup();
 
         let key_prefix = alloy::consensus::EMPTY_ROOT_HASH.0;
@@ -580,12 +549,13 @@ mod tests {
 
         // count all keys
         let iter = rdb.prefix_iterator(key_prefix.as_slice());
-        assert_eq!(iter.count(), 3);
+        // The migration should have deleted the legacy key; and migrated everything to new keys.
+        assert_eq!(iter.count(), 2);
     }
 
     #[test]
     // writes to disk only happens on commit
-    fn write_on_commit() {
+    fn write_on_commit_only() {
         let (_, rdb, cache, trie_storage) = setup();
 
         let key_prefix = alloy::consensus::EMPTY_ROOT_HASH.0;

@@ -386,7 +386,6 @@ impl Consensus {
         let state_sync = config.db.state_sync;
         let forks = config.consensus.get_forks()?;
         let enable_ots_indices = config.enable_ots_indices;
-        let prune_interval = config.sync.prune_interval;
 
         let mut consensus = Consensus {
             secret_key,
@@ -582,11 +581,6 @@ impl Consensus {
         // Initialize state trie storage
         let state_trie = consensus.db.state_trie()?;
         state_trie.init_state_trie(forks)?;
-        if prune_interval == u64::MAX {
-            // If the note is being pruned, let pruning naturally migrate the state.
-            // Otherwise, trigger migration - the actual migration process will be handled by the coordinator
-            message_sender.send_message_to_coordinator(InternalMessage::MigrateTrie(state_trie))?;
-        }
 
         // If timestamp of when current high_qc was written exists then use it to estimate the minimum number of blocks the network has moved on since shut down
         // This is useful in scenarios in which consensus has failed since this node went down
@@ -2466,7 +2460,7 @@ impl Consensus {
 
         // trigger snapshot
         self.message_sender
-            .send_message_to_coordinator(InternalMessage::PromoteTrie(
+            .send_message_to_coordinator(InternalMessage::SnapshotTrie(
                 trie_storage,
                 block.state_root_hash().into(),
                 block_number,
