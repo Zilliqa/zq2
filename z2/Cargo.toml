@@ -23,7 +23,7 @@ test = false
 [dependencies]
 alloy = { version = "1.6.3", default-features = false, features = ["consensus", "hyper", "provider-http", "provider-ws", "pubsub", "rlp", "serde", "signer-local"] }
 anyhow = "1.0.101"
-arc-swap = "1.8.1"
+arc-swap = "1.8.2"
 base64 = "0.22.1"
 bitvec = "1.0.1"
 clap = { version = "4.5.57", features = ["derive"] }
