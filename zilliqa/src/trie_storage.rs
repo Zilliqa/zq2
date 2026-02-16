@@ -398,6 +398,7 @@ mod tests {
     use super::*;
     use crate::crypto::SecretKey;
 
+    #[allow(clippy::type_complexity)]
     fn setup() -> (
         Arc<Pool<SqliteConnectionManager>>,
         Arc<rocksdb::DB>,
