@@ -2436,20 +2436,20 @@ impl Consensus {
                 anyhow!(format!("missing block parent {}", &current.parent_hash()))
             })?;
 
-            let grandparent_mix_hash = self
-                .get_block(&parent.parent_hash())?
-                .and_then(|block| block.header.mix_hash);
+            // let grandparent_mix_hash = self
+            //     .get_block(&parent.parent_hash())?
+            //     .and_then(|block| block.header.mix_hash);
 
             let state_at = self.state.at_root(parent.state_root_hash().into());
             let randao_enabled = self.state.forks.get(parent.header.number).randao_support;
             let block_header = BlockHeader {
                 view: parent.header.view,
                 number: parent.header.number,
-                mix_hash: grandparent_mix_hash,
+                mix_hash: parent.header.mix_hash,
                 ..Default::default()
             };
             let fork = self.state.forks.get(block_header.number);
-            for view in parent.view() + 1..current.view() {
+            for view in (parent.view() + 1..current.view()).step_by(1) {
                 let leader_view = if randao_enabled { view } else { view };
                 if let Ok(leader) =
                     state_at.leader(leader_view, block_header, fork, "finalize_block")
@@ -2462,7 +2462,7 @@ impl Consensus {
                         );
                     } else
                     {
-                        error!("Parent view: {}, current_view: {}, parent_height: {}, block_height: {}", parent.view(), current.view(), parent.number(), block.number());
+                        //error!("Parent view: {}, current_view: {}, parent_height: {}, block_height: {}", parent.view(), current.view(), parent.number(), block.number());
                         error!(
                             "PUSHING leader: {:?} in view: {:?}, parent_block: {:?}, parent_randao: {:?},\
                         current_block_num: {:?}, current_block_view: {:?}, current_block_randao: {:?},",
