@@ -2469,7 +2469,7 @@ impl Consensus {
                     } else
                     {
                         //error!("Parent view: {}, current_view: {}, parent_height: {}, block_height: {}", parent.view(), current.view(), parent.number(), block.number());
-                        error!(
+                        info!(
                             "PUSHING leader: {:?} in view: {:?}, parent_block_num: {:?}, parent_view: {:?}, parent_randao: {:?},\
                         current_block_num: {:?}, current_block_view: {:?}, current_block_randao: {:?},",
                             hex::encode(leader.as_bytes()),
