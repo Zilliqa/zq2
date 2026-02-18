@@ -74,6 +74,7 @@ pub fn verify(message: &[u8], public_key: PublicKey, signature: Signature) -> Op
 
 #[cfg(test)]
 mod tests {
+    use alloy::hex;
     use k256::{FieldBytes, PublicKey, Scalar, SecretKey, elliptic_curve::PrimeField};
 
     use super::{sign_inner, verify};

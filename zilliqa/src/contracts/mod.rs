@@ -1,3 +1,4 @@
+use alloy::hex;
 pub use deposit_v8 as deposit;
 use serde_json::Value;
 

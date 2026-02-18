@@ -50,9 +50,6 @@
 - name: Import checkpoint service installation
   ansible.builtin.import_playbook: install_checkpoint_service.yml
 
-- name: Import persistence backup installation
-  ansible.builtin.import_playbook: install_persistence_backup.yml
-
 - name: Ethereum Metrics Exporter installation
   ansible.builtin.import_playbook: install_ethereum_metrics_exporter.yml
   when: ethereum_metrics_exporter_image is defined and ethereum_metrics_exporter_image != ""

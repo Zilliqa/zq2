@@ -256,7 +256,7 @@ impl Transaction {
             | transaction::Transaction::Eip2930(_)
             | transaction::Transaction::Zilliqa(_)
             | transaction::Transaction::Intershard(_) => {
-                (transaction.max_fee_per_gas(), None, None)
+                (transaction.max_fee_per_gas().expect("TODO"), None, None)
             }
             transaction::Transaction::Eip1559(TxEip1559 {
                 max_fee_per_gas,
@@ -291,7 +291,7 @@ impl Transaction {
             to: transaction.to_addr(),
             transaction_index: block
                 .map(|b| b.transactions.iter().position(|t| *t == hash).unwrap() as u64),
-            value: transaction.amount(),
+            value: transaction.amount().expect("TODO"),
             v,
             r,
             s,
@@ -492,7 +492,7 @@ pub struct GetAccountResult {
 
 #[cfg(test)]
 mod tests {
-    use alloy::primitives::B256;
+    use alloy::{hex, primitives::B256};
 
     use super::Log;
 

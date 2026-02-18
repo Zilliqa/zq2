@@ -5,6 +5,7 @@ use std::{collections::HashMap, sync::Arc};
 use alloy::{
     consensus::{TxEip1559, TxEip2930, TxLegacy, transaction::RlpEcdsaDecodableTx},
     eips::{BlockId, BlockNumberOrTag, RpcBlockHash},
+    hex,
     primitives::{Address, B256, U64, U256},
     rpc::types::{
         FeeHistory, FilteredParams, TransactionRequest,
@@ -418,7 +419,7 @@ pub fn brt_to_eth_receipts(
             from,
             to: transaction.to_addr(),
             cumulative_gas_used: receipt_retrieved.cumulative_gas_used,
-            effective_gas_price: transaction.max_fee_per_gas(),
+            effective_gas_price: transaction.max_fee_per_gas().unwrap(),
             gas_used: receipt_retrieved.gas_used,
             contract_address,
             logs,
@@ -509,7 +510,7 @@ pub fn old_get_block_transaction_receipts_inner(
             from,
             to: transaction.to_addr(),
             cumulative_gas_used: receipt_retrieved.cumulative_gas_used,
-            effective_gas_price: transaction.max_fee_per_gas(),
+            effective_gas_price: transaction.max_fee_per_gas().unwrap(),
             gas_used: receipt_retrieved.gas_used,
             contract_address,
             logs,

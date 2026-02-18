@@ -630,6 +630,10 @@ impl State {
                     BaseFeeAndNonceCheck::Validate => false,
                     BaseFeeAndNonceCheck::Ignore => true,
                 };
+                cfg.disable_balance_check = match base_fee_and_nonce_check {
+                    BaseFeeAndNonceCheck::Validate => false,
+                    BaseFeeAndNonceCheck::Ignore => true,
+                };
                 cfg
             })
             .with_block(BlockEnv {
@@ -753,7 +757,7 @@ impl State {
         let gas_price = txn.gas_price;
 
         let deposit_gas = txn.get_deposit_gas()?;
-        let deposit = total_scilla_gas_price(deposit_gas, gas_price);
+        let deposit = total_scilla_gas_price(deposit_gas, gas_price)?;
         trace!("scilla_txn: gas_price {gas_price} deposit_gas {deposit_gas} deposit {deposit}");
 
         let gas_used: EvmGas = if fork.scilla_failed_txn_correct_gas_fee_charged {
@@ -795,7 +799,7 @@ impl State {
         }?;
 
         let actual_gas_charged =
-            total_scilla_gas_price(ScillaGas::from(result.gas_used), gas_price);
+            total_scilla_gas_price(ScillaGas::from(result.gas_used), gas_price)?;
         let from = new_state.load_account(from_addr)?;
         from.account.nonce += 1;
         from.mark_touch();
@@ -825,7 +829,7 @@ impl State {
             let original_acc = self.get_account(from_addr)?;
             from.account.balance = original_acc
                 .balance
-                .saturating_sub(actual_gas_charged.get());
+                .saturating_sub(actual_gas_charged.get()?);
         }
         trace!("scilla_txn completed successfully");
         Ok((result, new_state.finalize()))
@@ -881,10 +885,10 @@ impl State {
             let (ResultAndState { result, state }, scilla_state) = self.apply_transaction_evm(
                 from_addr,
                 txn.to_addr(),
-                txn.max_fee_per_gas(),
+                txn.max_fee_per_gas()?,
                 txn.max_priority_fee_per_gas(),
                 txn.gas_limit(),
-                txn.amount(),
+                txn.amount()?,
                 txn.payload().to_vec(),
                 txn.nonce(),
                 txn.access_list(),
@@ -1336,6 +1340,38 @@ impl State {
         extra_opts: ExtraOpts,
     ) -> Result<u64> {
         let gas_price = gas_price.unwrap_or(self.gas_price);
+
+        let is_simple_transfer = if data.is_empty()
+            && let Some(dest_addr) = to_addr
+        {
+            self.get_account(dest_addr)?.code.is_eoa()
+        } else {
+            false
+        };
+
+        // For simple transfer try running with the default gas limit (21k) first
+        if is_simple_transfer {
+            let gas = gas.unwrap_or(constants::EVM_MIN_GAS_UNITS);
+            if let Ok(result) = self.apply_transaction_evm(
+                from_addr,
+                to_addr,
+                gas_price,
+                max_priority_fee_per_gas,
+                gas,
+                value,
+                data.clone(),
+                None,
+                access_list.clone(),
+                current_block,
+                inspector::noop(),
+                false,
+                BaseFeeAndNonceCheck::Ignore,
+                extra_opts,
+            ) && result.0.result.is_success()
+            {
+                return Ok(constants::EVM_MIN_GAS_UNITS.0);
+            }
+        }
 
         let mut max = self.max_gas_for_caller(from_addr, value, gas_price, gas)?.0;
 
@@ -1827,9 +1863,9 @@ impl PendingState {
         trace!(
             "account balance = {0} sub {1}",
             account.account.balance,
-            amount.get()
+            amount.get()?
         );
-        let Some(balance) = account.account.balance.checked_sub(amount.get()) else {
+        let Some(balance) = account.account.balance.checked_sub(amount.get()?) else {
             info!("insufficient balance: {caller}");
             return Ok(Some(ScillaResult {
                 success: false,
@@ -1939,8 +1975,8 @@ pub fn store_external_libraries(
                 let file_path = ext_libs_path.join(&lib.name);
 
                 fs::write(&file_path, code).with_context(|| {
-                    format!("Failed to write the contract code to {:?}. library name: {}, library address: {}", file_path, lib.name, lib.address)
-                })?;
+                        format!("Failed to write the contract code to {:?}. library name: {}, library address: {}", file_path, lib.name, lib.address)
+                    })?;
             }
         }
     }
@@ -2077,9 +2113,9 @@ fn scilla_create(
     let account = state.load_account(contract_address)?;
     account.mark_touch();
     if fork.scilla_contract_creation_increments_account_balance {
-        account.account.balance += txn.amount.get();
+        account.account.balance += txn.amount.get()?;
     } else {
-        account.account.balance = txn.amount.get();
+        account.account.balance = txn.amount.get()?;
     }
     account.account.code = Code::Scilla {
         code: txn.code.clone(),
@@ -2150,7 +2186,7 @@ fn scilla_create(
 
     let gas = gas.min(create_output.gas_remaining);
 
-    inspector.create(from_addr, contract_address, txn.amount.get());
+    inspector.create(from_addr, contract_address, txn.amount.get()?);
 
     Ok((
         ScillaResult {
@@ -2294,7 +2330,7 @@ pub fn scilla_call(
                 fork,
                 current_block,
             )?;
-            inspector.call(sender, to_addr, amount.get(), depth);
+            inspector.call(sender, to_addr, amount.get()?, depth);
 
             let mut output = match output {
                 Ok(o) => o,
@@ -2336,7 +2372,7 @@ pub fn scilla_call(
 
                 let to = new_state.load_account(to_addr)?;
                 to.mark_touch();
-                to.account.balance += amount.get();
+                to.account.balance += amount.get()?;
 
                 if depth == 0 {
                     root_contract_accepted = true;
@@ -2441,9 +2477,9 @@ pub fn scilla_call(
 
             let to = current_state.load_account(to_addr)?;
             to.mark_touch();
-            to.account.balance += amount.get();
+            to.account.balance += amount.get()?;
 
-            inspector.transfer(from_addr, to_addr, amount.get(), depth);
+            inspector.transfer(from_addr, to_addr, amount.get()?, depth);
 
             state = Some(current_state);
         }

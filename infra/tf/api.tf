@@ -69,6 +69,7 @@ resource "google_compute_backend_service" "api" {
   load_balancing_scheme = "EXTERNAL_MANAGED"
   enable_cdn            = false
   session_affinity      = "CLIENT_IP"
+  timeout_sec           = var.api.load_balancer_timeout
 
   dynamic "backend" {
     for_each = var.api.detach_load_balancer ? {} : google_compute_instance_group.api
@@ -379,8 +380,7 @@ resource "google_secret_manager_secret_iam_binding" "rate_limit_bypass_endpoint_
       [for name, instance in module.bootstraps.instances : "serviceAccount:${instance.service_account}"],
       [for name, instance in module.validators.instances : "serviceAccount:${instance.service_account}"],
       [for name, instance in module.apis.instances : "serviceAccount:${instance.service_account}"],
-      [for name, instance in module.checkpoints.instances : "serviceAccount:${instance.service_account}"],
-      [for name, instance in module.persistences.instances : "serviceAccount:${instance.service_account}"]
+      [for name, instance in module.opsnodes.instances : "serviceAccount:${instance.service_account}"]
     ]),
     flatten([
       for private_api in module.private_apis : [

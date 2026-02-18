@@ -715,6 +715,7 @@ impl ScillaValue {
 mod tests {
     use std::{path::PathBuf, sync::Arc};
 
+    use alloy::hex;
     use crypto::Hash;
     use revm::primitives::FixedBytes;
 

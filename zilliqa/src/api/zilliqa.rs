@@ -5,6 +5,7 @@ use std::{fmt::Display, str::FromStr, sync::Arc};
 use alloy::{
     consensus::SignableTransaction,
     eips::{BlockId, BlockNumberOrTag},
+    hex,
     primitives::{Address, B256},
 };
 use anyhow::{Result, anyhow};

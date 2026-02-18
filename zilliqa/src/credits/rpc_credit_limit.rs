@@ -160,9 +160,7 @@ where
             .expect("RpcHeaderExt must be present");
 
         if ext.remote_key.is_some() || ext.remote_ip.is_none() {
-            // Bypass by KEY/IP
-            tracing::debug!(ip=?ext.remote_ip, key=?ext.remote_key, "RPC bypass");
-            return ResponseFuture::future(self.inner.call(req));
+            return ResponseFuture::future(self.inner.call(req)); // Bypass by KEY/IP
         };
         let key = ext
             .remote_ip
@@ -171,22 +169,12 @@ where
 
         // compute credits **before** executing the request.
         // this simplifies the error handling and ensures that the credit is always deducted.
-        let (token, state) = self
-            .acquire_state(&key)
-            .map_err(|err| {
-                tracing::error!(%err, "Failed to acquire state");
-                err
-            })
-            .unwrap_or_default();
+        let (token, state) = self.acquire_state(&key).unwrap_or_default();
         let state = self.check_credit_limit(state, &self.default_quota, req.method_name());
-        self.update_release(&key, state, token)
-            .map_err(|err| {
-                tracing::error!(%err, "Failed to update release");
-                err
-            })
-            .ok(); // ignore errors
+        self.update_release(&key, state, token).ok(); // ignore errors
 
         if matches!(state, RateState::Deny { .. }) {
+            tracing::warn!(ip=%key, id=%req.id, method=%req.method, "RPC limited");
             return ResponseFuture::ready(MethodResponse::error(
                 req.id,
                 ErrorObject::borrowed(RPC_ERROR_CODE, RPC_ERROR_MESSAGE, None),
@@ -208,9 +196,7 @@ where
             .expect("RpcHeaderExt must be present");
 
         if ext.remote_key.is_some() || ext.remote_ip.is_none() {
-            // Bypass by KEY/IP
-            tracing::debug!(ip=?ext.remote_ip, key=?ext.remote_key, "RPC bypass");
-            return self.inner.batch(batch);
+            return self.inner.batch(batch); // Bypass by KEY/IP
         };
         let key = ext
             .remote_ip
@@ -220,13 +206,7 @@ where
         // due to the way limits are applied, call ordering is irrelevant.
         // compute the credit budget and immediately mutate/fail any that are denied.
         // the denied calls are skipped by the underlying service handler.
-        let (token, mut state) = self
-            .acquire_state(&key)
-            .map_err(|err| {
-                tracing::error!(%err, "Failed to acquire state");
-                err
-            })
-            .unwrap_or_default();
+        let (token, mut state) = self.acquire_state(&key).unwrap_or_default();
         for entry in batch.iter_mut() {
             match entry {
                 Ok(BatchEntry::Call(req)) => {
@@ -234,6 +214,7 @@ where
                         self.check_credit_limit(state, &self.default_quota, req.method_name());
                     state = balance;
                     if matches!(state, RateState::Deny { .. }) {
+                        tracing::warn!(ip=%key, id=%req.id, method=%req.method, "RPC limited");
                         *entry = Err(BatchEntryErr::new(
                             req.id.clone(),
                             ErrorObject::borrowed(RPC_ERROR_CODE, RPC_ERROR_MESSAGE, None),
@@ -244,12 +225,7 @@ where
                 Err(_) => continue,
             }
         }
-        self.update_release(&key, state, token)
-            .map_err(|err| {
-                tracing::error!(%err, "Failed to update release");
-                err
-            })
-            .ok(); // only save the final state, skipping intermediate states.
+        self.update_release(&key, state, token).ok(); // only save the final state, skipping intermediate states.
 
         // underlying service handler
         self.inner.batch(batch)

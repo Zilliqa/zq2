@@ -27,6 +27,10 @@
           - curl
           - fio
           - gnupg
+          - google-compute-engine
+          - google-compute-engine-oslogin
+          - google-guest-agent
+          - google-osconfig-agent
           - jq
           - lsb-release
           - ncdu

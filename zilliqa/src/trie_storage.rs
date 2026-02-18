@@ -1,15 +1,14 @@
 use std::sync::Arc;
 
 use anyhow::Result;
+use lru::LruCache;
+use parking_lot::RwLock;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rocksdb::WriteBatch;
 use rusqlite::OptionalExtension;
 
 use crate::{cfg::Forks, crypto::Hash};
-
-// Percentiles: P50: 414.93 P75: 497.53 P99: 576.82 P99.9: 579.79 P99.99: 12678.76
-pub const BLOCK_SIZE: usize = 1 << 12;
 
 /// Special storage keys
 const ROCKSDB_MIGRATE_AT: &str = "migrate_at";
@@ -20,11 +19,16 @@ const ROCKSDB_CUTOVER_AT: &str = "cutover_at";
 pub struct TrieStorage {
     pool: Arc<Pool<SqliteConnectionManager>>,
     kvdb: Arc<rocksdb::DB>,
+    cache: Arc<RwLock<LruCache<Vec<u8>, Vec<u8>>>>,
 }
 
 impl TrieStorage {
-    pub fn new(pool: Arc<Pool<SqliteConnectionManager>>, kvdb: Arc<rocksdb::DB>) -> Self {
-        Self { pool, kvdb }
+    pub fn new(
+        pool: Arc<Pool<SqliteConnectionManager>>,
+        kvdb: Arc<rocksdb::DB>,
+        cache: Arc<RwLock<LruCache<Vec<u8>, Vec<u8>>>>,
+    ) -> Self {
+        Self { pool, kvdb, cache }
     }
 
     pub fn write_batch(&self, keys: Vec<Vec<u8>>, values: Vec<Vec<u8>>) -> Result<()> {
@@ -35,8 +39,10 @@ impl TrieStorage {
         anyhow::ensure!(keys.len() == values.len(), "Keys != Values");
 
         let mut batch = WriteBatch::default();
+        let mut cache = self.cache.write();
         for (key, value) in keys.into_iter().zip(values.into_iter()) {
             batch.put(key.as_slice(), value.as_slice());
+            cache.put(key, value);
         }
         Ok(self.kvdb.write(batch)?)
     }
@@ -119,12 +125,18 @@ impl eth_trie::DB for TrieStorage {
     type Error = eth_trie::TrieError;
 
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, Self::Error> {
+        // L1 - Lru mem
+        if let Some(value) = self.cache.write().get(key) {
+            return Ok(Some(value.clone()));
+        }
+
         // L2 - rocksdb
         if let Some(value) = self
             .kvdb
             .get(key)
             .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?
         {
+            self.cache.write().put(key.to_vec(), value.clone());
             return Ok(Some(value));
         }
 
@@ -140,6 +152,7 @@ impl eth_trie::DB for TrieStorage {
             .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?;
 
         if let Some(value) = value {
+            self.cache.write().put(key.to_vec(), value.clone());
             self.kvdb
                 .put(key, value.as_slice())
                 .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?;

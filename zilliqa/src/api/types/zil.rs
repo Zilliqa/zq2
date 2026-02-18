@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use alloy::{
     consensus::SignableTransaction,
+    hex,
     primitives::{Address, B256, B512},
 };
 use anyhow::Result;

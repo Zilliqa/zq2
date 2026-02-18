@@ -25,9 +25,9 @@ macro_rules! as_ref_impl {
         impl ToHex for $T {
             fn to_hex_inner(&self, prefix: bool) -> String {
                 if prefix {
-                    format!("0x{}", hex::encode(self))
+                    format!("0x{}", alloy::hex::encode(self))
                 } else {
-                    hex::encode(self)
+                    alloy::hex::encode(self)
                 }
             }
         }

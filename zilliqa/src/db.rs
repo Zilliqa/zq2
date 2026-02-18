@@ -3,6 +3,7 @@ use std::{
     fmt::Debug,
     fs::{self, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
+    num::NonZeroUsize,
     ops::RangeInclusive,
     path::{Path, PathBuf},
     sync::Arc,
@@ -13,6 +14,8 @@ use alloy::primitives::Address;
 use anyhow::{Context, Result, anyhow};
 #[allow(unused_imports)]
 use eth_trie::{DB, EthTrie, MemoryDB, Trie};
+use lru::LruCache;
+use parking_lot::RwLock;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rocksdb::{BlockBasedOptions, Cache, DBWithThreadMode, Options, SingleThreaded};
@@ -31,7 +34,7 @@ use crate::{
     precompiles::ViewHistory,
     time::SystemTime,
     transaction::{EvmGas, Log, SignedTransaction, TransactionReceipt, VerifiedTransaction},
-    trie_storage::{BLOCK_SIZE, TrieStorage},
+    trie_storage::TrieStorage,
 };
 
 const MAX_KEYS_IN_SINGLE_QUERY: usize = 32765;
@@ -246,6 +249,7 @@ const CURRENT_DB_VERSION: &str = "1";
 pub struct Db {
     pool: Arc<Pool<SqliteConnectionManager>>,
     kvdb: Arc<rocksdb::DB>,
+    cache: Arc<RwLock<LruCache<Vec<u8>, Vec<u8>>>>,
     path: Option<Box<Path>>,
     /// The block height at which ZQ2 blocks begin.
     /// This value should be required only for proto networks to distinguise between ZQ1 and ZQ2 blocks.
@@ -299,7 +303,7 @@ impl Db {
         };
 
         // Build connection pool
-        let num_workers = crate::tokio_worker_count().max(4) as u32;
+        let num_workers = crate::available_threads().max(4) as u32;
         let builder = Pool::builder().min_idle(Some(1)).max_size(num_workers * 2); // more than enough connections
         debug!("SQLite {builder:?}");
 
@@ -311,26 +315,35 @@ impl Db {
         let mut block_opts = BlockBasedOptions::default();
         // reduce disk and memory usage - https://github.com/facebook/rocksdb/wiki/RocksDB-Bloom-Filter#ribbon-filter
         block_opts.set_ribbon_filter(10.0);
-        block_opts.set_block_size(BLOCK_SIZE);
         block_opts.set_optimize_filters_for_memory(true); // reduce memory wastage with JeMalloc
         // Mitigate OOM
         block_opts.set_cache_index_and_filter_blocks(config.rocksdb_cache_index_filters);
         // Improve cache utilisation
         block_opts.set_pin_top_level_index_and_filter(true);
         block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
-        block_opts.set_partition_filters(true);
         block_opts.set_index_type(rocksdb::BlockBasedIndexType::TwoLevelIndexSearch);
-        block_opts.set_metadata_block_size(BLOCK_SIZE);
+        block_opts.set_partition_filters(true);
+        block_opts.set_block_size(config.rocksdb_block_size);
+        block_opts.set_metadata_block_size(config.rocksdb_block_size);
 
-        let cache = Cache::new_hyper_clock_cache(config.rocksdb_cache_size, BLOCK_SIZE); // set this to the block size
+        let cache =
+            Cache::new_hyper_clock_cache(config.rocksdb_cache_size, config.rocksdb_block_size);
         block_opts.set_block_cache(&cache);
 
         let mut rdb_opts = Options::default();
         rdb_opts.create_if_missing(true);
         rdb_opts.set_block_based_table_factory(&block_opts);
         rdb_opts.set_periodic_compaction_seconds(config.rocksdb_compaction_period);
-        // Mitigate OOM
-        rdb_opts.set_max_open_files(config.rocksdb_max_open_files); // prevent opening too many files at a time
+        // Mitigate OOM - prevent opening too many files at a time
+        rdb_opts.set_max_open_files(config.rocksdb_max_open_files);
+        // Reduce reads
+        rdb_opts.set_level_compaction_dynamic_level_bytes(true);
+        rdb_opts.set_target_file_size_base(config.rocksdb_target_file_size);
+        rdb_opts.set_max_bytes_for_level_base(config.rocksdb_target_file_size << 2);
+        // Reduce storage
+        rdb_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+        rdb_opts.set_bottommost_compression_type(rocksdb::DBCompressionType::Zstd);
+        rdb_opts.set_bottommost_zstd_max_train_bytes(0, true);
 
         // Should be safe in single-threaded mode
         // https://docs.rs/rocksdb/latest/rocksdb/type.DB.html#limited-performance-implication-for-single-threaded-mode
@@ -346,11 +359,16 @@ impl Db {
             rdb.latest_sequence_number()
         );
 
+        // Percentiles: P50: 414.93 P75: 497.53 P99: 576.82 P99.9: 579.79 P99.99: 12678.76
+        let cache =
+            LruCache::new(NonZeroUsize::new(config.rocksdb_state_cache_size / 500).unwrap());
+
         Ok(Db {
             pool: Arc::new(pool),
             path,
             executable_blocks_height,
             kvdb: Arc::new(rdb),
+            cache: Arc::new(RwLock::new(cache)),
             config,
         })
     }
@@ -827,7 +845,11 @@ impl Db {
     }
 
     pub fn state_trie(&self) -> Result<TrieStorage> {
-        Ok(TrieStorage::new(self.pool.clone(), self.kvdb.clone()))
+        Ok(TrieStorage::new(
+            self.pool.clone(),
+            self.kvdb.clone(),
+            self.cache.clone(),
+        ))
     }
 
     pub fn with_sqlite_tx(&self, operations: impl FnOnce(&Connection) -> Result<()>) -> Result<()> {

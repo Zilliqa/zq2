@@ -7,6 +7,7 @@ use std::{
 
 use alloy::{
     consensus::{EMPTY_ROOT_HASH, TxEip1559, TxEip2930, TxLegacy},
+    hex,
     primitives::{Address, B256, Signature, TxKind, U256},
 };
 use anyhow::{Context, Result, anyhow};

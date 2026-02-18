@@ -884,8 +884,8 @@ impl Sync {
             .finalize();
 
         if check_sum != computed_sum {
-            error!(
-                "MultiBlockResponse : unexpected checksum={check_sum} != {computed_sum} from {from}"
+            error!(%from,
+                "MultiBlockResponse : unexpected checksum={check_sum} != {computed_sum}"
             );
             return Ok(false);
         }
@@ -941,9 +941,7 @@ impl Sync {
             };
 
             if brt.block.number() < self.zq2_floor_height {
-                // do not active sync ZQ1 blocks
-                warn!("MultiBlockRequest : skipping ZQ1");
-                break;
+                break; // do not active sync ZQ1 blocks
             }
 
             let proposal = self.brt_to_proposal(brt);
@@ -1198,7 +1196,7 @@ impl Sync {
             } else {
                 // If something does not match, restart from the last known segment.
                 // This is a safety mechanism to prevent a peer from sending us garbage.
-                error!(
+                error!(from=%segment_peer.peer_id,
                     "DoMetadataResponse : unexpected metadata hash={block_hash} != {}, num={block_num} != {}",
                     meta.hash, meta.number,
                 );
@@ -1247,7 +1245,6 @@ impl Sync {
                 .filter(|&sb| {
                     self.segments.insert_sync_metadata(&sb.header).unwrap(); // record all metadata
                     block_size = block_size.saturating_add(sb.size_estimate);
-                    trace!(total=%block_size, "DoMetadataResponse : response");
                     if block_size > Self::RESPONSE_SIZE_THRESHOLD {
                         block_size = 0;
                         true
@@ -1290,18 +1287,15 @@ impl Sync {
         request: RequestBlocksByHeight,
     ) -> Result<ExternalMessage> {
         let range = request.from_height..=request.to_height;
-        debug!(?range, %from,
-            "MetadataRequest : received",
-        );
 
         if self.zq2_floor_height > request.to_height {
-            warn!("MetadataRequest : skipping ZQ1");
+            warn!(%from, ?range, "ActiveRequest : skipping ZQ1");
             return Ok(ExternalMessage::SyncBlockHeaders(vec![]));
         }
 
         // Do not respond to stale requests as the client has probably timed-out
         if request.request_at.elapsed()?.as_secs() > 20 {
-            warn!("MetadataRequest : stale");
+            warn!(%from, "ActiveRequest : stale");
             return Ok(ExternalMessage::SyncBlockHeaders(vec![]));
         }
 
@@ -1309,9 +1303,13 @@ impl Sync {
             .min(request.to_height.saturating_sub(request.from_height) as usize);
         let mut metas = Vec::with_capacity(batch_size);
         let Some(block) = self.db.get_block(BlockFilter::Height(request.to_height))? else {
-            warn!("MetadataRequest : missing");
+            warn!(%from, ?range, "ActiveRequest : missing");
             return Ok(ExternalMessage::SyncBlockHeaders(vec![]));
         };
+
+        debug!(?range, %from,
+            "ActiveRequest : received",
+        );
 
         let mut hash = block.hash();
         while metas.len() <= batch_size {
@@ -1348,7 +1346,6 @@ impl Sync {
             hash = parent_hash;
 
             if header.number.saturating_sub(1) < self.zq2_floor_height {
-                warn!("MetadataRequest : skipping ZQ1");
                 break;
             }
         }

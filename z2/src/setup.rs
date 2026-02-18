@@ -5,6 +5,7 @@ use std::{
 };
 
 use alloy::{
+    hex,
     primitives::{Address, address},
     signers::local::LocalSigner,
 };

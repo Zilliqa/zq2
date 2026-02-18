@@ -1,6 +1,7 @@
 use core::convert::AsRef;
 use std::{env, fs, os::unix::fs::PermissionsExt, path::Path};
 
+use alloy::hex;
 use anyhow::{Result, anyhow};
 use reqwest;
 use serde::{Deserialize, Serialize};

@@ -59,6 +59,3 @@
 
 - name: Import checkpoint service installation
   ansible.builtin.import_playbook: install_checkpoint_service.yml
-
-- name: Import persistence backup installation
-  ansible.builtin.import_playbook: install_persistence_backup.yml

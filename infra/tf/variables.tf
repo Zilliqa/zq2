@@ -66,13 +66,14 @@ variable "apps" {
 variable "api" {
   description = "(Optional) The configuration of the api nodes"
   type = object({
-    boot_disk_size       = optional(number, 100)
-    data_disk_size       = optional(number, 100)
-    instance_type        = optional(string, "e2-standard-2")
-    provisioning_model   = optional(string, "STANDARD")
-    generate_external_ip = optional(bool, false)
-    detach_load_balancer = optional(bool, false)
-    rate_limit           = optional(number, 1000000)
+    boot_disk_size        = optional(number, 100)
+    data_disk_size        = optional(number, 100)
+    instance_type         = optional(string, "e2-standard-2")
+    provisioning_model    = optional(string, "STANDARD")
+    generate_external_ip  = optional(bool, false)
+    detach_load_balancer  = optional(bool, false)
+    load_balancer_timeout = optional(number, 30)
+    rate_limit            = optional(number, 1000000)
     alternative_ssl_domains = optional(object({
       api    = optional(list(string), [])
       health = optional(list(string), [])
@@ -201,8 +202,8 @@ variable "bootstrap" {
   }
 }
 
-variable "checkpoint" {
-  description = "(Optional) The configuration of the checkpoint nodes"
+variable "opsnode" {
+  description = "(Optional) The configuration of the opsnode nodes (checkpoint + persistence)"
   type = object({
     boot_disk_size       = optional(number, 100)
     data_disk_size       = optional(number, 100)
@@ -228,49 +229,14 @@ variable "checkpoint" {
 
   # Validation for provisioning_model
   validation {
-    condition     = contains(["STANDARD", "SPOT"], var.checkpoint.provisioning_model)
+    condition     = contains(["STANDARD", "SPOT"], var.opsnode.provisioning_model)
     error_message = "Provisioning model must be one of 'STANDARD' or 'SPOT'."
   }
 
   # Validation to check that both 'region' and 'zone' are not specified together
   validation {
     condition = alltrue([
-      for node in var.checkpoint.nodes : (node.region != null && node.zone == null) || (node.region == null && node.zone != null)
-    ])
-    error_message = "You need to specify either 'region' or 'zone' for a node."
-  }
-}
-
-variable "persistence" {
-  description = "(Optional) The configuration of the persistence nodes"
-  type = object({
-    boot_disk_size       = optional(number, 100)
-    data_disk_size       = optional(number, 100)
-    instance_type        = optional(string, "e2-standard-2")
-    provisioning_model   = optional(string, "STANDARD")
-    generate_external_ip = optional(bool, false)
-    nodes = optional(list(object({
-      count  = number
-      region = optional(string)
-      zone   = optional(string)
-    })), [])
-    os_images_override      = optional(map(string), {})
-    instance_type_override  = optional(map(string), {})
-    boot_disk_size_override = optional(map(number), {})
-    data_disk_size_override = optional(map(number), {})
-  })
-  default = {}
-
-  # Validation for provisioning_model
-  validation {
-    condition     = contains(["STANDARD", "SPOT"], var.persistence.provisioning_model)
-    error_message = "Provisioning model must be one of 'STANDARD' or 'SPOT'."
-  }
-
-  # Validation to check that both 'region' and 'zone' are not specified together
-  validation {
-    condition = alltrue([
-      for node in var.persistence.nodes : (node.region != null && node.zone == null) || (node.region == null && node.zone != null)
+      for node in var.opsnode.nodes : (node.region != null && node.zone == null) || (node.region == null && node.zone != null)
     ])
     error_message = "You need to specify either 'region' or 'zone' for a node."
   }
@@ -333,9 +299,9 @@ variable "private_api" {
   validation {
     condition = alltrue([
       for key in keys(var.private_api) :
-      !contains(["bootstrap", "api", "validator", "apps", "checkpoint", "persistence", "private-api", "sentry"], key)
+      !contains(["bootstrap", "api", "validator", "apps", "opsnode", "private-api", "sentry"], key)
     ])
-    error_message = "The private-api key must NOT be one of: 'bootstrap', 'api', 'validator', 'apps', 'checkpoint', 'persistence', 'private-api', 'sentry'."
+    error_message = "The private-api key must NOT be one of: 'bootstrap', 'api', 'validator', 'apps', 'opsnode', 'private-api', 'sentry'."
   }
 }
 

@@ -37,8 +37,8 @@ consensus.forks = [
     { at_height = 7000000, inject_access_list = true, use_max_gas_priority_fee = true },
     { at_height = 10153271, failed_zil_transfers_to_eoa_proper_fee_deduction = true },
     { at_height = 13514400, validator_jailing = true },
-    { at_height = 99999999, scilla_empty_maps_are_encoded_correctly = true },
-    { at_height = 99999999, cancun_active = true },
-    { at_height = 99999999, scilla_call_gas_exempt_addrs_v2 = [] },
+    { at_height = 19486411, scilla_empty_maps_are_encoded_correctly = true },
+    { at_height = 19486411, cancun_active = true },
+    { at_height = 19486411, scilla_call_gas_exempt_addrs_v2 = ["0x0F8aeCCaCA7FEE297cC2aBf7fFC9a81e7122A727"] },
     { at_height = 99999999, randao_support = true },
 ]

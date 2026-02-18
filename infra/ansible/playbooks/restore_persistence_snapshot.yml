@@ -45,16 +45,14 @@
         latest_labeled_snapshot: >-
           {{ (snapshots_info.resources | default([])
               | selectattr('labels', 'defined')
-              | selectattr('labels.network', 'defined')
-              | selectattr('labels.network', 'equalto', network_filter_value)
-              | selectattr('labels.backup', 'defined')
-              | selectattr('labels.backup', 'equalto', 'true')
+              | selectattr('labels.zq2-network', 'defined')
+              | selectattr('labels.zq2-network', 'equalto', network_filter_value)
               | sort(attribute='creationTimestamp')) | last | default(None) }}
       when: not use_requested_snapshot | bool
 
     - name: Abort if no labeled snapshot found for fallback
       ansible.builtin.fail:
-        msg: "No snapshots found with labels network='{{ network_filter_value }}' and backup='true' in project {{ project_id }}."
+        msg: "No snapshots found with labels zq2-network='{{ network_filter_value }}' in project {{ project_id }}."
       when:
         - not use_requested_snapshot | bool
         - latest_labeled_snapshot is not defined or latest_labeled_snapshot is none
@@ -65,6 +63,10 @@
       when:
         - not use_requested_snapshot | bool
         - latest_labeled_snapshot is defined and latest_labeled_snapshot is not none
+
+    - name: Debug effective snapshot id
+      ansible.builtin.debug:
+        msg: "Using snapshot: {{ effective_snapshot_id }}"
   
     - name: Check if Zilliqa service exists
       ansible.builtin.stat:
@@ -152,6 +154,22 @@
       delegate_to: localhost
       become: false
 
+    - name: Build effective disk labels (include private-api if present)
+      ansible.builtin.set_fact:
+        effective_disk_labels: >-
+          {{
+            {
+              'node-name': inventory_hostname,
+              'role': (labels['role'] | default('unknown')),
+              'zq2-network': chain_name,
+              'goog-terraform-provisioned': 'true'
+            }
+            | combine(
+                (labels is defined and ('private-api' in labels))
+                | ternary({'private-api': labels['private-api']}, {})
+              )
+          }}
+
     - name: Restore data disk from snapshot
       google.cloud.gcp_compute_disk:
         name: "{{ inventory_hostname }}-data"
@@ -160,11 +178,7 @@
         type: "pd-ssd"
         source_snapshot:
           selfLink: "projects/{{ project_id }}/global/snapshots/{{ effective_snapshot_id }}"
-        labels:
-          node-name: "{{ inventory_hostname }}"
-          role: "{{ labels['role'] | default('unknown') }}"
-          zq2-network: "{{ chain_name }}"
-          goog-terraform-provisioned: "true"
+        labels: "{{ effective_disk_labels }}"
         state: present
         auth_kind: application
       delegate_to: localhost
@@ -238,6 +252,13 @@
         msg: "Data disk not found on this node, skipping mount configuration"
       when: not data_disk_device.stat.exists
 
+    - name: Start Zilliqa service with daemon reload
+      ansible.builtin.systemd:
+        name: zilliqa
+        state: started
+        enabled: yes
+        daemon_reload: yes
+
     - name: Warm up data disk by sequential read
       ansible.builtin.command:
         argv:
@@ -254,10 +275,3 @@
         - data_disk_path.stdout | length > 0
       changed_when: false
       failed_when: false
-
-    - name: Start Zilliqa service with daemon reload
-      ansible.builtin.systemd:
-        name: zilliqa
-        state: started
-        enabled: yes
-        daemon_reload: yes

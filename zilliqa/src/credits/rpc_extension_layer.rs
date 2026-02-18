@@ -34,7 +34,12 @@ impl RpcExtensionLayer {
         );
         let allow_keys = std::env::var("ALLOWED_KEYS").map_or_else(
             |_| DashSet::new(), // empty list
-            |csv| DashSet::from_iter(csv.split(',').filter_map(|key| key.trim().parse().ok())),
+            |csv| {
+                DashSet::from_iter(
+                    csv.split(',')
+                        .filter_map(|key| key.trim().to_uppercase().parse().ok()),
+                )
+            },
         );
         Self {
             allow_ips,
@@ -89,14 +94,28 @@ where
             .and_then(|val| val.to_str().ok())
             .and_then(|list| list.split(',').rev().nth(1)) // https://cloud.google.com/load-balancing/docs/https#x-forwarded-for_header
             .and_then(|first| first.trim().parse().ok())
-            .filter(|ip| !self.allow_ips.contains(ip));
+            .filter(|ip| {
+                if self.allow_ips.contains(ip) {
+                    tracing::debug!(%ip, "RPC bypass");
+                    false
+                } else {
+                    true
+                }
+            });
 
         let remote_key = req
             .headers()
             .get(RATE_LIMIT_KEY)
             .and_then(|val| val.to_str().ok())
-            .map(|key| key.to_string())
-            .filter(|key| self.allow_keys.contains(key));
+            .map(|key| key.to_uppercase()) // non-case-sensitive
+            .filter(|key| {
+                if self.allow_keys.contains(key) {
+                    tracing::debug!(%key, "RPC bypass");
+                    true
+                } else {
+                    false
+                }
+            });
 
         // TODO: user-based quotas
         let remote_user = req

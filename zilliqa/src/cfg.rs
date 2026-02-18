@@ -1,11 +1,6 @@
-use std::{
-    collections::HashMap,
-    ops::{Deref, Div},
-    str::FromStr,
-    time::Duration,
-};
+use std::{collections::HashMap, ops::Deref, str::FromStr, time::Duration};
 
-use alloy::{primitives::Address, rlp::Encodable};
+use alloy::{hex, primitives::Address, rlp::Encodable};
 use anyhow::{Result, anyhow};
 use libp2p::{Multiaddr, PeerId};
 use rand::{Rng, distributions::Alphanumeric};
@@ -50,9 +45,8 @@ pub struct Config {
 }
 
 pub fn slow_rpc_queries_handlers_count_default() -> usize {
-    // half the workers; or 1
-    let num_workers = crate::tokio_worker_count();
-    num_workers.div(2).max(1)
+    let n = crate::available_threads().saturating_sub(1);
+    n.max(4)
 }
 
 #[derive(Debug, Clone)]
@@ -192,6 +186,23 @@ pub struct DbConfig {
     /// RocksDB cache index/filters
     #[serde(default = "rocksdb_cache_index_filters_default")]
     pub rocksdb_cache_index_filters: bool,
+    /// State cache size
+    #[serde(default = "rocksdb_state_cache_size_default")]
+    pub rocksdb_state_cache_size: usize,
+    /// Block size
+    #[serde(default = "rocksdb_block_size_default")]
+    pub rocksdb_block_size: usize,
+    /// Target File Size
+    #[serde(default = "rocksdb_target_file_size_default")]
+    pub rocksdb_target_file_size: u64,
+}
+
+fn rocksdb_block_size_default() -> usize {
+    1 << 14 // 16KB reduces in-memory indexes
+}
+
+fn rocksdb_target_file_size_default() -> u64 {
+    1 << 28 // 256MB reduces number of open files
 }
 
 fn rocksdb_cache_index_filters_default() -> bool {
@@ -207,7 +218,11 @@ fn rocksdb_compaction_period_default() -> u64 {
 }
 
 fn rocksdb_cache_size_default() -> usize {
-    1024 * 1024 * 1024 // 1GB is enough for normal nodes
+    1 << 30 // 1GB is enough for normal nodes
+}
+
+fn rocksdb_state_cache_size_default() -> usize {
+    1 << 31
 }
 
 fn sql_cache_size_default() -> usize {
@@ -228,6 +243,9 @@ impl Default for DbConfig {
             rocksdb_compaction_period: rocksdb_compaction_period_default(),
             rocksdb_max_open_files: rocksdb_max_open_files_default(),
             rocksdb_cache_index_filters: rocksdb_cache_index_filters_default(),
+            rocksdb_state_cache_size: rocksdb_state_cache_size_default(),
+            rocksdb_block_size: rocksdb_block_size_default(),
+            rocksdb_target_file_size: rocksdb_target_file_size_default(),
         }
     }
 }
@@ -360,7 +378,7 @@ impl NodeConfig {
 
         anyhow::ensure!(
             self.state_cache_size == state_cache_size_default(),
-            "state_cache_size is deprecated. Use db.rocksdb_cache_size instead."
+            "state_cache_size is deprecated. Use db.rocksdb_cache_size and db.rocksdb_state_cache_size instead."
         );
 
         anyhow::ensure!(

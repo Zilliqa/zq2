@@ -81,6 +81,10 @@ pub enum ValidationOutcome {
     TotalNumberOfSlotsExceeded,
     /// Gas price is too low
     GasPriceTooLow,
+    /// Invalid amount
+    InvalidAmount,
+    /// Gas price too high
+    GasPriceTooHigh,
 }
 
 impl ValidationOutcome {
@@ -137,6 +141,8 @@ impl ValidationOutcome {
                 "Total number of slots for all senders has been exceeded".to_string()
             }
             Self::GasPriceTooLow => "Provided gas price is too low".to_string(),
+            Self::GasPriceTooHigh => "Provided gas price is too high".to_string(),
+            Self::InvalidAmount => "Invalid amount".to_string(),
         }
     }
 }
@@ -305,9 +311,10 @@ impl SignedTransaction {
             SignedTransaction::Eip2930 { tx, .. } => tx.gas_price,
             // We ignore the priority fee and just use the maximum fee.
             SignedTransaction::Eip1559 { tx, .. } => tx.max_fee_per_gas,
-            SignedTransaction::Zilliqa { tx, .. } => {
-                tx.gas_price.get() / (EVM_GAS_PER_SCILLA_GAS as u128)
-            }
+            SignedTransaction::Zilliqa { tx, .. } => tx
+                .gas_price
+                .get()
+                .map_or(u128::MAX, |p| p / (EVM_GAS_PER_SCILLA_GAS as u128)),
             SignedTransaction::Intershard { tx, .. } => tx.gas_price,
         }
     }
@@ -399,7 +406,7 @@ impl SignedTransaction {
                 // This is a copy of Transaction.h::GetTransactionType()
                 // We validate against slightly different thresholds since we don't have the
                 // mainnet constants to hand in Rust in zq2.
-                Ok(total_scilla_gas_price(
+                total_scilla_gas_price(
                     if !tx.to_addr.is_zero() && !tx.data.is_empty() && tx.code.is_empty() {
                         // It's a contract call (erm, probably)
                         SCILLA_INVOKE_RUNNER
@@ -412,7 +419,7 @@ impl SignedTransaction {
                     },
                     tx.gas_price,
                 )
-                .0)
+                .map(|m| m.0)
             }
             SignedTransaction::Intershard { tx, .. } => Ok(tx.gas_price * tx.gas_limit.0 as u128),
         }
@@ -511,6 +518,7 @@ impl SignedTransaction {
         account: &Account,
         block_gas_limit: EvmGas,
         min_gas_price: u128,
+        token_supply: u128,
         eth_chain_id: u64,
     ) -> Result<ValidationOutcome> {
         let hash = self.calculate_hash();
@@ -521,10 +529,20 @@ impl SignedTransaction {
         let result = ValidationOutcome::Success
             .and_then(|| self.validate_input_size())?
             .and_then(|| self.validate_gas_limit(block_gas_limit))?
-            .and_then(|| self.validate_gas_price(min_gas_price))?
+            .and_then(|| self.validate_gas_price(min_gas_price, token_supply))?
             .and_then(|| self.validate_chain_id(eth_chain_id))?
-            .and_then(|| self.validate_sender_account(account))?;
+            .and_then(|| self.validate_sender_account(account))?
+            .and_then(|| self.validate_amount(token_supply))?;
         Ok(result)
+    }
+
+    fn validate_amount(&self, token_supply: u128) -> Result<ValidationOutcome> {
+        if let Ok(amount) = self.zil_amount().get()
+            && amount < token_supply
+        {
+            return Ok(ValidationOutcome::Success);
+        }
+        Ok(ValidationOutcome::InvalidAmount)
     }
 
     fn validate_input_size(&self) -> Result<ValidationOutcome> {
@@ -633,10 +651,17 @@ impl SignedTransaction {
         Ok(ValidationOutcome::Success)
     }
 
-    fn validate_gas_price(&self, min_gas_price: u128) -> Result<ValidationOutcome> {
+    fn validate_gas_price(
+        &self,
+        min_gas_price: u128,
+        token_supply: u128,
+    ) -> Result<ValidationOutcome> {
         let gas_price = self.gas_price_per_evm_gas();
         if gas_price < min_gas_price {
             return Ok(ValidationOutcome::GasPriceTooLow);
+        }
+        if gas_price > token_supply {
+            return Ok(ValidationOutcome::GasPriceTooHigh);
         }
         Ok(ValidationOutcome::Success)
     }
@@ -717,16 +742,16 @@ impl Transaction {
         }
     }
 
-    pub fn max_fee_per_gas(&self) -> u128 {
-        match self {
+    pub fn max_fee_per_gas(&self) -> Result<u128> {
+        Ok(match self {
             Transaction::Legacy(TxLegacy { gas_price, .. }) => *gas_price,
             Transaction::Eip2930(TxEip2930 { gas_price, .. }) => *gas_price,
             Transaction::Eip1559(TxEip1559 {
                 max_fee_per_gas, ..
             }) => *max_fee_per_gas,
-            Transaction::Zilliqa(t) => t.gas_price.get() / (EVM_GAS_PER_SCILLA_GAS as u128),
+            Transaction::Zilliqa(t) => t.gas_price.get()? / (EVM_GAS_PER_SCILLA_GAS as u128),
             Transaction::Intershard(TxIntershard { gas_price, .. }) => *gas_price,
-        }
+        })
     }
 
     pub fn max_priority_fee_per_gas(&self) -> Option<u128> {
@@ -766,14 +791,14 @@ impl Transaction {
         }
     }
 
-    pub fn amount(&self) -> u128 {
-        match self {
+    pub fn amount(&self) -> Result<u128> {
+        Ok(match self {
             Transaction::Legacy(TxLegacy { value, .. }) => value.to(),
             Transaction::Eip2930(TxEip2930 { value, .. }) => value.to(),
             Transaction::Eip1559(TxEip1559 { value, .. }) => value.to(),
-            Transaction::Zilliqa(t) => t.amount.get(),
+            Transaction::Zilliqa(t) => t.amount.get()?,
             Transaction::Intershard(_) => 0,
-        }
+        })
     }
 
     pub fn payload(&self) -> &[u8] {
@@ -836,12 +861,12 @@ impl TryFrom<VerifiedTransaction> for TxEnv {
             tx_type: inner.revm_transaction_type().into(),
             caller: signer,
             gas_limit: inner.gas_limit().0,
-            gas_price: inner.max_fee_per_gas(),
+            gas_price: inner.max_fee_per_gas()?,
             kind: match inner.to_addr() {
                 Some(addr) => TxKind::Call(addr),
                 _ => TxKind::Create,
             },
-            value: inner.amount().try_into()?,
+            value: inner.amount()?.try_into()?,
             data: inner.payload().to_vec().into(),
             nonce: inner.nonce().unwrap_or_default(),
             chain_id: inner.chain_id(),
@@ -979,8 +1004,10 @@ impl ZilAmount {
     }
 
     /// Get the ZIL amount in units of (10^-18) ZILs.
-    pub fn get(self) -> u128 {
-        self.0.checked_mul(10u128.pow(6)).expect("amount overflow")
+    pub fn get(self) -> Result<u128> {
+        self.0
+            .checked_mul(10u128.pow(6))
+            .ok_or_else(|| anyhow::format_err!("Amount Overflow {} * 10^6", self.0))
     }
 
     /// Return the memory representation of this amount as a big-endian byte array.
@@ -1039,12 +1066,13 @@ impl FromStr for ZilAmount {
 
 /// Calculate the total price of a given `quantity` of [ScillaGas] at the specified `price`.
 /// Note that the units of the `price` should really be ([ZilAmount] / [ScillaGas])
-pub fn total_scilla_gas_price(quantity: ScillaGas, price: ZilAmount) -> ZilAmount {
-    ZilAmount(
-        (quantity.0 as u128)
-            .checked_mul(price.0)
-            .expect("amount overflow"),
-    )
+pub fn total_scilla_gas_price(quantity: ScillaGas, price: ZilAmount) -> Result<ZilAmount> {
+    (quantity.0 as u128)
+        .checked_mul(price.0)
+        .map(ZilAmount)
+        .ok_or_else(|| {
+            anyhow::format_err!("total_scilla_gas_price failed {} * {}", quantity.0, price.0)
+        })
 }
 
 pub const EVM_GAS_PER_SCILLA_GAS: u64 = 420;
@@ -1338,4 +1366,25 @@ fn encode_zilliqa_transaction(txn: &TxZilliqa, pub_key: schnorr::PublicKey) -> V
         oneof9,
     };
     prost::Message::encode_to_vec(&proto)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::transaction::total_scilla_gas_price;
+
+    #[test]
+    fn test_total_scilla_gas_price() {
+        let quantity = ScillaGas(50);
+        let price = ZilAmount(340282366920938463463374607331768210656);
+        let _total = total_scilla_gas_price(quantity, price);
+        assert!(_total.is_err());
+    }
+
+    #[test]
+    fn test_get() {
+        let price = ZilAmount(340282366920938463463374607331768210656);
+        let _total = price.get();
+        assert!(_total.is_err());
+    }
 }

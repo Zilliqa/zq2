@@ -4,7 +4,7 @@ use std::{
     str::FromStr,
 };
 
-use alloy::primitives::B256;
+use alloy::{hex, primitives::B256};
 use anyhow::{Context, Result, anyhow};
 use clap::{Args, Parser, Subcommand, builder::ArgAction};
 use clap_verbosity_flag::{InfoLevel, Verbosity};

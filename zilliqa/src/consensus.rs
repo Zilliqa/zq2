@@ -12,7 +12,10 @@ use std::{
     time::Duration,
 };
 
-use alloy::primitives::{Address, U256};
+use alloy::{
+    hex,
+    primitives::{Address, U256},
+};
 use anyhow::{Context, Result, anyhow};
 use bitvec::{bitarr, order::Msb0};
 use dashmap::DashMap;
@@ -953,7 +956,7 @@ impl Consensus {
         }
 
         if let Err(e) = self.check_block(&block, during_sync, "proposal->check_block") {
-            warn!(?e, "invalid block proposal received!");
+            warn!(error=%e, "Invalid block proposal received!"); // drop stack trace; the preceeding log message will have details.
             return Ok(None);
         }
 
@@ -2181,6 +2184,7 @@ impl Consensus {
             &early_account,
             self.config.consensus.eth_block_gas_limit,
             self.config.consensus.gas_price.0,
+            self.config.consensus.total_native_token_supply.0,
             eth_chain_id,
         )?;
         if !validation_result.is_ok() {
@@ -2668,10 +2672,7 @@ impl Consensus {
         }
 
         let Some(parent) = self.get_block(&block.parent_hash())? else {
-            warn!(
-                "Missing parent block while trying to check validity of block number {}",
-                block.number()
-            );
+            warn!("Missing parent of block number {}", block.number());
             return Err(MissingBlockError::from(block.parent_hash()).into());
         };
 
@@ -3505,6 +3506,7 @@ impl Consensus {
                                     &acc,
                                     self.config.consensus.eth_block_gas_limit,
                                     self.config.consensus.gas_price.0,
+                                    self.config.consensus.total_native_token_supply.0,
                                     self.config.eth_chain_id,
                                 ) else {
                                     warn!(
