@@ -649,7 +649,11 @@ impl Consensus {
             anyhow!("missing block corresponding to our high qc - this should never happen")
         })?;
 
-        let grandarent_mix_hash = self.get_block(&block.parent_hash()).ok().flatten().and_then(|block| block.header.mix_hash);
+        let grandarent_mix_hash = self
+            .get_block(&block.parent_hash())
+            .ok()
+            .flatten()
+            .and_then(|block| block.header.mix_hash);
 
         let leader = self.leader_at_block(&block, grandarent_mix_hash, view, "build_new_view");
         let new_view_message = (
@@ -1364,8 +1368,17 @@ impl Consensus {
             block_view + 1
         };
 
-        let grandarent_mix_hash = self.get_block(&block.parent_hash()).ok().flatten().and_then(|block| block.header.mix_hash);
-        if !self.are_we_leader_for_view(block_hash, grandarent_mix_hash, leader_view, "handle_vote()") {
+        let grandarent_mix_hash = self
+            .get_block(&block.parent_hash())
+            .ok()
+            .flatten()
+            .and_then(|block| block.header.mix_hash);
+        if !self.are_we_leader_for_view(
+            block_hash,
+            grandarent_mix_hash,
+            leader_view,
+            "handle_vote()",
+        ) {
             trace!(
                 vote_view = leader_view,
                 ?block_hash,
@@ -1939,17 +1952,28 @@ impl Consensus {
         Ok(Some(self.early_proposal.read().as_ref().unwrap().0.clone()))
     }
 
-    fn are_we_leader_for_view(&self, parent_hash: Hash, mix_hash: Option<Hash>, view: u64, caller: &str) -> bool {
+    fn are_we_leader_for_view(
+        &self,
+        parent_hash: Hash,
+        mix_hash: Option<Hash>,
+        view: u64,
+        caller: &str,
+    ) -> bool {
         match self.leader_for_view(parent_hash, mix_hash, view, caller) {
             Some(leader) => leader == self.public_key(),
             None => false,
         }
     }
 
-    fn leader_for_view(&self, parent_hash: Hash, mix_hash: Option<Hash>, view: u64, caller: &str) -> Option<NodePublicKey> {
+    fn leader_for_view(
+        &self,
+        parent_hash: Hash,
+        mix_hash: Option<Hash>,
+        view: u64,
+        caller: &str,
+    ) -> Option<NodePublicKey> {
         if let Ok(Some(parent)) = self.get_block(&parent_hash) {
-            if let Some(leader) = self.leader_at_block(&parent, mix_hash, view, caller)
-            {
+            if let Some(leader) = self.leader_at_block(&parent, mix_hash, view, caller) {
                 return Some(leader.public_key);
             }
             None
@@ -2049,12 +2073,21 @@ impl Consensus {
             return Ok(None);
         }
 
-        let grandparent_mix_hash = self.get_block(&hiqh_qc_block.parent_hash()).ok().flatten().and_then(|block| block.header.mix_hash);
+        let grandparent_mix_hash = self
+            .get_block(&hiqh_qc_block.parent_hash())
+            .ok()
+            .flatten()
+            .and_then(|block| block.header.mix_hash);
 
         // The leader for this view should be chosen according to the parent of the highest QC
         // What happens when there are multiple QCs with different parents?
         // if we are not the leader of the round in which the vote counts
-        if !self.are_we_leader_for_view(new_view.qc.block_hash, grandparent_mix_hash, new_view.view, "handle_new_view") {
+        if !self.are_we_leader_for_view(
+            new_view.qc.block_hash,
+            grandparent_mix_hash,
+            new_view.view,
+            "handle_new_view",
+        ) {
             info!(new_view.view, "skipping new view, not the leader");
             return Ok(None);
         }
@@ -2439,9 +2472,9 @@ impl Consensus {
                 anyhow!(format!("missing block parent {}", &current.parent_hash()))
             })?;
 
-            let grandparent_mix_hash = self
-                .get_block(&parent.parent_hash())?
-                .and_then(|block| block.header.mix_hash);
+            // let grandparent_mix_hash = self
+            //     .get_block(&parent.parent_hash())?
+            //     .and_then(|block| block.header.mix_hash);
 
             let state_at = self.state.at_root(parent.state_root_hash().into());
             let randao_enabled = self.state.forks.get(parent.header.number).randao_support;
@@ -2453,11 +2486,10 @@ impl Consensus {
             // };
             let fork = self.state.forks.get(parent.number());
             for view in (parent.view() + 1..current.view()).step_by(1) {
-
                 let block_header = BlockHeader {
                     view: view - 1,
                     number: parent.header.number + 1,
-                    mix_hash: parent.header.mix_hash, // should be grandparent
+                    mix_hash: parent.header.mix_hash,
                     ..Default::default()
                 };
                 let leader_view = if randao_enabled { view - 1 } else { view };
@@ -2470,8 +2502,7 @@ impl Consensus {
                             id = &leader.as_bytes()[..3],
                             "~~~~~~~~~~> skipping reorged"
                         );
-                    } else
-                    {
+                    } else {
                         //error!("Parent view: {}, current_view: {}, parent_height: {}, block_height: {}", parent.view(), current.view(), parent.number(), block.number());
                         info!(
                             "PUSHING leader: {:?} in view: {:?}, parent_block_num: {:?}, parent_view: {:?}, parent_randao: {:?},\
@@ -2698,16 +2729,13 @@ impl Consensus {
         let mix_hash = {
             // Some(_) => parent.header.mix_hash,
             // None =>
-                self
-                .get_block(&parent.parent_hash())
+            self.get_block(&parent.parent_hash())
                 .ok()
                 .flatten()
                 .and_then(|block| block.header.mix_hash)
         };
 
-        let Some(proposer) =
-            self.leader_at_block(&parent, mix_hash, leader_view, caller)
-        else {
+        let Some(proposer) = self.leader_at_block(&parent, mix_hash, leader_view, caller) else {
             return Err(anyhow!(
                 "Failed to find leader. Block number {}, Parent number {}",
                 block.number(),

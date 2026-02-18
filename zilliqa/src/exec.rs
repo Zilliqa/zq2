@@ -1139,7 +1139,7 @@ impl State {
 
         let pub_key_compare = pub_key.unwrap();
 
-        let peer_id = self.get_peer_id(pub_key_compare.clone()).unwrap().unwrap();
+        let _peer_id = self.get_peer_id(pub_key_compare).unwrap().unwrap();
         let stakers = self.get_stakers(current_block)?;
         let idx = stakers
             .iter()

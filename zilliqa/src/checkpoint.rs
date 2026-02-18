@@ -453,6 +453,7 @@ struct AccountBlob {
     pub spool: SpooledTempFile,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn save_ckpt(
     path: &Path,
     trie_storage: Arc<TrieStorage>,

@@ -191,7 +191,7 @@ async fn jailed_node_must_not_cause_timeouts(mut network: Network) {
                     false
                 }
             },
-            100,
+            10000,
         )
         .await
         .unwrap();

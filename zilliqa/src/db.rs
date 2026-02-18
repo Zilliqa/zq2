@@ -1697,6 +1697,7 @@ pub fn get_checkpoint_filename<P: AsRef<Path> + Debug>(
 
 /// Build checkpoint and write to disk.
 /// A description of the data written can be found in docs/checkpoints
+#[allow(clippy::too_many_arguments)]
 pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
     block: &Block,
     transactions: &Vec<SignedTransaction>,
