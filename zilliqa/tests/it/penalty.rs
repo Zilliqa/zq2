@@ -60,7 +60,7 @@ async fn jailed_node_must_not_propose_blocks(mut network: Network) {
                     .iter()
                     .find(|&(_, views)| views.len() >= MISSED_VIEW_THRESHOLD);
                 if let Some((id, views)) = jailed {
-                    tracing::error!(current_view, leader = ?hex::encode(id), ?views, "jailed in");
+                    tracing::error!(current_view, leader = ?alloy::hex::encode(id), ?views, "jailed in");
                 }
                 jailed.is_some() && jailed.unwrap().0.to_vec() == jailed_leader.as_bytes()
             },
