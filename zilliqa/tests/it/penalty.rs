@@ -28,7 +28,7 @@ async fn jailed_node_must_not_propose_blocks(mut network: Network) {
 
     tracing::error!(
         "Disconnected leader: {:?}",
-        hex::encode(jailed_leader.as_bytes())
+        alloy::hex::encode(jailed_leader.as_bytes())
     );
 
     // wait until the node is jailed
@@ -108,7 +108,7 @@ async fn jailed_node_must_not_propose_blocks(mut network: Network) {
                             "block {} in view {} proposed by jailed leader: {:?}",
                             current_block.number(),
                             current_block.view(),
-                            hex::encode(jailed_leader.as_bytes())
+                            alloy::hex::encode(jailed_leader.as_bytes())
                         );
                     }
                     jailed.is_none()
