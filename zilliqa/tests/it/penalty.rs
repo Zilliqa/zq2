@@ -50,7 +50,7 @@ async fn jailed_node_must_not_propose_blocks(mut network: Network) {
                             && *view < current_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW)
                     })
                     .fold(HashMap::new(), |mut acc, (view, leader)| {
-                        let id = (leader.as_bytes()[..3]).to_vec();
+                        let id = leader.as_bytes();
                         acc.entry(id)
                             .and_modify(|views: &mut Vec<u64>| views.push(*view))
                             .or_insert_with(|| vec![*view]);
@@ -60,9 +60,9 @@ async fn jailed_node_must_not_propose_blocks(mut network: Network) {
                     .iter()
                     .find(|&(_, views)| views.len() >= MISSED_VIEW_THRESHOLD);
                 if let Some((id, views)) = jailed {
-                    info!(current_view, id = &id[..3], ?views, "jailed in");
+                    tracing::error!(current_view, leader = ?hex::encode(id), ?views, "jailed in");
                 }
-                jailed.is_some()
+                jailed.is_some() && jailed.unwrap().0.to_vec() == jailed_leader.as_bytes()
             },
             1000,
         )
@@ -93,7 +93,7 @@ async fn jailed_node_must_not_propose_blocks(mut network: Network) {
                                     < current_block.view().saturating_sub(LAG_BEHIND_CURRENT_VIEW)
                         })
                         .fold(HashMap::new(), |mut acc, (view, leader)| {
-                            let id = (leader.as_bytes()[..3]).to_vec();
+                            let id = leader.as_bytes();
                             acc.entry(id)
                                 .and_modify(|views: &mut Vec<u64>| views.push(*view))
                                 .or_insert_with(|| vec![*view]);
@@ -105,9 +105,10 @@ async fn jailed_node_must_not_propose_blocks(mut network: Network) {
                     if jailed.is_some() {
                         assert!(
                             current_block.verify(jailed_leader).is_err(),
-                            "block {} in view {} proposed by jailed leader",
+                            "block {} in view {} proposed by jailed leader: {:?}",
                             current_block.number(),
-                            current_block.view()
+                            current_block.view(),
+                            hex::encode(jailed_leader.as_bytes())
                         );
                     }
                     jailed.is_none()

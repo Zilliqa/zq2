@@ -1158,8 +1158,9 @@ impl State {
         }
 
         info!(
-            "Calling leader at view: {}, block_number: {}, cumm_Stake: {:?}, leader: {:?}, randao: {:?}, caller: {}. idx: {:?}",
+            "Calling leader at view: {}, block_view: {}, block_number: {}, cumm_Stake: {:?}, leader: {:?}, randao: {:?}, caller: {}. idx: {:?}",
             view,
+            current_block.view,
             current_block.number,
             cumm_stake,
             hex::encode(pub_key_compare.as_bytes()),
