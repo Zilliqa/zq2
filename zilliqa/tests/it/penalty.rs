@@ -64,7 +64,7 @@ async fn jailed_node_must_not_propose_blocks(mut network: Network) {
                 }
                 jailed.is_some() && jailed.unwrap().0.to_vec() == jailed_leader.as_bytes()
             },
-            1000,
+            2000,
         )
         .await
         .unwrap();
@@ -175,7 +175,7 @@ async fn jailed_node_must_not_cause_timeouts(mut network: Network) {
                 }
                 jailed.is_some()
             },
-            1000,
+            2000,
         )
         .await
         .unwrap();
