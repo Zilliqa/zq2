@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use alloy::eips::BlockId;
-use tracing::{error, info};
+use tracing::info;
 use zilliqa::constants::{LAG_BEHIND_CURRENT_VIEW, MISSED_VIEW_THRESHOLD, MISSED_VIEW_WINDOW};
 
 use crate::Network;
