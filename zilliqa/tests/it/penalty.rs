@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use alloy::eips::BlockId;
-use tracing::info;
+use tracing::{error, info};
 use zilliqa::constants::{LAG_BEHIND_CURRENT_VIEW, MISSED_VIEW_THRESHOLD, MISSED_VIEW_WINDOW};
 
 use crate::Network;
@@ -111,6 +111,7 @@ async fn jailed_node_must_not_propose_blocks(mut network: Network) {
                             alloy::hex::encode(jailed_leader.as_bytes())
                         );
                     }
+                    //error!("Jailed: {:?}, current_view: {}", jailed.unwrap().1, current_block.view());
                     jailed.is_none()
                 } else {
                     false

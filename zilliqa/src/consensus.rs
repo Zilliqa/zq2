@@ -2485,7 +2485,7 @@ impl Consensus {
             //     ..Default::default()
             // };
             let fork = self.state.forks.get(parent.number());
-            for view in (parent.view() + 1..current.view()).step_by(1) {
+            for view in (parent.view() + 1..current.view()).rev() {
                 let block_header = BlockHeader {
                     view: view - 1,
                     number: parent.header.number + 1,
@@ -2516,7 +2516,7 @@ impl Consensus {
                             current.view(),
                             current.header.mix_hash
                         );
-                        new_missed_views.push_back((leader_view, leader)); // ensure new_missed_views in ascending order
+                        new_missed_views.push_front((leader_view, leader)); // ensure new_missed_views in ascending order
                     }
                 }
             }
