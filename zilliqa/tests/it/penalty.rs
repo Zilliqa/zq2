@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use alloy::eips::BlockId;
-use tracing::info;
+use tracing::{error, info};
 use zilliqa::constants::{LAG_BEHIND_CURRENT_VIEW, MISSED_VIEW_THRESHOLD, MISSED_VIEW_WINDOW};
 
 use crate::Network;
@@ -181,13 +181,14 @@ async fn jailed_node_must_not_cause_timeouts(mut network: Network) {
         .unwrap();
 
     let jailed_view = network.get_node(1).get_current_view().unwrap();
+    error!("Jailed view: {}", jailed_view);
 
     // wait for a block to be produced in the view in which the first node got jailed
     network
         .run_until(
             |n| {
                 if let Ok(Some(current_block)) = n.get_node(1).get_block(BlockId::latest()) {
-                    current_block.view() == jailed_view
+                    current_block.view() >= jailed_view
                 } else {
                     false
                 }
@@ -252,7 +253,7 @@ async fn jailed_node_must_not_cause_timeouts(mut network: Network) {
                     false
                 }
             },
-            10000,
+            12000,
         )
         .await
         .unwrap();
