@@ -95,7 +95,7 @@ fn process_empty(c: &mut Criterion) {
 
     let genesis = consensus.get_block_by_view(0).unwrap().unwrap();
     let mut state = consensus.state().at_root(genesis.state_root_hash().into());
-    let mut parent_hash = genesis.hash();
+    let mut parent_header = genesis.header;
     let mut proposals = (1..).map(|view| {
         // The reward per block above is configured to 1. The consensus algorithm splits this reward between the
         // proposer and the cosigners, rounding down. Effectively this means no rewards are issued to anyone with this
@@ -110,19 +110,23 @@ fn process_empty(c: &mut Criterion) {
 
         let vote = Vote::new(
             secret_key,
-            parent_hash,
+            parent_header.hash,
             secret_key.node_public_key(),
             view - 1,
         );
         let qc = QuorumCertificate::new(
             &[vote.signature()],
             bitarr![u8, Msb0; 1; MAX_COMMITTEE_SIZE],
-            parent_hash,
+            parent_header.hash,
             view - 1,
         );
 
         let mut empty_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
         let empty_root_hash = Hash(empty_trie.root_hash().unwrap().into());
+
+        let randao_reveal = Block::compute_randao_reveal(&secret_key, view);
+
+        let mix_hash = Block::compute_randao_mix(parent_header, randao_reveal);
 
         let block = Block::from_qc(
             secret_key,
@@ -137,10 +141,10 @@ fn process_empty(c: &mut Criterion) {
             SystemTime::UNIX_EPOCH,
             EvmGas(0),
             EvmGas(0),
-            None,
-            None,
+            Some(randao_reveal),
+            Some(mix_hash),
         );
-        parent_hash = block.hash();
+        parent_header = block.header;
 
         Proposal::from_parts(block, vec![])
     });
