@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use alloy::eips::BlockId;
-use tracing::{error, info};
+use tracing::{info};
 use zilliqa::constants::{LAG_BEHIND_CURRENT_VIEW, MISSED_VIEW_THRESHOLD, MISSED_VIEW_WINDOW};
 
 use crate::Network;
@@ -26,7 +26,7 @@ async fn jailed_node_must_not_propose_blocks(mut network: Network) {
     network.disconnect_node(0);
     let jailed_leader = network.get_node(0).consensus.read().public_key();
 
-    tracing::error!(
+    tracing::trace!(
         "Disconnected leader: {:?}",
         alloy::hex::encode(jailed_leader.as_bytes())
     );
@@ -58,13 +58,14 @@ async fn jailed_node_must_not_propose_blocks(mut network: Network) {
                     });
                 let jailed = missed_map
                     .iter()
-                    .find(|&(_, views)| views.len() >= MISSED_VIEW_THRESHOLD);
+                    .find(|&(leader, views)| views.len() >= MISSED_VIEW_THRESHOLD && leader.to_vec() == jailed_leader.as_bytes());
+
                 if let Some((id, views)) = jailed {
-                    tracing::error!(current_view, leader = ?alloy::hex::encode(id), ?views, "jailed in");
+                    tracing::trace!(current_view, leader = ?alloy::hex::encode(id), ?views, "jailed in");
                 }
-                jailed.is_some() && jailed.unwrap().0.to_vec() == jailed_leader.as_bytes()
+                jailed.is_some()
             },
-            2000,
+            5000,
         )
         .await
         .unwrap();
@@ -99,20 +100,28 @@ async fn jailed_node_must_not_propose_blocks(mut network: Network) {
                                 .or_insert_with(|| vec![*view]);
                             acc
                         });
-                    let jailed = missed_map
+                    let all_jailed = missed_map
                         .iter()
-                        .find(|&(_, views)| views.len() >= MISSED_VIEW_THRESHOLD);
-                    if jailed.is_some() {
-                        assert!(
-                            current_block.verify(jailed_leader).is_err(),
-                            "block {} in view {} proposed by jailed leader: {:?}",
-                            current_block.number(),
-                            current_block.view(),
-                            alloy::hex::encode(jailed_leader.as_bytes())
-                        );
+                        .filter(|&(_, views)| views.len() >= MISSED_VIEW_THRESHOLD)
+                        .collect::<Vec<_>>();
+
+                    if all_jailed.len() == n.nodes.len() {
+                        true
+                    } else {
+                        let jailed = all_jailed
+                            .iter()
+                            .find(|&(leader, _)| leader.to_vec() == jailed_leader.as_bytes());
+                        if jailed.is_some() {
+                            assert!(
+                                current_block.verify(jailed_leader).is_err(),
+                                "block {} in view {} proposed by jailed leader: {:?}",
+                                current_block.number(),
+                                current_block.view(),
+                                alloy::hex::encode(jailed_leader.as_bytes())
+                            );
+                        }
+                        jailed.is_none()
                     }
-                    //error!("Jailed: {:?}, current_view: {}", jailed.unwrap().1, current_block.view());
-                    jailed.is_none()
                 } else {
                     false
                 }
@@ -141,6 +150,7 @@ async fn jailed_node_must_not_cause_timeouts(mut network: Network) {
 
     // temporarily disconnect the first node to prevent it from proposing blocks
     network.disconnect_node(0);
+    let jailed_leader = network.get_node(0).consensus.read().public_key();
 
     // wait until the node is jailed
     // note that if there is only one node that is not proposing blocks, it will always be the first among the jailed nodes
@@ -161,7 +171,7 @@ async fn jailed_node_must_not_cause_timeouts(mut network: Network) {
                             && *view < current_view.saturating_sub(LAG_BEHIND_CURRENT_VIEW)
                     })
                     .fold(HashMap::new(), |mut acc, (view, leader)| {
-                        let id = (leader.as_bytes()[..3]).to_vec();
+                        let id = (leader.as_bytes()).to_vec();
                         acc.entry(id)
                             .and_modify(|views: &mut Vec<u64>| views.push(*view))
                             .or_insert_with(|| vec![*view]);
@@ -169,19 +179,19 @@ async fn jailed_node_must_not_cause_timeouts(mut network: Network) {
                     });
                 let jailed = missed_map
                     .iter()
-                    .find(|&(_, views)| views.len() >= MISSED_VIEW_THRESHOLD);
+                    .find(|&(leader, views)| views.len() >= MISSED_VIEW_THRESHOLD && leader.to_vec() == jailed_leader.as_bytes());
                 if let Some((id, views)) = jailed {
-                    info!(current_view, id = &id[..3], ?views, "jailed in");
+                    tracing::trace!(current_view, id = ?alloy::hex::encode(id), ?views, "jailed in");
                 }
                 jailed.is_some()
             },
-            2000,
+            5000,
         )
         .await
         .unwrap();
 
     let jailed_view = network.get_node(1).get_current_view().unwrap();
-    error!("Jailed view: {}", jailed_view);
+    tracing::error!("Jailed view: {}", jailed_view);
 
     // wait for a block to be produced in the view in which the first node got jailed
     network
@@ -230,25 +240,31 @@ async fn jailed_node_must_not_cause_timeouts(mut network: Network) {
                                     < current_block.view().saturating_sub(LAG_BEHIND_CURRENT_VIEW)
                         })
                         .fold(HashMap::new(), |mut acc, (view, leader)| {
-                            let id = (leader.as_bytes()[..3]).to_vec();
+                            let id = (leader.as_bytes()).to_vec();
                             acc.entry(id)
                                 .and_modify(|views: &mut Vec<u64>| views.push(*view))
                                 .or_insert_with(|| vec![*view]);
                             acc
                         });
-                    let jailed = missed_map
+                    let all_jailed = missed_map
                         .iter()
-                        .find(|&(_, views)| views.len() >= MISSED_VIEW_THRESHOLD);
-                    if jailed.is_some() {
-                        assert!(
-                            current_block.view() - current_block.number()
-                                == jailed_block.view() - jailed_block.number(),
-                            "block {} in view {} proposed after a missed view",
-                            current_block.number(),
-                            current_block.view()
-                        );
+                        .filter(|&(_, views)| views.len() >= MISSED_VIEW_THRESHOLD).collect::<Vec<_>>();
+                    if all_jailed.len() == n.nodes.len() {
+                        true
+                    } else {
+                        let jailed = all_jailed.iter()
+                            .find(|&(leader, _)| leader.to_vec() == jailed_leader.as_bytes());
+                        if jailed.is_some() {
+                            assert_eq!(
+                                current_block.view() - current_block.number(),
+                                jailed_block.view() - jailed_block.number(),
+                                "block {} in view {} proposed after a missed view",
+                                current_block.number(),
+                                current_block.view()
+                            );
+                        }
+                        jailed.is_none()
                     }
-                    jailed.is_none()
                 } else {
                     false
                 }

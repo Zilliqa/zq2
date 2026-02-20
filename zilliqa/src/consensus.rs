@@ -2472,26 +2472,15 @@ impl Consensus {
                 anyhow!(format!("missing block parent {}", &current.parent_hash()))
             })?;
 
-            // let grandparent_mix_hash = self
-            //     .get_block(&parent.parent_hash())?
-            //     .and_then(|block| block.header.mix_hash);
-
             let state_at = self.state.at_root(parent.state_root_hash().into());
             let randao_enabled = self.state.forks.get(parent.header.number).randao_support;
-            // let block_header = BlockHeader {
-            //     view: parent.header.view,
-            //     number: parent.header.number,
-            //     mix_hash: parent.header.mix_hash, // should be grandparent
-            //     ..Default::default()
-            // };
+            let block_header = BlockHeader {
+                number: parent.header.number + 1,
+                mix_hash: parent.header.mix_hash,
+                ..Default::default()
+            };
             let fork = self.state.forks.get(parent.number());
             for view in (parent.view() + 1..current.view()).rev() {
-                let block_header = BlockHeader {
-                    view: view - 1,
-                    number: parent.header.number + 1,
-                    mix_hash: parent.header.mix_hash,
-                    ..Default::default()
-                };
                 let leader_view = if randao_enabled { view - 1 } else { view };
                 if let Ok(leader) =
                     state_at.leader(leader_view, block_header, fork, "finalize_block")
@@ -2719,23 +2708,24 @@ impl Consensus {
             ));
         }
 
+        let randao_supported = self.state.forks.get(block.number()).randao_support;
+
         // Derive the proposer from the block's view
-        let leader_view = if self.state.forks.get(block.number()).randao_support {
+        let leader_view = if randao_supported {
             block.view() - 1
         } else {
             block.view()
         };
 
-        let mix_hash = {
-            // Some(_) => parent.header.mix_hash,
-            // None =>
-            self.get_block(&parent.parent_hash())
-                .ok()
-                .flatten()
-                .and_then(|block| block.header.mix_hash)
-        };
+        let grandparent_mix_hash = self
+            .get_block(&parent.parent_hash())
+            .ok()
+            .flatten()
+            .and_then(|block| block.header.mix_hash);
 
-        let Some(proposer) = self.leader_at_block(&parent, mix_hash, leader_view, caller) else {
+        let Some(proposer) =
+            self.leader_at_block(&parent, grandparent_mix_hash, leader_view, caller)
+        else {
             return Err(anyhow!(
                 "Failed to find leader. Block number {}, Parent number {}",
                 block.number(),
@@ -4027,7 +4017,7 @@ impl Consensus {
             let state_at = self.state.at_root(block_state_root_hash.into());
             let header = BlockHeader {
                 view: parent_view,
-                number: migrate_at - 1,
+                number: migrate_at,
                 mix_hash,
                 ..Default::default()
             };
@@ -4088,19 +4078,14 @@ impl Consensus {
                 break;
             }
             // the parent view was the one before we found a missed view in the loop above
-            let block = self
+            let parent = self
                 .get_block_by_view(view.saturating_sub(1))?
                 .expect("Parent block missing");
 
-            let parent_mix_hash = self
-                .get_block(&block.parent_hash())?
-                .and_then(|block| block.header.mix_hash);
-
-            let state_at = self.state.at_root(block.hash().into());
+            let state_at = self.state.at_root(parent.hash().into());
             let header = BlockHeader {
-                view: block.view(),
-                number: block.number(),
-                mix_hash: parent_mix_hash,
+                number: parent.number() + 1,
+                mix_hash: parent.header.mix_hash,
                 ..Default::default()
             };
             // skip the first missed view in a row as its block must have been reorged
@@ -4112,8 +4097,7 @@ impl Consensus {
             while self.get_block_by_view(view)?.is_none()
                 && self.state.view_history.read().min_view > view
             {
-                if let Ok(leader) =
-                    state_at.leader(view, block.header, fork, "merge_missed_view_history")
+                if let Ok(leader) = state_at.leader(view, header, fork, "merge_missed_view_history")
                 {
                     history.push_back((view, leader));
                     self.state
