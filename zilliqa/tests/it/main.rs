@@ -1131,6 +1131,9 @@ impl Network {
                     InternalMessage::UnsubscribeFromGossipSubTopic(topic) => {
                         debug!("unsubscribing from topic {:?}", topic);
                     }
+                    InternalMessage::SnapshotTrie(storage, hash, view) => {
+                        db::snapshot_trie(storage.clone(), *hash, *view).unwrap();
+                    }
                 }
             }
             AnyMessage::External(external_message) => {
