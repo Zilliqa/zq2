@@ -107,7 +107,7 @@ async fn main() -> Result<()> {
         zilliqa::cfg::DbConfig::default(),
     )?);
 
-    if let Some((block, _, _, view_history)) = zilliqa::checkpoint::load_ckpt(
+    if let Some((block, _, _, view_history, _)) = zilliqa::checkpoint::load_ckpt(
         path.as_path(),
         Arc::new(db.state_trie()?),
         args.id,

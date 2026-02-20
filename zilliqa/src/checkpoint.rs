@@ -10,6 +10,7 @@ use anyhow::{Result, anyhow, ensure};
 use eth_trie::{DB, EthTrie, MemoryDB, Trie};
 use lz4::Decoder;
 use tempfile::SpooledTempFile;
+use zip::ZipArchive;
 
 use crate::{
     crypto::Hash, db::Db, message::Block, precompiles::ViewHistory, state::Account,
@@ -208,7 +209,10 @@ pub fn load_trusted_checkpoint_v1<P: AsRef<Path>>(
 }
 
 const BIN_CONFIG: bincode::config::Configuration = bincode::config::standard();
-const CKPT_VERSION: &str = "ZILCHKPT/2.0";
+// Number of the newer checkpoint format starts with 2.0
+#[allow(unused)]
+const CKPT_VERSION_V2: &str = "ZILCHKPT/2.0"; // not used anymore
+const CKPT_VERSION_V3: &str = "ZILCHKPT/3.0";
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 struct Checkpoint {
@@ -218,6 +222,14 @@ struct Checkpoint {
     pub block_hash: Hash,
 }
 
+fn get_checkpoint_version(zipreader: &ZipArchive<File>) -> Result<f32> {
+    let comment = std::str::from_utf8(zipreader.comment())?;
+    let version_str = comment
+        .split('/')
+        .nth(1)
+        .ok_or_else(|| anyhow!("Invalid checkpoint version format"))?;
+    Ok(version_str.parse()?)
+}
 fn load_ckpt_meta(path: &Path, chain_id: u64, block_hash: &Hash) -> Result<Checkpoint> {
     let mut zipreader = zip::ZipArchive::new(std::fs::File::open(path)?)?;
 
@@ -225,11 +237,11 @@ fn load_ckpt_meta(path: &Path, chain_id: u64, block_hash: &Hash) -> Result<Check
     // This check also ensures that the file is a ZIP file by reading the EOCD.
     // In the future, we may handle different versions separately,
     //
-    // - ZILCHKPT/2.0 : Checkpoint 2.0
-    ensure!(
-        zipreader.comment() == CKPT_VERSION.as_bytes(),
-        "Invalid checkpoint version",
-    );
+    // - ZILCHKPT/x.0 : Checkpoint 2.0 or newer
+
+    let version_number = get_checkpoint_version(&zipreader)?;
+
+    ensure!(version_number >= 2.0f32, "Invalid checkpoint version",);
 
     let meta = {
         let mut file = zipreader.by_name("metadata.json")?;
@@ -249,12 +261,11 @@ fn load_ckpt_meta(path: &Path, chain_id: u64, block_hash: &Hash) -> Result<Check
     Ok(meta)
 }
 
-pub fn load_ckpt_blocks(path: &Path) -> Result<(Block, Vec<SignedTransaction>, Block)> {
+pub fn load_ckpt_blocks(path: &Path) -> Result<(Block, Vec<SignedTransaction>, Block, Block)> {
     let mut zipreader = zip::ZipArchive::new(std::fs::File::open(path)?)?;
-    ensure!(
-        zipreader.comment() == CKPT_VERSION.as_bytes(),
-        "Invalid checkpoint version",
-    );
+
+    let version_number = get_checkpoint_version(&zipreader)?;
+    ensure!(version_number >= 2.0f32, "Invalid checkpoint version",);
 
     let block = {
         let mut file = zipreader.by_name("block.bincode")?;
@@ -280,6 +291,27 @@ pub fn load_ckpt_blocks(path: &Path) -> Result<(Block, Vec<SignedTransaction>, B
     };
     ensure!(block.parent_hash() == parent.hash(), "Parent hash mismatch");
 
+    // Grandparent block is included in checkpoints starting from version 3.0
+    let grandparent = {
+        if version_number >= 3.0f32 {
+            let mut file = zipreader.by_name("grandparent.bincode")?;
+            let grandparent: crate::message::Block =
+                bincode::serde::decode_from_std_read(&mut file, BIN_CONFIG)?;
+            ensure!(
+                grandparent.verify_hash().is_ok(),
+                "Grandparent hash {} invalid",
+                grandparent.hash()
+            );
+            ensure!(
+                parent.parent_hash() == grandparent.hash(),
+                "Parent hash mismatch"
+            );
+            grandparent
+        } else {
+            Block::genesis(Hash::ZERO)
+        }
+    };
+
     // Verify transactions list
     let transactions = {
         let mut file = zipreader.by_name("transactions.bincode")?;
@@ -297,7 +329,7 @@ pub fn load_ckpt_blocks(path: &Path) -> Result<(Block, Vec<SignedTransaction>, B
         );
         transactions
     };
-    Ok((block, transactions, parent))
+    Ok((block, transactions, parent, grandparent))
 }
 
 pub fn load_ckpt_state(
@@ -306,10 +338,8 @@ pub fn load_ckpt_state(
     state_root_hash: &Hash,
 ) -> Result<(u64, u64)> {
     let mut zipreader = zip::ZipArchive::new(std::fs::File::open(path)?)?;
-    ensure!(
-        zipreader.comment() == CKPT_VERSION.as_bytes(),
-        "Invalid checkpoint version",
-    );
+    let version_number = get_checkpoint_version(&zipreader)?;
+    ensure!(version_number >= 2.0f32, "Invalid checkpoint version",);
 
     // reconstruct the state trie from accounts/storage leaf nodes
     let (account_count, record_count) = {
@@ -381,10 +411,8 @@ pub fn load_ckpt_state(
 
 pub fn load_ckpt_history(path: &Path) -> Result<ViewHistory> {
     let mut zipreader = zip::ZipArchive::new(std::fs::File::open(path)?)?;
-    ensure!(
-        zipreader.comment() == CKPT_VERSION.as_bytes(),
-        "Invalid checkpoint version",
-    );
+    let version_number = get_checkpoint_version(&zipreader)?;
+    ensure!(version_number >= 2.0f32, "Invalid checkpoint version",);
     let mut file = zipreader.by_name("history.bincode")?;
     let view_history: ViewHistory = bincode::serde::decode_from_std_read(&mut file, BIN_CONFIG)?;
     Ok(view_history)
@@ -396,9 +424,9 @@ pub fn load_ckpt(
     trie_storage: Arc<TrieStorage>,
     chain_id: u64,
     block_hash: &Hash,
-) -> Result<Option<(Block, Vec<SignedTransaction>, Block, ViewHistory)>> {
+) -> Result<Option<(Block, Vec<SignedTransaction>, Block, ViewHistory, Block)>> {
     let meta = load_ckpt_meta(path, chain_id, block_hash)?;
-    let (block, transactions, parent) = load_ckpt_blocks(path)?;
+    let (block, transactions, parent, grandparent) = load_ckpt_blocks(path)?;
     let (account_count, record_count) =
         load_ckpt_state(path, trie_storage.clone(), &parent.state_root_hash())?;
 
@@ -414,7 +442,13 @@ pub fn load_ckpt(
     let view_history = load_ckpt_history(path)?;
 
     tracing::info!(account=%account_count, record=%record_count, "Loaded"); // final update
-    Ok(Some((block, transactions, parent, view_history)))
+    Ok(Some((
+        block,
+        transactions,
+        parent,
+        view_history,
+        grandparent,
+    )))
 }
 
 #[derive(Debug)]
@@ -425,6 +459,7 @@ struct AccountBlob {
     pub spool: SpooledTempFile,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn save_ckpt(
     path: &Path,
     trie_storage: Arc<TrieStorage>,
@@ -433,6 +468,7 @@ pub fn save_ckpt(
     parent: &Block,
     chain_id: u64,
     view_history: ViewHistory,
+    grandparent: &Block,
 ) -> Result<()> {
     // parent
     ensure!(
@@ -459,6 +495,10 @@ pub fn save_ckpt(
         .compression_method(zip::CompressionMethod::Zstd);
 
     let mut zipwriter = zip::ZipWriter::new(zipfile);
+
+    // write grandparent.json
+    zipwriter.start_file("grandparent.bincode", options)?;
+    bincode::serde::encode_into_std_write(grandparent, &mut zipwriter, BIN_CONFIG)?;
 
     // write history.json
     zipwriter.start_file("history.bincode", options)?;
@@ -593,7 +633,7 @@ pub fn save_ckpt(
     zipwriter.start_file("metadata.json", options)?;
     serde_json::to_writer(&mut zipwriter, &meta)?;
 
-    zipwriter.set_comment(CKPT_VERSION);
+    zipwriter.set_comment(CKPT_VERSION_V3);
     zipwriter.finish()?;
     Ok(())
 }
