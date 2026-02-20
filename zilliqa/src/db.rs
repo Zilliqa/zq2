@@ -677,6 +677,8 @@ impl Db {
         // Use the default compaction filter, unless pruning is enabled
         if config.state_prune {
             let rev_floor = tag_floor.clone();
+            let tag_floor = rev_floor.load(Ordering::Relaxed);
+            tracing::info!(tag_floor, "StatePruneFilter");
             // Keys are only removed if they are older than the floor value, which is set during snapshot.
             // After pruning, old and legacy keys are eventually removed when the background compaction runs.
             rdb_opts.set_compaction_filter(
@@ -1707,12 +1709,14 @@ impl Db {
 pub fn snapshot_trie(storage: TrieStorage, root_hash: B256, block_number: u64) -> Result<()> {
     let trie = Arc::new(storage);
     let tag_lock = trie.tag_view.lock();
-    tracing::info!(%root_hash, block_number, "Snapshot: start");
+    let new_tag = *tag_lock;
+    tracing::info!(%root_hash, block_number, new_tag, "Snapshot: start");
     TrieStorage::snapshot(trie.clone(), root_hash)?;
-    tracing::info!(%root_hash, block_number, "Snapshot: done");
-    if trie.set_tag_floor(*tag_lock)? != 0 {
+    let old_tag = trie.set_tag_floor(new_tag)?;
+    if old_tag != 0 {
         trie.drop_sql_state_trie()?; // delete SQL database
     }
+    tracing::info!(%root_hash, block_number, new_tag, old_tag, "Snapshot: done");
     Ok(()) // not fatal, it can be retried later.
 }
 

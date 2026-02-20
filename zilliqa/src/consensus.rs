@@ -2457,6 +2457,7 @@ impl Consensus {
         let old_ceil = trie_storage.set_tag_ceil(new_ceil)?;
         // store the previous tag, which is the next floor.
         *tag_lock = old_ceil;
+        tracing::info!(block_number, new_ceil, old_ceil, "Snapshot: trigger");
 
         // trigger snapshot
         self.message_sender
