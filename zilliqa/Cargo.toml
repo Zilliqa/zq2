@@ -22,11 +22,11 @@ fake_response_channel = []
 fake_time = []
 
 [build-dependencies]
-anyhow = { version = "1.0.101", features = ["backtrace"] }
+anyhow = { version = "1.0.102", features = ["backtrace"] }
 vergen-git2 = { version = "9.1.0", features = [] }
 
 [dependencies]
-anyhow = { version = "1.0.101", features = ["backtrace"] }
+anyhow = { version = "1.0.102", features = ["backtrace"] }
 async-trait = "0.1.89"
 base64 = "0.22.1"
 bincode = { version = "2.0.1", features = ["serde"] }
