@@ -581,7 +581,7 @@ impl Sync {
             let range = proposals.first().as_ref().unwrap().number()
                 ..=proposals.last().as_ref().unwrap().number();
             if self.db.contains_canonical_block(&ancestor_hash)? {
-                //info!(?range, "InjectRecent : received");
+                info!(?range, "InjectRecent : received");
                 self.inject_proposals(proposals)?;
             } else {
                 debug!(?range, "InjectRecent: skipped");

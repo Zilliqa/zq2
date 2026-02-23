@@ -614,7 +614,13 @@ impl State {
         };
         let pending_state = PendingState::new(self.clone(), fork.clone());
 
-        let randao_mix_hash = current_block.mix_hash.unwrap_or(Hash::EMPTY);
+        let randao_mix_hash = if fork.randao_support {
+            current_block.mix_hash.unwrap_or(current_block.hash)
+        } else {
+            let mut padded_view_number = [0u8; 32];
+            padded_view_number[24..].copy_from_slice(&current_block.view.to_be_bytes());
+            Hash::builder().with(padded_view_number).finalize()
+        };
 
         let evm_ctx = new_zq2_evm_ctx(pending_state, external_context)
             .with_cfg({

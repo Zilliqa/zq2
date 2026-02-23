@@ -1972,7 +1972,6 @@ impl Consensus {
 
     fn committee_for_hash(&self, parent_hash: Hash) -> Result<Vec<NodePublicKey>> {
         let Ok(Some(parent)) = self.get_block(&parent_hash) else {
-            // tracing::error!("parent block not found: {:?}", parent_hash);
             return Ok(Vec::new()); // return an empty vector instead of Err for graceful app-level error-handling
         };
 
@@ -1991,7 +1990,7 @@ impl Consensus {
 
     /// Process a NewView message
     pub fn new_view(&mut self, from: PeerId, new_view: NewView) -> Result<Option<NetworkMessage>> {
-        info!(
+        trace!(
             "Received new view for view: {:?} from: {:?}",
             new_view.view, from
         );
@@ -2002,15 +2001,13 @@ impl Consensus {
             return Ok(None);
         };
 
+        // Get the committee for the qc hash (should be highest?) for this view
         let committee = if self.state.forks.get(hiqh_qc_block.number()).randao_support {
             let state = self.state.at_root(hiqh_qc_block.state_root_hash().into());
             state.get_stakers(hiqh_qc_block.header)?
         } else {
             self.committee_for_hash(new_view.qc.block_hash)?
         };
-
-        // Get the committee for the qc hash (should be highest?) for this view
-        //let committee: Vec<_> = self.committee_for_hash(new_view.qc.block_hash)?;
 
         // verify the sender's signature on the block hash
         let Some((index, public_key)) = committee
@@ -2035,7 +2032,7 @@ impl Consensus {
         let mut current_view = self.get_view()?;
         // if the vote is too old and does not count anymore
         if new_view.view + 1 < current_view {
-            info!(
+            trace!(
                 new_view.view,
                 "Received a NewView which is too old for us, discarding. Our view is: {} and new_view is: {}",
                 current_view,
@@ -2113,20 +2110,25 @@ impl Consensus {
                 "storing vote for new view"
             );
             if supermajority {
-                if current_view < new_view.view + 1 {
+                let new_view = if randao_supported {
+                    new_view.view + 1
+                } else {
+                    new_view.view
+                };
+                if current_view < new_view {
                     info!(
                         "forcibly updating view to {} as majority is ahead",
-                        new_view.view
+                        new_view
                     );
-                    current_view = new_view.view + 1;
+                    current_view = new_view;
                     self.set_view(current_view, false)?;
                 }
 
                 // if we are already in the round in which the vote counts and have reached supermajority we can propose a block
-                if new_view.view + 1 == current_view {
+                if new_view == current_view {
                     // todo: the aggregate qc is an aggregated signature on the qcs, view and validator index which can be batch verified
                     let agg = self.aggregate_qc_from_indexes(
-                        new_view.view,
+                        new_view,
                         &new_view_vote.qcs,
                         &new_view_vote.signatures,
                         new_view_vote.cosigned,
@@ -2423,7 +2425,7 @@ impl Consensus {
 
     /// Saves the finalized tip view, and runs all hooks for the newly finalized block
     fn finalize_block(&mut self, block: Block) -> Result<()> {
-        info!(
+        trace!(
             "Finalizing block {} at view {} num {}",
             block.hash(),
             block.view(),
@@ -2486,11 +2488,6 @@ impl Consensus {
         }
         self.state.finalized_view = block.view();
 
-        info!(
-            "Finalized view: {}, height: {}",
-            block.view(),
-            block.number()
-        );
         self.set_finalized_view(block.view())?;
 
         let receipts = self.db.get_transaction_receipts_in_block(&block.hash())?;
@@ -3093,11 +3090,7 @@ impl Consensus {
             });
 
         if cosigned_sum * 3 <= total_weight * 2 {
-            return Err(anyhow!(
-                "no quorum, cosigned sum: {}, total weight: {}",
-                cosigned_sum,
-                total_weight
-            ));
+            return Err(anyhow!("no quorum"));
         }
 
         Ok(())

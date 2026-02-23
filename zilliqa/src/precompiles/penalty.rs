@@ -307,7 +307,6 @@ fn call_penalty(
             .filter_map(filter)
             .count()
     };
-    //error!("Leader: {:?} has missed views: {} in view: {}, block_num: {:?}", hex::encode(leader), missed, view, ctx.block.number);
     let jailed = missed >= MISSED_VIEW_THRESHOLD;
     let output = encode(&[Token::Bool(jailed)]);
 

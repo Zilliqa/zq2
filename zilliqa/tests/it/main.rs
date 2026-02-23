@@ -1023,7 +1023,7 @@ impl Network {
 
     fn handle_message(&mut self, message: StreamMessage) {
         let (source, destination, ref contents) = message;
-        // info!(%source, ?destination);
+        info!(%source, ?destination);
         let sender_node = self
             .nodes
             .iter()
@@ -1254,7 +1254,7 @@ impl Network {
                 }
             }
             AnyMessage::Response { channel, message } => {
-                //info!(%message, ?channel, "response");
+                info!(%message, ?channel, "response");
 
                 let cbor_size = cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024), &message)
                     .unwrap()
