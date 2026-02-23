@@ -107,7 +107,7 @@ sled = { version = "0.34.7", features = ["no_logs"] }
 r2d2 = "0.8.10"
 r2d2_sqlite = "0.31.0"
 rocksdb = { version = "0.24.0", default-features = false, features = ["bindgen-runtime", "jemalloc", "lz4", "snappy", "zstd"] }
-zip = { version = "7.4.0", default-features = false, features = ["zstd"] }
+zip = { version = "8.1.0", default-features = false, features = ["zstd"] }
 eth_trie = { git = "https://github.com/Zilliqa/eth-trie.rs.git", branch = "zilliqa-revm" }
 arc-swap = "1.8.2"
 redis = { version = "0.32.7", features = ["keep-alive", "r2d2", "tcp_nodelay"], default-features = false }
