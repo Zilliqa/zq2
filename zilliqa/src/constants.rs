@@ -101,7 +101,7 @@ pub const EMPTY_ROOT_HASH: B256 =
 #[cfg(not(feature = "fake_time"))]
 pub const MISSED_VIEW_WINDOW: u64 = 600;
 #[cfg(feature = "fake_time")]
-pub const MISSED_VIEW_WINDOW: u64 = 600;
+pub const MISSED_VIEW_WINDOW: u64 = 60;
 pub const MISSED_VIEW_THRESHOLD: usize = 3;
 
 // The window of past views taken into account for jailing is defined by
