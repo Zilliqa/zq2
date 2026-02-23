@@ -400,11 +400,19 @@ fn get_leaders(params: Params, node: &Arc<Node>) -> Result<Vec<(u64, Validator)>
         }
     };
 
+    let grandparent_mix_hash = node
+        .consensus
+        .read()
+        .get_block(&parent_block.parent_hash())
+        .ok()
+        .flatten()
+        .and_then(|block| block.header.mix_hash);
+
     while leaders.len() <= count {
         if let Some(leader) =
             node.consensus
                 .read()
-                .leader_at_block(&parent_block, parent_block.header.mix_hash, view)
+                .leader_at_block(&parent_block, grandparent_mix_hash, view)
         {
             leaders.push((view, leader));
         } else {
