@@ -4,7 +4,7 @@ use std::sync::{
 };
 
 use anyhow::Result;
-use eth_trie::{EthTrie, Trie as _};
+use eth_trie::{DB, EthTrie, Trie as _};
 use lru::LruCache;
 use parking_lot::{Mutex, RwLock};
 use r2d2::Pool;
@@ -58,10 +58,8 @@ impl TrieStorage {
 
     /// Truncate the state_trie table
     pub fn drop_sql_state_trie(&self) -> Result<()> {
-        self.pool
-            .get()
-            .unwrap()
-            .execute("DELETE FROM state_trie", [])?; // TRUNCATE
+        let sql = self.pool.get().unwrap();
+        sql.execute("DROP TABLE IF EXISTS state_trie", [])?; // Use DROP TABLE faster
         Ok(())
     }
 
@@ -78,11 +76,16 @@ impl TrieStorage {
             let (_key, serialised_account) = akv?;
             let account_root = Account::try_from(serialised_account.as_slice())?.storage_root;
             let mut account_trie = EthTrie::new(trie_storage.clone()).at_root(account_root);
-            // repurpose clear_trie_from_db() to promote the account trie
+            // repurpose clear_trie_from_db() to promote the trie; root_hash() forces a commit.
+            let _ = account_trie.root_hash()?;
             account_trie.clear_trie_from_db()?;
         }
-        // repurpose clear_trie_from_db() to promote the state trie
+        // repurpose clear_trie_from_db() to promote the trie; root_hash() forces a commit.
+        let _ = state_trie.root_hash()?;
         state_trie.clear_trie_from_db()?;
+        // force commit of root hash
+        // force flush to disk
+        trie_storage.flush()?;
         Ok(())
     }
 
@@ -368,7 +371,10 @@ impl eth_trie::DB for TrieStorage {
     // promoting the trie at the db-level, without iterating the trie-level keys.
     // ** only called from clear_trie_from_db() **
     fn remove(&self, promote_key: &[u8]) -> Result<(), Self::Error> {
-        if let Ok(Some(value)) = self.get_tag_value(promote_key) {
+        if let Some(value) = self
+            .get_tag_value(promote_key)
+            .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?
+        {
             self.write_batch(
                 vec![promote_key.to_vec()],
                 vec![value],
@@ -378,9 +384,10 @@ impl eth_trie::DB for TrieStorage {
                     .to_be_bytes(),
                 false,
             )
-            .map_err(|e| eth_trie::TrieError::DB(e.to_string()))?
+            .map_err(|e| eth_trie::TrieError::DB(e.to_string()))
+        } else {
+            Err(eth_trie::TrieError::DB("trie not found".to_string()))
         }
-        Ok(())
     }
 
     fn remove_batch(&self, _: &[Vec<u8>]) -> Result<(), Self::Error> {

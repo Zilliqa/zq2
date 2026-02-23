@@ -2418,11 +2418,18 @@ impl Consensus {
 
         if self.block_is_first_in_epoch(block.number()) && !block.is_genesis() {
             // Do snapshots
+            // at epoch/block boundaries to avoid state inconsistencies.
             if self.config.sync.prune_interval != u64::MAX {
-                // do at block boundaries to avoid state inconsistencies.
-                // do at epoch boundaries to reduce size amplification.
-                let range = self.db.available_range()?;
-                self.snapshot_at(*range.start(), block.view())?;
+                let multiple =
+                    self.config.sync.prune_interval / self.config.consensus.blocks_per_epoch;
+                // gap > prune_interval to reduce size amplification.
+                if self
+                    .epoch_number(block.number())
+                    .is_multiple_of(multiple.saturating_add(1))
+                {
+                    let range = self.db.available_range()?;
+                    self.snapshot_at(*range.start(), block.view())?;
+                }
             };
             // Do checkpoints
             if self.config.do_checkpoints
