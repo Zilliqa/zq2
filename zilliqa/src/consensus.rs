@@ -2110,25 +2110,25 @@ impl Consensus {
                 "storing vote for new view"
             );
             if supermajority {
-                let new_view = if randao_supported {
+                let checked_view = if randao_supported {
                     new_view.view + 1
                 } else {
                     new_view.view
                 };
-                if current_view < new_view {
+                if current_view < checked_view {
                     info!(
                         "forcibly updating view to {} as majority is ahead",
-                        new_view
+                        checked_view
                     );
-                    current_view = new_view;
+                    current_view = checked_view;
                     self.set_view(current_view, false)?;
                 }
 
                 // if we are already in the round in which the vote counts and have reached supermajority we can propose a block
-                if new_view == current_view {
+                if checked_view == current_view {
                     // todo: the aggregate qc is an aggregated signature on the qcs, view and validator index which can be batch verified
                     let agg = self.aggregate_qc_from_indexes(
-                        new_view,
+                        new_view.view,
                         &new_view_vote.qcs,
                         &new_view_vote.signatures,
                         new_view_vote.cosigned,
