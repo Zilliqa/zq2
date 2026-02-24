@@ -3145,16 +3145,24 @@ impl Consensus {
         parent_mix_hash: Option<Hash>,
         view: u64,
     ) -> Option<Validator> {
+        let fork = state.forks.get(block.number());
         let executed_block = BlockHeader {
             // we need to set the (parent) block's view at which we call the jailing
             // precompile otherwise we won't know if we must use the node's history
             // or the checkpoint's history gradually extended during state-syncing
-            view: block.header.view,
-            number: block.header.number,
+            view: if fork.randao_support {
+                block.header.view
+            } else {
+                block.header.view + 1
+            },
+            number: if fork.randao_support {
+                block.header.number
+            } else {
+                block.header.number + 1
+            },
             mix_hash: parent_mix_hash,
             ..Default::default()
         };
-        let fork = state.forks.get(executed_block.number);
         let Ok(public_key) = state.leader(view, executed_block, fork) else {
             return None;
         };
