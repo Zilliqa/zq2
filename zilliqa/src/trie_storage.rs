@@ -83,7 +83,6 @@ impl TrieStorage {
         // repurpose clear_trie_from_db() to promote the trie; root_hash() forces a commit.
         let _ = state_trie.root_hash()?;
         state_trie.clear_trie_from_db()?;
-        // force commit of root hash
         // force flush to disk
         trie_storage.flush()?;
         Ok(())
@@ -361,6 +360,7 @@ impl eth_trie::DB for TrieStorage {
         .map_err(|e| eth_trie::TrieError::DB(e.to_string()))
     }
 
+    #[inline]
     fn flush(&self) -> Result<(), Self::Error> {
         self.kvdb
             .flush()
@@ -378,15 +378,12 @@ impl eth_trie::DB for TrieStorage {
             self.write_batch(
                 vec![promote_key.to_vec()],
                 vec![value],
-                self.rev_ceil
-                    .load(Ordering::Relaxed)
-                    .saturating_add(1) // push it one-down, to keep only 1 snapshot on-disk.
-                    .to_be_bytes(),
+                self.rev_ceil.load(Ordering::Relaxed).to_be_bytes(), // keeps 2 snapshots on-disk
                 false,
             )
             .map_err(|e| eth_trie::TrieError::DB(e.to_string()))
         } else {
-            Err(eth_trie::TrieError::DB("trie not found".to_string()))
+            Err(eth_trie::TrieError::DB("clear trie not found".to_string()))
         }
     }
 
@@ -416,7 +413,7 @@ mod tests {
                 .build(SqliteConnectionManager::memory())
                 .unwrap(),
         );
-        let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
+        let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap().keep()).unwrap());
         let tag = Arc::new(AtomicU64::new(u64::MAX));
         let lock = Arc::new(Mutex::new(u64::MIN));
         let cache = Arc::new(RwLock::new(LruCache::unbounded()));
@@ -458,10 +455,8 @@ mod tests {
         // snapshot-to-promote nodes; and count nodes
         trie_storage.inc_tag(u64::MAX).unwrap();
         TrieStorage::snapshot(trie_storage.clone(), root_hash).unwrap();
-        assert_eq!(
-            rdb.iterator(rocksdb::IteratorMode::Start).count(),
-            old_count * 2
-        );
+        let new_count = rdb.iterator(rocksdb::IteratorMode::Start).count();
+        assert_eq!(new_count, old_count * 2);
     }
 
     #[test]

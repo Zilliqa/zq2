@@ -247,6 +247,8 @@ pub struct Consensus {
     force_view: Option<(u64, DateTime)>,
     /// Mark if this node is in the committee at it's current head block height
     in_committee: bool,
+    /// Prune interval, if applicable
+    prune_interval: u64,
 }
 
 impl Consensus {
@@ -387,6 +389,10 @@ impl Consensus {
         let forks = config.consensus.get_forks()?;
         let enable_ots_indices = config.enable_ots_indices;
 
+        // pre-compute how often state snapshots are taken, if at all.
+        let bpe = config.consensus.blocks_per_epoch;
+        let prune_interval = ((config.sync.prune_interval / bpe) * bpe).saturating_add(bpe);
+
         let mut consensus = Consensus {
             secret_key,
             config,
@@ -411,6 +417,7 @@ impl Consensus {
             new_transaction_hashes: broadcast::Sender::new(128),
             force_view: None,
             in_committee: true,
+            prune_interval,
         };
 
         // If we're at genesis, add the genesis block and return
@@ -2419,18 +2426,10 @@ impl Consensus {
         if self.block_is_first_in_epoch(block.number()) && !block.is_genesis() {
             // Do snapshots
             // at epoch/block boundaries to avoid state inconsistencies.
-            if self.config.sync.prune_interval != u64::MAX {
-                let multiple =
-                    self.config.sync.prune_interval / self.config.consensus.blocks_per_epoch;
-                // gap > prune_interval to reduce size amplification.
-                if self
-                    .epoch_number(block.number())
-                    .is_multiple_of(multiple.saturating_add(1))
-                {
-                    let range = self.db.available_range()?;
-                    self.snapshot_at(*range.start(), block.view())?;
-                }
-            };
+            if block.number().is_multiple_of(self.prune_interval) {
+                let range = self.db.available_range()?;
+                self.snapshot_at(*range.start(), block.view())?;
+            }
             // Do checkpoints
             if self.config.do_checkpoints
                 && self.db.get_checkpoint_dir()?.is_some()
@@ -2464,7 +2463,7 @@ impl Consensus {
         let old_ceil = trie_storage.set_tag_ceil(new_ceil)?;
         // store the previous tag, which is the next floor.
         *tag_lock = old_ceil;
-        tracing::info!(block_number, new_ceil, old_ceil, "Snapshot: trigger");
+        tracing::info!(block_number, new_ceil, old_ceil, "Snapshot: go");
 
         // trigger snapshot
         self.message_sender

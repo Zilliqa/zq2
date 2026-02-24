@@ -639,13 +639,12 @@ impl Db {
     }
 
     fn init_rocksdb(config: DbConfig) -> (rocksdb::Options, Arc<AtomicU64>) {
-        // RocksDB configuration
         let mut block_opts = BlockBasedOptions::default();
         // reduce disk and memory usage - https://github.com/facebook/rocksdb/wiki/RocksDB-Bloom-Filter#ribbon-filter
         block_opts.set_ribbon_filter(10.0);
         block_opts.set_optimize_filters_for_memory(true); // reduce memory wastage with JeMalloc
         // Mitigate OOM
-        block_opts.set_cache_index_and_filter_blocks(config.rocksdb_cache_index_filters);
+        block_opts.set_cache_index_and_filter_blocks(true);
         // Improve cache utilisation
         block_opts.set_pin_top_level_index_and_filter(true);
         block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
@@ -653,39 +652,37 @@ impl Db {
         block_opts.set_partition_filters(true);
         block_opts.set_block_size(config.rocksdb_block_size);
         block_opts.set_metadata_block_size(config.rocksdb_block_size);
-
-        let cache =
-            Cache::new_hyper_clock_cache(config.rocksdb_cache_size, config.rocksdb_block_size);
+        // RocksDB cache
+        let cache = Cache::new_lru_cache(config.rocksdb_cache_size);
         block_opts.set_block_cache(&cache);
 
+        // RocksDB configuration
         let mut rdb_opts = Options::default();
+        // Set optimised defaults
+        rdb_opts.optimize_level_style_compaction(config.rocksdb_memtable_budget);
         rdb_opts.create_if_missing(true);
         rdb_opts.set_block_based_table_factory(&block_opts);
-        rdb_opts.set_periodic_compaction_seconds(config.rocksdb_compaction_period);
-        // Mitigate OOM - prevent opening too many files at a time
-        rdb_opts.set_max_open_files(config.rocksdb_max_open_files);
-        // Reduce reads
-        rdb_opts.set_level_compaction_dynamic_level_bytes(true);
-        rdb_opts.set_target_file_size_base(config.rocksdb_target_file_size);
-        rdb_opts.set_max_bytes_for_level_base(config.rocksdb_target_file_size << 2);
         // Reduce storage
         rdb_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
         rdb_opts.set_bottommost_compression_type(rocksdb::DBCompressionType::Zstd);
         rdb_opts.set_bottommost_zstd_max_train_bytes(0, true);
+        // Increase background threads
+        rdb_opts.increase_parallelism(crate::available_threads() as i32);
 
         let tag_floor = Arc::new(AtomicU64::new(u64::MAX));
         // Use the default compaction filter, unless pruning is enabled
         if config.state_prune {
+            tracing::info!("SnapshotCompactionFilter");
             let rev_floor = tag_floor.clone();
-            let tag_floor = rev_floor.load(Ordering::Relaxed);
-            tracing::info!(tag_floor, "StatePruneFilter");
-            // Keys are only removed if they are older than the floor value, which is set during snapshot.
+            // Keys are only removed if they are older than the floor value, which is set during a snapshot.
             // After pruning, old and legacy keys are eventually removed when the background compaction runs.
             rdb_opts.set_compaction_filter(
-                "StatePruneFilter",
+                "SnapshotCompactionFilter",
                 move |_lvl, key, _value| -> CompactionDecision {
                     match key.len() {
-                        // 40-bytes: remove tagged key, if the key is 'older' than the floor
+                        // 40-bytes: remove tagged key, if the key is 'older' than the floor.
+                        // The `rev_floor` is set to u64::MAX during startup; and only changed *after* a snapshot is taken.
+                        // If a snapshot gets interrupted for whatever reason, the floor remains unchanged; partial snapshots are safe.
                         TAGGED_KEY_LEN
                             if u64::from_be_bytes(key[32..40].try_into().unwrap())
                                 > rev_floor.load(Ordering::Relaxed) =>
@@ -693,6 +690,7 @@ impl Db {
                             CompactionDecision::Remove
                         }
                         // 32-bytes: remove legacy key, if snapshot already taken
+                        // Legacy keys are only removed after a snapshot of a more recent state has been taken.
                         LEGACY_KEY_LEN if rev_floor.load(Ordering::Relaxed) != u64::MAX => {
                             CompactionDecision::Remove
                         }
@@ -1710,13 +1708,13 @@ pub fn snapshot_trie(storage: TrieStorage, root_hash: B256, block_number: u64) -
     let trie = Arc::new(storage);
     let tag_lock = trie.tag_view.lock();
     let new_tag = *tag_lock;
-    tracing::info!(%root_hash, block_number, new_tag, "Snapshot: start");
+    tracing::info!(%root_hash, block_number, "Snapshot: begin");
     TrieStorage::snapshot(trie.clone(), root_hash)?;
     let old_tag = trie.set_tag_floor(new_tag)?;
     if old_tag != 0 {
         trie.drop_sql_state_trie()?; // delete SQL database
     }
-    tracing::info!(%root_hash, block_number, new_tag, old_tag, "Snapshot: done");
+    tracing::info!(block_number, new_tag, old_tag, "Snapshot: end");
     Ok(()) // not fatal, it can be retried later.
 }
 
