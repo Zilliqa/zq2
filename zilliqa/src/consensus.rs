@@ -3149,8 +3149,8 @@ impl Consensus {
             // we need to set the (parent) block's view at which we call the jailing
             // precompile otherwise we won't know if we must use the node's history
             // or the checkpoint's history gradually extended during state-syncing
-            view: block.header.view,
-            number: block.header.number,
+            view: block.header.view + 1,
+            number: block.header.number + 1,
             mix_hash: parent_mix_hash,
             ..Default::default()
         };
