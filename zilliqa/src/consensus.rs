@@ -2003,8 +2003,9 @@ impl Consensus {
             return Ok(None);
         };
 
+        let randao_support = self.state.forks.get(hiqh_qc_block.number()).randao_support;
         // Get the committee for the qc hash (should be highest?) for this view
-        let committee = if self.state.forks.get(hiqh_qc_block.number()).randao_support {
+        let committee = if randao_support {
             let state = self.state.at_root(hiqh_qc_block.state_root_hash().into());
             state.get_stakers(hiqh_qc_block.header)?
         } else {
@@ -2032,13 +2033,18 @@ impl Consensus {
         self.update_high_qc_and_view(false, new_view.qc)?;
 
         let mut current_view = self.get_view()?;
+        let checked_view = if randao_support {
+            new_view.view + 1
+        } else {
+            new_view.view
+        };
         // if the vote is too old and does not count anymore
-        if new_view.view + 1 < current_view {
+        if checked_view < current_view {
             trace!(
-                new_view.view,
+                checked_view,
                 "Received a NewView which is too old for us, discarding. Our view is: {} and new_view is: {}",
                 current_view,
-                new_view.view
+                checked_view
             );
             return Ok(None);
         }
@@ -2053,7 +2059,7 @@ impl Consensus {
         // What happens when there are multiple QCs with different parents?
         // if we are not the leader of the round in which the vote counts
         if !self.are_we_leader_for_view(new_view.qc.block_hash, parent_mix_hash, new_view.view) {
-            info!(new_view.view, "skipping new view, not the leader");
+            trace!(new_view.view, "skipping new view, not the leader");
             return Ok(None);
         }
 
@@ -2443,9 +2449,13 @@ impl Consensus {
             })?;
 
             let state_at = self.state.at_root(parent.state_root_hash().into());
-            let randao_enabled = self.state.forks.get(parent.header.number).randao_support;
+            let randao_enabled = self.state.forks.get(parent.number()).randao_support;
             let block_header = BlockHeader {
-                number: parent.header.number + 1,
+                number: if randao_enabled {
+                    parent.header.number + 1
+                } else {
+                    parent.header.number
+                },
                 mix_hash: parent.header.mix_hash,
                 ..Default::default()
             };
@@ -3928,16 +3938,21 @@ impl Consensus {
             let block = self
                 .get_canonical_block_by_number(migrate_at)?
                 .expect("Next block missing");
+
+            let fork = self.state.forks.get(block.number() - 1);
             let state_at = self.state.at_root(block_state_root_hash.into());
             let header = BlockHeader {
                 view: parent_view,
-                number: migrate_at,
+                number: if fork.randao_support {
+                    migrate_at
+                } else {
+                    migrate_at - 1
+                },
                 mix_hash,
                 ..Default::default()
             };
             let mut history = VecDeque::new();
             for view in parent_view + 1..block.view() {
-                let fork = self.state.forks.get(header.number);
                 if let Ok(leader) = state_at.leader(view, header, fork)
                     && view != parent_view + 1
                 {
@@ -3997,8 +4012,15 @@ impl Consensus {
                 .expect("Parent block missing");
 
             let state_at = self.state.at_root(parent.hash().into());
+
+            let fork = self.state.forks.get(parent.number());
+
             let header = BlockHeader {
-                number: parent.number() + 1,
+                number: if fork.randao_support {
+                    parent.number() + 1
+                } else {
+                    parent.number()
+                },
                 mix_hash: parent.header.mix_hash,
                 ..Default::default()
             };
