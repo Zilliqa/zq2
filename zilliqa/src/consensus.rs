@@ -721,7 +721,9 @@ impl Consensus {
                     view,
                     block.hash()
                 );
-                let leader = self.leader_at_block(&block, None, block.view()).unwrap();
+                let randao_support = self.state.forks.get(block.number()).randao_support;
+                let leader_view = if randao_support { block.view() } else { view };
+                let leader = self.leader_at_block(&block, None, leader_view).unwrap();
                 let vote = self.vote_from_block(&block);
                 let network_msg = self.build_vote(leader.peer_id, vote);
                 return Ok(Some(network_msg));
@@ -2656,10 +2658,10 @@ impl Consensus {
             ));
         }
 
-        let randao_supported = self.state.forks.get(block.number()).randao_support;
+        let parent_randao_supported = self.state.forks.get(parent.number()).randao_support;
 
         // Derive the proposer from the block's view
-        let leader_view = if randao_supported {
+        let leader_view = if parent_randao_supported {
             block.view() - 1
         } else {
             block.view()
