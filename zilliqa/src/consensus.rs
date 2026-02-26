@@ -1361,12 +1361,12 @@ impl Consensus {
             block_view + 1
         };
 
-        let grandarent_mix_hash = self
+        let parent_mix_hash = self
             .get_block(&block.parent_hash())
             .ok()
             .flatten()
             .and_then(|block| block.header.mix_hash);
-        if !self.are_we_leader_for_view(block_hash, grandarent_mix_hash, leader_view) {
+        if !self.are_we_leader_for_view(block_hash, parent_mix_hash, leader_view) {
             trace!(
                 vote_view = leader_view,
                 ?block_hash,
@@ -1889,7 +1889,8 @@ impl Consensus {
             }
             return Ok(None);
         };
-        info!(proposal_hash = ?final_block.hash(), parent_hash = ?final_block.parent_hash(), ?final_block.header.view, ?final_block.header.number, randao = ?final_block.header.mix_hash, txns = final_block.transactions.len(), "######### proposing block");
+
+        info!(proposal_hash = ?final_block.hash(), ?final_block.header.view, ?final_block.header.number, txns = final_block.transactions.len(), "######### proposing block");
 
         Ok(Some((
             None,
@@ -1979,9 +1980,20 @@ impl Consensus {
 
         let parent_root_hash = parent.state_root_hash();
 
+        let randao_supported = self.state.forks.get(parent.number()).randao_support;
+
         let state = self.state.at_root(parent_root_hash.into());
         let executed_block = BlockHeader {
-            number: parent.header.number + 1,
+            number: if randao_supported {
+                parent.number()
+            } else {
+                parent.number() + 1
+            },
+            mix_hash: if randao_supported {
+                parent.header.mix_hash
+            } else {
+                None
+            },
             ..Default::default()
         };
 
@@ -2452,9 +2464,9 @@ impl Consensus {
             let randao_enabled = self.state.forks.get(parent.number()).randao_support;
             let block_header = BlockHeader {
                 number: if randao_enabled {
-                    parent.header.number + 1
-                } else {
                     parent.header.number
+                } else {
+                    parent.header.number + 1
                 },
                 mix_hash: parent.header.mix_hash,
                 ..Default::default()
@@ -2700,7 +2712,11 @@ impl Consensus {
         let committee = self
             .state
             .at_root(parent.state_root_hash().into())
-            .get_stakers(parent.header)?;
+            .get_stakers(if parent_randao_supported {
+                parent.header
+            } else {
+                block.header
+            })?;
 
         if verified.is_err() {
             tracing::error!(?block, "Unable to verify block");
@@ -3943,27 +3959,25 @@ impl Consensus {
             let state_at = self.state.at_root(block_state_root_hash.into());
             let header = BlockHeader {
                 view: parent_view,
-                number: if fork.randao_support {
-                    migrate_at
-                } else {
-                    migrate_at - 1
-                },
+                number: migrate_at - 1,
                 mix_hash,
                 ..Default::default()
             };
             let mut history = VecDeque::new();
             for view in parent_view + 1..block.view() {
-                if let Ok(leader) = state_at.leader(view, header, fork)
+                let leader_view = if fork.randao_support { view - 1 } else { view };
+                if let Ok(leader) = state_at.leader(leader_view, header, fork)
                     && view != parent_view + 1
                 {
-                    history.push_back((view, leader));
+                    history.push_back((leader_view, leader));
                     self.state
                         .ckpt_view_history
                         .as_ref()
                         .expect("Checkpoint view history missing")
                         .write()
                         .append_history(&history)?;
-                    self.db.extend_ckpt_view_history(view, leader.as_bytes())?;
+                    self.db
+                        .extend_ckpt_view_history(leader_view, leader.as_bytes())?;
                     // TODO(jailing): collect them in a vector and call append_history only once
                 }
             }
@@ -4017,9 +4031,9 @@ impl Consensus {
 
             let header = BlockHeader {
                 number: if fork.randao_support {
-                    parent.number() + 1
-                } else {
                     parent.number()
+                } else {
+                    parent.number() + 1
                 },
                 mix_hash: parent.header.mix_hash,
                 ..Default::default()
@@ -4033,15 +4047,17 @@ impl Consensus {
             while self.get_block_by_view(view)?.is_none()
                 && self.state.view_history.read().min_view > view
             {
-                if let Ok(leader) = state_at.leader(view, header, fork) {
-                    history.push_back((view, leader));
+                let leader_view = if fork.randao_support { view - 1 } else { view };
+                if let Ok(leader) = state_at.leader(leader_view, header, fork) {
+                    history.push_back((leader_view, leader));
                     self.state
                         .ckpt_view_history
                         .as_ref()
                         .expect("Checkpoint view history missing")
                         .write()
                         .append_history(&history)?;
-                    self.db.extend_ckpt_view_history(view, leader.as_bytes())?;
+                    self.db
+                        .extend_ckpt_view_history(leader_view, leader.as_bytes())?;
                     // TODO(jailing): collect them in a vector and call append_history only once
                 }
                 view += 1;
