@@ -23,7 +23,8 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use revm::primitives::B256;
 use rocksdb::{
-    BlockBasedOptions, Cache, CompactionDecision, DBWithThreadMode, Options, SingleThreaded,
+    BlockBasedOptions, BlockBasedTablePinningTier, Cache, CompactionDecision, DBWithThreadMode,
+    Options, SingleThreaded,
 };
 use rusqlite::{
     Connection, OptionalExtension, Row, ToSql, named_params,
@@ -646,14 +647,16 @@ impl Db {
         // Mitigate OOM
         block_opts.set_cache_index_and_filter_blocks(true);
         // Improve cache utilisation
-        block_opts.set_pin_top_level_index_and_filter(true);
-        block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
         block_opts.set_index_type(rocksdb::BlockBasedIndexType::TwoLevelIndexSearch);
         block_opts.set_partition_filters(true);
         block_opts.set_block_size(config.rocksdb_block_size);
         block_opts.set_metadata_block_size(config.rocksdb_block_size);
-        // RocksDB cache
-        let cache = Cache::new_lru_cache(config.rocksdb_cache_size);
+        // Improve pinning of filters/indexes
+        block_opts.set_partition_pinning_tier(BlockBasedTablePinningTier::All);
+        block_opts.set_top_level_index_pinning_tier(BlockBasedTablePinningTier::FlushAndSimilar);
+        block_opts.set_unpartitioned_pinning_tier(BlockBasedTablePinningTier::None);
+        let cache =
+            Cache::new_hyper_clock_cache(config.rocksdb_cache_size, config.rocksdb_block_size);
         block_opts.set_block_cache(&cache);
 
         // RocksDB configuration
