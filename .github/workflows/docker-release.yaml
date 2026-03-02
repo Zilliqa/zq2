@@ -102,7 +102,7 @@ jobs:
           fetch-depth: 0
       - name: Get tag version - private image
         id: set-tag
-        uses: Zilliqa/gh-actions-workflows/actions/generate-tag@v2
+        uses: Zilliqa/gh-actions-workflows/actions/generate-tag@v3
         with:
           tag: ${{ env.GCP_REGISTRY }}/zq2
           length: 8
