@@ -6,7 +6,10 @@ use std::{
     num::NonZeroUsize,
     ops::RangeInclusive,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 
@@ -15,10 +18,14 @@ use anyhow::{Context, Result, anyhow};
 #[allow(unused_imports)]
 use eth_trie::{DB, EthTrie, MemoryDB, Trie};
 use lru::LruCache;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rocksdb::{BlockBasedOptions, Cache, DBWithThreadMode, Options, SingleThreaded};
+use revm::primitives::B256;
+use rocksdb::{
+    BlockBasedOptions, BlockBasedTablePinningTier, Cache, CompactionDecision, DBWithThreadMode,
+    Options, SingleThreaded,
+};
 use rusqlite::{
     Connection, OptionalExtension, Row, ToSql, named_params,
     types::{FromSql, FromSqlError, ToSqlOutput},
@@ -34,7 +41,7 @@ use crate::{
     precompiles::ViewHistory,
     time::SystemTime,
     transaction::{EvmGas, Log, SignedTransaction, TransactionReceipt, VerifiedTransaction},
-    trie_storage::TrieStorage,
+    trie_storage::{LEGACY_KEY_LEN, ROCKSDB_TAGGING_AT, TAGGED_KEY_LEN, TrieStorage},
 };
 
 const MAX_KEYS_IN_SINGLE_QUERY: usize = 32765;
@@ -256,6 +263,10 @@ pub struct Db {
     executable_blocks_height: Option<u64>,
     /// Clone of DbConfig
     pub config: DbConfig,
+    /// State Pruning
+    rev_ceil: Arc<AtomicU64>, // always set to the finalised view height; set by Db::set_finalised_view()
+    rev_floor: Arc<AtomicU64>, // resets to u64::MAX at startup; gets set by Db::snapshot()
+    pub tag_view: Arc<Mutex<u64>>, // used to lock the promotion process
 }
 
 impl Db {
@@ -311,46 +322,13 @@ impl Db {
         let connection = pool.get()?;
         Self::ensure_schema(&connection)?;
 
-        // RocksDB configuration
-        let mut block_opts = BlockBasedOptions::default();
-        // reduce disk and memory usage - https://github.com/facebook/rocksdb/wiki/RocksDB-Bloom-Filter#ribbon-filter
-        block_opts.set_ribbon_filter(10.0);
-        block_opts.set_optimize_filters_for_memory(true); // reduce memory wastage with JeMalloc
-        // Mitigate OOM
-        block_opts.set_cache_index_and_filter_blocks(config.rocksdb_cache_index_filters);
-        // Improve cache utilisation
-        block_opts.set_pin_top_level_index_and_filter(true);
-        block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
-        block_opts.set_index_type(rocksdb::BlockBasedIndexType::TwoLevelIndexSearch);
-        block_opts.set_partition_filters(true);
-        block_opts.set_block_size(config.rocksdb_block_size);
-        block_opts.set_metadata_block_size(config.rocksdb_block_size);
-
-        let cache =
-            Cache::new_hyper_clock_cache(config.rocksdb_cache_size, config.rocksdb_block_size);
-        block_opts.set_block_cache(&cache);
-
-        let mut rdb_opts = Options::default();
-        rdb_opts.create_if_missing(true);
-        rdb_opts.set_block_based_table_factory(&block_opts);
-        rdb_opts.set_periodic_compaction_seconds(config.rocksdb_compaction_period);
-        // Mitigate OOM - prevent opening too many files at a time
-        rdb_opts.set_max_open_files(config.rocksdb_max_open_files);
-        // Reduce reads
-        rdb_opts.set_level_compaction_dynamic_level_bytes(true);
-        rdb_opts.set_target_file_size_base(config.rocksdb_target_file_size);
-        rdb_opts.set_max_bytes_for_level_base(config.rocksdb_target_file_size << 2);
-        // Reduce storage
-        rdb_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
-        rdb_opts.set_bottommost_compression_type(rocksdb::DBCompressionType::Zstd);
-        rdb_opts.set_bottommost_zstd_max_train_bytes(0, true);
-
         // Should be safe in single-threaded mode
         // https://docs.rs/rocksdb/latest/rocksdb/type.DB.html#limited-performance-implication-for-single-threaded-mode
         let rdb_path = path.as_ref().map_or_else(
             || tempfile::tempdir().unwrap().path().join("state.rocksdb"),
             |p| p.join("state.rocksdb"),
         );
+        let (rdb_opts, rev_floor) = Self::init_rocksdb(config.clone());
         let rdb = DBWithThreadMode::<SingleThreaded>::open(&rdb_opts, rdb_path)?;
 
         tracing::info!(
@@ -363,13 +341,23 @@ impl Db {
         let cache =
             LruCache::new(NonZeroUsize::new(config.rocksdb_state_cache_size / 500).unwrap());
 
+        // Use the last known tag for keys.
+        let last_tag = rdb.get(ROCKSDB_TAGGING_AT)?.map_or(u64::MAX, |v| {
+            u64::from_be_bytes(v.try_into().expect("8-bytes"))
+        });
+        let rev_ceil = Arc::new(AtomicU64::new(last_tag)); // stores the reverse view
+        let tag_view = Arc::new(Mutex::new(u64::MAX.saturating_sub(last_tag))); // stores the equivalent view
+
         Ok(Db {
             pool: Arc::new(pool),
-            path,
-            executable_blocks_height,
             kvdb: Arc::new(rdb),
             cache: Arc::new(RwLock::new(cache)),
+            path,
+            executable_blocks_height,
             config,
+            rev_ceil,
+            rev_floor,
+            tag_view,
         })
     }
 
@@ -651,6 +639,73 @@ impl Db {
         Ok(())
     }
 
+    fn init_rocksdb(config: DbConfig) -> (rocksdb::Options, Arc<AtomicU64>) {
+        let mut block_opts = BlockBasedOptions::default();
+        // reduce disk and memory usage - https://github.com/facebook/rocksdb/wiki/RocksDB-Bloom-Filter#ribbon-filter
+        block_opts.set_ribbon_filter(10.0);
+        block_opts.set_optimize_filters_for_memory(true); // reduce memory wastage with JeMalloc
+        // Mitigate OOM
+        block_opts.set_cache_index_and_filter_blocks(true);
+        // Improve cache utilisation
+        block_opts.set_index_type(rocksdb::BlockBasedIndexType::TwoLevelIndexSearch);
+        block_opts.set_partition_filters(true);
+        block_opts.set_block_size(config.rocksdb_block_size);
+        block_opts.set_metadata_block_size(config.rocksdb_block_size);
+        // Improve pinning of filters/indexes
+        block_opts.set_partition_pinning_tier(BlockBasedTablePinningTier::All);
+        block_opts.set_top_level_index_pinning_tier(BlockBasedTablePinningTier::FlushAndSimilar);
+        block_opts.set_unpartitioned_pinning_tier(BlockBasedTablePinningTier::None);
+        let cache =
+            Cache::new_hyper_clock_cache(config.rocksdb_cache_size, config.rocksdb_block_size);
+        block_opts.set_block_cache(&cache);
+
+        // RocksDB configuration
+        let mut rdb_opts = Options::default();
+        // Set optimised defaults
+        rdb_opts.optimize_level_style_compaction(config.rocksdb_memtable_budget);
+        rdb_opts.create_if_missing(true);
+        rdb_opts.set_block_based_table_factory(&block_opts);
+        // Reduce storage
+        rdb_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+        rdb_opts.set_bottommost_compression_type(rocksdb::DBCompressionType::Zstd);
+        rdb_opts.set_bottommost_zstd_max_train_bytes(0, true);
+        // Increase background threads
+        rdb_opts.increase_parallelism(crate::available_threads() as i32);
+
+        let tag_floor = Arc::new(AtomicU64::new(u64::MAX));
+        // Use the default compaction filter, unless pruning is enabled
+        if config.state_prune {
+            tracing::info!("SnapshotCompactionFilter");
+            let rev_floor = tag_floor.clone();
+            // Keys are only removed if they are older than the floor value, which is set during a snapshot.
+            // After pruning, old and legacy keys are eventually removed when the background compaction runs.
+            rdb_opts.set_compaction_filter(
+                "SnapshotCompactionFilter",
+                move |_lvl, key, _value| -> CompactionDecision {
+                    match key.len() {
+                        // 40-bytes: remove tagged key, if the key is 'older' than the floor.
+                        // The `rev_floor` is set to u64::MAX during startup; and only changed *after* a snapshot is taken.
+                        // If a snapshot gets interrupted for whatever reason, the floor remains unchanged; partial snapshots are safe.
+                        TAGGED_KEY_LEN
+                            if u64::from_be_bytes(key[32..40].try_into().unwrap())
+                                > rev_floor.load(Ordering::Relaxed) =>
+                        {
+                            CompactionDecision::Remove
+                        }
+                        // 32-bytes: remove legacy key, if snapshot already taken
+                        // Legacy keys are only removed after a snapshot of a more recent state has been taken.
+                        LEGACY_KEY_LEN if rev_floor.load(Ordering::Relaxed) != u64::MAX => {
+                            CompactionDecision::Remove
+                        }
+                        // default to keep, all other keys
+                        _ => CompactionDecision::Keep,
+                    }
+                },
+            );
+        }
+        (rdb_opts, tag_floor)
+    }
+
     // SQLite performance tweaks
     fn init_connection(
         connection: &mut Connection,
@@ -812,6 +867,10 @@ impl Db {
             self.pool.clone(),
             self.kvdb.clone(),
             self.cache.clone(),
+            self.rev_ceil.clone(),
+            self.rev_floor.clone(),
+            self.tag_view.clone(),
+            self.config.state_prune,
         ))
     }
 
@@ -1641,6 +1700,24 @@ impl Db {
     pub fn get_total_transaction_count(&self) -> Result<usize> {
         Ok(0)
     }
+}
+
+/// Snapshot the state trie.
+///
+/// Promotes the tag of each node to the given view. This process may take a while to complete.
+/// The `tag_lock` ensures that only one snapshot is in progress at a time.
+/// The previous state trie will be eventually pruned during compaction.
+pub fn snapshot_trie(storage: TrieStorage, root_hash: B256, new_floor: u64) -> Result<()> {
+    let trie = Arc::new(storage);
+    let tag_ceil = trie.tag_view.lock();
+    tracing::info!(%root_hash, new_floor, %tag_ceil, "Snapshot: begin");
+    TrieStorage::snapshot(trie.clone(), root_hash)?;
+    let old_floor = trie.set_tag_floor(new_floor)?;
+    if old_floor == 0 && new_floor != 0 {
+        trie.drop_sql_state_trie()?; // delete SQL database
+    }
+    tracing::info!(new_floor, old_floor, %tag_ceil, "Snapshot: end");
+    Ok(()) // not fatal, it can be retried later.
 }
 
 pub fn get_checkpoint_filename<P: AsRef<Path> + Debug>(

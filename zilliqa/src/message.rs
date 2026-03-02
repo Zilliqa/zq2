@@ -394,6 +394,8 @@ pub enum InternalMessage {
     SubscribeToGossipSubTopic(GossipSubTopic),
     /// Notify p2p cordinator to unsubscribe from a particular gossipsub topic
     UnsubscribeFromGossipSubTopic(GossipSubTopic),
+    /// Snapshot a trie at a given point
+    SnapshotTrie(TrieStorage, B256, u64),
 }
 
 #[derive(Debug, Clone)]
@@ -419,6 +421,9 @@ impl Display for InternalMessage {
             }
             InternalMessage::UnsubscribeFromGossipSubTopic(topic) => {
                 write!(f, "UnsubscribeFromGossipSubTopic({topic:?})")
+            }
+            InternalMessage::SnapshotTrie(_storage, hash, view) => {
+                write!(f, "SnapshotTrie({hash:?}) {view})")
             }
         }
     }

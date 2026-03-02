@@ -174,18 +174,12 @@ pub struct DbConfig {
     /// Whether to enable state-sync/state-migration
     #[serde(default)]
     pub state_sync: bool,
+    /// config.toml setting is ignored.
+    #[serde(default)]
+    pub state_prune: bool,
     /// RocksDB block cache size, in bytes.
     #[serde(default = "rocksdb_cache_size_default")]
     pub rocksdb_cache_size: usize,
-    /// RocksDB periodic compaction seconds.
-    #[serde(default = "rocksdb_compaction_period_default")]
-    pub rocksdb_compaction_period: u64,
-    /// RocksDB max open files.
-    #[serde(default = "rocksdb_max_open_files_default")]
-    pub rocksdb_max_open_files: i32,
-    /// RocksDB cache index/filters
-    #[serde(default = "rocksdb_cache_index_filters_default")]
-    pub rocksdb_cache_index_filters: bool,
     /// State cache size
     #[serde(default = "rocksdb_state_cache_size_default")]
     pub rocksdb_state_cache_size: usize,
@@ -193,28 +187,16 @@ pub struct DbConfig {
     #[serde(default = "rocksdb_block_size_default")]
     pub rocksdb_block_size: usize,
     /// Target File Size
-    #[serde(default = "rocksdb_target_file_size_default")]
-    pub rocksdb_target_file_size: u64,
+    #[serde(default = "rocksdb_memtable_budget_default")]
+    pub rocksdb_memtable_budget: usize,
 }
 
 fn rocksdb_block_size_default() -> usize {
     1 << 14 // 16KB reduces in-memory indexes
 }
 
-fn rocksdb_target_file_size_default() -> u64 {
-    1 << 28 // 256MB reduces number of open files
-}
-
-fn rocksdb_cache_index_filters_default() -> bool {
-    false // true: mitigate OOM; false: better performance.
-}
-
-fn rocksdb_max_open_files_default() -> i32 {
-    -1 // Set max_open_files to -1 to always keep all files open, which avoids expensive table cache calls.
-}
-
-fn rocksdb_compaction_period_default() -> u64 {
-    u64::MAX - 1 // allow rocksdb to decide
+fn rocksdb_memtable_budget_default() -> usize {
+    1 << 31 // 2GB is a reasonable default
 }
 
 fn rocksdb_cache_size_default() -> usize {
@@ -222,7 +204,7 @@ fn rocksdb_cache_size_default() -> usize {
 }
 
 fn rocksdb_state_cache_size_default() -> usize {
-    1 << 31
+    1 << 31 // 2GB is a reasonable default
 }
 
 fn sql_cache_size_default() -> usize {
@@ -239,13 +221,11 @@ impl Default for DbConfig {
             conn_cache_size: sql_cache_size_default(),
             auto_checkpoint: sql_auto_checkpoint_default(),
             state_sync: false,
+            state_prune: false,
             rocksdb_cache_size: rocksdb_cache_size_default(),
-            rocksdb_compaction_period: rocksdb_compaction_period_default(),
-            rocksdb_max_open_files: rocksdb_max_open_files_default(),
-            rocksdb_cache_index_filters: rocksdb_cache_index_filters_default(),
             rocksdb_state_cache_size: rocksdb_state_cache_size_default(),
             rocksdb_block_size: rocksdb_block_size_default(),
-            rocksdb_target_file_size: rocksdb_target_file_size_default(),
+            rocksdb_memtable_budget: rocksdb_memtable_budget_default(),
         }
     }
 }
@@ -376,31 +356,33 @@ impl NodeConfig {
             }
         }
 
+        // deprecated settings
         anyhow::ensure!(
             self.state_cache_size == state_cache_size_default(),
             "state_cache_size is deprecated. Use db.rocksdb_cache_size and db.rocksdb_state_cache_size instead."
         );
-
+        anyhow::ensure!(!self.db.state_prune, "db.state_prune must not be set");
+        // sync/prune settings
         anyhow::ensure!(
             self.sync.base_height == u64_max() || self.sync.prune_interval == u64_max(),
-            "base_height and prune_interval cannot be set at the same time"
+            "sync.base_height and sync.prune_interval cannot be set at the same time"
         );
-        // when set, >> 15 to avoid pruning forks; > 256 to be EVM-safe; arbitrarily picked.
         anyhow::ensure!(
             self.sync.prune_interval >= MIN_PRUNE_INTERVAL,
-            "prune_interval must be at least {MIN_PRUNE_INTERVAL}",
+            "sync.prune_interval must be at least {MIN_PRUNE_INTERVAL}",
         );
-        // 10 is a reasonable minimum for a node to be useful.
+        anyhow::ensure!(
+            self.sync.prune_interval == u64::MAX || !self.do_checkpoints,
+            "state_prune and do_checkpoints cannot be set at the same time"
+        );
         anyhow::ensure!(
             self.sync.block_request_batch_size >= 10,
             "block_request_batch_size must be at least 10"
         );
-        // 1000 would saturate a typical node.
         anyhow::ensure!(
             self.sync.max_blocks_in_flight <= 1000,
             "max_blocks_in_flight must be at most 1000"
         );
-        // the minimum required for the next leader selection
         anyhow::ensure!(
             self.max_missed_view_age >= MISSED_VIEW_WINDOW,
             "max_missed_view_age must be at least {MISSED_VIEW_WINDOW}"

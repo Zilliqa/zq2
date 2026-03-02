@@ -247,6 +247,8 @@ pub struct Consensus {
     force_view: Option<(u64, DateTime)>,
     /// Mark if this node is in the committee at it's current head block height
     in_committee: bool,
+    /// Prune interval, if applicable
+    prune_interval: u64,
 }
 
 impl Consensus {
@@ -387,11 +389,15 @@ impl Consensus {
         let forks = config.consensus.get_forks()?;
         let enable_ots_indices = config.enable_ots_indices;
 
+        // pre-compute how often state snapshots are taken, if at all.
+        let bpe = config.consensus.blocks_per_epoch;
+        let prune_interval = ((config.sync.prune_interval / bpe) * bpe).saturating_add(bpe);
+
         let mut consensus = Consensus {
             secret_key,
             config,
             sync,
-            message_sender,
+            message_sender: message_sender.clone(),
             reset_timeout,
             votes: DashMap::new(),
             buffered_votes: DashMap::new(),
@@ -411,6 +417,7 @@ impl Consensus {
             new_transaction_hashes: broadcast::Sender::new(128),
             force_view: None,
             in_committee: true,
+            prune_interval,
         };
 
         // If we're at genesis, add the genesis block and return
@@ -579,7 +586,8 @@ impl Consensus {
         }
 
         // Initialize state trie storage
-        consensus.db.state_trie()?.init_state_trie(forks)?;
+        let state_trie = consensus.db.state_trie()?;
+        state_trie.init_state_trie(forks)?;
 
         // If timestamp of when current high_qc was written exists then use it to estimate the minimum number of blocks the network has moved on since shut down
         // This is useful in scenarios in which consensus has failed since this node went down
@@ -2415,44 +2423,55 @@ impl Consensus {
             }
         }
 
-        if self.block_is_first_in_epoch(block.number())
-            && !block.is_genesis()
-            && self.config.do_checkpoints
-            && self.epoch_is_checkpoint(self.epoch_number(block.number()))
-            && let Some(checkpoint_path) = self.db.get_checkpoint_dir()?
-        {
-            let parent = self
-                .db
-                .get_block(block.parent_hash().into())?
-                .ok_or(anyhow!(
-                    "Trying to checkpoint block, but we don't have its parent"
-                ))?;
-            let transactions: Vec<SignedTransaction> = block
-                .transactions
-                .iter()
-                .map(|txn_hash| {
-                    let tx = self.db.get_transaction(txn_hash)?.ok_or(anyhow!(
-                        "failed to fetch transaction {} for checkpoint parent {}",
-                        txn_hash,
-                        parent.hash()
-                    ))?;
-                    Ok::<_, anyhow::Error>(tx.tx)
-                })
-                .collect::<Result<Vec<SignedTransaction>>>()?;
-
-            self.message_sender.send_message_to_coordinator(
-                InternalMessage::ExportBlockCheckpoint(
-                    Box::new(block),
-                    transactions,
-                    Box::new(parent),
-                    self.db.state_trie()?.clone(),
-                    self.state.view_history.read().clone(),
-                    checkpoint_path,
-                ),
-            )?;
+        if self.block_is_first_in_epoch(block.number()) && !block.is_genesis() {
+            // Do snapshots
+            // at epoch/block boundaries to avoid state inconsistencies.
+            if block.number().is_multiple_of(self.prune_interval) {
+                let range = self.db.available_range()?;
+                self.snapshot_at(*range.start(), block.view())?;
+            }
+            // Do checkpoints
+            if self.config.do_checkpoints
+                && self.db.get_checkpoint_dir()?.is_some()
+                && self.epoch_is_checkpoint(self.epoch_number(block.number()))
+            {
+                self.checkpoint_at(block.number())?;
+            }
         }
 
         Ok(())
+    }
+
+    /// Trigger a snapshot
+    pub fn snapshot_at(&self, block_number: u64, new_ceil: u64) -> Result<()> {
+        // skip if there is a snapshot in progress.
+        let Some(mut tag_lock) = self.db.tag_view.try_lock() else {
+            return Ok(());
+        };
+        // error if the lowest block does not exist
+        let Some(block) = self.get_canonical_block_by_number(block_number)? else {
+            return Err(anyhow::format_err!("Snapshot: missing block"));
+        };
+        // skip if the lowest block unsafe to snapshot
+        // 'unsafe' means that the block exists in a tag range that could be pruned away during compaction.
+        if block.view() < *tag_lock {
+            return Ok(());
+        }
+
+        let trie_storage = self.db.state_trie()?;
+        // raise the ceiling to the new tag, promoting all new state
+        let old_ceil = trie_storage.set_tag_ceil(new_ceil)?;
+        // store the previous tag, which is the next floor.
+        *tag_lock = new_ceil;
+        tracing::info!(block_number, new_ceil, old_ceil, "Snapshot: go");
+
+        // trigger snapshot
+        self.message_sender
+            .send_message_to_coordinator(InternalMessage::SnapshotTrie(
+                trie_storage,
+                block.state_root_hash().into(),
+                old_ceil,
+            ))
     }
 
     /// Trigger a checkpoint, for debugging.
