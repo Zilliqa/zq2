@@ -1707,17 +1707,16 @@ impl Db {
 /// Promotes the tag of each node to the given view. This process may take a while to complete.
 /// The `tag_lock` ensures that only one snapshot is in progress at a time.
 /// The previous state trie will be eventually pruned during compaction.
-pub fn snapshot_trie(storage: TrieStorage, root_hash: B256, block_number: u64) -> Result<()> {
+pub fn snapshot_trie(storage: TrieStorage, root_hash: B256, new_floor: u64) -> Result<()> {
     let trie = Arc::new(storage);
-    let tag_lock = trie.tag_view.lock();
-    let new_tag = *tag_lock;
-    tracing::info!(%root_hash, block_number, "Snapshot: begin");
+    let tag_ceil = trie.tag_view.lock();
+    tracing::info!(%root_hash, new_floor, %tag_ceil, "Snapshot: begin");
     TrieStorage::snapshot(trie.clone(), root_hash)?;
-    let old_tag = trie.set_tag_floor(new_tag)?;
-    if old_tag != 0 {
+    let old_floor = trie.set_tag_floor(new_floor)?;
+    if old_floor == 0 && new_floor != 0 {
         trie.drop_sql_state_trie()?; // delete SQL database
     }
-    tracing::info!(block_number, new_tag, old_tag, "Snapshot: end");
+    tracing::info!(new_floor, old_floor, %tag_ceil, "Snapshot: end");
     Ok(()) // not fatal, it can be retried later.
 }
 

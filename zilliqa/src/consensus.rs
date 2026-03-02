@@ -2462,7 +2462,7 @@ impl Consensus {
         // raise the ceiling to the new tag, promoting all new state
         let old_ceil = trie_storage.set_tag_ceil(new_ceil)?;
         // store the previous tag, which is the next floor.
-        *tag_lock = old_ceil;
+        *tag_lock = new_ceil;
         tracing::info!(block_number, new_ceil, old_ceil, "Snapshot: go");
 
         // trigger snapshot
@@ -2470,7 +2470,7 @@ impl Consensus {
             .send_message_to_coordinator(InternalMessage::SnapshotTrie(
                 trie_storage,
                 block.state_root_hash().into(),
-                block_number,
+                old_ceil,
             ))
     }
 
