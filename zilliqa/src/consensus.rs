@@ -713,7 +713,12 @@ impl Consensus {
                 .get_block_by_view(0)
                 .unwrap()
                 .ok_or_else(|| anyhow!("missing block"))?;
-            let stakers = self.state.get_stakers(block.header)?;
+            // Get the list of stakers for the next block.
+            let next_block_header = BlockHeader {
+                number: block.number() + 1,
+                ..block.header
+            };
+            let stakers = self.state.get_stakers(next_block_header)?;
             // If we're in the genesis committee, vote again.
             if stakers.iter().any(|v| *v == self.public_key()) {
                 info!(
@@ -830,11 +835,7 @@ impl Consensus {
 
         // Get the list of stakers for the next block.
         let next_block_header = BlockHeader {
-            number: if randao_support {
-                block.number()
-            } else {
-                block.number() + 1
-            },
+            number: block.number() + 1,
             ..block.header
         };
         let stakers = self
@@ -1058,14 +1059,9 @@ impl Consensus {
 
             // Get the list of stakers for the next block.
             let next_block_header = BlockHeader {
-                number: if randao_support {
-                    block.number()
-                } else {
-                    block.number() + 1
-                },
+                number: block.number() + 1,
                 ..block.header
             };
-
             let stakers = self.state.get_stakers(next_block_header)?;
 
             if !stakers.iter().any(|v| *v == self.public_key()) {
@@ -1375,13 +1371,9 @@ impl Consensus {
             return Ok(None);
         }
 
-        let executed_block = if randao_support {
-            block.header
-        } else {
-            BlockHeader {
-                number: block.header.number + 1,
-                ..Default::default()
-            }
+        let executed_block = BlockHeader {
+            number: block.header.number + 1,
+            ..Default::default()
         };
 
         let committee = self
@@ -1980,20 +1972,9 @@ impl Consensus {
 
         let parent_root_hash = parent.state_root_hash();
 
-        let randao_supported = self.state.forks.get(parent.number()).randao_support;
-
         let state = self.state.at_root(parent_root_hash.into());
         let executed_block = BlockHeader {
-            number: if randao_supported {
-                parent.number()
-            } else {
-                parent.number() + 1
-            },
-            mix_hash: if randao_supported {
-                parent.header.mix_hash
-            } else {
-                None
-            },
+            number: parent.header.number + 1,
             ..Default::default()
         };
 
@@ -2017,13 +1998,7 @@ impl Consensus {
 
         let randao_support = self.state.forks.get(hiqh_qc_block.number()).randao_support;
         // Get the committee for the qc hash (should be highest?) for this view
-        let committee = if randao_support {
-            let state = self.state.at_root(hiqh_qc_block.state_root_hash().into());
-            state.get_stakers(hiqh_qc_block.header)?
-        } else {
-            self.committee_for_hash(new_view.qc.block_hash)?
-        };
-
+        let committee: Vec<_> = self.committee_for_hash(new_view.qc.block_hash)?;
         // verify the sender's signature on the block hash
         let Some((index, public_key)) = committee
             .iter()
@@ -2087,16 +2062,8 @@ impl Consensus {
 
         let randao_supported = self.state.forks.get(hiqh_qc_block.number()).randao_support;
         let executed_block = BlockHeader {
-            number: if randao_supported {
-                hiqh_qc_block.number()
-            } else {
-                hiqh_qc_block.header.number + 1
-            },
-            mix_hash: if randao_supported {
-                hiqh_qc_block.header.mix_hash
-            } else {
-                None
-            },
+            number: hiqh_qc_block.header.number + 1,
+            mix_hash: hiqh_qc_block.header.mix_hash,
             ..Default::default()
         };
 
@@ -2463,11 +2430,7 @@ impl Consensus {
             let state_at = self.state.at_root(parent.state_root_hash().into());
             let randao_enabled = self.state.forks.get(parent.number()).randao_support;
             let block_header = BlockHeader {
-                number: if randao_enabled {
-                    parent.header.number
-                } else {
-                    parent.header.number + 1
-                },
+                number: parent.header.number,
                 mix_hash: parent.header.mix_hash,
                 ..Default::default()
             };
@@ -2712,11 +2675,7 @@ impl Consensus {
         let committee = self
             .state
             .at_root(parent.state_root_hash().into())
-            .get_stakers(if parent_randao_supported {
-                parent.header
-            } else {
-                block.header
-            })?;
+            .get_stakers(block.header)?;
 
         if verified.is_err() {
             tracing::error!(?block, "Unable to verify block");
@@ -2734,7 +2693,7 @@ impl Consensus {
             &block.header.qc.cosigned,
             &committee,
             parent.state_root_hash(),
-            &parent,
+            block,
         )?;
 
         // Verify the block's QC signature - note the parent should be the committee the QC
@@ -2746,7 +2705,7 @@ impl Consensus {
                 &agg.cosigned,
                 &committee,
                 parent.state_root_hash(),
-                &parent,
+                block,
             )?;
             // Verify the aggregate QC's signature
             self.batch_verify_agg_signature(agg, &committee)?;
@@ -3178,16 +3137,8 @@ impl Consensus {
             // we need to set the (parent) block's view at which we call the jailing
             // precompile otherwise we won't know if we must use the node's history
             // or the checkpoint's history gradually extended during state-syncing
-            view: if fork.randao_support {
-                block.header.view
-            } else {
-                block.header.view + 1
-            },
-            number: if fork.randao_support {
-                block.header.number
-            } else {
-                block.header.number + 1
-            },
+            view: block.header.view + 1,
+            number: block.header.number + 1,
             mix_hash: parent_mix_hash,
             ..Default::default()
         };
@@ -3507,7 +3458,6 @@ impl Consensus {
             .join(",");
 
         let mut touched_addresses = vec![];
-
         for (tx_index, txn) in verified_txns.iter().enumerate() {
             self.new_transaction(txn.clone(), true)?;
             let tx_hash = txn.hash;
@@ -4027,14 +3977,9 @@ impl Consensus {
 
             let state_at = self.state.at_root(parent.hash().into());
 
-            let fork = self.state.forks.get(parent.number());
-
             let header = BlockHeader {
-                number: if fork.randao_support {
-                    parent.number()
-                } else {
-                    parent.number() + 1
-                },
+                view: parent.view(),
+                number: parent.number(),
                 mix_hash: parent.header.mix_hash,
                 ..Default::default()
             };
