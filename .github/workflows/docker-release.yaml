@@ -15,7 +15,6 @@ jobs:
     permissions:
       id-token: write
       contents: write
-      security-events: write
     if: ${{ github.ref_name != 'main' && github.ref_type == 'tag' }} 
     runs-on: ubuntu-latest-16-cores
     env:
@@ -47,31 +46,6 @@ jobs:
     - name: Build ZQ2 Docker images
       run: DOCKER_BUILDKIT=1 docker build --build-arg="is_release=true" -t zilliqa/zq2:${{ github.ref_name }} -t ${{ env.GCP_REGISTRY }}/zq2:${{ github.ref_name }} -f Dockerfile .
       shell: bash
-    - name: Run Trivy vulnerability scanner
-      uses: aquasecurity/trivy-action@0.33.1
-      with:
-        image-ref: zilliqa/zq2:${{ github.ref_name }}
-        format: 'table'
-        exit-code: '0'
-        ignore-unfixed: true
-        vuln-type: 'os,library'
-        severity: 'CRITICAL,HIGH'
-    - name: Run Trivy vulnerability scanner (SARIF)
-      uses: aquasecurity/trivy-action@0.33.1
-      with:
-        image-ref: zilliqa/zq2:${{ github.ref_name }}
-        format: 'sarif'
-        output: 'trivy-results.sarif'
-        exit-code: '0'
-        ignore-unfixed: true
-        vuln-type: 'os,library'
-        severity: 'CRITICAL,HIGH'
-        limit-severities-for-sarif: true
-    - name: Upload Trivy scan results to GitHub Security tab
-      uses: github/codeql-action/upload-sarif@v4
-      if: always()
-      with:
-        sarif_file: 'trivy-results.sarif'
     - name: Login to the DockerHub
       uses: docker/login-action@v3
       with:
@@ -87,7 +61,6 @@ jobs:
       permissions:
         id-token: write
         contents: write
-        security-events: write
       if: ${{ github.ref_name == 'main' }} || ${{ github.event_name == 'workflow_dispatch' }}
       runs-on: ubuntu-latest-16-cores
       env:
@@ -125,31 +98,6 @@ jobs:
       - name: Build ZQ2 Docker images
         run: DOCKER_BUILDKIT=1 docker build --build-arg="is_release=true" -t ${{ steps.set-tag.outputs.tags }} -f Dockerfile .
         shell: bash
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@0.33.1
-        with:
-          image-ref: ${{ steps.set-tag.outputs.tags }}
-          format: 'table'
-          exit-code: '0'
-          ignore-unfixed: true
-          vuln-type: 'os,library'
-          severity: 'CRITICAL,HIGH'
-      - name: Run Trivy vulnerability scanner (SARIF)
-        uses: aquasecurity/trivy-action@0.33.1
-        with:
-          image-ref: ${{ steps.set-tag.outputs.tags }}
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          exit-code: '0'
-          ignore-unfixed: true
-          vuln-type: 'os,library'
-          severity: 'CRITICAL,HIGH'
-          limit-severities-for-sarif: true
-      - name: Upload Trivy scan results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v4
-        if: always()
-        with:
-          sarif_file: 'trivy-results.sarif'
       - name: Push Docker images to GCP
         run: docker push ${{ steps.set-tag.outputs.tags }}
         shell: bash
