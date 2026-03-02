@@ -976,24 +976,10 @@ impl Node {
             .flatten()
             .and_then(|block| block.header.mix_hash);
 
-        let randao_support = self
-            .consensus
-            .read()
-            .state()
-            .forks
-            .get(block.number())
-            .randao_support;
-
-        let view = if randao_support {
-            parent.view()
-        } else {
-            block.view()
-        };
-
         let Some(proposer) =
             self.consensus
                 .read()
-                .leader_at_block(&parent, grandparent_mix_hash, view)
+                .leader_at_block(&parent, grandparent_mix_hash, block.view())
         else {
             return Ok(None);
         };
