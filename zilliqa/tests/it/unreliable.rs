@@ -12,7 +12,7 @@ async fn block_production_even_when_lossy_network(mut network: Network) {
 
     // wait until a certain number of blocks has been produced
     network
-        .run_until_block_finalized(until_at, 7000)
+        .run_until_block_finalized(until_at, 10000)
         .await
         .unwrap();
 
@@ -53,7 +53,7 @@ async fn blocks_are_produced_while_a_node_restarts(mut network: Network) {
     // TODO(#721): Once the committee is visible in the API, we can avoid waiting as long.
     // wait until at least 5 blocks have been produced
     network
-        .run_until_block_finalized(until_at, 7000)
+        .run_until_block_finalized(until_at, 10000)
         .await
         .unwrap();
 

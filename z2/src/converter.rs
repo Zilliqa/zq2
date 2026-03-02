@@ -544,6 +544,8 @@ pub async fn convert_persistence(
             SystemTime::UNIX_EPOCH + Duration::from_micros(zq1_block.timestamp),
             ScillaGas(zq1_block.gas_used).into(),
             ScillaGas(zq1_block.gas_limit).into(),
+            None,
+            None,
         );
 
         // For each receipt update block hash. This can be done once all receipts build receipt_root_hash which is used for calculating block hash
@@ -652,6 +654,8 @@ fn create_empty_block_from_parent(
         parent_block.header.timestamp,
         parent_block.header.gas_used,
         parent_block.header.gas_limit,
+        None,
+        None,
     )
 }
 

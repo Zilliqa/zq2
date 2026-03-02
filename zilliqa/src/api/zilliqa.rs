@@ -860,7 +860,7 @@ fn get_tx_block_verbose(params: Params, node: &Arc<Node>) -> Result<Option<zil::
             return Err(anyhow!("Block not finalized"));
         }
         let proposer = node
-            .get_proposer_reward_address(block.header)?
+            .get_proposer_reward_address(&block)?
             .expect("No proposer");
         (block, proposer, node.db.clone())
     };

@@ -132,19 +132,24 @@ async fn handle_forking_correctly(mut network: Network) {
 
     network.drop_propose_messages_except_one().await;
 
-    // Check that node 0 has executed the transaction while the others haven't
+    let mut receipts = Vec::new();
+
+    // Check that node 0 has executed the transaction
     let first = network
         .get_node(0)
         .get_transaction_receipt(Hash(hash.0))
         .unwrap();
-    let second = network
-        .get_node(1)
-        .get_transaction_receipt(Hash(hash.0))
-        .unwrap();
 
-    // Only the first node should have executed the transaction
+    // For sure the first node should execute txn
     assert!(first.is_some());
-    assert!(second.is_none());
+
+    for node in network.nodes.iter() {
+        let receipt = node.inner.get_transaction_receipt(Hash(hash.0)).unwrap();
+        receipts.push(receipt);
+    }
+
+    // There must be nodes that didn't receive this block
+    assert!(receipts.iter().any(|x| x.is_none()));
 
     let original_receipt = first.unwrap();
 

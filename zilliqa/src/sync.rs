@@ -484,7 +484,7 @@ impl Sync {
                 continue; // skip if block has empty transactions root hash
             }
             let block = bnr.block;
-            tracing::info!(number=%block.number(), hash=%block.hash(), "Recovering checkpoint");
+            info!(number=%block.number(), hash=%block.hash(), "Recovering checkpoint");
             self.state = SyncState::Phase4((block.number(), block.hash()));
             let range = block.number()..=block.number();
             return self.request_passive_sync(range); // request 1 block only

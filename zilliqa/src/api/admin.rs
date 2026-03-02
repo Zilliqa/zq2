@@ -189,7 +189,7 @@ fn import_history(params: Params, node: &Arc<Node>) -> Result<()> {
     let mut params = params.sequence();
     let param: &str = params.next::<&str>()?;
     let path = std::path::Path::new(param);
-    let (block, _, _) = load_ckpt_blocks(path)?;
+    let (block, _, _, _) = load_ckpt_blocks(path)?;
     {
         if node
             .consensus
@@ -400,8 +400,20 @@ fn get_leaders(params: Params, node: &Arc<Node>) -> Result<Vec<(u64, Validator)>
         }
     };
 
+    let grandparent_mix_hash = node
+        .consensus
+        .read()
+        .get_block(&parent_block.parent_hash())
+        .ok()
+        .flatten()
+        .and_then(|block| block.header.mix_hash);
+
     while leaders.len() <= count {
-        if let Some(leader) = node.consensus.read().leader_at_block(&parent_block, view) {
+        if let Some(leader) =
+            node.consensus
+                .read()
+                .leader_at_block(&parent_block, grandparent_mix_hash, view)
+        {
             leaders.push((view, leader));
         } else {
             break; // missed view history not available

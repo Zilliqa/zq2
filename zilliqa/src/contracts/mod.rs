@@ -1,5 +1,5 @@
 use alloy::hex;
-pub use deposit_v7 as deposit;
+pub use deposit_v8 as deposit;
 use serde_json::Value;
 
 pub mod deposit_init {
@@ -369,6 +369,78 @@ pub mod deposit_v7 {
         Lazy::new(|| CONTRACT.abi.function("withdrawalPeriod").unwrap().clone());
 }
 
+pub mod deposit_v8 {
+    use ethabi::{Constructor, Function};
+    use once_cell::sync::Lazy;
+
+    use super::{Contract, contract};
+
+    pub static CONTRACT: Lazy<Contract> =
+        Lazy::new(|| contract("src/contracts/deposit_v8.sol", "Deposit"));
+    pub static CONSTRUCTOR: Lazy<Constructor> =
+        Lazy::new(|| CONTRACT.abi.constructor().unwrap().clone());
+    pub static REINITIALIZE: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.functions_by_name("reinitialize").unwrap()[0].clone());
+    pub static REINITIALIZE_2: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.functions_by_name("reinitialize").unwrap()[1].clone());
+    pub static UPGRADE_TO_AND_CALL: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("upgradeToAndCall").unwrap().clone());
+    pub static VERSION: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("version").unwrap().clone());
+
+    pub static BYTECODE: Lazy<Vec<u8>> = Lazy::new(|| CONTRACT.bytecode.clone());
+    pub static LEADER_AT_VIEW: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("leaderAtView").unwrap().clone());
+
+    pub static LEADER_AT_VIEW_WITH_RANDAO: Lazy<Function> = Lazy::new(|| {
+        CONTRACT
+            .abi
+            .function("leaderAtViewWithRandao")
+            .unwrap()
+            .clone()
+    });
+    pub static DEPOSIT: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("deposit").unwrap().clone());
+    pub static DEPOSIT_TOPUP: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("depositTopup").unwrap().clone());
+    pub static UNSTAKE: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("unstake").unwrap().clone());
+    pub static WITHDRAW: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("withdraw").unwrap().clone());
+    pub static CURRENT_EPOCH: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("currentEpoch").unwrap().clone());
+    pub static GET_STAKE: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("getStake").unwrap().clone());
+    pub static GET_FUTURE_STAKE: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("getFutureStake").unwrap().clone());
+    pub static GET_REWARD_ADDRESS: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("getRewardAddress").unwrap().clone());
+    pub static GET_SIGNING_ADDRESS: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("getSigningAddress").unwrap().clone());
+    pub static GET_CONTROL_ADDRESS: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("getControlAddress").unwrap().clone());
+    pub static SET_SIGNING_ADDRESS: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("setSigningAddress").unwrap().clone());
+    pub static SET_CONTROL_ADDRESS: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("setControlAddress").unwrap().clone());
+    pub static GET_PEER_ID: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("getPeerId").unwrap().clone());
+    pub static GET_STAKERS: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("getStakers").unwrap().clone());
+    pub static GET_TOTAL_STAKE: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("getTotalStake").unwrap().clone());
+    pub static COMMITTEE: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("committee").unwrap().clone());
+    pub static MIN_DEPOSIT: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("minimumStake").unwrap().clone());
+    pub static MAX_STAKERS: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("maximumStakers").unwrap().clone());
+    pub static BLOCKS_PER_EPOCH: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("blocksPerEpoch").unwrap().clone());
+    pub static WITHDRAWAL_PERIOD: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("withdrawalPeriod").unwrap().clone());
+}
+
 pub mod shard {
     use ethabi::Constructor;
     use once_cell::sync::Lazy;
@@ -491,6 +563,7 @@ mod tests {
                 "src/contracts/deposit_v5.sol",
                 "src/contracts/deposit_v6.sol",
                 "src/contracts/deposit_v7.sol",
+                "src/contracts/deposit_v8.sol",
                 "src/contracts/utils/deque.sol",
                 "src/contracts/intershard_bridge.sol",
                 "src/contracts/shard.sol",

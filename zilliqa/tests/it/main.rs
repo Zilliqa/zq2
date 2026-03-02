@@ -383,6 +383,7 @@ impl Network {
                         height: deposit_v3_upgrade_block_height_value,
                         reinitialise_params: Some(ReinitialiseParams::default()),
                     }),
+                    Some(ContractUpgradeConfig::from_height(0)),
                 )
             } else {
                 ContractUpgrades::new(
@@ -397,6 +398,7 @@ impl Network {
                         height: 0,
                         reinitialise_params: Some(ReinitialiseParams::default()),
                     }),
+                    Some(ContractUpgradeConfig::from_height(0)),
                 )
             }
         };
@@ -556,6 +558,10 @@ impl Network {
                     height: self.deposit_v3_upgrade_block_height.unwrap(),
                     reinitialise_params: Some(ReinitialiseParams::default()),
                 }),
+                Some(ContractUpgradeConfig {
+                    height: self.deposit_v3_upgrade_block_height.unwrap(),
+                    reinitialise_params: Some(ReinitialiseParams::default()),
+                }),
             )
         } else {
             ContractUpgrades::new(
@@ -566,6 +572,10 @@ impl Network {
                     reinitialise_params: Some(ReinitialiseParams::default()),
                 }),
                 Some(ContractUpgradeConfig::from_height(0)),
+                Some(ContractUpgradeConfig {
+                    height: 0,
+                    reinitialise_params: Some(ReinitialiseParams::default()),
+                }),
                 Some(ContractUpgradeConfig {
                     height: 0,
                     reinitialise_params: Some(ReinitialiseParams::default()),
@@ -830,7 +840,7 @@ impl Network {
 
             if messages.is_empty() {
                 warn!("Messages were empty - advance time faster!");
-                zilliqa::time::advance(Duration::from_millis(50));
+                zilliqa::time::advance(Duration::from_millis(1));
                 continue;
             }
 
@@ -1107,6 +1117,7 @@ impl Network {
                         trie_storage,
                         view_history,
                         output,
+                        grandparent,
                     ) => {
                         assert!(
                             self.do_checkpoints,
@@ -1121,6 +1132,7 @@ impl Network {
                             trie_storage.clone(),
                             *source_shard,
                             view_history.clone(),
+                            grandparent,
                             output,
                         )
                         .unwrap();
@@ -1134,7 +1146,7 @@ impl Network {
                 }
             }
             AnyMessage::External(external_message) => {
-                info!(%external_message, "external");
+                //info!(%external_message, "external");
 
                 let cbor_size =
                     cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024), &external_message)
@@ -1806,13 +1818,11 @@ impl FauxRpcTransport {
     }
 
     async fn map_request(&self, req: SerializedRequest) -> TransportResult<Response> {
-        println!("REQ> {}", req.serialized().get());
         let (response, _rx) = self
             .rpc_module
             .raw_json_request(req.serialized().get(), 1024)
             .await
             .expect("no transport errors");
-        println!("RES< {}", response.get());
 
         let response: Response = serde_json::from_str(response.get()).expect("no encoding errors");
         Ok(response)
