@@ -4,7 +4,7 @@ use std::sync::{
 };
 
 use anyhow::Result;
-use eth_trie::{DB, EthTrie, Trie as _};
+use eth_trie::{EthTrie, Trie as _};
 use lru::LruCache;
 use parking_lot::{Mutex, RwLock};
 use r2d2::Pool;
@@ -83,8 +83,6 @@ impl TrieStorage {
         // repurpose clear_trie_from_db() to promote the trie; root_hash() forces a commit.
         let _ = state_trie.root_hash()?;
         state_trie.clear_trie_from_db()?;
-        // force flush to disk
-        trie_storage.flush()?;
         Ok(())
     }
 
@@ -378,7 +376,10 @@ impl eth_trie::DB for TrieStorage {
             self.write_batch(
                 vec![promote_key.to_vec()],
                 vec![value],
-                self.rev_ceil.load(Ordering::Relaxed).to_be_bytes(), // keeps 2 snapshots on-disk
+                self.rev_ceil
+                    .load(Ordering::Relaxed)
+                    .saturating_add(1)
+                    .to_be_bytes(), // keeps 1 snapshot on-disk
                 false,
             )
             .map_err(|e| eth_trie::TrieError::DB(e.to_string()))
@@ -413,7 +414,7 @@ mod tests {
                 .build(SqliteConnectionManager::memory())
                 .unwrap(),
         );
-        let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap().keep()).unwrap());
+        let rdb = Arc::new(rocksdb::DB::open_default(tempdir().unwrap()).unwrap());
         let tag = Arc::new(AtomicU64::new(u64::MAX));
         let lock = Arc::new(Mutex::new(u64::MIN));
         let cache = Arc::new(RwLock::new(LruCache::unbounded()));
