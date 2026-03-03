@@ -207,7 +207,9 @@ impl Sync {
         };
 
         // Idle duration
-        let max_idle_duration = config.consensus.block_time / 3;
+        // Give 20% time to do passive-sync/block-pruning operations.
+        // TODO: Move passive-sync/block-pruning into a separate thread.
+        let max_idle_duration = config.consensus.block_time / 5;
 
         // checkpoint period
         let checkpoint_period =

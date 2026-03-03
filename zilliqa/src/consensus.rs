@@ -248,7 +248,7 @@ pub struct Consensus {
     /// Mark if this node is in the committee at it's current head block height
     in_committee: bool,
     /// Prune interval, if applicable
-    prune_interval: u64,
+    prune_period: u64,
 }
 
 impl Consensus {
@@ -391,7 +391,7 @@ impl Consensus {
 
         // pre-compute how often state snapshots are taken, if at all.
         let bpe = config.consensus.blocks_per_epoch;
-        let prune_interval = ((config.sync.prune_interval / bpe) * bpe).saturating_add(bpe);
+        let prune_period = ((config.sync.prune_interval / bpe) * bpe).saturating_add(bpe);
 
         let mut consensus = Consensus {
             secret_key,
@@ -417,7 +417,7 @@ impl Consensus {
             new_transaction_hashes: broadcast::Sender::new(128),
             force_view: None,
             in_committee: true,
-            prune_interval,
+            prune_period,
         };
 
         // If we're at genesis, add the genesis block and return
@@ -2426,7 +2426,7 @@ impl Consensus {
         if self.block_is_first_in_epoch(block.number()) && !block.is_genesis() {
             // Do snapshots
             // at epoch/block boundaries to avoid state inconsistencies.
-            if block.number().is_multiple_of(self.prune_interval) {
+            if block.number().is_multiple_of(self.prune_period) {
                 let range = self.db.available_range()?;
                 self.snapshot_at(*range.start(), block.view())?;
             }
