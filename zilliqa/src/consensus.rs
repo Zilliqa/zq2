@@ -610,28 +610,15 @@ impl Consensus {
 
         // Set self.network_message_cache incase the network is stuck
         if consensus.db.get_voted_in_view()? {
-            let head_block = consensus.head_block();
-            let (block, leader_view) = if consensus
-                .state
-                .forks
-                .get(head_block.number())
-                .randao_support
-            {
-                let high_qc_block = consensus
-                    .get_block(&consensus.high_qc.block_hash)?
-                    .ok_or_else(|| anyhow!("missing block for high_qc in create_consensus"))?;
-                let view = high_qc_block.view();
-                (high_qc_block, view)
-            } else {
-                let view = consensus.get_view()?;
-                (head_block, view)
-            };
+            let block = consensus.head_block();
             let parent_mix_hash = consensus
                 .get_block(&block.parent_hash())
                 .ok()
                 .flatten()
                 .and_then(|block| block.header.mix_hash);
-            if let Some(leader) = consensus.leader_at_block(&block, parent_mix_hash, leader_view) {
+            if let Some(leader) =
+                consensus.leader_at_block(&block, parent_mix_hash, consensus.get_view()?)
+            {
                 consensus.build_vote(leader.peer_id, consensus.vote_from_block(&block));
             }
         } else {
@@ -2400,6 +2387,7 @@ impl Consensus {
             })?;
             let state_at = self.state.at_root(parent.state_root_hash().into());
             let block_header = BlockHeader {
+                view: parent.header.view,
                 number: parent.header.number,
                 mix_hash: parent.header.mix_hash,
                 ..Default::default()
