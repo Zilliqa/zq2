@@ -1,4 +1,4 @@
-FROM rust:1.92.0-slim-bookworm as builder
+FROM rust:1.92.0-slim-bookworm AS builder
 
 ARG is_release=false
 RUN apt update -y && \
@@ -16,10 +16,10 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/target \
     if [ "${is_release}" != "true" ] ; then \
-    cargo build --bin zilliqa && \
+    cargo auditable build --bin zilliqa && \
     mv ./target/debug/zilliqa ./build/ ;\
     else \
-    cargo build --release --bin zilliqa && \
+    cargo auditable build --release --bin zilliqa && \
     mv ./target/release/zilliqa ./build/ ;\
     fi
 

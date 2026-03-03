@@ -114,6 +114,7 @@ redis = { version = "0.32.7", features = ["keep-alive", "r2d2", "tcp_nodelay"], 
 alloy = { version = "1.7.3", default-features = false, features = ["consensus", "dyn-abi", "eips", "json-abi", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types"] }
 crossbeam = "0.8.4"
 lru = "0.16.3"
+cargo-auditable = "0.7.2"
 
 [dev-dependencies]
 alloy = { version = "1.7.3", default-features = false, features = ["consensus", "dyn-abi", "eips", "json-abi", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types", "pubsub", "json-rpc", "contract", "signer-local"] }
