@@ -1543,9 +1543,17 @@ impl Consensus {
             }
         };
 
-        let randao_reveal = Block::compute_randao_reveal(&self.secret_key, view);
+        let randao_supported = self.state.forks.get(parent.number()).randao_support;
 
-        let mix_hash = Block::compute_randao_mix(parent.header, randao_reveal);
+        let (randao_reveal, mix_hash) = if randao_supported {
+            let randao_reveal = Block::compute_randao_reveal(&self.secret_key, view);
+            (
+                Some(randao_reveal),
+                Some(Block::compute_randao_mix(parent.header, randao_reveal)),
+            )
+        } else {
+            (None, None)
+        };
 
         // This is a partial header of a block that will be proposed with some transactions executed below.
         // It is needed so that each transaction is executed within proper block context (the block it belongs to)
@@ -1554,7 +1562,7 @@ impl Consensus {
             number: parent.header.number + 1,
             timestamp: SystemTime::max(SystemTime::now(), parent.timestamp()), // block timestamp at **start** of assembly, not end.
             gas_limit: self.config.consensus.eth_block_gas_limit,
-            mix_hash: Some(mix_hash),
+            mix_hash,
             ..BlockHeader::default()
         };
 
@@ -1600,8 +1608,8 @@ impl Consensus {
             executed_block_header.timestamp,
             EvmGas(0),
             executed_block_header.gas_limit,
-            Some(randao_reveal),
-            Some(mix_hash),
+            randao_reveal,
+            mix_hash,
         );
 
         let mut early_proposal = self.early_proposal.write();
