@@ -1328,7 +1328,7 @@ impl Consensus {
             .flatten()
             .and_then(|block| block.header.mix_hash);
         if !self.are_we_leader_for_view(block_hash, parent_mix_hash, block_view + 1) {
-            trace!(
+            info!(
                 vote_view = block_view + 1,
                 ?block_hash,
                 "skipping vote, not the leader"
@@ -1912,10 +1912,8 @@ impl Consensus {
         view: u64,
     ) -> Option<NodePublicKey> {
         if let Ok(Some(parent)) = self.get_block(&parent_hash) {
-            if let Some(leader) = self.leader_at_block(&parent, mix_hash, view) {
-                return Some(leader.public_key);
-            }
-            None
+            let leader = self.leader_at_block(&parent, mix_hash, view).unwrap();
+            Some(leader.public_key)
         } else {
             if view > 1 {
                 warn!(
@@ -1950,12 +1948,12 @@ impl Consensus {
 
     /// Process a NewView message
     pub fn new_view(&mut self, from: PeerId, new_view: NewView) -> Result<Option<NetworkMessage>> {
-        trace!(
+        info!(
             "Received new view for view: {:?} from: {:?}",
             new_view.view, from
         );
 
-        let Some(hiqh_qc_block) = self.get_block(&new_view.qc.block_hash)? else {
+        let Some(parent) = self.get_block(&new_view.qc.block_hash)? else {
             trace!("high_qc block does not exist for NewView. Attempting to fetch block via sync");
             self.sync.sync_from_probe()?;
             return Ok(None);
@@ -1995,8 +1993,8 @@ impl Consensus {
             return Ok(None);
         }
 
-        let parent_mix_hash = self
-            .get_block(&hiqh_qc_block.parent_hash())
+        let grandparent_mix_hash = self
+            .get_block(&parent.parent_hash())
             .ok()
             .flatten()
             .and_then(|block| block.header.mix_hash);
@@ -2004,7 +2002,8 @@ impl Consensus {
         // The leader for this view should be chosen according to the parent of the highest QC
         // What happens when there are multiple QCs with different parents?
         // if we are not the leader of the round in which the vote counts
-        if !self.are_we_leader_for_view(new_view.qc.block_hash, parent_mix_hash, new_view.view) {
+        if !self.are_we_leader_for_view(new_view.qc.block_hash, grandparent_mix_hash, new_view.view)
+        {
             trace!(new_view.view, "skipping new view, not the leader");
             return Ok(None);
         }
@@ -2039,8 +2038,7 @@ impl Consensus {
             new_view_vote.signatures.push(new_view.signature);
 
             // Update state to root pointed by voted block (in meantime it might have changed!)
-            self.state
-                .set_to_root(hiqh_qc_block.state_root_hash().into());
+            self.state.set_to_root(parent.state_root_hash().into());
             let Some(weight) = self.state.get_stake(new_view.public_key, executed_block)? else {
                 return Err(anyhow!("vote from validator without stake"));
             };
@@ -3779,9 +3777,7 @@ impl Consensus {
         }
 
         // replay one block - writing new state to RocksDB.
-        let Some(parent_state_root_hash) =
-            state_trie.get_root_hash(migrate_at.saturating_sub(1))?
-        else {
+        let Some(parent_hash) = state_trie.get_root_hash(migrate_at.saturating_sub(1))? else {
             unimplemented!("parent state must exist!");
         };
 
@@ -3789,11 +3785,11 @@ impl Consensus {
             .db
             .get_block_and_receipts_and_transactions(BlockFilter::Height(migrate_at))?
             .expect("block must exist");
-        let block_state_root_hash = brt.block.state_root_hash();
+        let block_hash = brt.block.state_root_hash();
 
         let brt_view = brt.block.view();
 
-        let mut mix_hash = brt.block.header.mix_hash;
+        let mix_hash = brt.block.header.mix_hash;
         // the history kept in memory is missing due to a node restart, load it from the database
         if self.state.ckpt_view_history.is_none() {
             let missed_views = self
@@ -3832,11 +3828,11 @@ impl Consensus {
         }
 
         let cutover_at = state_trie.get_cutover_at()?;
-        info!(end=%cutover_at,number=%migrate_at,state=%block_state_root_hash, "State-sync");
+        tracing::info!(end=%cutover_at,number=%migrate_at,state=%block_hash, "State-sync");
         self.replay_proposal(
             brt.block,
             brt.transactions.into_iter().map(|t| t.tx).collect_vec(),
-            parent_state_root_hash,
+            parent_hash,
         )?;
 
         // fast-forward to next block, skipping empty blocks, up to cutover threshold
@@ -3849,7 +3845,7 @@ impl Consensus {
                 .expect("Next block missing");
 
             let fork = self.state.forks.get(block.number() - 1);
-            let state_at = self.state.at_root(block_state_root_hash.into());
+            let state_at = self.state.at_root(block_hash.into());
             let header = BlockHeader {
                 view: parent_view,
                 number: migrate_at - 1,
@@ -3874,18 +3870,17 @@ impl Consensus {
             }
             self.state.ckpt_finalized_view = Some(block.view());
             parent_view = block.view();
-            mix_hash = block.header.mix_hash;
-            let Some(computed_state_root_hash) = state_trie.get_root_hash(migrate_at)? else {
-                warn!(number=%migrate_at,"State-sync retrying");
+            let Some(hash) = state_trie.get_root_hash(migrate_at)? else {
+                tracing::warn!(number=%migrate_at,"State-sync retrying");
                 return Ok(true); // retry later
             };
-            if computed_state_root_hash != block_state_root_hash {
+            if hash != block_hash {
                 state_trie.set_migrate_at(migrate_at)?;
                 return Ok(false);
             }
         }
         // done
-        info!("State-sync complete!");
+        tracing::info!("State-sync complete!");
         state_trie.finish_migration()?;
         self.merge_missed_view_history()?;
         Ok(true)
@@ -3912,16 +3907,14 @@ impl Consensus {
                 break;
             }
             // the parent view was the one before we found a missed view in the loop above
-            let parent = self
+            let block = self
                 .get_block_by_view(view.saturating_sub(1))?
                 .expect("Parent block missing");
-
-            let state_at = self.state.at_root(parent.hash().into());
-
+            let state_at = self.state.at_root(block.hash().into());
             let header = BlockHeader {
-                view: parent.view(),
-                number: parent.number(),
-                mix_hash: parent.header.mix_hash,
+                view: block.view(),
+                number: block.number(),
+                mix_hash: block.header.mix_hash,
                 ..Default::default()
             };
             // skip the first missed view in a row as its block must have been reorged
