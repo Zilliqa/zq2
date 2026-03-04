@@ -2004,7 +2004,7 @@ impl Consensus {
         // if we are not the leader of the round in which the vote counts
         if !self.are_we_leader_for_view(new_view.qc.block_hash, grandparent_mix_hash, new_view.view)
         {
-            trace!(new_view.view, "skipping new view, not the leader");
+            debug!(new_view.view, "skipping new view, not the leader");
             return Ok(None);
         }
 
@@ -2026,7 +2026,6 @@ impl Consensus {
         };
         let executed_block = BlockHeader {
             number: parent.header.number + 1,
-            mix_hash: parent.header.mix_hash,
             ..Default::default()
         };
 
@@ -2037,6 +2036,12 @@ impl Consensus {
             new_view_vote.cosigned.set(index, true);
             new_view_vote.signatures.push(new_view.signature);
 
+            let Ok(Some(parent)) = self.get_block(&new_view.qc.block_hash) else {
+                return Err(anyhow!(
+                    "parent block not found: {:?}",
+                    new_view.qc.block_hash
+                ));
+            };
             // Update state to root pointed by voted block (in meantime it might have changed!)
             self.state.set_to_root(parent.state_root_hash().into());
             let Some(weight) = self.state.get_stake(new_view.public_key, executed_block)? else {
