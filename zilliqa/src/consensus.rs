@@ -2413,6 +2413,11 @@ impl Consensus {
                             "~~~~~~~~~~> skipping reorged"
                         );
                     } else {
+                        error!(
+                            "Pushing Jailed leader in view: {}, {:?}",
+                            view,
+                            alloy::hex::encode(leader.as_bytes())
+                        );
                         new_missed_views.push_front((view, leader)); // ensure new_missed_views in ascending order
                     }
                 }
@@ -2732,7 +2737,7 @@ impl Consensus {
             ));
         }
 
-        let randao_supported = self.state.forks.get(block.number()).randao_support;
+        let randao_supported = self.state.forks.get(block.number() - 1).randao_support;
 
         if randao_supported {
             let randao_reveal = block
