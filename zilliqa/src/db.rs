@@ -35,7 +35,6 @@ use tracing::{debug, warn};
 
 use crate::{
     cfg::DbConfig,
-    constants::MIN_PRUNE_INTERVAL,
     crypto::{BlsSignature, Hash},
     exec::{ScillaError, ScillaException, ScillaTransition},
     message::{AggregateQc, Block, BlockHeader, QuorumCertificate},
@@ -507,6 +506,7 @@ impl Db {
             )?;
         }
 
+        // New index needed. Otherwise, deleting a txn will result in a table scan due to ON CASCADE DELETE.
         if version < 7 {
             connection.execute_batch(
                 "
@@ -719,7 +719,7 @@ impl Db {
         connection.pragma_update(None, "journal_mode", "WAL")?;
         // reduced non-critical fsync() calls, reducing disk I/O
         connection.pragma_update(None, "synchronous", "NORMAL")?;
-        // use FAST secure delete to improve I/O when deleting rows
+        // use FAST to improve I/O when deleting many rows
         connection.pragma_update(None, "secure_delete", "FAST")?;
         // store temporary tables/indices in-memory, reducing disk I/O
         connection.pragma_update(None, "temp_store", "MEMORY")?;
@@ -1338,46 +1338,6 @@ impl Db {
 
             Ok(())
         })
-    }
-
-    /// Prune any blocks below `base_height`; or
-    /// any blocks that are `prune_interval` behind the latest block.
-    pub async fn prune_blocks(&self, prune_interval: u64, base_height: u64) -> Result<()> {
-        // compute prune ceiling
-        let db_range = self.available_range()?;
-        let prune_ceil = if base_height != u64::MAX {
-            db_range
-                .end()
-                .saturating_sub(MIN_PRUNE_INTERVAL.saturating_sub(1))
-                .min(base_height)
-        } else if prune_interval != u64::MAX {
-            db_range
-                .end()
-                .saturating_sub(prune_interval.saturating_sub(1))
-        } else {
-            return Ok(());
-        };
-
-        // set prune range
-        let range = *db_range.start()..prune_ceil;
-        tracing::debug!(?range, "Prune");
-
-        // prune blocks, as fast as possible
-        for (_n, number) in range.enumerate() {
-            // remove canonical block and transactions
-            if let Some(block) = self.get_transactionless_block(BlockFilter::Height(number))? {
-                self.prune_block(&block, true)?;
-            }
-            // remove any non-canonical blocks; typically none
-            for block in self.get_all_blocks_by_height(number)? {
-                self.prune_block(&block, false)?;
-            }
-
-            // be a good neighbour; do not hog the db.
-            tokio::task::yield_now().await;
-        }
-
-        Ok(())
     }
 
     /// Return canonical and non-canonical blocks at the given height.
