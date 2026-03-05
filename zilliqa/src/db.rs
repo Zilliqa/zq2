@@ -1313,17 +1313,24 @@ impl Db {
                     .collect::<Vec<_>>()
                     .join(",");
 
+                // Trick: Use temp table to speed up deletion
+                db.prepare_cached("CREATE TEMP TABLE to_delete(tx_hash BLOB PRIMARY_KEY)")?
+                    .execute([])?;
+                db.execute(
+                    format!("INSERT INTO to_delete VALUES ({placeholders})").as_str(),
+                    rusqlite::params_from_iter(chunk.iter()),
+                )?;
                 // Delete receipts linked to this and other blocks
-                db.prepare(
-                    format!("DELETE FROM receipts WHERE tx_hash IN ({placeholders})").as_str(),
+                db.prepare_cached(
+                    "DELETE FROM receipts WHERE tx_hash IN (SELECT tx_hash FROM to_delete)",
                 )?
-                .execute(rusqlite::params_from_iter(chunk.iter()))?;
-
+                .execute([])?;
                 // Delete all transactions linked to this block
-                db.prepare(
-                    format!("DELETE FROM transactions WHERE tx_hash IN ({placeholders})").as_str(),
+                db.prepare_cached(
+                    "DELETE FROM transactions WHERE tx_hash IN (SELECT tx_hash FROM to_delete)",
                 )?
-                .execute(rusqlite::params_from_iter(chunk.iter()))?;
+                .execute([])?;
+                db.prepare_cached("DROP TABLE to_delete")?.execute([])?;
             }
 
             // Delete child row, before deleting parents
