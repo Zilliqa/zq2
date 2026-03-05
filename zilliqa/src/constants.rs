@@ -112,3 +112,6 @@ pub const MISSED_VIEW_THRESHOLD: usize = 3;
 pub const LAG_BEHIND_CURRENT_VIEW: u64 = 50;
 #[cfg(feature = "fake_time")]
 pub const LAG_BEHIND_CURRENT_VIEW: u64 = 10;
+
+// How many JSON-RPC threads to use
+pub const JSON_RPC_HANDLERS_COUNT: u32 = 100;

@@ -31,13 +31,8 @@ async fn prune_interval(mut network: Network) {
         ..Default::default()
     });
     network.run_until_synced(index).await;
-    let number = network.node_at(index).get_finalized_block_number().unwrap();
-
-    tracing::info!(number, "Added pruned node.");
-
-    // run for a bit to allow state pruning to kick in
     network
-        .run_until_block_finalized(MIN_PRUNE_INTERVAL * 3, 1000)
+        .run_until_block_finalized(MIN_PRUNE_INTERVAL * 2, 1000)
         .await
         .unwrap();
 
@@ -86,7 +81,7 @@ async fn base_height(mut network: Network) {
             file: checkpoint_path.to_str().unwrap().to_string(),
             hash: Hash(checkpoint_hash.0),
         }),
-        base_height: Some(3),
+        base_height: Some(5),
         ..Default::default()
     });
 
@@ -106,7 +101,7 @@ async fn base_height(mut network: Network) {
         .available_range()
         .unwrap()
         .start();
-    assert_eq!(base_height, 3); // successful passive-sync to block 3.
+    assert_eq!(base_height, 5); // successful passive-sync to block 3.
 }
 
 #[zilliqa_macros::test(do_checkpoints)]

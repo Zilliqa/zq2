@@ -39,6 +39,7 @@ use crate::{
     exec::{ScillaError, ScillaException, ScillaTransition},
     message::{AggregateQc, Block, BlockHeader, QuorumCertificate},
     precompiles::ViewHistory,
+    sync::MIN_PRUNE_INTERVAL,
     time::SystemTime,
     transaction::{EvmGas, Log, SignedTransaction, TransactionReceipt, VerifiedTransaction},
     trie_storage::{LEGACY_KEY_LEN, ROCKSDB_TAGGING_AT, TAGGED_KEY_LEN, TrieStorage},
@@ -314,8 +315,8 @@ impl Db {
         };
 
         // Build connection pool
-        let num_workers = crate::available_threads().max(4) as u32;
-        let builder = Pool::builder().min_idle(Some(1)).max_size(num_workers * 2); // more than enough connections
+        let num_workers = crate::available_threads() as u32;
+        let builder = Pool::builder().min_idle(Some(1)).max_size(num_workers * 2);
         debug!("SQLite {builder:?}");
 
         let pool = builder.build(manager)?;
@@ -674,7 +675,7 @@ impl Db {
 
         let tag_floor = Arc::new(AtomicU64::new(u64::MAX));
         // Use the default compaction filter, unless pruning is enabled
-        if config.state_prune {
+        if config.prune_interval != u64::MAX {
             tracing::info!("SnapshotCompactionFilter");
             let rev_floor = tag_floor.clone();
             // Keys are only removed if they are older than the floor value, which is set during a snapshot.
@@ -734,6 +735,14 @@ impl Db {
         )? {
             warn!("*** QPSG disabled - queries may be slow ***");
         }
+
+        // improve SQLITE_BUSY/SQLITE_LOCKED handling
+        connection.busy_timeout(Duration::from_secs(5))?;
+        connection.busy_handler(Some(|retry| {
+            warn!("SQL busy {retry}");
+            retry < 5 // default: 5s * 5 = 25s
+        }))?;
+
         // Add tracing - logs SQL statements
         connection.trace_v2(
             rusqlite::trace::TraceEventCodes::SQLITE_TRACE_PROFILE,
@@ -870,7 +879,7 @@ impl Db {
             self.rev_ceil.clone(),
             self.rev_floor.clone(),
             self.tag_view.clone(),
-            self.config.state_prune,
+            self.config.prune_interval != u64::MAX,
         ))
     }
 
@@ -1293,39 +1302,94 @@ impl Db {
 
     /// Delete the block and its related transactions and receipts
     pub fn prune_block(&self, block: &Block, is_canonical: bool) -> Result<()> {
+        tracing::trace!(number = block.number(), hash=%block.hash(), "Prune");
         let hash = block.hash();
-        self.with_sqlite_tx(|db| {
-            // get a list of transactions
-            let txns = db
-                .prepare_cached("SELECT tx_hash FROM receipts WHERE block_hash = ?1")?
-                .query_map([hash], |row| row.get(0))?
-                .collect::<Result<Vec<Hash>, _>>()?;
+        let db = self.pool.get()?;
 
+        // get a list of transactions
+        let txns = if is_canonical {
+            db.prepare_cached("SELECT tx_hash FROM receipts WHERE block_hash = ?1")?
+                .query_map([hash], |row| row.get(0))?
+                .collect::<Result<Vec<Hash>, _>>()?
+        } else {
+            Vec::new()
+        };
+
+        self.with_sqlite_tx(|db| {
             // Delete child row, before deleting parents
             // https://github.com/Zilliqa/zq2/issues/2216#issuecomment-2812501876
-            db.prepare_cached("DELETE FROM receipts WHERE block_hash = ?1")?
-                .execute([hash])?;
+            // db.prepare_cached("DELETE FROM receipts WHERE block_hash = ?1")?
+            //     .execute([hash])?;
+
+            // Avoid locking the DB for too long by doing this in chunks
+            for chunk in txns.chunks(MAX_KEYS_IN_SINGLE_QUERY) {
+                let placeholders = std::iter::repeat_n("?", chunk.len())
+                    .collect::<Vec<_>>()
+                    .join(",");
+
+                // Delete receipts linked to this and other blocks
+                db.prepare(
+                    format!("DELETE FROM receipts WHERE tx_hash IN ({placeholders})").as_str(),
+                )?
+                .execute(rusqlite::params_from_iter(chunk.iter()))?;
+
+                // Delete all transactions linked to this block
+                db.prepare(
+                    format!("DELETE FROM transactions WHERE tx_hash IN ({placeholders})").as_str(),
+                )?
+                .execute(rusqlite::params_from_iter(chunk.iter()))?;
+            }
 
             // Delete the block after all references are deleted
             db.prepare_cached("DELETE FROM blocks WHERE block_hash = ?1")?
                 .execute([hash])?;
 
-            // Delete all other references to this list of txns
-            if is_canonical {
-                for tx in txns {
-                    // Deletes all other references to this txn; txn can only exist in one canonical block.
-                    db.prepare_cached("DELETE FROM receipts WHERE tx_hash = ?1")?
-                        .execute([tx])?;
-                    // Delete the txn itself after all references are deleted
-                    db.prepare_cached("DELETE FROM transactions WHERE tx_hash = ?1")?
-                        .execute([tx])?;
-                }
-            }
             Ok(())
         })
     }
 
-    pub fn get_blocks_by_height(&self, height: u64) -> Result<Vec<Block>> {
+    /// Prune any blocks below `base_height`; or
+    /// any blocks that are `prune_interval` behind the latest block.
+    pub async fn prune_blocks(&self, prune_interval: u64, base_height: u64) -> Result<()> {
+        // compute prune ceiling
+        let db_range = self.available_range()?;
+        let prune_ceil = if base_height != u64::MAX {
+            db_range
+                .end()
+                .saturating_sub(MIN_PRUNE_INTERVAL.saturating_sub(1))
+                .min(base_height)
+        } else if prune_interval != u64::MAX {
+            db_range
+                .end()
+                .saturating_sub(prune_interval.saturating_sub(1))
+        } else {
+            return Ok(());
+        };
+
+        // set prune range
+        let range = *db_range.start()..prune_ceil;
+        tracing::debug!(?range, "Prune");
+
+        // prune blocks, as fast as possible
+        for (_n, number) in range.enumerate() {
+            // remove canonical block and transactions
+            if let Some(block) = self.get_transactionless_block(BlockFilter::Height(number))? {
+                self.prune_block(&block, true)?;
+            }
+            // remove any non-canonical blocks; typically none
+            for block in self.get_all_blocks_by_height(number)? {
+                self.prune_block(&block, false)?;
+            }
+
+            // be a good neighbour; do not hog the db.
+            tokio::task::yield_now().await;
+        }
+
+        Ok(())
+    }
+
+    /// Return canonical and non-canonical blocks at the given height.
+    pub fn get_all_blocks_by_height(&self, height: u64) -> Result<Vec<Block>> {
         let rows = self.pool.get()?
             .prepare_cached("SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE height = ?1")?
             .query_map([height], |row| Ok(Block {

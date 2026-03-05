@@ -140,8 +140,6 @@ pub struct Sync {
     sync_base_height: u64,
     zq2_floor_height: u64,
     ignore_passive: bool,
-    // periodic vacuum
-    vacuum_at: u64,
     // checkpoint period
     checkpoint_period: u64,
 }
@@ -155,8 +153,6 @@ impl Sync {
     const MAX_CACHE_SIZE: usize = 100_000;
     // Do not overflow libp2p::request-response::cbor::codec::RESPONSE_SIZE_MAXIMUM = 10MB (default)
     const RESPONSE_SIZE_THRESHOLD: usize = crate::constants::SYNC_THRESHOLD;
-    // periodic vacuum interval
-    const VACUUM_INTERVAL: u64 = 604800; // 'weekly'
 
     pub fn new(
         config: &NodeConfig,
@@ -175,7 +171,7 @@ impl Sync {
             Self::MAX_BATCH_SIZE * Self::MAX_CONCURRENT_PEERS, // phase 2 buffering - 1000 is more than sufficient; more may work too.
         );
         let sync_base_height = config.sync.base_height;
-        let prune_interval = config.sync.prune_interval;
+        let prune_interval = config.db.prune_interval;
         // Start from reset, or continue sync
         let latest_block_number = latest_block
             .as_ref()
@@ -197,14 +193,6 @@ impl Sync {
         if latest_block_number < zq2_floor_height {
             return Err(anyhow::anyhow!("Please restore from a checkpoint"));
         }
-
-        // at some random point in the future, or never
-        let vacuum_at = if prune_interval != u64::MAX {
-            latest_block_number
-                .saturating_add(rand::thread_rng().gen_range(1..Self::VACUUM_INTERVAL))
-        } else {
-            u64::MAX
-        };
 
         // Idle duration
         // Give 20% time to do passive-sync/block-pruning operations.
@@ -245,7 +233,6 @@ impl Sync {
             size_cache: HashMap::with_capacity(Self::MAX_CACHE_SIZE),
             zq2_floor_height,
             ignore_passive,
-            vacuum_at,
             checkpoint_period,
         })
     }
@@ -460,12 +447,7 @@ impl Sync {
                 self.request_passive_sync(range)?;
             }
             Ordering::Less => {
-                let last_prune = self.prune_range(range)?;
-                if last_prune > self.vacuum_at {
-                    tracing::info!("Vacuum at {last_prune} then {}", self.vacuum_at);
-                    self.db.vacuum()?;
-                    self.vacuum_at = last_prune.saturating_add(Self::VACUUM_INTERVAL);
-                }
+                let _last_prune = self.prune_range(range)?;
             }
         }
         Ok(())
@@ -525,12 +507,10 @@ impl Sync {
             }
             // remove canonical block and transactions
             if let Some(block) = self.db.get_block(BlockFilter::Height(number))? {
-                trace!(number = %block.number(), hash=%block.hash(), "Prune");
                 self.db.prune_block(&block, true)?;
             }
             // remove any other non-canonical blocks; typically none
-            for block in self.db.get_blocks_by_height(number)? {
-                trace!(number = %block.number(), hash=%block.hash(), "Prune");
+            for block in self.db.get_all_blocks_by_height(number)? {
                 self.db.prune_block(&block, false)?;
             }
         }

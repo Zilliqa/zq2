@@ -619,11 +619,13 @@ impl Network {
             sync: SyncConfig {
                 max_blocks_in_flight: max_blocks_in_flight_default(),
                 block_request_batch_size: block_request_batch_size_default(),
-                prune_interval: options.prune_interval.unwrap_or(u64_max()),
                 base_height: options.base_height.unwrap_or(u64_max()),
                 ignore_passive: false,
             },
-            db: DbConfig::default(),
+            db: DbConfig {
+                prune_interval: options.prune_interval.unwrap_or(u64_max()),
+                ..DbConfig::default()
+            },
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: true,
             max_missed_view_age: max_missed_view_age_default(),
@@ -657,7 +659,7 @@ impl Network {
             secret_key: Some(self.nodes[0].secret_key),
             onchain_key: Some(self.nodes[0].onchain_key.clone()),
             checkpoint: self.nodes[0].inner.config.load_checkpoint.clone(),
-            prune_interval: Some(self.nodes[0].inner.config.sync.prune_interval),
+            prune_interval: Some(self.nodes[0].inner.config.db.prune_interval),
             base_height: Some(self.nodes[0].inner.config.sync.base_height),
             state_sync: Some(self.nodes[0].inner.config.db.state_sync),
         };
@@ -728,7 +730,7 @@ impl Network {
                     let mut c = self.nodes[i].inner.config.clone();
                     c.load_checkpoint = opts.checkpoint.clone();
                     c.db.state_sync = opts.state_sync.unwrap_or_default();
-                    c.sync.prune_interval = opts.prune_interval.unwrap_or(u64::MAX);
+                    c.db.prune_interval = opts.prune_interval.unwrap_or(u64::MAX);
                     c.sync.base_height = opts.base_height.unwrap_or(u64::MAX);
                     c
                 };

@@ -391,7 +391,7 @@ impl Consensus {
 
         // pre-compute how often state snapshots are taken, if at all.
         let bpe = config.consensus.blocks_per_epoch;
-        let prune_period = ((config.sync.prune_interval / bpe) * bpe).saturating_add(bpe);
+        let prune_period = ((config.db.prune_interval / bpe) * bpe).saturating_add(bpe);
 
         let mut consensus = Consensus {
             secret_key,

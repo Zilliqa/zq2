@@ -45,8 +45,7 @@ pub struct Config {
 }
 
 pub fn slow_rpc_queries_handlers_count_default() -> usize {
-    let n = crate::available_threads().saturating_sub(1);
-    n.max(4)
+    crate::available_threads().saturating_sub(1).max(4)
 }
 
 #[derive(Debug, Clone)]
@@ -174,9 +173,6 @@ pub struct DbConfig {
     /// Whether to enable state-sync/state-migration
     #[serde(default)]
     pub state_sync: bool,
-    /// config.toml setting is ignored.
-    #[serde(default)]
-    pub state_prune: bool,
     /// RocksDB block cache size, in bytes.
     #[serde(default = "rocksdb_cache_size_default")]
     pub rocksdb_cache_size: usize,
@@ -189,6 +185,9 @@ pub struct DbConfig {
     /// Target File Size
     #[serde(default = "rocksdb_memtable_budget_default")]
     pub rocksdb_memtable_budget: usize,
+    /// The N number of historical blocks to be kept in the DB during pruning. N >= 300.
+    #[serde(default = "u64_max")]
+    pub prune_interval: u64,
 }
 
 fn rocksdb_block_size_default() -> usize {
@@ -221,7 +220,7 @@ impl Default for DbConfig {
             conn_cache_size: sql_cache_size_default(),
             auto_checkpoint: sql_auto_checkpoint_default(),
             state_sync: false,
-            state_prune: false,
+            prune_interval: u64_max(),
             rocksdb_cache_size: rocksdb_cache_size_default(),
             rocksdb_state_cache_size: rocksdb_state_cache_size_default(),
             rocksdb_block_size: rocksdb_block_size_default(),
@@ -239,9 +238,6 @@ pub struct SyncConfig {
     /// The maximum number of blocks to request in a single message when syncing.
     #[serde(default = "block_request_batch_size_default")]
     pub block_request_batch_size: usize,
-    /// The N number of historical blocks to be kept in the DB during pruning. N >= 300.
-    #[serde(default = "u64_max")]
-    pub prune_interval: u64,
     /// Lowest block to sync from, during passive-sync.
     /// Cannot be set if prune_interval is set.
     #[serde(default = "u64_max")]
@@ -256,7 +252,6 @@ impl Default for SyncConfig {
         Self {
             max_blocks_in_flight: max_blocks_in_flight_default(),
             block_request_batch_size: block_request_batch_size_default(),
-            prune_interval: u64_max(),
             base_height: u64_max(),
             ignore_passive: false,
         }
@@ -361,18 +356,17 @@ impl NodeConfig {
             self.state_cache_size == state_cache_size_default(),
             "state_cache_size is deprecated. Use db.rocksdb_cache_size and db.rocksdb_state_cache_size instead."
         );
-        anyhow::ensure!(!self.db.state_prune, "db.state_prune must not be set");
         // sync/prune settings
         anyhow::ensure!(
-            self.sync.base_height == u64_max() || self.sync.prune_interval == u64_max(),
+            self.sync.base_height == u64_max() || self.db.prune_interval == u64_max(),
             "sync.base_height and sync.prune_interval cannot be set at the same time"
         );
         anyhow::ensure!(
-            self.sync.prune_interval >= MIN_PRUNE_INTERVAL,
+            self.db.prune_interval >= MIN_PRUNE_INTERVAL,
             "sync.prune_interval must be at least {MIN_PRUNE_INTERVAL}",
         );
         anyhow::ensure!(
-            self.sync.prune_interval == u64::MAX || !self.do_checkpoints,
+            self.db.prune_interval == u64::MAX || !self.do_checkpoints,
             "state_prune and do_checkpoints cannot be set at the same time"
         );
         anyhow::ensure!(

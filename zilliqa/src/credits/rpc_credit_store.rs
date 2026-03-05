@@ -6,7 +6,7 @@ use r2d2::Pool;
 use rand::{RngCore, thread_rng};
 use redis::{Client, Commands};
 
-use crate::credits::RateState;
+use crate::{constants::JSON_RPC_HANDLERS_COUNT, credits::RateState};
 
 /// Abstraction for managing global rate limits and user-specific rate limits.
 #[derive(Debug)]
@@ -25,9 +25,8 @@ impl RpcCreditStore {
 
         // spin up redis connection pool
         let pool = uri.as_ref().and_then(|url| {
-            let num_workers = crate::available_threads().max(4) as u32;
             Pool::builder()
-                .max_size(num_workers * 2)
+                .max_size(JSON_RPC_HANDLERS_COUNT)
                 .min_idle(Some(1))
                 .connection_timeout(Duration::from_secs(1)) // fail fast
                 .build(Client::open(url.to_string()).unwrap())
