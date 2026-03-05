@@ -8,10 +8,10 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::json;
 
 use crate::{
+    constants::MIN_PRUNE_INTERVAL,
     constants::MISSED_VIEW_WINDOW,
     credits::RateQuota,
     crypto::{Hash, NodePublicKey},
-    sync::MIN_PRUNE_INTERVAL,
     transaction::EvmGas,
 };
 

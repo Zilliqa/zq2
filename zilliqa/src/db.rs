@@ -35,11 +35,11 @@ use tracing::{debug, warn};
 
 use crate::{
     cfg::DbConfig,
+    constants::MIN_PRUNE_INTERVAL,
     crypto::{BlsSignature, Hash},
     exec::{ScillaError, ScillaException, ScillaTransition},
     message::{AggregateQc, Block, BlockHeader, QuorumCertificate},
     precompiles::ViewHistory,
-    sync::MIN_PRUNE_INTERVAL,
     time::SystemTime,
     transaction::{EvmGas, Log, SignedTransaction, TransactionReceipt, VerifiedTransaction},
     trie_storage::{LEGACY_KEY_LEN, ROCKSDB_TAGGING_AT, TAGGED_KEY_LEN, TrieStorage},
@@ -485,15 +485,10 @@ impl Db {
             connection.execute_batch(
                 "
                 BEGIN;
-
                 INSERT INTO schema_version VALUES (5);
-
                 CREATE TABLE IF NOT EXISTS view_history (view INTEGER NOT NULL PRIMARY KEY, leader BLOB) WITHOUT ROWID;
-
                 CREATE INDEX IF NOT EXISTS idx_view_history_leader ON view_history(leader);
-
                 INSERT INTO view_history (view, leader) VALUES (1000000000000, NULL);
-
                 COMMIT;
             ",
             )?;
@@ -503,15 +498,10 @@ impl Db {
             connection.execute_batch(
                 "
                 BEGIN;
-
                 INSERT INTO schema_version VALUES (6);
-
                 CREATE TABLE IF NOT EXISTS ckpt_view_history (view INTEGER NOT NULL PRIMARY KEY, leader BLOB) WITHOUT ROWID;
-
                 CREATE INDEX IF NOT EXISTS idx_ckpt_view_history_leader ON ckpt_view_history(leader);
-
                 INSERT INTO ckpt_view_history (view, leader) VALUES (1000000000000, NULL);
-
                 COMMIT;
             ",
             )?;
@@ -714,12 +704,14 @@ impl Db {
     ) -> Result<(), rusqlite::Error> {
         // large page_size is more compact/efficient, 64K is hard-coded maximum
         connection.pragma_update(None, "page_size", 1 << 15)?;
-        // reduced non-critical fsync() calls, reducing disk I/O
-        connection.pragma_update(None, "synchronous", "NORMAL")?;
-        // store temporary tables/indices in-memory, reducing disk I/O
-        connection.pragma_update(None, "temp_store", "MEMORY")?;
         // improved read/write multi-threaded locking
         connection.pragma_update(None, "journal_mode", "WAL")?;
+        // reduced non-critical fsync() calls, reducing disk I/O
+        connection.pragma_update(None, "synchronous", "NORMAL")?;
+        // use FAST secure delete to improve I/O when deleting rows
+        connection.pragma_update(None, "secure_delete", "FAST")?;
+        // store temporary tables/indices in-memory, reducing disk I/O
+        connection.pragma_update(None, "temp_store", "MEMORY")?;
         // journal size of 32MB - empirical value
         connection.pragma_update(None, "journal_size_limit", 1 << 25)?;
         // page cache 32MB/connection default
@@ -735,7 +727,6 @@ impl Db {
         )? {
             warn!("*** QPSG disabled - queries may be slow ***");
         }
-
         // improve SQLITE_BUSY/SQLITE_LOCKED handling
         connection.busy_timeout(Duration::from_secs(5))?;
         connection.busy_handler(Some(|retry| {
@@ -1316,11 +1307,6 @@ impl Db {
         };
 
         self.with_sqlite_tx(|db| {
-            // Delete child row, before deleting parents
-            // https://github.com/Zilliqa/zq2/issues/2216#issuecomment-2812501876
-            // db.prepare_cached("DELETE FROM receipts WHERE block_hash = ?1")?
-            //     .execute([hash])?;
-
             // Avoid locking the DB for too long by doing this in chunks
             for chunk in txns.chunks(MAX_KEYS_IN_SINGLE_QUERY) {
                 let placeholders = std::iter::repeat_n("?", chunk.len())
@@ -1339,6 +1325,11 @@ impl Db {
                 )?
                 .execute(rusqlite::params_from_iter(chunk.iter()))?;
             }
+
+            // Delete child row, before deleting parents
+            // https://github.com/Zilliqa/zq2/issues/2216#issuecomment-2812501876
+            db.prepare_cached("DELETE FROM receipts WHERE block_hash = ?1")?
+                .execute([hash])?;
 
             // Delete the block after all references are deleted
             db.prepare_cached("DELETE FROM blocks WHERE block_hash = ?1")?

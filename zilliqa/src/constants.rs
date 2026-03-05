@@ -1,7 +1,5 @@
 use std::time::Duration;
 
-use revm::primitives::{B256, b256};
-
 use crate::transaction::{EvmGas, ScillaGas};
 
 // How big data slot a transaction can use
@@ -92,10 +90,6 @@ pub const MAX_REQUEST_SIZE: usize = 1024 * 1024;
 pub const PROPOSAL_THRESHOLD: usize = MAX_GOSSIP_SIZE * 8 / 10; // 80%
 pub const SYNC_THRESHOLD: usize = MAX_RESPONSE_SIZE - MAX_GOSSIP_SIZE;
 
-/// Empty state trie hash
-pub const EMPTY_ROOT_HASH: B256 =
-    b256!("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421");
-
 // Jailing considers a window of past views and checks if the selected leader
 // missed a number of views configured as threshold.
 #[cfg(not(feature = "fake_time"))]
@@ -115,3 +109,9 @@ pub const LAG_BEHIND_CURRENT_VIEW: u64 = 10;
 
 // How many JSON-RPC threads to use
 pub const JSON_RPC_HANDLERS_COUNT: u32 = 100;
+
+// For the purpose of testing, we need a smaller prune interval to ensure that the test cases run faster.
+#[cfg(feature = "fake_time")]
+pub const MIN_PRUNE_INTERVAL: u64 = 10;
+#[cfg(not(feature = "fake_time"))]
+pub const MIN_PRUNE_INTERVAL: u64 = 300;
