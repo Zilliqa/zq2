@@ -507,6 +507,17 @@ impl Db {
             )?;
         }
 
+        if version < 7 {
+            connection.execute_batch(
+                "
+                BEGIN;
+                INSERT INTO schema_version VALUES (7);
+                CREATE INDEX IF NOT EXISTS idx_touched_address_tx_hash ON touched_address_index(tx_hash);
+                COMMIT;
+            ",
+            )?;
+        }
+
         Ok(())
     }
 
@@ -1295,48 +1306,31 @@ impl Db {
     pub fn prune_block(&self, block: &Block, is_canonical: bool) -> Result<()> {
         tracing::trace!(number = block.number(), hash=%block.hash(), "Prune");
         let hash = block.hash();
-        let db = self.pool.get()?;
-
-        // get a list of transactions
-        let txns = if is_canonical {
-            db.prepare_cached("SELECT tx_hash FROM receipts WHERE block_hash = ?1")?
-                .query_map([hash], |row| row.get(0))?
-                .collect::<Result<Vec<Hash>, _>>()?
-        } else {
-            Vec::new()
-        };
-
         self.with_sqlite_tx(|db| {
-            // Avoid locking the DB for too long by doing this in chunks
-            for chunk in txns.chunks(MAX_KEYS_IN_SINGLE_QUERY) {
-                let placeholders = std::iter::repeat_n("?", chunk.len())
-                    .collect::<Vec<_>>()
-                    .join(",");
-
-                // Trick: Use temp table to speed up deletion
+            if is_canonical {
+                // Trick: Use temp table instead of query parser for bulk transactions
                 db.prepare_cached("CREATE TEMP TABLE to_delete(tx_hash BLOB PRIMARY_KEY)")?
                     .execute([])?;
-                db.execute(
-                    format!("INSERT INTO to_delete VALUES ({placeholders})").as_str(),
-                    rusqlite::params_from_iter(chunk.iter()),
-                )?;
-                // Delete receipts linked to this and other blocks
+                db.prepare_cached(
+                    "INSERT INTO to_delete (tx_hash) SELECT tx_hash FROM receipts WHERE block_hash = ?1"
+                )?.execute([hash])?;
+                // Delete receipts references
                 db.prepare_cached(
                     "DELETE FROM receipts WHERE tx_hash IN (SELECT tx_hash FROM to_delete)",
                 )?
                 .execute([])?;
-                // Delete all transactions linked to this block
+                // Delete all transactions linked to this block; and their touched_address_index references
                 db.prepare_cached(
                     "DELETE FROM transactions WHERE tx_hash IN (SELECT tx_hash FROM to_delete)",
                 )?
                 .execute([])?;
                 db.prepare_cached("DROP TABLE to_delete")?.execute([])?;
+            } else {
+                // Delete child row, before deleting parents
+                // https://github.com/Zilliqa/zq2/issues/2216#issuecomment-2812501876
+                db.prepare_cached("DELETE FROM receipts WHERE block_hash = ?1")?
+                    .execute([hash])?;
             }
-
-            // Delete child row, before deleting parents
-            // https://github.com/Zilliqa/zq2/issues/2216#issuecomment-2812501876
-            db.prepare_cached("DELETE FROM receipts WHERE block_hash = ?1")?
-                .execute([hash])?;
 
             // Delete the block after all references are deleted
             db.prepare_cached("DELETE FROM blocks WHERE block_hash = ?1")?
