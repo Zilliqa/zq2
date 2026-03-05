@@ -16,9 +16,11 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/target \
     if [ "${is_release}" != "true" ] ; then \
+    cargo install cargo-auditable && \
     cargo auditable build --bin zilliqa && \
     mv ./target/debug/zilliqa ./build/ ;\
     else \
+    cargo install cargo-auditable && \
     cargo auditable build --release --bin zilliqa && \
     mv ./target/release/zilliqa ./build/ ;\
     fi
