@@ -314,7 +314,7 @@ impl Db {
         };
 
         // Build connection pool
-        let num_workers = crate::available_threads().max(4) as u32;
+        let num_workers = crate::available_threads() as u32;
         let builder = Pool::builder().min_idle(Some(1)).max_size(num_workers * 2);
         debug!("SQLite {builder:?}");
 

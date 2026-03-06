@@ -32,7 +32,7 @@ async fn prune_interval(mut network: Network) {
     });
     network.run_until_synced(index).await;
     network
-        .run_until_block_finalized(MIN_PRUNE_INTERVAL * 2, 1000)
+        .run_until_block_finalized(MIN_PRUNE_INTERVAL * 3, 1000)
         .await
         .unwrap();
 
