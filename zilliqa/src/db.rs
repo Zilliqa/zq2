@@ -314,7 +314,7 @@ impl Db {
         };
 
         // Build connection pool
-        let num_workers = crate::available_threads() as u32;
+        let num_workers = crate::available_threads().max(4) as u32;
         let builder = Pool::builder().min_idle(Some(1)).max_size(num_workers * 2);
         debug!("SQLite {builder:?}");
 
@@ -738,12 +738,6 @@ impl Db {
         )? {
             warn!("*** QPSG disabled - queries may be slow ***");
         }
-        // improve SQLITE_BUSY/SQLITE_LOCKED handling
-        connection.busy_timeout(Duration::from_secs(5))?;
-        connection.busy_handler(Some(|retry| {
-            warn!("SQL busy {retry}");
-            retry < 5 // default: 5s * 5 = 25s
-        }))?;
 
         // Add tracing - logs SQL statements
         connection.trace_v2(
