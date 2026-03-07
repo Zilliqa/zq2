@@ -1,33 +1,47 @@
 use alloy::{
     primitives::{Address, U256},
-    providers::Provider as _,
+    providers::Provider,
     rpc::types::TransactionRequest,
 };
 use fs_extra::file::CopyOptions;
-use zilliqa::{cfg::Checkpoint, crypto::Hash, sync::MIN_PRUNE_INTERVAL};
+use zilliqa::{cfg::Checkpoint, constants::MIN_PRUNE_INTERVAL, crypto::Hash};
 
 use crate::{Network, NewNodeOptions};
 
 // Test a pruning node does not hold old blocks.
-#[zilliqa_macros::test]
+#[zilliqa_macros::test(blocks_per_epoch = 3)]
 async fn prune_interval(mut network: Network) {
-    network.run_until_block_finalized(5, 100).await.unwrap();
+    let wallet = network.genesis_wallet().await;
 
-    tracing::info!("Adding pruned node. {}", MIN_PRUNE_INTERVAL);
+    // make sure that pruning preserves the balance.
+    let address = Address::random();
+    let amount = U256::from(1234);
+    let hash = *wallet
+        .send_transaction(TransactionRequest::default().to(address).value(amount))
+        .await
+        .unwrap()
+        .tx_hash();
+    let _ = network.run_until_receipt(&wallet, &hash, 100).await;
+    let balance = wallet.get_balance(address).await.unwrap();
+    assert_eq!(balance, amount);
+
+    tracing::info!(prune_interval = MIN_PRUNE_INTERVAL, "Adding pruned node.");
     let index = network.add_node_with_options(crate::NewNodeOptions {
         prune_interval: Some(MIN_PRUNE_INTERVAL),
         ..Default::default()
     });
     network.run_until_synced(index).await;
-
     network
-        .run_until_block_finalized(MIN_PRUNE_INTERVAL + 5, 1000)
+        .run_until_block_finalized(MIN_PRUNE_INTERVAL * 3, 1000)
         .await
         .unwrap();
 
     let range = network.node_at(index).db.available_range().unwrap();
-    tracing::info!("Pruned range: {range:?}");
+    tracing::info!(?range, "Pruned");
     assert_eq!(range.count() as u64, MIN_PRUNE_INTERVAL);
+
+    let balance = wallet.get_balance(address).await.unwrap();
+    assert_eq!(balance, amount);
 }
 
 #[zilliqa_macros::test(do_checkpoints)]
@@ -67,7 +81,7 @@ async fn base_height(mut network: Network) {
             file: checkpoint_path.to_str().unwrap().to_string(),
             hash: Hash(checkpoint_hash.0),
         }),
-        base_height: Some(3),
+        base_height: Some(5),
         ..Default::default()
     });
 
@@ -87,7 +101,7 @@ async fn base_height(mut network: Network) {
         .available_range()
         .unwrap()
         .start();
-    assert_eq!(base_height, 3); // successful passive-sync to block 3.
+    assert_eq!(base_height, 5); // successful passive-sync to block 3.
 }
 
 #[zilliqa_macros::test(do_checkpoints)]
