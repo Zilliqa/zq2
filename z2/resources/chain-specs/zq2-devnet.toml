@@ -49,7 +49,7 @@ consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
 # Gas parameters
 consensus.eth_block_gas_limit = 84000000
 consensus.gas_price = "4_761_904_800_000"
-consensus.contract_upgrades = { deposit_v5 = { height = 0, reinitialise_params = { withdrawal_period = 300 } }, deposit_v6 = { height = 0 }, deposit_v7 = { height = 0 } }
+consensus.contract_upgrades = { deposit_v5 = { height = 0, reinitialise_params = { withdrawal_period = 300 } }, deposit_v6 = { height = 0 }, deposit_v7 = { height = 0 }, deposit_v8 = { height = 0 } }
 consensus.new_view_broadcast_interval = { secs = 30, nanos = 0 }
 
 api_servers = [{ default_quota = { balance = 500, period = 1 }, port = 4201, enabled_apis = [{ namespace = "eth", apis = ["blockNumber"] }] }, { port = 4202, enabled_apis = ["admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] }]
