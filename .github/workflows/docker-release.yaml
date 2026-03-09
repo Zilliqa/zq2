@@ -35,7 +35,7 @@ jobs:
         service_account: "${{ secrets.GCP_PRD_GITHUB_SA_DOCKER_REGISTRY }}"
         create_credentials_file: true
     - name: Set up QEMU
-      uses: docker/setup-qemu-action@v3
+      uses: docker/setup-qemu-action@v4
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
     - name: Login to the GCP registry
@@ -115,7 +115,7 @@ jobs:
           service_account: "${{ secrets.GCP_PRD_GITHUB_SA_DOCKER_REGISTRY }}"
           create_credentials_file: true
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Login to the GCP registry
