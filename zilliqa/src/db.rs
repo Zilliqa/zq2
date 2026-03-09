@@ -518,7 +518,7 @@ impl Db {
             )?;
         }
 
-        if version < 7 {
+        if version < 8 {
             connection.execute_batch(
                 "
                 BEGIN;
