@@ -840,7 +840,7 @@ impl Network {
 
             if messages.is_empty() {
                 warn!("Messages were empty - advance time faster!");
-                zilliqa::time::advance(Duration::from_millis(1));
+                zilliqa::time::advance(Duration::from_millis(50));
                 continue;
             }
 
@@ -1146,7 +1146,7 @@ impl Network {
                 }
             }
             AnyMessage::External(external_message) => {
-                //info!(%external_message, "external");
+                info!(%external_message, "external");
 
                 let cbor_size =
                     cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024), &external_message)

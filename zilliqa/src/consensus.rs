@@ -1938,6 +1938,7 @@ impl Consensus {
 
     fn committee_for_hash(&self, parent_hash: Hash) -> Result<Vec<NodePublicKey>> {
         let Ok(Some(parent)) = self.get_block(&parent_hash) else {
+            tracing::error!("parent block not found: {:?}", parent_hash);
             return Ok(Vec::new()); // return an empty vector instead of Err for graceful app-level error-handling
         };
 
@@ -2012,7 +2013,7 @@ impl Consensus {
         // if we are not the leader of the round in which the vote counts
         if !self.are_we_leader_for_view(new_view.qc.block_hash, grandparent_mix_hash, new_view.view)
         {
-            debug!(new_view.view, "skipping new view, not the leader");
+            trace!(new_view.view, "skipping new view, not the leader");
             return Ok(None);
         }
 
@@ -2413,11 +2414,6 @@ impl Consensus {
                             "~~~~~~~~~~> skipping reorged"
                         );
                     } else {
-                        error!(
-                            "Pushing Jailed leader in view: {}, {:?}",
-                            view,
-                            alloy::hex::encode(leader.as_bytes())
-                        );
                         new_missed_views.push_front((view, leader)); // ensure new_missed_views in ascending order
                     }
                 }
