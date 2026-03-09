@@ -165,6 +165,7 @@ resource "google_compute_target_https_proxy" "private_api" {
   name             = each.key
   url_map          = google_compute_url_map.private_api[each.key].id
   ssl_certificates = [google_compute_managed_ssl_certificate.private_api[each.key].id]
+  ssl_policy       = google_compute_ssl_policy.custom.id
 }
 
 data "google_compute_global_address" "private_api" {

@@ -109,3 +109,14 @@ resource "google_compute_firewall" "allow_monitor_healthcheck" {
     ports    = ["8080"]
   }
 }
+
+######################################
+## SSL POLICY
+######################################
+
+resource "google_compute_ssl_policy" "custom" {
+  project         = var.project_id
+  name            = format("%s-custom", var.chain_name)
+  profile         = "COMPATIBLE"
+  min_tls_version = "TLS_1_2"
+}

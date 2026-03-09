@@ -521,7 +521,7 @@ pub fn save_ckpt(
 
     let mut account_count = u64::MIN;
     let mut record_count = u64::MIN;
-    let num_workers = crate::available_threads().max(1) * 2; // 2 x CPUs
+    let num_workers = crate::available_threads();
     let (work_tx, work_rx) = crossbeam::channel::bounded::<(Vec<u8>, Vec<u8>)>(num_workers * 2); // 2 x Threads
     let (blob_tx, blob_rx) = crossbeam::channel::bounded::<AccountBlob>(num_workers * 2); // 2 x Threads
 

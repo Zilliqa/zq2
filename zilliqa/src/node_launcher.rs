@@ -32,6 +32,7 @@ use tracing::*;
 use crate::{
     api::{self, subscription_id_provider::EthIdProvider},
     cfg::NodeConfig,
+    constants::JSON_RPC_HANDLERS_COUNT,
     credits::{RpcCreditRate, RpcCreditStore, RpcExtensionLayer, RpcLimitLayer},
     crypto::SecretKey,
     message::{ExternalMessage, InternalMessage},
@@ -168,6 +169,7 @@ impl NodeLauncher {
             let server = jsonrpsee::server::ServerBuilder::new()
                 .set_config(
                     ServerConfig::builder()
+                        .max_connections(JSON_RPC_HANDLERS_COUNT)
                         .max_response_body_size(config.api_limits.max_rpc_response_size)
                         .set_id_provider(EthIdProvider)
                         .build(),
