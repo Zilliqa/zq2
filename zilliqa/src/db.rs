@@ -522,7 +522,7 @@ impl Db {
             connection.execute_batch(
                 "
                 BEGIN;
-                INSERT INTO schema_version VALUES (7);
+                INSERT INTO schema_version VALUES (8);
                 ALTER TABLE blocks ADD COLUMN randao_reveal BLOB;
                 ALTER TABLE blocks ADD COLUMN mix_hash BLOB;
                 COMMIT;
