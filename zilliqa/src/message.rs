@@ -389,6 +389,7 @@ pub enum InternalMessage {
         TrieStorage,
         ViewHistory,
         Box<Path>,
+        Box<Block>,
     ),
     /// Notify p2p cordinator to subscribe to a particular gossipsub topic
     SubscribeToGossipSubTopic(GossipSubTopic),
@@ -592,6 +593,11 @@ pub struct BlockHeader {
     pub timestamp: SystemTime,
     pub gas_used: EvmGas,
     pub gas_limit: EvmGas,
+    // randao_reveal and mix_hash are activated at a fork
+    #[serde(default)]
+    pub randao_reveal: Option<BlsSignature>,
+    #[serde(default)]
+    pub mix_hash: Option<Hash>,
 }
 
 impl BlockHeader {
@@ -615,21 +621,31 @@ impl BlockHeader {
             timestamp: SystemTime::UNIX_EPOCH,
             gas_used: EvmGas(0),
             gas_limit: EvmGas(0),
+            randao_reveal: Some(BlsSignature::identity()),
+            mix_hash: Some(Hash::EMPTY),
         }
     }
 
     pub fn size(&self) -> usize {
-        std::mem::size_of_val(&self.view)
-            + std::mem::size_of_val(&self.number)
+        let mut size = size_of_val(&self.view)
+            + size_of_val(&self.number)
             + self.hash.as_bytes().len()
             + self.qc.size()
             + self.signature.to_bytes().len()
             + self.state_root_hash.as_bytes().len()
             + self.transactions_root_hash.as_bytes().len()
             + self.receipts_root_hash.as_bytes().len()
-            + std::mem::size_of_val(&self.timestamp)
-            + std::mem::size_of_val(&self.gas_used)
-            + std::mem::size_of_val(&self.gas_limit)
+            + size_of_val(&self.timestamp)
+            + size_of_val(&self.gas_used)
+            + size_of_val(&self.gas_limit);
+
+        if let Some(randao_reveal) = &self.randao_reveal {
+            size += randao_reveal.to_bytes().len();
+        }
+        if let Some(mix_hash) = &self.mix_hash {
+            size += mix_hash.as_bytes().len();
+        }
+        size
     }
 }
 
@@ -648,6 +664,8 @@ impl Default for BlockHeader {
             timestamp: SystemTime::UNIX_EPOCH,
             gas_used: EvmGas(0),
             gas_limit: EvmGas(0),
+            randao_reveal: None,
+            mix_hash: None,
         }
     }
 }
@@ -676,6 +694,8 @@ impl Block {
             EvmGas(0),
             EvmGas(0),
             Either::Right(BlsSignature::identity()),
+            Some(BlsSignature::identity()),
+            Some(Hash::EMPTY),
         )
     }
 
@@ -693,6 +713,8 @@ impl Block {
         timestamp: SystemTime,
         gas_used: EvmGas,
         gas_limit: EvmGas,
+        randao_reveal: Option<BlsSignature>,
+        mix_hash: Option<Hash>,
     ) -> Block {
         Self::new(
             view,
@@ -707,6 +729,8 @@ impl Block {
             gas_used,
             gas_limit,
             Either::Left(secret_key),
+            randao_reveal,
+            mix_hash,
         )
     }
 
@@ -724,6 +748,8 @@ impl Block {
         gas_used: EvmGas,
         gas_limit: EvmGas,
         secret_key_or_signature: Either<SecretKey, BlsSignature>,
+        randao_reveal: Option<BlsSignature>,
+        mix_hash: Option<Hash>,
     ) -> Self {
         let block = Block {
             header: BlockHeader {
@@ -738,6 +764,8 @@ impl Block {
                 timestamp,
                 gas_used,
                 gas_limit,
+                randao_reveal,
+                mix_hash,
             },
             agg,
             transactions,
@@ -833,11 +861,28 @@ impl Block {
 
         size
     }
+
+    pub fn compute_randao_reveal(private_key: &SecretKey, view: u64) -> BlsSignature {
+        let to_sign = view.to_be_bytes();
+        private_key.sign(&to_sign)
+    }
+
+    pub fn compute_randao_mix(parent_block: BlockHeader, randao_reveal: BlsSignature) -> Hash {
+        let parent_mix = parent_block.mix_hash.unwrap_or(parent_block.hash).0;
+        let randao_reveal_hash = Keccak256::digest(randao_reveal.to_bytes());
+
+        let mut result = [0u8; 32];
+        for i in 0..32 {
+            result[i] = parent_mix[i] ^ randao_reveal_hash[i];
+        }
+
+        Hash(result)
+    }
 }
 
 impl Block {
     pub fn compute_hash(&self) -> Hash {
-        Hash::builder()
+        let mut builder = Hash::builder()
             .with(self.view().to_be_bytes())
             .with(self.number().to_be_bytes())
             .with(self.state_root_hash().as_bytes())
@@ -858,8 +903,15 @@ impl Block {
                     .as_ref()
                     .map(|agg| agg.compute_hash().as_bytes().to_vec()),
             )
-            .with_iter(self.transactions.iter().map(|hash| hash.as_bytes()))
-            .finalize()
+            .with_iter(self.transactions.iter().map(|hash| hash.as_bytes()));
+
+        if let Some(randao_reveal) = &self.header.randao_reveal {
+            builder = builder.with(randao_reveal.to_bytes());
+        }
+        if let Some(mix_hash) = &self.header.mix_hash {
+            builder = builder.with(mix_hash.as_bytes());
+        }
+        builder.finalize()
     }
 }
 
@@ -895,7 +947,7 @@ impl revm_context::Block for Block {
     }
 
     fn prevrandao(&self) -> Option<B256> {
-        None
+        Some(self.header.mix_hash.unwrap_or(Hash::EMPTY).0.into())
     }
 
     fn blob_excess_gas_and_price(&self) -> Option<BlobExcessGasAndPrice> {

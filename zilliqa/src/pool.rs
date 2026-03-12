@@ -982,7 +982,7 @@ impl TransactionPool {
     ) -> TxAddResult {
         // check for duplicates
         if self.core.hash_to_txn_map.contains_key(&txn.hash) {
-            tracing::warn!(
+            tracing::debug!(
                 "Transaction with this hash is already in the pool. Txn hash: {:?}, from: {:?}, account nonce: {:?}",
                 txn.hash,
                 txn.signer,
@@ -1091,7 +1091,7 @@ impl TransactionPool {
     ) -> TxAddResult {
         // check for duplicates
         if self.core.hash_to_txn_map.contains_key(&txn.hash) {
-            tracing::warn!(
+            tracing::debug!(
                 "Transaction with this hash is already in the pool. Txn hash: {:?}, from: {:?}, account nonce: {:?}",
                 txn.hash,
                 txn.signer,

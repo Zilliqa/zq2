@@ -303,16 +303,22 @@ impl Consensus {
             State::new_with_genesis(db.state_trie()?, config.clone(), db.clone())
         }?;
 
-        let (ckpt_block, ckpt_transactions, ckpt_parent) =
-            if let Some((block, transactions, parent, view_history)) = checkpoint_data {
+        let (ckpt_block, ckpt_transactions, ckpt_parent, ckpt_grandparent) =
+            if let Some((block, transactions, parent, view_history, grandparent)) = checkpoint_data
+            {
                 info!(
                     history = display(&view_history),
                     "~~~~~~~~~~> found in checkpoint"
                 );
                 *state.view_history.write() = view_history;
-                (Some(block), Some(transactions), Some(parent))
+                (
+                    Some(block),
+                    Some(transactions),
+                    Some(parent),
+                    Some(grandparent),
+                )
             } else {
-                (None, None, None)
+                (None, None, None, None)
             };
 
         let (latest_block, latest_block_view) = match latest_block {
@@ -557,8 +563,8 @@ impl Consensus {
         }
 
         // If we started from a checkpoint
-        if let (Some(block), Some(transactions), Some(parent)) =
-            (ckpt_block, ckpt_transactions, ckpt_parent)
+        if let (Some(block), Some(transactions), Some(parent), Some(_grandparent)) =
+            (ckpt_block, ckpt_transactions, ckpt_parent, ckpt_grandparent)
         {
             // if the checkpoint block does not exist, execute the block
             if consensus
@@ -613,7 +619,14 @@ impl Consensus {
         // Set self.network_message_cache incase the network is stuck
         if consensus.db.get_voted_in_view()? {
             let block = consensus.head_block();
-            if let Some(leader) = consensus.leader_at_block(&block, consensus.get_view()?) {
+            let parent_mix_hash = consensus
+                .get_block(&block.parent_hash())
+                .ok()
+                .flatten()
+                .and_then(|block| block.header.mix_hash);
+            if let Some(leader) =
+                consensus.leader_at_block(&block, parent_mix_hash, consensus.get_view()?)
+            {
                 consensus.build_vote(leader.peer_id, consensus.vote_from_block(&block));
             }
         } else {
@@ -628,7 +641,14 @@ impl Consensus {
         let block = self.get_block(&self.high_qc.block_hash)?.ok_or_else(|| {
             anyhow!("missing block corresponding to our high qc - this should never happen")
         })?;
-        let leader = self.leader_at_block(&block, view);
+
+        let parent_mix_hash = self
+            .get_block(&block.parent_hash())
+            .ok()
+            .flatten()
+            .and_then(|block| block.header.mix_hash);
+
+        let leader = self.leader_at_block(&block, parent_mix_hash, view);
         let new_view_message = (
             leader.map(|leader: Validator| leader.peer_id),
             ExternalMessage::NewView(Box::new(NewView::new(
@@ -701,7 +721,7 @@ impl Consensus {
                     view,
                     block.hash()
                 );
-                let leader = self.leader_at_block(&block, view).unwrap();
+                let leader = self.leader_at_block(&block, None, view).unwrap();
                 let vote = self.vote_from_block(&block);
                 let network_msg = self.build_vote(leader.peer_id, vote);
                 return Ok(Some(network_msg));
@@ -1036,7 +1056,7 @@ impl Consensus {
             } else {
                 self.in_committee(true)?;
                 let vote = self.vote_from_block(&block);
-                let next_leader = self.leader_at_block(&block, view);
+                let next_leader = self.leader_at_block(&block, parent.header.mix_hash, view);
 
                 if self.create_next_block_on_timeout.load(Ordering::SeqCst) {
                     warn!("Create block on timeout set. Clearing");
@@ -1310,8 +1330,13 @@ impl Consensus {
 
         // if we are not the leader of the round in which the vote counts
         // The vote is in the happy path (?) - so the view is block view + 1
-        if !self.are_we_leader_for_view(block_hash, block_view + 1) {
-            trace!(
+        let parent_mix_hash = self
+            .get_block(&block.parent_hash())
+            .ok()
+            .flatten()
+            .and_then(|block| block.header.mix_hash);
+        if !self.are_we_leader_for_view(block_hash, parent_mix_hash, block_view + 1) {
+            info!(
                 vote_view = block_view + 1,
                 ?block_hash,
                 "skipping vote, not the leader"
@@ -1480,6 +1505,8 @@ impl Consensus {
             proposal.header.timestamp, // set block timestamp to **start** point of assembly.
             proposal.header.gas_used,
             proposal.header.gas_limit,
+            proposal.header.randao_reveal,
+            proposal.header.mix_hash,
         );
         self.receipts_cache
             .lock()
@@ -1524,6 +1551,18 @@ impl Consensus {
             }
         };
 
+        let randao_supported = self.state.forks.get(parent.number()).randao_support;
+
+        let (randao_reveal, mix_hash) = if randao_supported {
+            let randao_reveal = Block::compute_randao_reveal(&self.secret_key, view);
+            (
+                Some(randao_reveal),
+                Some(Block::compute_randao_mix(parent.header, randao_reveal)),
+            )
+        } else {
+            (None, None)
+        };
+
         // This is a partial header of a block that will be proposed with some transactions executed below.
         // It is needed so that each transaction is executed within proper block context (the block it belongs to)
         let executed_block_header = BlockHeader {
@@ -1531,6 +1570,7 @@ impl Consensus {
             number: parent.header.number + 1,
             timestamp: SystemTime::max(SystemTime::now(), parent.timestamp()), // block timestamp at **start** of assembly, not end.
             gas_limit: self.config.consensus.eth_block_gas_limit,
+            mix_hash,
             ..BlockHeader::default()
         };
 
@@ -1576,6 +1616,8 @@ impl Consensus {
             executed_block_header.timestamp,
             EvmGas(0),
             executed_block_header.gas_limit,
+            randao_reveal,
+            mix_hash,
         );
 
         let mut early_proposal = self.early_proposal.write();
@@ -1872,16 +1914,21 @@ impl Consensus {
         Ok(Some(self.early_proposal.read().as_ref().unwrap().0.clone()))
     }
 
-    fn are_we_leader_for_view(&self, parent_hash: Hash, view: u64) -> bool {
-        match self.leader_for_view(parent_hash, view) {
+    fn are_we_leader_for_view(&self, parent_hash: Hash, mix_hash: Option<Hash>, view: u64) -> bool {
+        match self.leader_for_view(parent_hash, mix_hash, view) {
             Some(leader) => leader == self.public_key(),
             None => false,
         }
     }
 
-    fn leader_for_view(&self, parent_hash: Hash, view: u64) -> Option<NodePublicKey> {
+    fn leader_for_view(
+        &self,
+        parent_hash: Hash,
+        mix_hash: Option<Hash>,
+        view: u64,
+    ) -> Option<NodePublicKey> {
         if let Ok(Some(parent)) = self.get_block(&parent_hash) {
-            let leader = self.leader_at_block(&parent, view).unwrap();
+            let leader = self.leader_at_block(&parent, mix_hash, view).unwrap();
             Some(leader.public_key)
         } else {
             if view > 1 {
@@ -1892,14 +1939,14 @@ impl Consensus {
                 return None;
             }
             let head_block = self.head_block();
-            let leader = self.leader_at_block(&head_block, view).unwrap();
+            let leader = self.leader_at_block(&head_block, None, view).unwrap();
             Some(leader.public_key)
         }
     }
 
     fn committee_for_hash(&self, parent_hash: Hash) -> Result<Vec<NodePublicKey>> {
         let Ok(Some(parent)) = self.get_block(&parent_hash) else {
-            // tracing::error!("parent block not found: {:?}", parent_hash);
+            tracing::error!("parent block not found: {:?}", parent_hash);
             return Ok(Vec::new()); // return an empty vector instead of Err for graceful app-level error-handling
         };
 
@@ -1923,11 +1970,11 @@ impl Consensus {
             new_view.view, from
         );
 
-        if self.get_block(&new_view.qc.block_hash)?.is_none() {
+        let Some(parent) = self.get_block(&new_view.qc.block_hash)? else {
             trace!("high_qc block does not exist for NewView. Attempting to fetch block via sync");
             self.sync.sync_from_probe()?;
             return Ok(None);
-        }
+        };
 
         // Get the committee for the qc hash (should be highest?) for this view
         let committee: Vec<_> = self.committee_for_hash(new_view.qc.block_hash)?;
@@ -1963,10 +2010,17 @@ impl Consensus {
             return Ok(None);
         }
 
+        let grandparent_mix_hash = self
+            .get_block(&parent.parent_hash())
+            .ok()
+            .flatten()
+            .and_then(|block| block.header.mix_hash);
+
         // The leader for this view should be chosen according to the parent of the highest QC
         // What happens when there are multiple QCs with different parents?
         // if we are not the leader of the round in which the vote counts
-        if !self.are_we_leader_for_view(new_view.qc.block_hash, new_view.view) {
+        if !self.are_we_leader_for_view(new_view.qc.block_hash, grandparent_mix_hash, new_view.view)
+        {
             trace!(new_view.view, "skipping new view, not the leader");
             return Ok(None);
         }
@@ -2355,10 +2409,12 @@ impl Consensus {
             let block_header = BlockHeader {
                 view: parent.header.view,
                 number: parent.header.number,
+                mix_hash: parent.header.mix_hash,
                 ..Default::default()
             };
+            let fork = self.state.forks.get(parent.number());
             for view in (parent.view() + 1..current.view()).rev() {
-                if let Ok(leader) = state_at.leader(view, block_header) {
+                if let Ok(leader) = state_at.leader(view, block_header, fork) {
                     if view == parent.view() + 1 {
                         trace!(
                             view,
@@ -2486,6 +2542,12 @@ impl Consensus {
             .ok_or(anyhow!(
                 "Trying to checkpoint block, but we don't have its parent"
             ))?;
+        let grandparent = self
+            .db
+            .get_block(parent.parent_hash().into())?
+            .ok_or(anyhow!(
+                "Trying to checkpoint block, but we don't have its grandparent"
+            ))?;
         let transactions: Vec<SignedTransaction> = block
             .transactions
             .iter()
@@ -2527,6 +2589,7 @@ impl Consensus {
                 self.db.state_trie()?,
                 view_history,
                 checkpoint_dir,
+                Box::new(grandparent),
             ))?;
         Ok((file_name.display().to_string(), hash.to_string()))
     }
@@ -2559,8 +2622,14 @@ impl Consensus {
             ));
         }
 
-        // Derive the proposer from the block's view
-        let Some(proposer) = self.leader_at_block(&parent, block.view()) else {
+        let grandparent_mix_hash = self
+            .get_block(&parent.parent_hash())
+            .ok()
+            .flatten()
+            .and_then(|block| block.header.mix_hash);
+
+        let Some(proposer) = self.leader_at_block(&parent, grandparent_mix_hash, block.view())
+        else {
             return Err(anyhow!(
                 "Failed to find leader. Block number {}, Parent number {}",
                 block.number(),
@@ -2672,6 +2741,28 @@ impl Consensus {
             return Err(anyhow!(
                 "invalid block, does not extend from finalized block"
             ));
+        }
+
+        let randao_supported = self.state.forks.get(block.number() - 1).randao_support;
+
+        if randao_supported {
+            let randao_reveal = block
+                .header
+                .randao_reveal
+                .ok_or(anyhow!("Missing randao reveal in received proposal!"))?;
+            let view_as_bytes = block.header.view.to_be_bytes();
+            proposer.public_key.verify(&view_as_bytes, randao_reveal)?;
+
+            let computed_mix_hash = Block::compute_randao_mix(parent.header, randao_reveal);
+
+            let block_mix_hash = block
+                .header
+                .mix_hash
+                .ok_or(anyhow!("Missing mix hash in received proposal!"))?;
+
+            if computed_mix_hash != block_mix_hash {
+                return Err(anyhow!("Invalid randao mix hash!"));
+            }
         }
         Ok(())
     }
@@ -2995,21 +3086,33 @@ impl Consensus {
         Ok(())
     }
 
-    pub fn leader_at_block(&self, block: &Block, view: u64) -> Option<Validator> {
+    pub fn leader_at_block(
+        &self,
+        block: &Block,
+        parent_mix_hash: Option<Hash>,
+        view: u64,
+    ) -> Option<Validator> {
         let state_at = self.state.at_root(block.state_root_hash().into());
-        Self::leader_at_state(&state_at, block, view)
+        Self::leader_at_state(&state_at, block, parent_mix_hash, view)
     }
 
-    pub fn leader_at_state(state: &State, block: &Block, view: u64) -> Option<Validator> {
+    fn leader_at_state(
+        state: &State,
+        block: &Block,
+        parent_mix_hash: Option<Hash>,
+        view: u64,
+    ) -> Option<Validator> {
+        let fork = state.forks.get(block.number());
         let executed_block = BlockHeader {
             // we need to set the (parent) block's view at which we call the jailing
             // precompile otherwise we won't know if we must use the node's history
             // or the checkpoint's history gradually extended during state-syncing
             view: block.header.view + 1,
             number: block.header.number + 1,
+            mix_hash: parent_mix_hash,
             ..Default::default()
         };
-        let Ok(public_key) = state.leader(view, executed_block) else {
+        let Ok(public_key) = state.leader(view, executed_block, fork) else {
             return None;
         };
 
@@ -3448,7 +3551,15 @@ impl Consensus {
         cumulative_gas_fee: u128,
     ) -> Result<()> {
         // Apply the rewards of previous round
-        let proposer = self.leader_at_block(parent, block.view()).unwrap();
+        let grandparent_mix_hash = self
+            .get_block(&parent.parent_hash())
+            .ok()
+            .flatten()
+            .and_then(|block| block.header.mix_hash);
+
+        let proposer = self
+            .leader_at_block(parent, grandparent_mix_hash, block.view())
+            .unwrap();
         Self::apply_rewards_late_at(
             parent,
             state,
@@ -3701,6 +3812,8 @@ impl Consensus {
         let block_hash = brt.block.state_root_hash();
 
         let brt_view = brt.block.view();
+
+        let mix_hash = brt.block.header.mix_hash;
         // the history kept in memory is missing due to a node restart, load it from the database
         if self.state.ckpt_view_history.is_none() {
             let missed_views = self
@@ -3754,15 +3867,18 @@ impl Consensus {
             let block = self
                 .get_canonical_block_by_number(migrate_at)?
                 .expect("Next block missing");
+
+            let fork = self.state.forks.get(block.number() - 1);
             let state_at = self.state.at_root(block_hash.into());
             let header = BlockHeader {
                 view: parent_view,
                 number: migrate_at - 1,
+                mix_hash,
                 ..Default::default()
             };
             let mut history = VecDeque::new();
             for view in parent_view + 1..block.view() {
-                if let Ok(leader) = state_at.leader(view, header)
+                if let Ok(leader) = state_at.leader(view, header, fork)
                     && view != parent_view + 1
                 {
                     history.push_back((view, leader));
@@ -3822,16 +3938,19 @@ impl Consensus {
             let header = BlockHeader {
                 view: block.view(),
                 number: block.number(),
+                mix_hash: block.header.mix_hash,
                 ..Default::default()
             };
             // skip the first missed view in a row as its block must have been reorged
             view += 1;
+
+            let fork = self.state.forks.get(header.number);
             // but add all subsequent missed views to the history
             let mut history = VecDeque::new();
             while self.get_block_by_view(view)?.is_none()
                 && self.state.view_history.read().min_view > view
             {
-                if let Ok(leader) = state_at.leader(view, header) {
+                if let Ok(leader) = state_at.leader(view, header, fork) {
                     history.push_back((view, leader));
                     self.state
                         .ckpt_view_history

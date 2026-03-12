@@ -647,7 +647,7 @@ fn get_block_by_number(params: Params, node: &Arc<Node>) -> Result<Option<eth::B
         let block = node
             .get_block(block_number)?
             .ok_or_else(|| anyhow!("Block not found"))?;
-        let miner = node.get_proposer_reward_address(block.header)?;
+        let miner = node.get_proposer_reward_address(&block)?;
         let block_gas_limit = block.gas_limit();
         let result = eth::Block::from_block(&block, miner.unwrap_or_default(), block_gas_limit);
         return Ok(Some(result));
@@ -675,7 +675,7 @@ pub fn get_eth_block(
         None => return Ok(None),
     };
 
-    let miner = node.get_proposer_reward_address(block.header)?;
+    let miner = node.get_proposer_reward_address(&block)?;
     let block_gas_limit = block.gas_limit();
     let mut result = eth::Block::from_block(&block, miner.unwrap_or_default(), block_gas_limit);
 
@@ -1032,7 +1032,7 @@ async fn subscribe(
                     .db
                     .get_transactionless_block(header.hash.into())?
                     .ok_or("Block not found")?;
-                let miner = node.get_proposer_reward_address(block.header)?;
+                let miner = node.get_proposer_reward_address(&block)?;
                 let block_gas_limit = block.gas_limit();
                 let eth_block =
                     eth::Block::from_block(&block, miner.unwrap_or_default(), block_gas_limit);
