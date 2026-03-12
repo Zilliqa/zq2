@@ -37,16 +37,13 @@ consensus.epochs_per_checkpoint=24
 sync.ignore_passive = true
 {%- endif %}
 {%- if role == "private-api" %}
-db.rocksdb_cache_index_filters = true
 sync.ignore_passive = true
 max_missed_view_age = 1000000000000
 {%- endif %}
 {%- if role == "api" %}
-db.rocksdb_cache_index_filters = true
 max_missed_view_age = 1000000000000
 {%- endif %}
 {%- if role == "opsnode" %}
-db.rocksdb_cache_index_filters = true
 max_missed_view_age = 1000000000000
 {%- endif %}
 
