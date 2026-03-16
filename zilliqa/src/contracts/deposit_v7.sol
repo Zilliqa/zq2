@@ -775,9 +775,10 @@ contract Deposit is UUPSUpgradeable {
         Deque.Withdrawals storage withdrawals = $
             ._stakersMap[blsPubKey]
             .withdrawals;
-        count = (count == 0 || count > withdrawals.length())
-            ? withdrawals.length()
-            : count;
+        count =
+            (count == 0 || count > withdrawals.length())
+                ? withdrawals.length()
+                : count;
 
         while (count > 0) {
             Withdrawal storage withdrawal = withdrawals.front();
