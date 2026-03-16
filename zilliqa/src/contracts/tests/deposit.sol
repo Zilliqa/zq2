@@ -51,10 +51,9 @@ contract DepositTest is Test {
             hex"92370645a6ad97d8a4e4b44b8e6db63ab8409473310ac7b21063809450192bace7fb768d60c697a18bbf98b4ddb511f2"
         )
     ];
-    bytes internal peerId =
-        bytes(
-            hex"002408011220bed0be7a6dfa10c2335148e04927155a726174d6bac61a09ad8e2f72ac697eda"
-        );
+    bytes internal peerId = bytes(
+        hex"002408011220bed0be7a6dfa10c2335148e04927155a726174d6bac61a09ad8e2f72ac697eda"
+    );
 
     // bytes[] expected_stakerKeys_storage;
     // uint256[] expected_indices_storage;

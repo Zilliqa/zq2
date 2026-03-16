@@ -477,7 +477,8 @@ contract ScillaInterop {
         uint128 arg2,
         string memory fieldName
     ) public {
-        address SOME_RANDOM_ADDRESS = 0x00000000005a494c4445504f53495450524f5859;
+        address SOME_RANDOM_ADDRESS =
+            0x00000000005a494c4445504f53495450524f5859;
 
         // reads to SOME_RANDOM_ADDRESS should give 0 before and after the call
         uint128 beforeWriteRandAddr = readMapUint128(
