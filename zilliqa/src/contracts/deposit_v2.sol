@@ -643,9 +643,10 @@ contract Deposit is UUPSUpgradeable {
         Staker storage staker = $._stakersMap[$._stakerKeys[msg.sender]];
 
         Deque.Withdrawals storage withdrawals = staker.withdrawals;
-        count = (count == 0 || count > withdrawals.length())
-            ? withdrawals.length()
-            : count;
+        count =
+            (count == 0 || count > withdrawals.length())
+                ? withdrawals.length()
+                : count;
 
         while (count > 0) {
             Withdrawal storage withdrawal = withdrawals.front();
