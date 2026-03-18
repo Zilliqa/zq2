@@ -1120,6 +1120,7 @@ impl Network {
                         view_history,
                         output,
                         grandparent,
+                        historical_blocks,
                     ) => {
                         assert!(
                             self.do_checkpoints,
@@ -1136,6 +1137,7 @@ impl Network {
                             view_history.clone(),
                             grandparent,
                             output,
+                            &historical_blocks,
                         )
                         .unwrap();
                     }

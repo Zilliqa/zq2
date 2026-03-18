@@ -213,6 +213,7 @@ const BIN_CONFIG: bincode::config::Configuration = bincode::config::standard();
 #[allow(unused)]
 const CKPT_VERSION_V2: &str = "ZILCHKPT/2.0"; // not used anymore
 const CKPT_VERSION_V3: &str = "ZILCHKPT/3.0";
+const CKPT_VERSION_V3_1: &str = "ZILCHKPT/3.1";
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 struct Checkpoint {
@@ -261,7 +262,15 @@ fn load_ckpt_meta(path: &Path, chain_id: u64, block_hash: &Hash) -> Result<Check
     Ok(meta)
 }
 
-pub fn load_ckpt_blocks(path: &Path) -> Result<(Block, Vec<SignedTransaction>, Block, Block)> {
+pub fn load_ckpt_blocks(
+    path: &Path,
+) -> Result<(
+    Block,
+    Vec<SignedTransaction>,
+    Block,
+    Block,
+    Vec<(Block, Vec<SignedTransaction>)>,
+)> {
     let mut zipreader = zip::ZipArchive::new(std::fs::File::open(path)?)?;
 
     let version_number = get_checkpoint_version(&zipreader)?;
@@ -329,7 +338,17 @@ pub fn load_ckpt_blocks(path: &Path) -> Result<(Block, Vec<SignedTransaction>, B
         );
         transactions
     };
-    Ok((block, transactions, parent, grandparent))
+    // Historical blocks are included in checkpoints starting from version 3.1
+    let historical_blocks = if version_number >= 3.1f32 {
+        let mut file = zipreader.by_name("historical_blocks.bincode")?;
+        let blocks: Vec<(Block, Vec<SignedTransaction>)> =
+            bincode::serde::decode_from_std_read(&mut file, BIN_CONFIG)?;
+        blocks
+    } else {
+        vec![]
+    };
+
+    Ok((block, transactions, parent, grandparent, historical_blocks))
 }
 
 pub fn load_ckpt_state(
@@ -424,9 +443,18 @@ pub fn load_ckpt(
     trie_storage: Arc<TrieStorage>,
     chain_id: u64,
     block_hash: &Hash,
-) -> Result<Option<(Block, Vec<SignedTransaction>, Block, ViewHistory, Block)>> {
+) -> Result<
+    Option<(
+        Block,
+        Vec<SignedTransaction>,
+        Block,
+        ViewHistory,
+        Block,
+        Vec<(Block, Vec<SignedTransaction>)>,
+    )>,
+> {
     let meta = load_ckpt_meta(path, chain_id, block_hash)?;
-    let (block, transactions, parent, grandparent) = load_ckpt_blocks(path)?;
+    let (block, transactions, parent, grandparent, historical_blocks) = load_ckpt_blocks(path)?;
     let (account_count, record_count) =
         load_ckpt_state(path, trie_storage.clone(), &parent.state_root_hash())?;
 
@@ -441,13 +469,14 @@ pub fn load_ckpt(
 
     let view_history = load_ckpt_history(path)?;
 
-    tracing::info!(account=%account_count, record=%record_count, "Loaded"); // final update
+    tracing::info!(account=%account_count, record=%record_count, historical=%historical_blocks.len(), "Loaded");
     Ok(Some((
         block,
         transactions,
         parent,
         view_history,
         grandparent,
+        historical_blocks,
     )))
 }
 
@@ -469,6 +498,7 @@ pub fn save_ckpt(
     chain_id: u64,
     view_history: ViewHistory,
     grandparent: &Block,
+    historical_blocks: &[(Block, Vec<SignedTransaction>)],
 ) -> Result<()> {
     // parent
     ensure!(
@@ -633,7 +663,17 @@ pub fn save_ckpt(
     zipwriter.start_file("metadata.json", options)?;
     serde_json::to_writer(&mut zipwriter, &meta)?;
 
-    zipwriter.set_comment(CKPT_VERSION_V3);
+    // write historical blocks (V3.1+)
+    if !historical_blocks.is_empty() {
+        zipwriter.start_file("historical_blocks.bincode", options)?;
+        bincode::serde::encode_into_std_write(historical_blocks, &mut zipwriter, BIN_CONFIG)?;
+    }
+
+    zipwriter.set_comment(if historical_blocks.is_empty() {
+        CKPT_VERSION_V3
+    } else {
+        CKPT_VERSION_V3_1
+    });
     zipwriter.finish()?;
     Ok(())
 }

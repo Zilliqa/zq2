@@ -95,6 +95,7 @@ async fn main() -> Result<()> {
         args.id,
         ViewHistory::default(),
         &Block::genesis(Hash::ZERO),
+        &[],
     )?;
     println!("WRITE {:?}", now.elapsed());
 

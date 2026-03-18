@@ -390,6 +390,7 @@ pub enum InternalMessage {
         ViewHistory,
         Box<Path>,
         Box<Block>,
+        Vec<(Block, Vec<SignedTransaction>)>,
     ),
     /// Notify p2p cordinator to subscribe to a particular gossipsub topic
     SubscribeToGossipSubTopic(GossipSubTopic),

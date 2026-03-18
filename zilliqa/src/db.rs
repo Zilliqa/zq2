@@ -817,12 +817,22 @@ impl Db {
     /// Return checkpointed block and transactions which must be executed after this function
     /// Return None if checkpoint already loaded
     #[allow(clippy::type_complexity)]
+    #[allow(clippy::type_complexity)]
     pub fn load_trusted_checkpoint(
         &self,
         path: PathBuf,
         hash: &Hash,
         our_shard_id: u64,
-    ) -> Result<Option<(Block, Vec<SignedTransaction>, Block, ViewHistory, Block)>> {
+    ) -> Result<
+        Option<(
+            Block,
+            Vec<SignedTransaction>,
+            Block,
+            ViewHistory,
+            Block,
+            Vec<(Block, Vec<SignedTransaction>)>,
+        )>,
+    > {
         let trie_storage = Arc::new(self.state_trie()?);
         let state_trie = EthTrie::new(trie_storage.clone());
 
@@ -832,7 +842,7 @@ impl Db {
             && self.get_highest_canonical_block_number()?.is_none()
         {
             tracing::info!(%hash, "Restoring checkpoint");
-            let (block, transactions, parent, view_history, grandparent) =
+            let (block, transactions, parent, view_history, grandparent, historical_blocks) =
                 crate::checkpoint::load_ckpt(
                     path.as_path(),
                     trie_storage.clone(),
@@ -843,12 +853,17 @@ impl Db {
 
             let parent_ref: &Block = &parent; // for moving into the closure
             let grandparent_ref: &Block = &grandparent;
+            let historical_refs: Vec<&Block> =
+                historical_blocks.iter().map(|(b, _)| b).collect();
             self.with_sqlite_tx(move |tx| {
                 self.insert_block_with_db_tx(tx, parent_ref)?;
                 self.set_finalized_view_with_db_tx(tx, parent_ref.view())?;
                 self.set_high_qc_with_db_tx(tx, block.header.qc)?;
                 self.set_view_with_db_tx(tx, parent_ref.view() + 1, false)?;
                 self.insert_block_with_db_tx(tx, grandparent_ref)?;
+                for hist_block in &historical_refs {
+                    self.insert_block_with_db_tx(tx, hist_block)?;
+                }
                 Ok(())
             })?;
 
@@ -858,10 +873,11 @@ impl Db {
                 parent,
                 view_history,
                 grandparent,
+                historical_blocks,
             )));
         }
 
-        let (block, transactions, parent, grandparent) =
+        let (block, transactions, parent, grandparent, historical_blocks) =
             crate::checkpoint::load_ckpt_blocks(path.as_path())?;
 
         // Populated database; check if the parent block exists in the DB.
@@ -901,6 +917,7 @@ impl Db {
             parent,
             view_history,
             grandparent,
+            historical_blocks,
         )))
     }
 
@@ -1444,6 +1461,58 @@ impl Db {
         Ok(rows)
     }
 
+    pub fn get_canonical_blocks_and_receipts_and_transactions_by_height_range(
+        &self,
+        range: RangeInclusive<u64>,
+    ) -> Result<Vec<BlockAndReceiptsAndTransactions>> {
+        let (from, to) = (*range.start(), *range.end());
+        if from > to {
+            return Ok(Vec::new());
+        }
+
+        // Fetch all blocks in a single query
+        let conn = self.pool.get()?;
+        let mut stmt = conn.prepare_cached(
+            "SELECT
+                block_hash, view, height, qc, signature,
+                state_root_hash, transactions_root_hash, receipts_root_hash,
+                timestamp, gas_used, gas_limit, agg, randao_reveal, mix_hash
+             FROM blocks b
+             WHERE height BETWEEN ?1 AND ?2 AND is_canonical = TRUE
+               AND view = (SELECT MAX(b2.view) FROM blocks b2 WHERE b2.height = b.height AND b2.is_canonical = TRUE)
+             ORDER BY height ASC",
+        )?;
+        let blocks: Vec<Block> = stmt
+            .query_map([from, to], |row| {
+                Ok(Block {
+                    header: BlockHeader {
+                        hash: row.get(0)?,
+                        view: row.get(1)?,
+                        number: row.get(2)?,
+                        qc: row.get(3)?,
+                        signature: row.get(4)?,
+                        state_root_hash: row.get(5)?,
+                        transactions_root_hash: row.get(6)?,
+                        receipts_root_hash: row.get(7)?,
+                        timestamp: row.get::<_, SystemTimeSqlable>(8)?.into(),
+                        gas_used: row.get(9)?,
+                        gas_limit: row.get(10)?,
+                        randao_reveal: row.get(12)?,
+                        mix_hash: row.get(13)?,
+                    },
+                    agg: row.get(11)?,
+                    transactions: vec![],
+                })
+            })?
+            .collect::<Result<_, _>>()?;
+
+        // Fetch receipts and transactions per block
+        blocks
+            .into_iter()
+            .map(|block| self.get_receipts_and_transactions_for_block(block))
+            .collect()
+    }
+
     pub fn get_transactionless_block(&self, filter: BlockFilter) -> Result<Option<Block>> {
         fn make_block(row: &Row) -> rusqlite::Result<Block> {
             Ok(Block {
@@ -1567,9 +1636,16 @@ impl Db {
         &self,
         filter: BlockFilter,
     ) -> Result<Option<BlockAndReceiptsAndTransactions>> {
-        let Some(mut block) = self.get_transactionless_block(filter)? else {
+        let Some(block) = self.get_transactionless_block(filter)? else {
             return Ok(None);
         };
+        Ok(Some(self.get_receipts_and_transactions_for_block(block)?))
+    }
+
+    fn get_receipts_and_transactions_for_block(
+        &self,
+        mut block: Block,
+    ) -> Result<BlockAndReceiptsAndTransactions> {
         if self.executable_blocks_height.is_some()
             && block.header.number < self.executable_blocks_height.unwrap()
         {
@@ -1617,11 +1693,11 @@ impl Db {
 
         assert_eq!(receipts.len(), transactions.len());
 
-        Ok(Some(BlockAndReceiptsAndTransactions {
+        Ok(BlockAndReceiptsAndTransactions {
             block,
             receipts,
             transactions,
-        }))
+        })
     }
 
     pub fn contains_block(&self, block_hash: &Hash) -> Result<bool> {
@@ -1794,6 +1870,7 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
     view_history: ViewHistory,
     grandparent: &Block,
     output_dir: P,
+    historical_blocks: &[(Block, Vec<SignedTransaction>)],
 ) -> Result<()> {
     fs::create_dir_all(&output_dir)?;
     let trie_storage = Arc::new(state_trie_storage);
@@ -1807,6 +1884,7 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
         shard_id,
         view_history,
         grandparent,
+        historical_blocks,
     )?;
 
     // rename file when done
@@ -1996,11 +2074,12 @@ mod tests {
             view_history,
             &checkpoint_grandparent,
             &checkpoint_path,
+            &[],
         )
         .unwrap();
 
         // now load the checkpoint
-        let (block, transactions, parent, view_history, grandparent) = db
+        let (block, transactions, parent, view_history, grandparent, _historical_blocks) = db
             .load_trusted_checkpoint(
                 checkpoint_path.join(checkpoint_block.number().to_string()),
                 &checkpoint_block.hash(),
@@ -2019,7 +2098,7 @@ mod tests {
         }
 
         // load the checkpoint again, to ensure idempotency
-        let (block, transactions, parent, view_history, grandparent) = db
+        let (block, transactions, parent, view_history, grandparent, _historical_blocks) = db
             .load_trusted_checkpoint(
                 checkpoint_path.join(checkpoint_block.number().to_string()),
                 &checkpoint_block.hash(),

@@ -448,7 +448,7 @@ pub fn failed_request_sleep_duration_default() -> Duration {
 }
 
 pub fn max_missed_view_age_default() -> u64 {
-    MISSED_VIEW_WINDOW
+    MISSED_VIEW_WINDOW * (blocks_per_epoch_default() + 1)
 }
 
 /// Wrapper for [u128] that (de)serializes with a string. `serde_toml` does not support `u128`s.
@@ -719,6 +719,7 @@ impl Forks {
                 ForkName::ScillaCallGasExemptAddrsV2 => {
                     fork.scilla_call_gas_exempt_addrs_v2.length() != 0
                 }
+                ForkName::DistributeRewardsEveryEpoch => fork.distribute_rewards_every_epoch,
             } {
                 return Some(fork.at_height);
             }
@@ -767,6 +768,7 @@ pub struct Fork {
     pub cancun_active: bool,
     pub scilla_call_gas_exempt_addrs_v2: Vec<Address>,
     pub randao_support: bool,
+    pub distribute_rewards_every_epoch: bool,
 }
 
 pub enum ForkName {
@@ -794,6 +796,7 @@ pub enum ForkName {
     UseMaxGasPriorityFee,
     ValidatorJailing,
     ScillaCallGasExemptAddrsV2,
+    DistributeRewardsEveryEpoch,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -915,6 +918,8 @@ pub struct ForkDelta {
     pub scilla_call_gas_exempt_addrs_v2: Vec<Address>,
     /// if true, randao is supported
     pub randao_support: Option<bool>,
+    /// if true, rewards are distributed every epoch instead of every block
+    pub distribute_rewards_every_epoch: Option<bool>,
 }
 
 impl Fork {
@@ -1027,6 +1032,9 @@ impl Fork {
                 addrs
             },
             randao_support: delta.randao_support.unwrap_or(self.randao_support),
+            distribute_rewards_every_epoch: delta
+                .distribute_rewards_every_epoch
+                .unwrap_or(self.distribute_rewards_every_epoch),
         }
     }
 }
@@ -1132,6 +1140,7 @@ pub fn genesis_fork_default() -> Fork {
         cancun_active: true,
         scilla_call_gas_exempt_addrs_v2: vec![],
         randao_support: true,
+        distribute_rewards_every_epoch: true,
     }
 }
 
@@ -1310,6 +1319,7 @@ mod tests {
                 cancun_active: None,
                 scilla_call_gas_exempt_addrs_v2: vec![],
                 randao_support: None,
+                distribute_rewards_every_epoch: None,
             }],
             ..Default::default()
         };
@@ -1370,6 +1380,7 @@ mod tests {
                     cancun_active: Some(false),
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: Some(false),
+                    distribute_rewards_every_epoch: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1410,6 +1421,7 @@ mod tests {
                     cancun_active: None,
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: None,
+                    distribute_rewards_every_epoch: None,
                 },
             ],
             ..Default::default()
@@ -1487,6 +1499,7 @@ mod tests {
                     cancun_active: None,
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: None,
+                    distribute_rewards_every_epoch: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1527,6 +1540,7 @@ mod tests {
                     cancun_active: None,
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: None,
+                    distribute_rewards_every_epoch: None,
                 },
             ],
             ..Default::default()
@@ -1592,6 +1606,7 @@ mod tests {
                 cancun_active: true,
                 scilla_call_gas_exempt_addrs_v2: vec![],
                 randao_support: true,
+                distribute_rewards_every_epoch: true,
             },
             forks: vec![],
             ..Default::default()
@@ -1645,6 +1660,7 @@ mod tests {
                     cancun_active: None,
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: None,
+                    distribute_rewards_every_epoch: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1685,6 +1701,7 @@ mod tests {
                     cancun_active: None,
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: None,
+                    distribute_rewards_every_epoch: None,
                 },
             ],
             ..Default::default()
