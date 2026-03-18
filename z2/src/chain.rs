@@ -124,7 +124,7 @@ impl Chain {
                     }), // https://github.com/Zilliqa/zq2/pull/3221
                 }),
                 deposit_v8: Some(ContractUpgradeConfig {
-                    height: 99999999,
+                    height: 28278000,
                     reinitialise_params: Some(ReinitialiseParams {
                         withdrawal_period: 461680,
                     }),
@@ -148,7 +148,7 @@ impl Chain {
                     }), // https://github.com/Zilliqa/zq2/pull/3221
                 }),
                 deposit_v8: Some(ContractUpgradeConfig {
-                    height: 99999999,
+                    height: 23925600,
                     reinitialise_params: Some(ReinitialiseParams {
                         withdrawal_period: 461680,
                     }),
@@ -296,8 +296,7 @@ impl Chain {
                     "scilla_call_gas_exempt_addrs_v2": [
                     ],
                 }),
-                // estimated: arbitrary high block number no reachable before next fork
-                json!({ "at_height": 99999999, "randao_support": true}),
+                json!({ "at_height": 28281600, "randao_support": true}),
             ]),
             Chain::Zq2Mainnet => Some(vec![
                 json!({ "at_height": 4770088, "executable_blocks": true }),
@@ -353,8 +352,7 @@ impl Chain {
                         "0x0F8aeCCaCA7FEE297cC2aBf7fFC9a81e7122A727",
                     ],
                 }),
-                // estimated: arbitrary high block number no reachable before next fork
-                json!({ "at_height": 99999999, "randao_support": true}),
+                json!({ "at_height": 23929200, "randao_support": true}),
             ]),
             _ => None,
         }
