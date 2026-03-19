@@ -91,6 +91,17 @@ extendEnvironment((hre: HardhatRuntimeEnvironment) => {
       const url = hre.getNetworkUrl();
       const customProvider = new JsonRpcProvider(url);
       customProvider.pollingInterval = 200;
+      const configuredGasPrice = (hre as any).network.config.gasPrice;
+      if (configuredGasPrice && configuredGasPrice !== "auto") {
+        const gasPriceBN = ethers.BigNumber.from(configuredGasPrice);
+        customProvider.getFeeData = async () => ({
+          maxFeePerGas: gasPriceBN,
+          maxPriorityFeePerGas: gasPriceBN,
+          gasPrice: gasPriceBN,
+          lastBaseFeePerGas: null
+        });
+      }
+
       const signer = new ethers.Wallet(privateKeys[0], customProvider);
 
       return signer;

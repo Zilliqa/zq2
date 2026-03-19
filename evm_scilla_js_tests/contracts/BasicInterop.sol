@@ -27,7 +27,7 @@ contract BasicInterop {
     uint256 argsLength = encodedArgs.length;
     bool success;
     assembly {
-      success := call(21000, 0x5a494c53, 0, add(encodedArgs, 0x20), argsLength, 0x20, 0)
+      success := call(gas(), 0x5a494c53, 0, add(encodedArgs, 0x20), argsLength, 0x20, 0)
     }
     require(success);
   }
@@ -42,7 +42,7 @@ contract BasicInterop {
     bool success;
     bytes memory output = new bytes(36);
     assembly {
-      success := staticcall(21000, 0x5a494c92, add(encodedArgs, 0x20), argsLength, add(output, 0x20), 32)
+      success := staticcall(gas(), 0x5a494c92, add(encodedArgs, 0x20), argsLength, add(output, 0x20), 32)
     }
     require(success);
     (funds) = abi.decode(output, (uint128));
@@ -62,7 +62,7 @@ contract BasicInterop {
     uint256 argsLength = encodedArgs.length;
     bool success;
     assembly {
-      success := call(21000, 0x5a494c53, 0, add(encodedArgs, 0x20), argsLength, 0x20, 0)
+      success := call(gas(), 0x5a494c53, 0, add(encodedArgs, 0x20), argsLength, 0x20, 0)
     }
     require(success);
   }
@@ -78,7 +78,7 @@ contract BasicInterop {
     bool success;
     bytes memory output = new bytes(36);
     assembly {
-      success := staticcall(21000, 0x5a494c92, add(encodedArgs, 0x20), argsLength, add(output, 0x20), 32)
+      success := staticcall(gas(), 0x5a494c92, add(encodedArgs, 0x20), argsLength, add(output, 0x20), 32)
     }
     require(success);
     (funds) = abi.decode(output, (uint128));
@@ -91,7 +91,7 @@ contract BasicInterop {
     uint256 argsLength = encodedArgs.length;
     bool success;
     assembly {
-      success := call(21000, 0x5a494c53, 0, add(encodedArgs, 0x20), argsLength, 0x20, 0)
+      success := call(gas(), 0x5a494c53, 0, add(encodedArgs, 0x20), argsLength, 0x20, 0)
     }
     require(success);
   }
@@ -102,7 +102,7 @@ contract BasicInterop {
     bool success;
     bytes memory output = new bytes(36);
     assembly {
-      success := staticcall(21000, 0x5a494c92, add(encodedArgs, 0x20), argsLength, add(output, 0x20), 32)
+      success := staticcall(gas(), 0x5a494c92, add(encodedArgs, 0x20), argsLength, add(output, 0x20), 32)
     }
     require(success);
     uint128 funds;
@@ -117,7 +117,7 @@ contract BasicInterop {
     uint256 argsLength = encodedArgs.length;
     bool success;
     assembly {
-      success := call(21000, 0x5a494c53, 0, add(encodedArgs, 0x20), argsLength, 0x20, 0)
+      success := call(gas(), 0x5a494c53, 0, add(encodedArgs, 0x20), argsLength, 0x20, 0)
     }
     require(success);
   }
@@ -128,7 +128,7 @@ contract BasicInterop {
     bool success;
     bytes memory output = new bytes(36);
     assembly {
-      success := staticcall(21000, 0x5a494c92, add(encodedArgs, 0x20), argsLength, add(output, 0x20), 32)
+      success := staticcall(gas(), 0x5a494c92, add(encodedArgs, 0x20), argsLength, add(output, 0x20), 32)
     }
     require(success);
     int128 funds;
@@ -148,7 +148,7 @@ contract BasicInterop {
     uint256 argsLength = encodedArgs.length;
     bool success;
     assembly {
-      success := call(21000, 0x5a494c53, 0, add(encodedArgs, 0x20), argsLength, 0x20, 0)
+      success := call(gas(), 0x5a494c53, 0, add(encodedArgs, 0x20), argsLength, 0x20, 0)
     }
     require(success);
   }
@@ -160,7 +160,7 @@ contract BasicInterop {
     bytes memory output = new bytes(128);
     uint256 output_len = output.length - 4;
     assembly {
-      success := staticcall(21000, 0x5a494c92, add(encodedArgs, 0x20), argsLength, add(output, 0x20), output_len)
+      success := staticcall(gas(), 0x5a494c92, add(encodedArgs, 0x20), argsLength, add(output, 0x20), output_len)
     }
     require(success);
 
@@ -174,7 +174,7 @@ contract BasicInterop {
     uint256 argsLength = encodedArgs.length;
     bool success;
     assembly {
-      success := call(21000, 0x5a494c53, 0, add(encodedArgs, 0x20), argsLength, 0x20, 0)
+      success := call(gas(), 0x5a494c53, 0, add(encodedArgs, 0x20), argsLength, 0x20, 0)
     }
     require(success);
   }
@@ -186,7 +186,7 @@ contract BasicInterop {
     bytes memory output = new bytes(128);
     uint256 output_len = output.length - 4;
     assembly {
-      success := staticcall(21000, 0x5a494c92, add(encodedArgs, 0x20), argsLength, add(output, 0x20), output_len)
+      success := staticcall(gas(), 0x5a494c92, add(encodedArgs, 0x20), argsLength, add(output, 0x20), output_len)
     }
     require(success);
 

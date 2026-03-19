@@ -3,8 +3,9 @@ import {Contract} from "ethers";
 import hre from "hardhat";
 import {ScillaContract} from "hardhat-scilla-plugin";
 import {parallelizer} from "../helpers";
+import { BasicInterop } from "../typechain-types/BasicInterop";
 
-xdescribe("BasicInterop", function () {
+describe("BasicInterop", function () {
   // Keys used in all tests cases
   const addr1 = "0xB3F90B06a7Dd9a860f8722f99B17fAce5abcb259";
   const addr2 = "0xc8532d4c6354D717163fAa8B7504b2b4436D20d1";
@@ -13,7 +14,7 @@ xdescribe("BasicInterop", function () {
   const IMMUTABLE_INT = -12345;
   const IMMUTABLE_STRING = "Salam"; // Means hello in Persian :)
 
-  let solidityContract: Contract;
+  let solidityContract: BasicInterop;
   let scillaContract: ScillaContract;
   let scillaContractAddress: string;
 
@@ -22,7 +23,12 @@ xdescribe("BasicInterop", function () {
       this.skip();
     }
 
-    solidityContract = await hre.deployContract("BasicInterop");
+    // console.log("eth deployer", await hre.getEthSignerForContractDeployment());
+    // console.log("zil deployer", hre.getZilSignerForContractDeployment());
+
+    solidityContract = (await hre.deployContract("BasicInterop")) as BasicInterop;
+
+    console.log("Solidity contract deployed at", solidityContract.address);
 
     scillaContract = await parallelizer.deployScillaContract(
       "BasicInterop",
@@ -32,6 +38,8 @@ xdescribe("BasicInterop", function () {
       addr1
     );
     scillaContractAddress = scillaContract.address?.toLowerCase()!;
+
+    console.log("Scilla contract deployed at", scillaContractAddress);
   });
 
   it("Should be deployed successfully", async function () {
@@ -42,7 +50,9 @@ xdescribe("BasicInterop", function () {
   describe("When call is performed from solidity to scilla contract", function () {
     it("It should return proper string after invoking set method with string arg", async function () {
       const someString = "SomeString";
-      await solidityContract.callString(scillaContractAddress, "setString", KEEP_ORIGIN, someString);
+      const tx = await solidityContract.callString(scillaContractAddress, "setString", KEEP_ORIGIN, someString, { gasLimit: 60000  });
+      console.log("Tx hash for setString call", tx.hash);
+      await tx.wait();
       let readString = await solidityContract.readString(scillaContractAddress, "strField");
       expect(readString).to.be.equal(someString);
     });

@@ -1,6 +1,6 @@
 import {JsonRpcProvider} from "@ethersproject/providers";
 import {Account} from "@zilliqa-js/zilliqa";
-import {Wallet} from "ethers";
+import {BigNumber, Wallet} from "ethers";
 import {HardhatRuntimeEnvironment} from "hardhat/types";
 
 export default class SignerPool {
@@ -29,6 +29,16 @@ export default class SignerPool {
     const url = hre.getNetworkUrl();
     const customProvider = new JsonRpcProvider(url);
     customProvider.pollingInterval = 200;
+    const configuredGasPrice = (hre as any).network.config.gasPrice;
+    if (configuredGasPrice && configuredGasPrice !== "auto") {
+      const gasPriceBN = BigNumber.from(configuredGasPrice);
+      customProvider.getFeeData = async () => ({
+        maxFeePerGas: gasPriceBN,
+        maxPriorityFeePerGas: gasPriceBN,
+        gasPrice: gasPriceBN,
+        lastBaseFeePerGas: null
+      });
+    }
     const signers = privateKeys.map((prvKey) => {
       return new hre.ethers.Wallet(prvKey, customProvider);
     });
