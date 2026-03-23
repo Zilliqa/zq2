@@ -40,6 +40,35 @@ library ScillaConnector {
     function callScilla(
         address target,
         string memory tran_name,
+        string memory arg1
+    ) internal {
+        bytes memory encodedArgs = abi.encode(
+            target,
+            tran_name,
+            CALL_SCILLA_WITH_THE_SAME_SENDER,
+            arg1
+        );
+        uint256 argsLength = encodedArgs.length;
+
+        assembly {
+            let ok := call(
+                gas(),
+                SCILLA_CALL_PRECOMPILE_ADDRESS,
+                0,
+                add(encodedArgs, 0x20),
+                argsLength,
+                0x20,
+                0
+            )
+            if iszero(ok) {
+                revert(0, 0)
+            }
+        }
+    }
+
+    function callScilla(
+        address target,
+        string memory tran_name,
         address arg1
     ) internal {
         bytes memory encodedArgs = abi.encode(
@@ -400,6 +429,14 @@ contract ScillaInterop {
         address key2
     ) public view returns (uint128) {
         return scillaContract.readNestedMapUint128(varName, key1, key2);
+    }
+
+    function callScillaString(
+        address scillaContract,
+        string memory transitionName,
+        string memory arg1
+    ) public {
+        scillaContract.callScilla(transitionName, arg1);
     }
 
     function callScillaNoArgs(

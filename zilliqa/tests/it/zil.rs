@@ -1218,6 +1218,7 @@ async fn scilla_precompiles(mut network: Network) {
 
         field num : Uint128 = big_number
         field str : String = "foobar"
+        field strField : String = ""
         field addr_to_int : Map ByStr20 Uint128 =
           let emp = Emp ByStr20 Uint128 in
           builtin put emp addr one
@@ -1231,6 +1232,10 @@ async fn scilla_precompiles(mut network: Network) {
           addr_to_int[a] := b;
           e = {_eventname : "Inserted"; a : a; b : b};
           event e
+        end
+
+        transition SetString(s: String)
+          strField := s
         end
 
         transition LogSender()
@@ -1405,6 +1410,28 @@ async fn scilla_precompiles(mut network: Network) {
         scilla_log["params"][0]["value"],
         format!("{:?}", wallet.default_signer_address())
     );
+
+    // Test calling a Scilla transition with a String argument and reading back the result.
+    let hash = *contract
+        .callScillaString(
+            scilla_contract_address,
+            "SetString".into(),
+            "hello world".into(),
+        )
+        .gas(84_000_000)
+        .send()
+        .await
+        .unwrap()
+        .tx_hash();
+    let receipt = network.run_until_receipt(&wallet, &hash, 100).await;
+    assert!(receipt.status());
+
+    let str_val = contract
+        .readString(scilla_contract_address, "strField".into())
+        .call()
+        .await
+        .unwrap();
+    assert_eq!(str_val, "hello world");
 }
 
 #[zilliqa_macros::test(restrict_concurrency)]
