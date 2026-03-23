@@ -3,7 +3,7 @@ FROM rust:1.92.0-slim-bookworm AS builder
 ARG is_release=false
 RUN apt update -y && \
     apt upgrade -y && \
-    apt install -y protobuf-compiler libclang-dev build-essential libssl-dev pkg-config
+    apt install -y protobuf-compiler libclang-dev build-essential libssl-dev pkg-config clang
 
 RUN apt autoremove
 
@@ -12,6 +12,9 @@ WORKDIR /zilliqa
 RUN mkdir build
 
 COPY . .
+
+ENV CXX=clang++
+ENV CC=clang
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/target \

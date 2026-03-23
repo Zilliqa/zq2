@@ -49,7 +49,7 @@ jobs:
         run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && echo "$HOME/.cargo/bin" >> $GITHUB_PATH
       - run: rustup show active-toolchain
       - name: Install dependencies
-        run: sudo add-apt-repository ppa:ethereum/ethereum && sudo apt update && sudo apt install -y solc build-essential pkg-config libssl-dev cmake protobuf-compiler libclang-dev
+        run: sudo add-apt-repository ppa:ethereum/ethereum && sudo apt update && sudo apt install -y solc build-essential pkg-config libssl-dev cmake protobuf-compiler libclang-dev clang
       - uses: actions/checkout@v6
         with:
           submodules: recursive
@@ -63,10 +63,19 @@ jobs:
       - name: rustfmt
         run: cargo +nightly fmt --all --check
       - name: Clippy
+        env:
+          CXX: clang++
+          CC: clang
         run: cargo clippy --all --all-targets --all-features -- -D warnings
       - name: Build
+        env:
+          CXX: clang++
+          CC: clang
         run: cargo build --all-targets --all-features
       - name: Test
+        env:
+          CXX: clang++
+          CC: clang
         run: cargo test --tests --examples --bins --all-features
       - name: Verify working directory is clean
         run: git diff --exit-code
@@ -95,4 +104,7 @@ jobs:
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - name: JS test framework
+        env:
+          CXX: clang++
+          CC: clang
         run: export PATH="/scilla/0/bin:$PATH" && ./scripts/js_test.sh
