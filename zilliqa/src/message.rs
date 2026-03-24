@@ -601,6 +601,54 @@ pub struct BlockHeader {
     pub mix_hash: Option<Hash>,
 }
 
+/// Legacy block header without randao fields, for deserializing old checkpoint data.
+#[derive(Deserialize)]
+pub(crate) struct LegacyBlockHeader {
+    pub view: u64,
+    pub number: u64,
+    pub hash: Hash,
+    pub qc: QuorumCertificate,
+    pub signature: BlsSignature,
+    pub state_root_hash: Hash,
+    pub transactions_root_hash: Hash,
+    pub receipts_root_hash: Hash,
+    pub timestamp: SystemTime,
+    pub gas_used: EvmGas,
+    pub gas_limit: EvmGas,
+}
+
+/// Legacy block without randao fields in the header, for deserializing old checkpoint data.
+#[derive(Deserialize)]
+pub(crate) struct LegacyBlock {
+    pub header: LegacyBlockHeader,
+    pub agg: Option<AggregateQc>,
+    pub transactions: Vec<Hash>,
+}
+
+impl From<LegacyBlock> for Block {
+    fn from(old: LegacyBlock) -> Self {
+        Block {
+            header: BlockHeader {
+                view: old.header.view,
+                number: old.header.number,
+                hash: old.header.hash,
+                qc: old.header.qc,
+                signature: old.header.signature,
+                state_root_hash: old.header.state_root_hash,
+                transactions_root_hash: old.header.transactions_root_hash,
+                receipts_root_hash: old.header.receipts_root_hash,
+                timestamp: old.header.timestamp,
+                gas_used: old.header.gas_used,
+                gas_limit: old.header.gas_limit,
+                randao_reveal: None,
+                mix_hash: None,
+            },
+            agg: old.agg,
+            transactions: old.transactions,
+        }
+    }
+}
+
 impl BlockHeader {
     pub fn genesis_hash() -> Hash {
         Hash::builder()

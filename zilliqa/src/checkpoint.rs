@@ -138,7 +138,7 @@ pub fn get_checkpoint_block(
     reader.read_exact(&mut block_len_buf)?;
     let mut block_ser = vec![0u8; usize::try_from(u64::from_be_bytes(block_len_buf))?];
     reader.read_exact(&mut block_ser)?;
-    let block: Block = bincode::serde::decode_from_slice(&block_ser, bincode::config::legacy())?.0;
+    let block = decode_block_compat(&block_ser, bincode::config::legacy())?;
     if block.hash() != *hash {
         return Err(anyhow!("Checkpoint does not match trusted hash"));
     }
@@ -156,8 +156,7 @@ pub fn get_checkpoint_block(
     reader.read_exact(&mut parent_len_buf)?;
     let mut parent_ser = vec![0u8; usize::try_from(u64::from_be_bytes(parent_len_buf))?];
     reader.read_exact(&mut parent_ser)?;
-    let parent: Block =
-        bincode::serde::decode_from_slice(&parent_ser, bincode::config::legacy())?.0;
+    let parent = decode_block_compat(&parent_ser, bincode::config::legacy())?;
     if block.parent_hash() != parent.hash() {
         return Err(anyhow!("Invalid checkpoint parent blockhash"));
     }
@@ -209,6 +208,20 @@ pub fn load_trusted_checkpoint_v1<P: AsRef<Path>>(
 }
 
 const BIN_CONFIG: bincode::config::Configuration = bincode::config::standard();
+
+/// Decode a Block from a bincode slice, handling backward compatibility.
+/// Tries the current format first (BlockHeader with randao fields). If that fails,
+/// falls back to the legacy format (BlockHeader without randao fields) and converts.
+fn decode_block_compat<C: bincode::config::Config>(data: &[u8], config: C) -> Result<Block> {
+    match bincode::serde::decode_from_slice::<Block, _>(data, config) {
+        Ok((block, _)) => Ok(block),
+        Err(_) => {
+            let (legacy, _) =
+                bincode::serde::decode_from_slice::<crate::message::LegacyBlock, _>(data, config)?;
+            Ok(Block::from(legacy))
+        }
+    }
+}
 // Number of the newer checkpoint format starts with 2.0
 #[allow(unused)]
 const CKPT_VERSION_V2: &str = "ZILCHKPT/2.0"; // not used anymore
@@ -278,8 +291,9 @@ pub fn load_ckpt_blocks(
 
     let block = {
         let mut file = zipreader.by_name("block.bincode")?;
-        let block: crate::message::Block =
-            bincode::serde::decode_from_std_read(&mut file, BIN_CONFIG)?;
+        let mut data = Vec::new();
+        file.read_to_end(&mut data)?;
+        let block = decode_block_compat(&data, BIN_CONFIG)?;
         ensure!(
             block.verify_hash().is_ok(),
             "Block hash {} invalid",
@@ -289,8 +303,9 @@ pub fn load_ckpt_blocks(
     };
     let parent = {
         let mut file = zipreader.by_name("parent.bincode")?;
-        let parent: crate::message::Block =
-            bincode::serde::decode_from_std_read(&mut file, BIN_CONFIG)?;
+        let mut data = Vec::new();
+        file.read_to_end(&mut data)?;
+        let parent = decode_block_compat(&data, BIN_CONFIG)?;
         ensure!(
             parent.verify_hash().is_ok(),
             "Parent hash {} invalid",
@@ -304,8 +319,9 @@ pub fn load_ckpt_blocks(
     let grandparent = {
         if version_number >= 3.0f32 {
             let mut file = zipreader.by_name("grandparent.bincode")?;
-            let grandparent: crate::message::Block =
-                bincode::serde::decode_from_std_read(&mut file, BIN_CONFIG)?;
+            let mut data = Vec::new();
+            file.read_to_end(&mut data)?;
+            let grandparent = decode_block_compat(&data, BIN_CONFIG)?;
             ensure!(
                 grandparent.verify_hash().is_ok(),
                 "Grandparent hash {} invalid",
