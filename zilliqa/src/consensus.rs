@@ -609,18 +609,30 @@ impl Consensus {
                     }
                 }
 
-                // Execute the checkpoint block itself
-                consensus.state.set_to_root(parent.state_root_hash().into());
+                // Execute the checkpoint block itself.
+                // In v3.2, `parent` is epoch_parent (not the checkpoint block's direct parent),
+                // so look up the actual parent from DB (it was just executed as the last
+                // historical block). For v3.0/v3.1 this is a no-op since
+                // block.parent_hash() == parent.hash().
+                let actual_parent = consensus
+                    .get_block(&block.parent_hash())?
+                    .unwrap_or_else(|| parent.clone());
+                consensus
+                    .state
+                    .set_to_root(actual_parent.state_root_hash().into());
                 consensus.execute_block(
                     None,
                     &block,
                     transactions,
                     &consensus
                         .state
-                        .at_root(parent.state_root_hash().into())
+                        .at_root(actual_parent.state_root_hash().into())
                         .get_stakers(block.header)?,
                     true,
                 )?;
+                // Update finalized view to the checkpoint block so that RPC
+                // queries using BlockId::finalized() see the full replayed state.
+                consensus.db.set_finalized_view(block.view())?;
             }
             // set starting point for state-sync/state-migration
             if state_sync {
@@ -2576,35 +2588,27 @@ impl Consensus {
         let block = self
             .get_canonical_block_by_number(block_number)?
             .ok_or(anyhow!("No such block number {block_number}"))?;
-        let parent = self
-            .db
-            .get_block(block.parent_hash().into())?
-            .ok_or(anyhow!(
-                "Trying to checkpoint block, but we don't have its parent"
-            ))?;
-        let grandparent = self
-            .db
-            .get_block(parent.parent_hash().into())?
-            .ok_or(anyhow!(
-                "Trying to checkpoint block, but we don't have its grandparent"
-            ))?;
         let transactions: Vec<SignedTransaction> = block
             .transactions
             .iter()
             .map(|txn_hash| {
                 let tx = self.db.get_transaction(txn_hash)?.ok_or(anyhow!(
-                    "failed to fetch transaction {} for checkpoint parent {}",
+                    "failed to fetch transaction {} for checkpoint block {}",
                     txn_hash,
-                    parent.hash()
+                    block.hash()
                 ))?;
                 Ok::<_, anyhow::Error>(tx.tx)
             })
             .collect::<Result<Vec<SignedTransaction>>>()?;
 
-        // Collect historical blocks (one epoch) for distribute_rewards_every_epoch.
-        // Range: [block_number - blocks_per_epoch, block_number - 1], each with its transactions.
+        // Collect historical blocks for distribute_rewards_every_epoch.
+        // Range: [block_number - blocks_per_epoch + 1, block_number - 1].
+        // We start one block AFTER the previous epoch boundary so that epoch_parent
+        // (parent of first historical block) is the boundary block whose state already
+        // includes the previous epoch's reward distribution. This avoids needing two
+        // epochs of blocks in the checkpoint.
         let blocks_per_epoch = self.config.consensus.blocks_per_epoch;
-        let hist_start = block_number.saturating_sub(blocks_per_epoch);
+        let hist_start = block_number.saturating_sub(blocks_per_epoch - 1);
         let hist_end = block_number.saturating_sub(1);
         let mut historical_blocks: Vec<(Block, Vec<SignedTransaction>)> = Vec::new();
         if hist_start < block_number {
@@ -2620,6 +2624,30 @@ impl Consensus {
             }
         }
 
+        // v3.2: epoch_parent = parent of the first block in the epoch (state root source).
+        // epoch_grandparent = epoch_parent's parent.
+        let epoch_parent = if let Some((first_hist, _)) = historical_blocks.first() {
+            self.db
+                .get_block(first_hist.parent_hash().into())?
+                .ok_or(anyhow!(
+                    "Missing parent of first historical block {}",
+                    first_hist.number()
+                ))?
+        } else {
+            // No historical blocks: fall back to checkpoint block's direct parent
+            self.db
+                .get_block(block.parent_hash().into())?
+                .ok_or(anyhow!(
+                    "Trying to checkpoint block, but we don't have its parent"
+                ))?
+        };
+        let epoch_grandparent = self
+            .db
+            .get_block(epoch_parent.parent_hash().into())?
+            .ok_or(anyhow!(
+                "Trying to checkpoint block, but we don't have the epoch grandparent"
+            ))?;
+
         let checkpoint_dir = self
             .db
             .get_checkpoint_dir()?
@@ -2627,30 +2655,30 @@ impl Consensus {
         let file_name = db::get_checkpoint_filename(checkpoint_dir.clone(), &block)?;
         let hash = block.hash();
         let missed_view_age = self.config.max_missed_view_age;
-        // after loading the checkpoint we will need the leader of its parent block, but also
-        // have to include the potential missed views between the checkpoint block and its parent
+        // View history must cover from epoch_parent to checkpoint block so that
+        // leaders can be resolved during epoch replay on load.
         let view_history =
             self.state
                 .view_history
                 .read()
-                .new_at(parent.view(), block.view(), missed_view_age);
+                .new_at(epoch_parent.view(), block.view(), missed_view_age);
         info!(
             view = self.get_view()?,
-            ckpt_parent_view = parent.view(),
+            epoch_parent_view = epoch_parent.view(),
             ckpt_block_view = block.view(),
             view_history = display(&view_history),
             historical_blocks = historical_blocks.len(),
-            "~~~~~~~~~~> saving checkpoint in current"
+            "~~~~~~~~~~> saving checkpoint"
         );
         self.message_sender
             .send_message_to_coordinator(InternalMessage::ExportBlockCheckpoint(
                 Box::new(block),
                 transactions,
-                Box::new(parent),
+                Box::new(epoch_parent),
                 self.db.state_trie()?,
                 view_history,
                 checkpoint_dir,
-                Box::new(grandparent),
+                Box::new(epoch_grandparent),
                 historical_blocks,
             ))?;
         Ok((file_name.display().to_string(), hash.to_string()))
