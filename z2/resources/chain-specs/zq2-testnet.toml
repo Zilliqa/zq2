@@ -92,5 +92,6 @@ consensus.forks = [
     { at_height = 23685219, scilla_empty_maps_are_encoded_correctly = true },
     { at_height = 23685219, cancun_active = true },
     { at_height = 23685219, scilla_call_gas_exempt_addrs_v2 = [] },
-    { at_height = 28281600, randao_support = true, evm_to_scilla_strings_encoded_properly = true },
+    { at_height = 28281600, randao_support = true },
+    { at_height = 29230131, evm_to_scilla_strings_encoded_properly = true },
 ]
