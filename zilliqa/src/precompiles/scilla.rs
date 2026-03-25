@@ -23,7 +23,7 @@ use scilla_parser::{
 use tracing::trace;
 
 use crate::{
-    cfg::scilla_ext_libs_path_default,
+    cfg::{Fork, scilla_ext_libs_path_default},
     constants::SCILLA_INVOKE_RUNNER,
     evm::ZQ2EvmContext,
     exec::{PendingState, ScillaError, scilla_call},
@@ -166,7 +166,7 @@ impl ToScillaType for NodeAddressType {
 
 /// Given a Scilla value of type `ty`, read a Solidity value of this type from the [Decoder] and return the
 /// equivalent Scilla value which could be used to look up this key in a map.
-fn read_index(ty: ScillaType, d: &mut Decoder) -> Result<Vec<u8>> {
+fn read_index(ty: ScillaType, d: &mut Decoder, fork: &Fork) -> Result<Vec<u8>> {
     let index = match ty {
         // Note we use the `Debug` impl of `Address`, rather than `Display` because we don't want to include the EIP-55
         // checksum.
@@ -181,7 +181,13 @@ fn read_index(ty: ScillaType, d: &mut Decoder) -> Result<Vec<u8>> {
         ScillaType::Uint64 => serde_json::to_vec(&u64::detokenize(d.decode()?).to_string())?,
         ScillaType::Uint128 => serde_json::to_vec(&u128::detokenize(d.decode()?).to_string())?,
         ScillaType::Uint256 => serde_json::to_vec(&U256::detokenize(d.decode()?).to_string())?,
-        ScillaType::String => String::detokenize(d.decode()?).into_bytes(),
+        ScillaType::String => {
+            if fork.evm_to_scilla_strings_encoded_properly {
+                serde_json::to_vec(&String::detokenize(d.decode()?))?
+            } else {
+                String::detokenize(d.decode()?).into_bytes()
+            }
+        }
         ScillaType::Map(_, _) => {
             return Err(anyhow!("a map cannot be the key of another map"));
         }
@@ -198,12 +204,13 @@ fn get_indices(
     ty: ScillaType,
     decoder: &mut Decoder,
     indices: &mut Vec<Vec<u8>>,
+    fork: &Fork,
 ) -> Result<ScillaType> {
     match ty {
         ScillaType::Map(k, v) => {
-            let index = read_index(*k, decoder)?;
+            let index = read_index(*k, decoder, fork)?;
             indices.push(index);
-            get_indices(*v, decoder, indices)
+            get_indices(*v, decoder, indices, fork)
         }
         _ => Ok(ty),
     }
@@ -355,7 +362,7 @@ fn scilla_read(
     };
 
     let mut indices = vec![];
-    let Ok(ty) = get_indices(ty, &mut decoder, &mut indices) else {
+    let Ok(ty) = get_indices(ty, &mut decoder, &mut indices, &ctx.chain.fork) else {
         return err("failed to read indices");
     };
 
@@ -584,7 +591,7 @@ fn scilla_call_precompile(
                 return err(format!("unexpected scilla type as a parameter: {ty:?}"));
             };
 
-            let Ok(value) = read_index(ty, &mut decoder) else {
+            let Ok(value) = read_index(ty, &mut decoder, &ctx.chain.fork) else {
                 return fatal("failed to get value");
             };
             let Ok(value) = serde_json::from_slice::<serde_json::Value>(&value) else {

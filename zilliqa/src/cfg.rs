@@ -767,6 +767,7 @@ pub struct Fork {
     pub cancun_active: bool,
     pub scilla_call_gas_exempt_addrs_v2: Vec<Address>,
     pub randao_support: bool,
+    pub evm_to_scilla_strings_encoded_properly: bool,
 }
 
 pub enum ForkName {
@@ -915,6 +916,8 @@ pub struct ForkDelta {
     pub scilla_call_gas_exempt_addrs_v2: Vec<Address>,
     /// if true, randao is supported
     pub randao_support: Option<bool>,
+    /// if true, strings passed from EVM to Scilla via interop are properly JSON-encoded
+    pub evm_to_scilla_strings_encoded_properly: Option<bool>,
 }
 
 impl Fork {
@@ -1027,6 +1030,9 @@ impl Fork {
                 addrs
             },
             randao_support: delta.randao_support.unwrap_or(self.randao_support),
+            evm_to_scilla_strings_encoded_properly: delta
+                .evm_to_scilla_strings_encoded_properly
+                .unwrap_or(self.evm_to_scilla_strings_encoded_properly),
         }
     }
 }
@@ -1132,6 +1138,7 @@ pub fn genesis_fork_default() -> Fork {
         cancun_active: true,
         scilla_call_gas_exempt_addrs_v2: vec![],
         randao_support: true,
+        evm_to_scilla_strings_encoded_properly: true,
     }
 }
 
@@ -1310,6 +1317,7 @@ mod tests {
                 cancun_active: None,
                 scilla_call_gas_exempt_addrs_v2: vec![],
                 randao_support: None,
+                evm_to_scilla_strings_encoded_properly: None,
             }],
             ..Default::default()
         };
@@ -1370,6 +1378,7 @@ mod tests {
                     cancun_active: Some(false),
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: Some(false),
+                    evm_to_scilla_strings_encoded_properly: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1410,6 +1419,7 @@ mod tests {
                     cancun_active: None,
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: None,
+                    evm_to_scilla_strings_encoded_properly: None,
                 },
             ],
             ..Default::default()
@@ -1487,6 +1497,7 @@ mod tests {
                     cancun_active: None,
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: None,
+                    evm_to_scilla_strings_encoded_properly: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1527,6 +1538,7 @@ mod tests {
                     cancun_active: None,
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: None,
+                    evm_to_scilla_strings_encoded_properly: None,
                 },
             ],
             ..Default::default()
@@ -1592,6 +1604,7 @@ mod tests {
                 cancun_active: true,
                 scilla_call_gas_exempt_addrs_v2: vec![],
                 randao_support: true,
+                evm_to_scilla_strings_encoded_properly: true,
             },
             forks: vec![],
             ..Default::default()
@@ -1645,6 +1658,7 @@ mod tests {
                     cancun_active: None,
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: None,
+                    evm_to_scilla_strings_encoded_properly: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1685,6 +1699,7 @@ mod tests {
                     cancun_active: None,
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: None,
+                    evm_to_scilla_strings_encoded_properly: None,
                 },
             ],
             ..Default::default()
