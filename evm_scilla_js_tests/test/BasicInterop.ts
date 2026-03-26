@@ -43,8 +43,22 @@ describe("BasicInterop", function () {
   describe("When call is performed from solidity to scilla contract", function () {
     it("It should return proper string after invoking set method with string arg", async function () {
       const someString = "SomeString";
-      const tx = await solidityContract.callString(scillaContractAddress, "setString", KEEP_ORIGIN, someString);
+      const tx = await solidityContract.callString(scillaContractAddress, "setString", KEEP_ORIGIN, someString, { gasLimit: 300000 });
       await tx.wait();
+
+      let readString = await solidityContract.readString(scillaContractAddress, "strField");
+      expect(readString).to.be.equal(someString);
+    });
+
+    it("It should return proper address and string after invoking set method with address and string args", async function () {
+      const someString = "SomeString";
+      const someAddress = solidityContract.address;
+
+      const tx = await solidityContract.callAddressAndString(scillaContractAddress, "setAddressAndString", KEEP_ORIGIN, someAddress, someString, { gasLimit: 310000 });
+      await tx.wait();
+
+      let readAddress = await solidityContract.readAddress(scillaContractAddress, "addrField");
+      expect(readAddress).to.be.equal(someAddress);
       let readString = await solidityContract.readString(scillaContractAddress, "strField");
       expect(readString).to.be.equal(someString);
     });

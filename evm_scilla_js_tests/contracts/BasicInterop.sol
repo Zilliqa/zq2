@@ -153,6 +153,23 @@ contract BasicInterop {
     require(success);
   }
 
+  function callAddressAndString(
+    address contract_address,
+    string memory tran_name,
+    uint256 keep_origin,
+    address arg1,
+    string memory arg2
+  ) public {
+    bytes memory encodedArgs = abi.encode(contract_address, tran_name, keep_origin, arg1, arg2);
+    uint256 argsLength = encodedArgs.length;
+
+    bool success;
+    assembly {
+      success := call(gas(), 0x5a494c53, 0, add(encodedArgs, 0x20), argsLength, 0x20, 0)
+    }
+    require(success);
+  }
+
   function readString(address scilla_contract, string memory field_name) public view returns (string memory retVal) {
     bytes memory encodedArgs = abi.encode(scilla_contract, field_name);
     uint256 argsLength = encodedArgs.length;
