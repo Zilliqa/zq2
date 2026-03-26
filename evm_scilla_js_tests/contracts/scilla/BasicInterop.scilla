@@ -42,3 +42,8 @@ end
 transition setAddress(str: ByStr20)
     addrField := str
 end
+
+transition setAddressAndString(address: ByStr20, str: String)
+    addrField := address;
+    strField := str
+end
