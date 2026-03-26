@@ -190,7 +190,7 @@ pub struct DbConfig {
 }
 
 fn rocksdb_block_size_default() -> usize {
-    1 << 14 // 16KB reduces in-memory indexes
+    1 << 12 // Reduce block size - https://github.com/Zilliqa/zq2/issues/3543
 }
 
 fn rocksdb_memtable_budget_default() -> usize {
