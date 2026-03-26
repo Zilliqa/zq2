@@ -6,7 +6,7 @@ export class Parallelizer {
   constructor() {
     const private_keys: string[] = hre.network["config"]["accounts"] as string[];
 
-    this.zilliqaSetup = initZilliqa(hre.getNetworkUrl(), hre.getZilliqaChainId(), private_keys, 30);
+    this.zilliqaSetup = initZilliqa(hre.getNetworkUrl(), hre.getZilliqaChainId(), private_keys, 30, 1000, 2500, 50000);
   }
 
   async deployScillaContract(contractName: string, ...args: any[]): Promise<ScillaContract> {
