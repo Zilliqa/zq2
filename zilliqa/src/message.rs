@@ -2,7 +2,6 @@ use std::{
     collections::HashSet,
     fmt::{self, Display, Formatter},
     ops::Range,
-    path::Path,
 };
 
 use alloy::primitives::{Address, B256, U256};
@@ -16,7 +15,6 @@ use sha3::{Digest, Keccak256};
 
 use crate::{
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey},
-    precompiles::ViewHistory,
     time::SystemTime,
     transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
     trie_storage::TrieStorage,
@@ -379,19 +377,8 @@ pub enum InternalMessage {
     LaunchLink(u64),
     /// Routes intershard call information between two locally running, bridged, shard processes
     IntershardCall(IntershardCall),
-    /// Trigger a checkpoint export of the given block, including the state at its root hash as read
-    /// from the given trie
-    /// (checkpoint block, transactions, parent block, reference to our trie DB, output path)
-    ExportBlockCheckpoint(
-        Box<Block>,
-        Vec<SignedTransaction>,
-        Box<Block>,
-        TrieStorage,
-        ViewHistory,
-        Box<Path>,
-        Box<Block>,
-        Vec<(Block, Vec<SignedTransaction>)>,
-    ),
+    /// Trigger a checkpoint export.
+    ExportBlockCheckpoint(Box<crate::checkpoint::CheckpointExport>),
     /// Notify p2p cordinator to subscribe to a particular gossipsub topic
     SubscribeToGossipSubTopic(GossipSubTopic),
     /// Notify p2p cordinator to unsubscribe from a particular gossipsub topic
@@ -415,8 +402,14 @@ impl Display for InternalMessage {
             InternalMessage::LaunchShard(id) => write!(f, "LaunchShard({id})"),
             InternalMessage::LaunchLink(dest) => write!(f, "LaunchLink({dest})"),
             InternalMessage::IntershardCall(_) => write!(f, "IntershardCall"),
-            InternalMessage::ExportBlockCheckpoint(block, ..) => {
-                write!(f, "ExportCheckpoint({})", block.number())
+            InternalMessage::ExportBlockCheckpoint(export) => {
+                let block_num = export
+                    .data
+                    .blocks
+                    .last()
+                    .map(|(b, _)| b.number())
+                    .unwrap_or(0);
+                write!(f, "ExportCheckpoint({block_num})")
             }
             InternalMessage::SubscribeToGossipSubTopic(topic) => {
                 write!(f, "SubscribeToGossipSubTopic({topic:?})")

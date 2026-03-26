@@ -86,16 +86,17 @@ async fn main() -> Result<()> {
     let path = PathBuf::from(args.output.clone());
     let now = Instant::now();
     println!("WRITE {} -> {}", dbpath.display(), args.output);
+    let ckpt = zilliqa::checkpoint::CheckpointBlocks {
+        grandparent: Block::genesis(Hash::ZERO),
+        parent,
+        blocks: vec![(block, transactions)],
+    };
     zilliqa::checkpoint::save_ckpt(
         path.as_path(),
         Arc::new(db.state_trie()?),
-        &block,
-        &transactions,
-        &parent,
+        ckpt,
         args.id,
         ViewHistory::default(),
-        &Block::genesis(Hash::ZERO),
-        &[],
     )?;
     println!("WRITE {:?}", now.elapsed());
 

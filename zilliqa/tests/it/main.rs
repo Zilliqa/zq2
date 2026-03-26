@@ -1112,34 +1112,17 @@ impl Network {
                             trace!(?message);
                         }
                     }
-                    InternalMessage::ExportBlockCheckpoint(
-                        block,
-                        transactions,
-                        parent,
-                        trie_storage,
-                        view_history,
-                        output,
-                        grandparent,
-                        historical_blocks,
-                    ) => {
+                    InternalMessage::ExportBlockCheckpoint(export) => {
                         assert!(
                             self.do_checkpoints,
                             "Node requested a checkpoint checkpoint export to {}, despite checkpoints beind disabled in the config",
-                            output.to_string_lossy()
+                            export.output_dir.to_string_lossy()
                         );
-                        trace!("Exporting checkpoint to path {}", output.to_string_lossy());
-                        db::checkpoint_block_with_state(
-                            block,
-                            transactions,
-                            parent,
-                            trie_storage.clone(),
-                            *source_shard,
-                            view_history.clone(),
-                            grandparent,
-                            output,
-                            &historical_blocks,
-                        )
-                        .unwrap();
+                        trace!(
+                            "Exporting checkpoint to path {}",
+                            export.output_dir.to_string_lossy()
+                        );
+                        db::checkpoint_block_with_state(*export.clone(), *source_shard).unwrap();
                     }
                     InternalMessage::SubscribeToGossipSubTopic(topic) => {
                         debug!("subscribing to topic {:?}", topic);
@@ -1229,7 +1212,7 @@ impl Network {
                                 // Send to nodes only in the same shard (having same chain_id)
                                 if inner.config.eth_chain_id == sender_chain_id {
                                     // Re-route Proposals from Broadcast to Requests
-                                    match external_message {
+                                    match &external_message {
                                         ExternalMessage::Proposal(_) => inner
                                             .handle_request(
                                                 source,

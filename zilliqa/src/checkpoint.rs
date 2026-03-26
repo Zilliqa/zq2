@@ -249,30 +249,25 @@ fn write_bincode_file(
 /// In v3.2, `blocks.bincode` contains all epoch blocks followed by the checkpoint block
 /// (each paired with their transactions). `epoch_parent` and `epoch_grandparent` are
 /// stored separately.
+///
 fn deserialize_checkpoint_with_bundle_blocks(
     zipreader: &mut ZipArchive<File>,
-) -> Result<(
-    Block,
-    Vec<SignedTransaction>,
-    Block,
-    Block,
-    Vec<(Block, Vec<SignedTransaction>)>,
-)> {
-    let mut all_blocks: Vec<(Block, Vec<SignedTransaction>)> = {
+) -> Result<CheckpointBlocks> {
+    let all_blocks: Vec<(Block, Vec<SignedTransaction>)> = {
         let mut file = zipreader.by_name("blocks.bincode")?;
         bincode::serde::decode_from_std_read(&mut file, BIN_CONFIG)?
     };
     ensure!(!all_blocks.is_empty(), "Checkpoint blocks file is empty");
 
-    // Last entry is the checkpoint block; preceding entries are epoch blocks
-    let (block, transactions) = all_blocks.pop().unwrap();
+    // Last entry is the checkpoint block; validate it
+    let (block, transactions) = all_blocks.last().unwrap();
     ensure!(
         block.verify_hash().is_ok(),
         "Block hash {} invalid",
         block.hash()
     );
     let mut transactions_trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
-    for tx in &transactions {
+    for tx in transactions {
         let hash = tx.calculate_hash();
         transactions_trie.insert(hash.as_bytes(), hash.as_bytes())?;
     }
@@ -311,8 +306,29 @@ fn deserialize_checkpoint_with_bundle_blocks(
         "Epoch grandparent hash mismatch"
     );
 
-    // all_blocks now contains only the epoch blocks (checkpoint block was popped)
-    Ok((block, transactions, parent, grandparent, all_blocks))
+    Ok(CheckpointBlocks {
+        grandparent,
+        parent,
+        blocks: all_blocks,
+    })
+}
+
+/// Deserialized checkpoint: grandparent, parent, and a list of blocks with transactions
+/// where the last entry is the checkpoint block.
+#[derive(Debug, Clone)]
+pub struct CheckpointBlocks {
+    pub grandparent: Block,
+    pub parent: Block,
+    pub blocks: Vec<(Block, Vec<SignedTransaction>)>,
+}
+
+/// Everything needed to export a checkpoint to disk.
+#[derive(Debug, Clone)]
+pub struct CheckpointExport {
+    pub data: CheckpointBlocks,
+    pub trie_storage: TrieStorage,
+    pub view_history: ViewHistory,
+    pub output_dir: Box<Path>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
@@ -363,15 +379,7 @@ fn load_ckpt_meta(path: &Path, chain_id: u64, block_hash: &Hash) -> Result<Check
     Ok(meta)
 }
 
-pub fn load_ckpt_blocks(
-    path: &Path,
-) -> Result<(
-    Block,
-    Vec<SignedTransaction>,
-    Block,
-    Block,
-    Vec<(Block, Vec<SignedTransaction>)>,
-)> {
+pub fn load_ckpt_blocks(path: &Path) -> Result<CheckpointBlocks> {
     let mut zipreader = zip::ZipArchive::new(std::fs::File::open(path)?)?;
 
     let version_number = get_checkpoint_version(&zipreader)?;
@@ -381,7 +389,7 @@ pub fn load_ckpt_blocks(
     );
 
     // v3.2+: bincode-encoded files with epoch parent/grandparent semantics
-    if version_number >= 3.2f32 {
+    if version_number.as_str() >= "3.2" {
         return deserialize_checkpoint_with_bundle_blocks(&mut zipreader);
     }
 
@@ -452,7 +460,7 @@ pub fn load_ckpt_blocks(
         transactions
     };
     // Historical blocks are included in checkpoints starting from version 3.1
-    let historical_blocks = if version_number >= 3.1f32 {
+    let mut blocks = if version_number.as_str() >= "3.1" {
         let mut file = zipreader.by_name("historical_blocks.bincode")?;
         let blocks: Vec<(Block, Vec<SignedTransaction>)> =
             bincode::serde::decode_from_std_read(&mut file, BIN_CONFIG)?;
@@ -460,8 +468,13 @@ pub fn load_ckpt_blocks(
     } else {
         vec![]
     };
+    blocks.push((block, transactions));
 
-    Ok((block, transactions, parent, grandparent, historical_blocks))
+    Ok(CheckpointBlocks {
+        grandparent,
+        parent,
+        blocks,
+    })
 }
 
 pub fn load_ckpt_state(
@@ -556,26 +569,16 @@ pub fn load_ckpt_history(path: &Path) -> Result<ViewHistory> {
     Ok(view_history)
 }
 
-#[allow(clippy::type_complexity)]
 pub fn load_ckpt(
     path: &Path,
     trie_storage: Arc<TrieStorage>,
     chain_id: u64,
     block_hash: &Hash,
-) -> Result<
-    Option<(
-        Block,
-        Vec<SignedTransaction>,
-        Block,
-        ViewHistory,
-        Block,
-        Vec<(Block, Vec<SignedTransaction>)>,
-    )>,
-> {
+) -> Result<Option<(CheckpointBlocks, ViewHistory)>> {
     let meta = load_ckpt_meta(path, chain_id, block_hash)?;
-    let (block, transactions, parent, grandparent, historical_blocks) = load_ckpt_blocks(path)?;
+    let ckpt = load_ckpt_blocks(path)?;
     let (account_count, record_count) =
-        load_ckpt_state(path, trie_storage.clone(), &parent.state_root_hash())?;
+        load_ckpt_state(path, trie_storage.clone(), &ckpt.parent.state_root_hash())?;
 
     ensure!(
         meta.record_count == record_count,
@@ -588,15 +591,8 @@ pub fn load_ckpt(
 
     let view_history = load_ckpt_history(path)?;
 
-    tracing::info!(account=%account_count, record=%record_count, historical=%historical_blocks.len(), "Loaded");
-    Ok(Some((
-        block,
-        transactions,
-        parent,
-        view_history,
-        grandparent,
-        historical_blocks,
-    )))
+    tracing::info!(account=%account_count, record=%record_count, blocks=%ckpt.blocks.len(), "Loaded");
+    Ok(Some((ckpt, view_history)))
 }
 
 #[derive(Debug)]
@@ -607,23 +603,19 @@ struct AccountBlob {
     pub spool: SpooledTempFile,
 }
 
-/// Save a v3.2 checkpoint.
-///
-/// In v3.2, `parent` is the epoch_parent (parent of the first block in the epoch),
-/// `grandparent` is epoch_grandparent, and `historical_blocks` contains the epoch blocks.
-/// State is saved at `parent.state_root_hash()` (epoch_parent's state root).
-#[allow(clippy::too_many_arguments)]
+/// Save a v3.2 checkpoint. State is saved at `ckpt.parent.state_root_hash()`.
 pub fn save_ckpt(
     path: &Path,
     trie_storage: Arc<TrieStorage>,
-    block: &Block,
-    transactions: &Vec<SignedTransaction>,
-    parent: &Block,
+    ckpt: CheckpointBlocks,
     chain_id: u64,
     view_history: ViewHistory,
-    grandparent: &Block,
-    historical_blocks: &[(Block, Vec<SignedTransaction>)],
 ) -> Result<()> {
+    let (block, transactions) = ckpt
+        .blocks
+        .last()
+        .ok_or_else(|| anyhow!("blocks is empty"))?;
+
     // Verify transactions root hash
     let mut transactions_trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
     for tx in transactions {
@@ -645,14 +637,19 @@ pub fn save_ckpt(
     let mut zipwriter = zip::ZipWriter::new(zipfile);
 
     // Write block data files
-    // Combine epoch blocks + checkpoint block into a single file.
-    // The checkpoint block (with its transactions) is appended as the last entry.
-    let mut all_blocks: Vec<(Block, Vec<SignedTransaction>)> =
-        historical_blocks.to_vec();
-    all_blocks.push((block.clone(), transactions.clone()));
-    write_bincode_file(&mut zipwriter, "blocks.bincode", options, &all_blocks)?;
-    write_bincode_file(&mut zipwriter, "epoch_parent.bincode", options, parent)?;
-    write_bincode_file(&mut zipwriter, "epoch_grandparent.bincode", options, grandparent)?;
+    write_bincode_file(&mut zipwriter, "blocks.bincode", options, &ckpt.blocks)?;
+    write_bincode_file(
+        &mut zipwriter,
+        "epoch_parent.bincode",
+        options,
+        &ckpt.parent,
+    )?;
+    write_bincode_file(
+        &mut zipwriter,
+        "epoch_grandparent.bincode",
+        options,
+        &ckpt.grandparent,
+    )?;
     write_bincode_file(&mut zipwriter, "history.bincode", options, &view_history)?;
 
     // Write the state trie at parent (epoch_parent) state root
@@ -667,7 +664,8 @@ pub fn save_ckpt(
     // iterate over accounts and save the accounts to the checkpoint file.
     // This is done in parallel, using crossbeam, to speed up the process.
     // While the ordering of the accounts being saved is not guaranteed, it is not a problem as long as every account is completely saved.
-    let state_trie = EthTrie::new(trie_storage.clone()).at_root(parent.state_root_hash().into());
+    let state_trie =
+        EthTrie::new(trie_storage.clone()).at_root(ckpt.parent.state_root_hash().into());
     crossbeam::thread::scope(|s| {
         // Consumer: receive processed blobs and write them sequentially into the zip writer.
         let consumer = s.spawn(|_s| -> Result<u64> {

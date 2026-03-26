@@ -2,13 +2,12 @@ use std::collections::HashSet;
 
 use alloy::{
     consensus::TypedTransaction,
-    eips::eip2930::AccessList,
+    eips::{BlockId, eip2930::AccessList},
     network::TransactionBuilder,
     primitives::{Address, U256},
     providers::{Provider as _, WalletProvider},
     rpc::types::TransactionRequest,
 };
-use alloy::eips::BlockId;
 use tracing::*;
 use zilliqa::{crypto::Hash, state::contract_addr};
 
@@ -242,7 +241,11 @@ async fn zero_account_per_block_balance_updates(mut network: Network) {
     network.run_until_block(&wallet, before_epoch, 200).await;
 
     // Record balances before the epoch boundary
-    let block = wallet.get_block(before_epoch.into()).await.unwrap().unwrap();
+    let block = wallet
+        .get_block(before_epoch.into())
+        .await
+        .unwrap()
+        .unwrap();
     let miner = block.header.beneficiary;
     let miner_balance_before = wallet
         .get_balance(miner)
@@ -258,7 +261,9 @@ async fn zero_account_per_block_balance_updates(mut network: Network) {
         .unwrap();
 
     // Advance to the epoch boundary where rewards are distributed
-    network.run_until_block(&wallet, blocks_per_epoch, 200).await;
+    network
+        .run_until_block(&wallet, blocks_per_epoch, 200)
+        .await;
 
     // Check proposer was rewarded
     let miner_balance_after = wallet
@@ -358,7 +363,9 @@ async fn gas_fees_should_be_transferred_to_zero_account(mut network: Network) {
         .unwrap();
 
     // Advance to the epoch boundary where rewards and gas fees are distributed
-    network.run_until_block(&wallet, blocks_per_epoch, 200).await;
+    network
+        .run_until_block(&wallet, blocks_per_epoch, 200)
+        .await;
 
     let mut total_rewards = U256::ZERO;
     for (reward_address, balance_before) in &reward_balances_before {

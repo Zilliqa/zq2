@@ -816,23 +816,12 @@ impl Db {
     /// Fetch checkpoint data from file and initialise db state
     /// Return checkpointed block and transactions which must be executed after this function
     /// Return None if checkpoint already loaded
-    #[allow(clippy::type_complexity)]
-    #[allow(clippy::type_complexity)]
     pub fn load_trusted_checkpoint(
         &self,
         path: PathBuf,
         hash: &Hash,
         our_shard_id: u64,
-    ) -> Result<
-        Option<(
-            Block,
-            Vec<SignedTransaction>,
-            Block,
-            ViewHistory,
-            Block,
-            Vec<(Block, Vec<SignedTransaction>)>,
-        )>,
-    > {
+    ) -> Result<Option<(crate::checkpoint::CheckpointBlocks, ViewHistory)>> {
         let trie_storage = Arc::new(self.state_trie()?);
         let state_trie = EthTrie::new(trie_storage.clone());
 
@@ -842,60 +831,60 @@ impl Db {
             && self.get_highest_canonical_block_number()?.is_none()
         {
             tracing::info!(%hash, "Restoring checkpoint");
-            let (block, transactions, parent, view_history, grandparent, historical_blocks) =
-                crate::checkpoint::load_ckpt(
-                    path.as_path(),
-                    trie_storage.clone(),
-                    our_shard_id,
-                    hash,
-                )?
-                .expect("does not return None");
+            let (ckpt, view_history) = crate::checkpoint::load_ckpt(
+                path.as_path(),
+                trie_storage.clone(),
+                our_shard_id,
+                hash,
+            )?
+            .expect("does not return None");
 
-            let parent_ref: &Block = &parent; // for moving into the closure
-            let grandparent_ref: &Block = &grandparent;
-            let historical_refs: Vec<&Block> =
-                historical_blocks.iter().map(|(b, _)| b).collect();
+            let high_qc = ckpt
+                .blocks
+                .last()
+                .expect("blocks must not be empty")
+                .0
+                .header
+                .qc;
+            let parent_ref: &Block = &ckpt.parent;
+            let grandparent_ref: &Block = &ckpt.grandparent;
+            let block_refs: Vec<&Block> = ckpt.blocks[..ckpt.blocks.len() - 1]
+                .iter()
+                .map(|(b, _)| b)
+                .collect();
             self.with_sqlite_tx(move |tx| {
                 self.insert_block_with_db_tx(tx, parent_ref)?;
                 self.set_finalized_view_with_db_tx(tx, parent_ref.view())?;
-                self.set_high_qc_with_db_tx(tx, block.header.qc)?;
+                self.set_high_qc_with_db_tx(tx, high_qc)?;
                 self.set_view_with_db_tx(tx, parent_ref.view() + 1, false)?;
                 self.insert_block_with_db_tx(tx, grandparent_ref)?;
-                for hist_block in &historical_refs {
-                    self.insert_block_with_db_tx(tx, hist_block)?;
+                for block in &block_refs {
+                    self.insert_block_with_db_tx(tx, block)?;
                 }
                 Ok(())
             })?;
 
-            return Ok(Some((
-                block,
-                transactions,
-                parent,
-                view_history,
-                grandparent,
-                historical_blocks,
-            )));
+            return Ok(Some((ckpt, view_history)));
         }
 
-        let (block, transactions, parent, grandparent, historical_blocks) =
-            crate::checkpoint::load_ckpt_blocks(path.as_path())?;
+        let ckpt = crate::checkpoint::load_ckpt_blocks(path.as_path())?;
 
         // Populated database; check if the parent block exists in the DB.
-        let Some(ckpt_parent) = self.get_transactionless_block(parent.hash().into())? else {
+        let Some(ckpt_parent) = self.get_transactionless_block(ckpt.parent.hash().into())? else {
             return Err(anyhow!("Invalid checkpoint attempt"));
         };
         anyhow::ensure!(
-            ckpt_parent.parent_hash() == parent.parent_hash(),
+            ckpt_parent.parent_hash() == ckpt.parent.parent_hash(),
             "Critical checkpoint error"
         );
 
-        // Populated database; check if the parent block exists in the DB.
+        // Populated database; check if the grandparent block exists in the DB.
         let ckpt_grandparent = self
-            .get_transactionless_block(grandparent.hash().into())?
+            .get_transactionless_block(ckpt.grandparent.hash().into())?
             .unwrap_or(Block::genesis(Hash::ZERO));
         if ckpt_grandparent.state_root_hash() != Hash::ZERO {
             anyhow::ensure!(
-                ckpt_grandparent.parent_hash() == grandparent.parent_hash(),
+                ckpt_grandparent.parent_hash() == ckpt.grandparent.parent_hash(),
                 "Critical checkpoint error"
             );
         }
@@ -911,14 +900,7 @@ impl Db {
             &ckpt_parent.state_root_hash(),
         )?;
 
-        Ok(Some((
-            block,
-            transactions,
-            parent,
-            view_history,
-            grandparent,
-            historical_blocks,
-        )))
+        Ok(Some((ckpt, view_history)))
     }
 
     pub fn state_trie(&self) -> Result<TrieStorage> {
@@ -1859,32 +1841,25 @@ pub fn get_checkpoint_filename<P: AsRef<Path> + Debug>(
 }
 
 /// Build checkpoint and write to disk.
-/// A description of the data written can be found in docs/checkpoints
-#[allow(clippy::too_many_arguments)]
-pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
-    block: &Block,
-    transactions: &Vec<SignedTransaction>,
-    parent: &Block,
-    state_trie_storage: TrieStorage,
+pub fn checkpoint_block_with_state(
+    export: crate::checkpoint::CheckpointExport,
     shard_id: u64,
-    view_history: ViewHistory,
-    grandparent: &Block,
-    output_dir: P,
-    historical_blocks: &[(Block, Vec<SignedTransaction>)],
 ) -> Result<()> {
-    fs::create_dir_all(&output_dir)?;
-    let trie_storage = Arc::new(state_trie_storage);
-    let path = get_checkpoint_filename(output_dir, block)?;
+    let block = &export
+        .data
+        .blocks
+        .last()
+        .expect("blocks must not be empty")
+        .0;
+    fs::create_dir_all(&export.output_dir)?;
+    let trie_storage = Arc::new(export.trie_storage);
+    let path = get_checkpoint_filename(&export.output_dir, block)?;
     crate::checkpoint::save_ckpt(
         path.with_extension("part").as_path(),
         trie_storage,
-        block,
-        transactions,
-        parent,
+        export.data,
         shard_id,
-        view_history,
-        grandparent,
-        historical_blocks,
+        export.view_history,
     )?;
 
     // rename file when done
@@ -2064,22 +2039,21 @@ mod tests {
 
         const SHARD_ID: u64 = 5000;
 
-        let checkpoint_transactions = vec![];
-        checkpoint_block_with_state(
-            &checkpoint_block,
-            &checkpoint_transactions,
-            &checkpoint_parent,
-            db.state_trie().unwrap(),
-            SHARD_ID,
+        let checkpoint_transactions: Vec<SignedTransaction> = vec![];
+        let export = crate::checkpoint::CheckpointExport {
+            data: crate::checkpoint::CheckpointBlocks {
+                grandparent: checkpoint_grandparent.clone(),
+                parent: checkpoint_parent.clone(),
+                blocks: vec![(checkpoint_block.clone(), checkpoint_transactions.clone())],
+            },
+            trie_storage: db.state_trie().unwrap(),
             view_history,
-            &checkpoint_grandparent,
-            &checkpoint_path,
-            &[],
-        )
-        .unwrap();
+            output_dir: checkpoint_path.clone(),
+        };
+        checkpoint_block_with_state(export, SHARD_ID).unwrap();
 
         // now load the checkpoint
-        let (block, transactions, parent, view_history, grandparent, _historical_blocks) = db
+        let (ckpt, view_history) = db
             .load_trusted_checkpoint(
                 checkpoint_path.join(checkpoint_block.number().to_string()),
                 &checkpoint_block.hash(),
@@ -2087,10 +2061,11 @@ mod tests {
             )
             .unwrap()
             .unwrap();
-        assert_eq!(checkpoint_block, block);
-        assert_eq!(checkpoint_transactions, transactions);
-        assert_eq!(checkpoint_parent, parent);
-        assert_eq!(checkpoint_grandparent, grandparent);
+        let (block, transactions) = ckpt.blocks.last().unwrap();
+        assert_eq!(checkpoint_block, *block);
+        assert_eq!(checkpoint_transactions, *transactions);
+        assert_eq!(checkpoint_parent, ckpt.parent);
+        assert_eq!(checkpoint_grandparent, ckpt.grandparent);
         if let Some((view, _)) = view_history.missed_views.front() {
             assert!(*view >= view_history.min_view);
         } else {
@@ -2098,7 +2073,7 @@ mod tests {
         }
 
         // load the checkpoint again, to ensure idempotency
-        let (block, transactions, parent, view_history, grandparent, _historical_blocks) = db
+        let (ckpt, view_history) = db
             .load_trusted_checkpoint(
                 checkpoint_path.join(checkpoint_block.number().to_string()),
                 &checkpoint_block.hash(),
@@ -2106,10 +2081,11 @@ mod tests {
             )
             .unwrap()
             .unwrap();
-        assert_eq!(checkpoint_block, block);
-        assert_eq!(checkpoint_transactions, transactions);
-        assert_eq!(checkpoint_parent, parent);
-        assert_eq!(checkpoint_grandparent, grandparent);
+        let (block, transactions) = ckpt.blocks.last().unwrap();
+        assert_eq!(checkpoint_block, *block);
+        assert_eq!(checkpoint_transactions, *transactions);
+        assert_eq!(checkpoint_parent, ckpt.parent);
+        assert_eq!(checkpoint_grandparent, ckpt.grandparent);
         if let Some((view, _)) = view_history.missed_views.front() {
             assert!(*view >= view_history.min_view);
         } else {

@@ -107,12 +107,13 @@ async fn main() -> Result<()> {
         zilliqa::cfg::DbConfig::default(),
     )?);
 
-    if let Some((block, _, _, view_history, _, _)) = zilliqa::checkpoint::load_ckpt(
+    if let Some((ckpt, view_history)) = zilliqa::checkpoint::load_ckpt(
         path.as_path(),
         Arc::new(db.state_trie()?),
         args.id,
         &Hash::from_bytes(hex::decode(args.hash.as_bytes())?)?,
     )? {
+        let block = &ckpt.blocks.last().expect("blocks must not be empty").0;
         if let Some((view, _)) = view_history.missed_views.front() {
             println!("{view_history}");
             if match args.id {

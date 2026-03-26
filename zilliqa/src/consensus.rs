@@ -303,26 +303,17 @@ impl Consensus {
             State::new_with_genesis(db.state_trie()?, config.clone(), db.clone())
         }?;
 
-        let (ckpt_block, ckpt_transactions, ckpt_parent, ckpt_grandparent, ckpt_historical_blocks) =
-            if let Some((block, transactions, parent, view_history, grandparent, historical_blocks)) =
-                checkpoint_data
-            {
-                info!(
-                    history = display(&view_history),
-                    historical = historical_blocks.len(),
-                    "~~~~~~~~~~> found in checkpoint"
-                );
-                *state.view_history.write() = view_history;
-                (
-                    Some(block),
-                    Some(transactions),
-                    Some(parent),
-                    Some(grandparent),
-                    historical_blocks,
-                )
-            } else {
-                (None, None, None, None, vec![])
-            };
+        let ckpt = if let Some((ckpt, view_history)) = checkpoint_data {
+            info!(
+                history = display(&view_history),
+                blocks = ckpt.blocks.len(),
+                "~~~~~~~~~~> found in checkpoint"
+            );
+            *state.view_history.write() = view_history;
+            Some(ckpt)
+        } else {
+            None
+        };
 
         let (latest_block, latest_block_view) = match latest_block {
             Some(l) => (Some(l.clone()), l.view()),
@@ -488,15 +479,18 @@ impl Consensus {
         // if the node was started without or with a checkpoint older than its finalized view
         if consensus.config.load_checkpoint.is_none()
             || finalized_view
-                > ckpt_block
+                > ckpt
                     .as_ref()
+                    .and_then(|c| c.blocks.last())
                     .expect("Checkpoint block missing")
+                    .0
                     .view()
         {
             // if state_sync but no checkpoint is specified in the config then
             // the already started state syncing will be resumed, otherwise
             // it will be (re)started from the checkpoint specified
-            if state_sync && let Some(ckpt_block) = ckpt_block.as_ref() {
+            if state_sync && let Some((ckpt_block, _)) = ckpt.as_ref().and_then(|c| c.blocks.last())
+            {
                 let new_history = consensus.state.view_history.read().new_at(
                     finalized_view,
                     finalized_view,
@@ -565,78 +559,40 @@ impl Consensus {
             }
         }
 
-        // If we started from a checkpoint
-        if let (Some(block), Some(transactions), Some(parent), Some(_grandparent)) =
-            (ckpt_block, ckpt_transactions, ckpt_parent, ckpt_grandparent)
-        {
-            // if the checkpoint block does not exist, execute the block
+        // If we started from a checkpoint, execute the blocks
+        if let Some(ckpt) = ckpt {
+            let (ckpt_block, _) = ckpt.blocks.last().expect("blocks must not be empty");
+            // if the checkpoint block does not exist, execute the blocks
             if consensus
                 .db
-                .get_transactionless_block(BlockFilter::Hash(block.hash()))?
+                .get_transactionless_block(BlockFilter::Hash(ckpt_block.hash()))?
                 .is_none()
             {
-                // Execute historical blocks first if present (needed for
-                // distribute_rewards_every_epoch to have the full epoch of
-                // blocks available when the checkpoint block is an epoch boundary).
-                if !ckpt_historical_blocks.is_empty() {
-                    info!(
-                        count = ckpt_historical_blocks.len(),
-                        "Executing historical blocks from checkpoint"
-                    );
-                    for (hist_block, hist_transactions) in ckpt_historical_blocks {
-                        let hist_parent = consensus
-                            .get_block(&hist_block.parent_hash())?
-                            .ok_or_else(|| {
-                                anyhow!(
-                                    "missing parent for historical block {}",
-                                    hist_block.number()
-                                )
-                            })?;
-                        consensus
-                            .state
-                            .set_to_root(hist_parent.state_root_hash().into());
-                        let committee = consensus
-                            .state
-                            .at_root(hist_parent.state_root_hash().into())
-                            .get_stakers(hist_block.header)?;
-                        consensus.execute_block(
-                            None,
-                            &hist_block,
-                            hist_transactions,
-                            &committee,
-                            true,
-                        )?;
-                    }
-                }
-
-                // Execute the checkpoint block itself.
-                // In v3.2, `parent` is epoch_parent (not the checkpoint block's direct parent),
-                // so look up the actual parent from DB (it was just executed as the last
-                // historical block). For v3.0/v3.1 this is a no-op since
-                // block.parent_hash() == parent.hash().
-                let actual_parent = consensus
-                    .get_block(&block.parent_hash())?
-                    .unwrap_or_else(|| parent.clone());
-                consensus
-                    .state
-                    .set_to_root(actual_parent.state_root_hash().into());
-                consensus.execute_block(
-                    None,
-                    &block,
-                    transactions,
-                    &consensus
+                for (block, transactions) in &ckpt.blocks {
+                    // Look up the parent from DB; fall back to epoch parent for the
+                    // first block in the epoch.
+                    let block_parent = consensus
+                        .get_block(&block.parent_hash())?
+                        .unwrap_or_else(|| ckpt.parent.clone());
+                    consensus
                         .state
-                        .at_root(actual_parent.state_root_hash().into())
-                        .get_stakers(block.header)?,
-                    true,
-                )?;
+                        .set_to_root(block_parent.state_root_hash().into());
+                    let committee = consensus
+                        .state
+                        .at_root(block_parent.state_root_hash().into())
+                        .get_stakers(block.header)?;
+                    consensus.execute_block(None, block, transactions.clone(), &committee, true)?;
+                }
                 // Update finalized view to the checkpoint block so that RPC
                 // queries using BlockId::finalized() see the full replayed state.
-                consensus.db.set_finalized_view(block.view())?;
+                consensus.db.set_finalized_view(ckpt_block.view())?;
             }
             // set starting point for state-sync/state-migration
             if state_sync {
-                consensus.db.state_trie()?.set_migrate_at(block.number())?;
+                consensus
+                    .db
+                    .state_trie()?
+                    .set_migrate_at(ckpt_block.number())?;
             }
         }
 
@@ -2657,11 +2613,11 @@ impl Consensus {
         let missed_view_age = self.config.max_missed_view_age;
         // View history must cover from epoch_parent to checkpoint block so that
         // leaders can be resolved during epoch replay on load.
-        let view_history =
-            self.state
-                .view_history
-                .read()
-                .new_at(epoch_parent.view(), block.view(), missed_view_age);
+        let view_history = self.state.view_history.read().new_at(
+            epoch_parent.view(),
+            block.view(),
+            missed_view_age,
+        );
         info!(
             view = self.get_view()?,
             epoch_parent_view = epoch_parent.view(),
@@ -2670,17 +2626,21 @@ impl Consensus {
             historical_blocks = historical_blocks.len(),
             "~~~~~~~~~~> saving checkpoint"
         );
+        historical_blocks.push((block, transactions));
+        let export = crate::checkpoint::CheckpointExport {
+            data: crate::checkpoint::CheckpointBlocks {
+                grandparent: epoch_grandparent,
+                parent: epoch_parent,
+                blocks: historical_blocks,
+            },
+            trie_storage: self.db.state_trie()?,
+            view_history,
+            output_dir: checkpoint_dir,
+        };
         self.message_sender
-            .send_message_to_coordinator(InternalMessage::ExportBlockCheckpoint(
-                Box::new(block),
-                transactions,
-                Box::new(epoch_parent),
-                self.db.state_trie()?,
-                view_history,
-                checkpoint_dir,
-                Box::new(epoch_grandparent),
-                historical_blocks,
-            ))?;
+            .send_message_to_coordinator(InternalMessage::ExportBlockCheckpoint(Box::new(
+                export,
+            )))?;
         Ok((file_name.display().to_string(), hash.to_string()))
     }
 
@@ -3676,7 +3636,10 @@ impl Consensus {
         let fork_activation_height = self
             .state
             .forks
-            .find_height_fork_first_activated(ForkName::DistributeRewardsEveryEpoch).ok_or(anyhow!("Missing activation height for DistributeRewardsEveryEpoch"))?;
+            .find_height_fork_first_activated(ForkName::DistributeRewardsEveryEpoch)
+            .ok_or(anyhow!(
+                "Missing activation height for DistributeRewardsEveryEpoch"
+            ))?;
 
         let range_end = current_block.number();
 
@@ -3699,13 +3662,17 @@ impl Consensus {
                 range_start..=(range_end.saturating_sub(1)),
             )?;
 
-        //error!("Blocks and heights: {}", historical_data.iter().map(|b| format!("{}-{}", b.block.number(), b.block.view())).collect::<Vec<_>>().join(", "));
-
         let mut total_gas_fees: u128 = 0;
 
         let mut parent_of_first_block = if let Some(first_data) = historical_data.first() {
             self.get_block(&first_data.block.parent_hash())?
-                .ok_or_else(|| anyhow!("missing parent for first block in epoch range: [{}, {}]", range_start, range_end))?
+                .ok_or_else(|| {
+                    anyhow!(
+                        "missing parent for first block in epoch range: [{}, {}]",
+                        range_start,
+                        range_end
+                    )
+                })?
         } else {
             parent.clone()
         };
@@ -3729,13 +3696,28 @@ impl Consensus {
             .flatten()
             .and_then(|b| b.header.mix_hash);
 
-        for data in historical_data.into_iter().chain(std::iter::once(current_data)) {
+        for data in historical_data
+            .into_iter()
+            .chain(std::iter::once(current_data))
+        {
             let block = data.block;
             let parent_state = state.at_root(parent_of_first_block.state_root_hash().into());
 
             let committee = parent_state.get_stakers(block.header)?;
 
-            let proposer = Self::leader_at_state(&parent_state, &parent_of_first_block, grandparent_mix_hash, block.view()).ok_or_else(|| anyhow!("no leader for block {} view {}", block.number(), block.view()))?;
+            let proposer = Self::leader_at_state(
+                &parent_state,
+                &parent_of_first_block,
+                grandparent_mix_hash,
+                block.view(),
+            )
+            .ok_or_else(|| {
+                anyhow!(
+                    "no leader for block {} view {}",
+                    block.number(),
+                    block.view()
+                )
+            })?;
 
             let proposer_key = proposer.public_key;
 
@@ -3753,7 +3735,10 @@ impl Consensus {
             parent_of_first_block = block;
         }
 
-        let transfer_gas_fee_to_zero_account = state.forks.get(current_block.header.number).transfer_gas_fee_to_zero_account;
+        let transfer_gas_fee_to_zero_account = state
+            .forks
+            .get(current_block.header.number)
+            .transfer_gas_fee_to_zero_account;
         if transfer_gas_fee_to_zero_account {
             state.mutate_account(Address::ZERO, |a| {
                 a.balance = a
