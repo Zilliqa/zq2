@@ -323,7 +323,12 @@ struct Checkpoint {
     pub block_hash: Hash,
 }
 
-fn get_checkpoint_version(zipreader: &ZipArchive<File>) -> Result<f32> {
+/// Extracts the checkpoint version from the ZIP file comment.
+/// Allowed formats: e.g ZILCHKPT/1.0, ZILCHKPT/1.0.1, ZILCHKPT/1.0.1+xyz
+//
+// - ZILCHKPT/2.0 : Original ZIP checkpoint format.
+// - ZILCHKPT/3.0 : Added grandparent block.
+fn get_checkpoint_version(zipreader: &ZipArchive<File>) -> Result<String> {
     let comment = std::str::from_utf8(zipreader.comment())?;
     let version_str = comment
         .split('/')
@@ -334,15 +339,11 @@ fn get_checkpoint_version(zipreader: &ZipArchive<File>) -> Result<f32> {
 fn load_ckpt_meta(path: &Path, chain_id: u64, block_hash: &Hash) -> Result<Checkpoint> {
     let mut zipreader = zip::ZipArchive::new(std::fs::File::open(path)?)?;
 
-    // Currently checks that the version matches exactly.
-    // This check also ensures that the file is a ZIP file by reading the EOCD.
-    // In the future, we may handle different versions separately,
-    //
-    // - ZILCHKPT/x.0 : Checkpoint 2.0 or newer
-
     let version_number = get_checkpoint_version(&zipreader)?;
-
-    ensure!(version_number >= 2.0f32, "Invalid checkpoint version",);
+    ensure!(
+        version_number.as_str() >= "2.0",
+        "Invalid checkpoint version",
+    );
 
     let meta = {
         let mut file = zipreader.by_name("metadata.json")?;
@@ -374,7 +375,10 @@ pub fn load_ckpt_blocks(
     let mut zipreader = zip::ZipArchive::new(std::fs::File::open(path)?)?;
 
     let version_number = get_checkpoint_version(&zipreader)?;
-    ensure!(version_number >= 2.0f32, "Invalid checkpoint version",);
+    ensure!(
+        version_number.as_str() >= "2.0",
+        "Invalid checkpoint version",
+    );
 
     // v3.2+: bincode-encoded files with epoch parent/grandparent semantics
     if version_number >= 3.2f32 {
@@ -410,7 +414,7 @@ pub fn load_ckpt_blocks(
 
     // Grandparent block is included in checkpoints starting from version 3.0
     let grandparent = {
-        if version_number >= 3.0f32 {
+        if version_number.as_str() >= "3.0" {
             let mut file = zipreader.by_name("grandparent.bincode")?;
             let mut data = Vec::new();
             file.read_to_end(&mut data)?;
@@ -467,7 +471,10 @@ pub fn load_ckpt_state(
 ) -> Result<(u64, u64)> {
     let mut zipreader = zip::ZipArchive::new(std::fs::File::open(path)?)?;
     let version_number = get_checkpoint_version(&zipreader)?;
-    ensure!(version_number >= 2.0f32, "Invalid checkpoint version",);
+    ensure!(
+        version_number.as_str() >= "2.0",
+        "Invalid checkpoint version",
+    );
 
     // reconstruct the state trie from accounts/storage leaf nodes
     let (account_count, record_count) = {
@@ -540,7 +547,10 @@ pub fn load_ckpt_state(
 pub fn load_ckpt_history(path: &Path) -> Result<ViewHistory> {
     let mut zipreader = zip::ZipArchive::new(std::fs::File::open(path)?)?;
     let version_number = get_checkpoint_version(&zipreader)?;
-    ensure!(version_number >= 2.0f32, "Invalid checkpoint version",);
+    ensure!(
+        version_number.as_str() >= "2.0",
+        "Invalid checkpoint version",
+    );
     let mut file = zipreader.by_name("history.bincode")?;
     let view_history: ViewHistory = bincode::serde::decode_from_std_read(&mut file, BIN_CONFIG)?;
     Ok(view_history)

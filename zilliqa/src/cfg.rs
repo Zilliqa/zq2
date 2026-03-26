@@ -190,7 +190,7 @@ pub struct DbConfig {
 }
 
 fn rocksdb_block_size_default() -> usize {
-    1 << 14 // 16KB reduces in-memory indexes
+    1 << 12 // Reduce block size - https://github.com/Zilliqa/zq2/issues/3543
 }
 
 fn rocksdb_memtable_budget_default() -> usize {
@@ -768,6 +768,7 @@ pub struct Fork {
     pub cancun_active: bool,
     pub scilla_call_gas_exempt_addrs_v2: Vec<Address>,
     pub randao_support: bool,
+    pub evm_to_scilla_strings_encoded_properly: bool,
     pub distribute_rewards_every_epoch: bool,
 }
 
@@ -918,6 +919,8 @@ pub struct ForkDelta {
     pub scilla_call_gas_exempt_addrs_v2: Vec<Address>,
     /// if true, randao is supported
     pub randao_support: Option<bool>,
+    /// if true, strings passed from EVM to Scilla via interop are properly JSON-encoded
+    pub evm_to_scilla_strings_encoded_properly: Option<bool>,
     /// if true, rewards are distributed every epoch instead of every block
     pub distribute_rewards_every_epoch: Option<bool>,
 }
@@ -1032,6 +1035,9 @@ impl Fork {
                 addrs
             },
             randao_support: delta.randao_support.unwrap_or(self.randao_support),
+            evm_to_scilla_strings_encoded_properly: delta
+                .evm_to_scilla_strings_encoded_properly
+                .unwrap_or(self.evm_to_scilla_strings_encoded_properly),
             distribute_rewards_every_epoch: delta
                 .distribute_rewards_every_epoch
                 .unwrap_or(self.distribute_rewards_every_epoch),
@@ -1140,6 +1146,7 @@ pub fn genesis_fork_default() -> Fork {
         cancun_active: true,
         scilla_call_gas_exempt_addrs_v2: vec![],
         randao_support: true,
+        evm_to_scilla_strings_encoded_properly: true,
         distribute_rewards_every_epoch: true,
     }
 }
@@ -1319,6 +1326,7 @@ mod tests {
                 cancun_active: None,
                 scilla_call_gas_exempt_addrs_v2: vec![],
                 randao_support: None,
+                evm_to_scilla_strings_encoded_properly: None,
                 distribute_rewards_every_epoch: None,
             }],
             ..Default::default()
@@ -1380,6 +1388,7 @@ mod tests {
                     cancun_active: Some(false),
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: Some(false),
+                    evm_to_scilla_strings_encoded_properly: None,
                     distribute_rewards_every_epoch: None,
                 },
                 ForkDelta {
@@ -1421,6 +1430,7 @@ mod tests {
                     cancun_active: None,
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: None,
+                    evm_to_scilla_strings_encoded_properly: None,
                     distribute_rewards_every_epoch: None,
                 },
             ],
@@ -1499,6 +1509,7 @@ mod tests {
                     cancun_active: None,
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: None,
+                    evm_to_scilla_strings_encoded_properly: None,
                     distribute_rewards_every_epoch: None,
                 },
                 ForkDelta {
@@ -1540,6 +1551,7 @@ mod tests {
                     cancun_active: None,
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: None,
+                    evm_to_scilla_strings_encoded_properly: None,
                     distribute_rewards_every_epoch: None,
                 },
             ],
@@ -1606,6 +1618,7 @@ mod tests {
                 cancun_active: true,
                 scilla_call_gas_exempt_addrs_v2: vec![],
                 randao_support: true,
+                evm_to_scilla_strings_encoded_properly: true,
                 distribute_rewards_every_epoch: true,
             },
             forks: vec![],
@@ -1660,6 +1673,7 @@ mod tests {
                     cancun_active: None,
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: None,
+                    evm_to_scilla_strings_encoded_properly: None,
                     distribute_rewards_every_epoch: None,
                 },
                 ForkDelta {
@@ -1701,6 +1715,7 @@ mod tests {
                     cancun_active: None,
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: None,
+                    evm_to_scilla_strings_encoded_properly: None,
                     distribute_rewards_every_epoch: None,
                 },
             ],

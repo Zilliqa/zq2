@@ -32,7 +32,7 @@ base64 = "0.22.1"
 bincode = { version = "2.0.1", features = ["serde"] }
 bitvec = { version = "1.0.1", features = ["serde"] }
 bytes = "1.11.1"
-clap = { version = "4.5.60", features = ["derive"] }
+clap = { version = "4.6.0", features = ["derive"] }
 ethabi = "18.0.0"
 futures = "0.3.32"
 http = "1.4.0"
@@ -48,7 +48,7 @@ lz4 = "1.28"
 once_cell = "1.21.4"
 opentelemetry = { version = "0.31.0", features = ["metrics"] }
 opentelemetry_sdk = { version = "0.31.0", features = ["rt-tokio"] }
-opentelemetry-otlp = { version = "0.31.0", default-features = true, features = [
+opentelemetry-otlp = { version = "0.31.1", default-features = true, features = [
     "grpc-tonic",
     "metrics",
 ] }
@@ -82,7 +82,7 @@ tokio = { version = "1.50.0", features = [
     "sync",
 ] }
 tokio-stream = "0.1.18"
-toml = "1.0.6"
+toml = "1.0.7"
 tower = "0.5.3"
 tower-http = { version = "0.6.6", features = ["cors"] }
 tracing = "0.1.44"
@@ -107,9 +107,9 @@ sled = { version = "0.34.7", features = ["no_logs"] }
 r2d2 = "0.8.10"
 r2d2_sqlite = "0.31.0"
 rocksdb = { version = "0.24.0", default-features = false, features = ["bindgen-runtime", "jemalloc", "lz4", "snappy", "zstd"] }
-zip = { version = "8.2.0", default-features = false, features = ["zstd"] }
+zip = { version = "8.3.0", default-features = false, features = ["zstd"] }
 eth_trie = { git = "https://github.com/Zilliqa/eth-trie.rs.git", branch = "zilliqa-revm" }
-arc-swap = "1.8.2"
+arc-swap = "1.9.0"
 redis = { version = "0.32.7", features = ["keep-alive", "r2d2", "tcp_nodelay"], default-features = false }
 alloy = { version = "1.7.3", default-features = false, features = ["consensus", "dyn-abi", "eips", "json-abi", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types"] }
 crossbeam = "0.8.4"
