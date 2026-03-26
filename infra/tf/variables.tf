@@ -251,6 +251,7 @@ variable "private_api" {
     provisioning_model     = optional(string, "STANDARD")
     generate_external_ip   = optional(bool, false)
     detach_load_balancer   = optional(bool, false)
+    enable_cloud_armor     = optional(bool, false)
     firewall_source_ranges = optional(list(string), [])
     dns_names              = optional(list(string), [])
     alternative_ssl_domains = optional(object({
