@@ -568,12 +568,8 @@ impl Consensus {
                 .get_transactionless_block(BlockFilter::Hash(ckpt_block.hash()))?
                 .is_none()
             {
+                let mut block_parent = &ckpt.parent;
                 for (block, transactions) in &ckpt.blocks {
-                    // Look up the parent from DB; fall back to epoch parent for the
-                    // first block in the epoch.
-                    let block_parent = consensus
-                        .get_block(&block.parent_hash())?
-                        .unwrap_or_else(|| ckpt.parent.clone());
                     consensus
                         .state
                         .set_to_root(block_parent.state_root_hash().into());
@@ -582,6 +578,7 @@ impl Consensus {
                         .at_root(block_parent.state_root_hash().into())
                         .get_stakers(block.header)?;
                     consensus.execute_block(None, block, transactions.clone(), &committee, true)?;
+                    block_parent = block;
                 }
                 // Update finalized view to the checkpoint block so that RPC
                 // queries using BlockId::finalized() see the full replayed state.
@@ -1488,7 +1485,6 @@ impl Consensus {
         };
         proposal.header.qc = final_qc;
 
-        //error!("DURING BLOCK PROPOSAL BEFORE STATE IS: {:?}", state.root_hash()?);
         self.apply_proposal_to_state(
             &mut state,
             &proposal,
@@ -2320,10 +2316,7 @@ impl Consensus {
                     return Ok(false);
                 };
                 match self.block_extends_from(proposal, &qc_block) {
-                    Ok(true) => {
-                        //self.check_and_commit(proposal)?;
-                        Ok(true)
-                    }
+                    Ok(true) => Ok(true),
                     Ok(false) => {
                         trace!("block does not extend from parent");
                         Ok(false)
@@ -2343,7 +2336,6 @@ impl Consensus {
                     return Ok(false);
                 };
                 if proposal.view() == 0 || proposal.view() == qc_block.view() + 1 {
-                    //self.check_and_commit(proposal)?;
                     Ok(true)
                 } else {
                     trace!(
@@ -3572,7 +3564,6 @@ impl Consensus {
         }
 
         let mut state = self.state.clone();
-        //error!("BEFORE REWARDS start state is: {:?}", state.root_hash());
         self.apply_proposal_to_state(&mut state, block, &parent, committee, cumulative_gas_fee)?;
         self.state = state;
 
@@ -3631,8 +3622,6 @@ impl Consensus {
             return Ok(());
         }
 
-        //error!("Distributing rewards in range: [{}, parent: {}]", current_block.number() - self.config.consensus.blocks_per_epoch + 1, current_block.number());
-
         let fork_activation_height = self
             .state
             .forks
@@ -3688,8 +3677,6 @@ impl Consensus {
             transactions: vec![],
         };
 
-        //error!("View history: {:?}", state.view_history.read());
-
         let mut grandparent_mix_hash = self
             .get_block(&parent_of_first_block.parent_hash())
             .ok()
@@ -3721,8 +3708,6 @@ impl Consensus {
 
             let proposer_key = proposer.public_key;
 
-            //error!("Applying rewards for block: {} leader: {:?}, state_root: {:?}, parent_hash: {:?}, parent_view: {}, parent_number: {}, grandparent_mix: {:?}", block.number(), alloy::hex::encode(proposer_key.as_bytes()), parent_of_first_block.state_root_hash(), parent_of_first_block.hash(), parent_of_first_block.view(), parent_of_first_block.number(), grandparent_mix_hash);
-
             Self::apply_rewards_late_at(
                 &parent_of_first_block,
                 state,
@@ -3748,8 +3733,6 @@ impl Consensus {
                 Ok(())
             })?;
         }
-
-        //error!("Distributing rewards in range: [{}, parent: {}] Done", current_block.number() - self.config.consensus.blocks_per_epoch + 1, current_block.number());
 
         Ok(())
     }
@@ -3777,8 +3760,6 @@ impl Consensus {
             let proposer = self
                 .leader_at_block(parent, grandparent_mix_hash, block.view())
                 .unwrap();
-            //error!("Applying rewards for block: {} view: {}, state_root: {:?}, parent_hash: {:?}, parent_view: {}, parent_number: {}, grandparent_mix: {:?}", block.number(), block.view(), parent.state_root_hash(), parent.hash(), parent.view(), parent.number(), grandparent_mix_hash);
-            //error!("View history: {:?}", state.view_history.read());
             Self::apply_rewards_late_at(
                 parent,
                 state,

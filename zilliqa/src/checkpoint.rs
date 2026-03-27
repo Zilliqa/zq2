@@ -227,9 +227,7 @@ fn decode_block_compat<C: bincode::config::Config>(data: &[u8], config: C) -> Re
 const CKPT_VERSION_V2: &str = "ZILCHKPT/2.0"; // not used anymore
 #[allow(unused)]
 const CKPT_VERSION_V3: &str = "ZILCHKPT/3.0";
-#[allow(unused)]
 const CKPT_VERSION_V3_1: &str = "ZILCHKPT/3.1";
-const CKPT_VERSION_V3_2: &str = "ZILCHKPT/3.2";
 
 /// Write a complete bincode-encoded file into the zip archive.
 fn write_bincode_file(
@@ -244,9 +242,9 @@ fn write_bincode_file(
     Ok(())
 }
 
-/// Deserialize a v3.2+ checkpoint with bundled epoch blocks (bincode encoding).
+/// Deserialize a v3.1+ checkpoint with bundled epoch blocks (bincode encoding).
 ///
-/// In v3.2, `blocks.bincode` contains all epoch blocks followed by the checkpoint block
+/// In v3.1, `blocks.bincode` contains all epoch blocks followed by the checkpoint block
 /// (each paired with their transactions). `epoch_parent` and `epoch_grandparent` are
 /// stored separately.
 ///
@@ -254,7 +252,7 @@ fn deserialize_checkpoint_with_bundle_blocks(
     zipreader: &mut ZipArchive<File>,
 ) -> Result<CheckpointBlocks> {
     let all_blocks: Vec<(Block, Vec<SignedTransaction>)> = {
-        let mut file = zipreader.by_name("blocks.bincode")?;
+        let mut file = zipreader.by_name("epoch_blocks.bincode")?;
         bincode::serde::decode_from_std_read(&mut file, BIN_CONFIG)?
     };
     ensure!(!all_blocks.is_empty(), "Checkpoint blocks file is empty");
@@ -388,12 +386,12 @@ pub fn load_ckpt_blocks(path: &Path) -> Result<CheckpointBlocks> {
         "Invalid checkpoint version",
     );
 
-    // v3.2+: bincode-encoded files with epoch parent/grandparent semantics
-    if version_number.as_str() >= "3.2" {
+    // v3.1+: bincode-encoded files with epoch parent/grandparent semantics
+    if version_number.as_str() >= "3.1" {
         return deserialize_checkpoint_with_bundle_blocks(&mut zipreader);
     }
 
-    // v3.0/v3.1: bincode-encoded files
+    // v3.0: bincode-encoded files
     let block = {
         let mut file = zipreader.by_name("block.bincode")?;
         let mut data = Vec::new();
@@ -459,16 +457,8 @@ pub fn load_ckpt_blocks(path: &Path) -> Result<CheckpointBlocks> {
         );
         transactions
     };
-    // Historical blocks are included in checkpoints starting from version 3.1
-    let mut blocks = if version_number.as_str() >= "3.1" {
-        let mut file = zipreader.by_name("historical_blocks.bincode")?;
-        let blocks: Vec<(Block, Vec<SignedTransaction>)> =
-            bincode::serde::decode_from_std_read(&mut file, BIN_CONFIG)?;
-        blocks
-    } else {
-        vec![]
-    };
-    blocks.push((block, transactions));
+
+    let blocks = vec![(block, transactions)];
 
     Ok(CheckpointBlocks {
         grandparent,
@@ -603,7 +593,7 @@ struct AccountBlob {
     pub spool: SpooledTempFile,
 }
 
-/// Save a v3.2 checkpoint. State is saved at `ckpt.parent.state_root_hash()`.
+/// Save a v3.1 checkpoint. State is saved at `ckpt.parent.state_root_hash()`.
 pub fn save_ckpt(
     path: &Path,
     trie_storage: Arc<TrieStorage>,
@@ -637,7 +627,12 @@ pub fn save_ckpt(
     let mut zipwriter = zip::ZipWriter::new(zipfile);
 
     // Write block data files
-    write_bincode_file(&mut zipwriter, "blocks.bincode", options, &ckpt.blocks)?;
+    write_bincode_file(
+        &mut zipwriter,
+        "epoch_blocks.bincode",
+        options,
+        &ckpt.blocks,
+    )?;
     write_bincode_file(
         &mut zipwriter,
         "epoch_parent.bincode",
@@ -770,7 +765,7 @@ pub fn save_ckpt(
     zipwriter.start_file("metadata.json", options)?;
     serde_json::to_writer(&mut zipwriter, &meta)?;
 
-    zipwriter.set_comment(CKPT_VERSION_V3_2);
+    zipwriter.set_comment(CKPT_VERSION_V3_1);
     zipwriter.finish()?;
     Ok(())
 }
