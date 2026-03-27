@@ -109,8 +109,7 @@ resource "google_compute_backend_service" "private_api" {
     }
   }
 
-  ## Attach Cloud Armor policy to the backend service
-  security_policy = module.private_api_security_policies[each.key].policy.self_link
+  security_policy = each.value.config.enable_cloud_armor ? module.private_api_security_policies[each.key].policy.self_link : null
 }
 
 resource "google_compute_url_map" "private_api" {
@@ -197,7 +196,7 @@ resource "google_compute_global_forwarding_rule" "private_api_https" {
 }
 
 module "private_api_security_policies" {
-  for_each = local.private_api_instances
+  for_each = { for k, v in local.private_api_instances : k => v if v.config.enable_cloud_armor }
 
   source = "./modules/google-cloud-armor"
 
@@ -216,3 +215,4 @@ module "private_api_security_policies" {
     }
   }
 }
+

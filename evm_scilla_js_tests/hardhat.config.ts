@@ -66,17 +66,18 @@ const config: HardhatUserConfig = {
       miningState: false
     },
     public_devnet: {
-      url: "https://api.devnet.zilliqa.com",
-      websocketUrl: "ws://api.devnet.zilliqa.com",
+      url: "https://api.zq2-devnet.zilliqa.com",
+      websocketUrl: "ws://api.zq2-devnet.zilliqa.com",
       accounts: [
         "4CC853DE4F9FE4A9155185C65B56B6A9B024F896B54528B9E9448B6CD9B8F329",
         ...loadFromSignersFile("public_devnet")
       ],
-      chainId: 33385,
+      chainId: 33469,
       zilliqaNetwork: true,
       web3ClientVersion: "Zilliqa/v8.2",
       protocolVersion: 0x41,
-      miningState: false
+      miningState: false,
+      gasPrice: 5000000000000
     },
     zblockchain: {
       url: "http://localdev-l2api.localdomain",
@@ -192,7 +193,15 @@ extendEnvironment(async (hre) => {
   hre.debug = ENV_VARS.debug;
   hre.scillaTesting = ENV_VARS.scilla;
   hre.signer_pool = new SignerPool();
-  hre.zilliqaSetup = initZilliqa(hre.getNetworkUrl(), hre.getZilliqaChainId(), private_keys, 30);
+  hre.zilliqaSetup = initZilliqa(
+    hre.getNetworkUrl(),
+    hre.getZilliqaChainId(),
+    private_keys,
+    30,
+    1000,
+    2500,
+    50000
+  );
 });
 
 import "./tasks/Balances";
