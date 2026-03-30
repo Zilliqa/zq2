@@ -695,3 +695,58 @@ async fn epoch_based_rewards(mut network: Network) {
         "Total rewards should have increased at epoch boundary!"
     );
 }
+
+#[zilliqa_macros::test]
+async fn state_root_consistent_within_epoch(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let blocks_per_epoch = network.get_node(0).config.consensus.blocks_per_epoch as usize;
+
+    // Advance through two full epochs
+    let target = blocks_per_epoch * 2;
+    network.run_until_block(&wallet, target as u64, 400).await;
+
+    // Collect state roots for all blocks in the range [0, target].
+    // state_roots[i] corresponds to block i.
+    let mut state_roots = Vec::new();
+    for block_num in 0..=target {
+        let block = wallet
+            .get_block((block_num as u64).into())
+            .await
+            .unwrap()
+            .unwrap_or_else(|| panic!("block {block_num} not found"));
+        state_roots.push(block.header.state_root);
+    }
+
+    // Within the first epoch (blocks 1 .. blocks_per_epoch-1), state root should not change
+    // because there are no transactions and no rewards are distributed.
+    for block_num in 1..blocks_per_epoch {
+        assert_eq!(
+            state_roots[block_num], state_roots[1],
+            "State root changed at block {block_num} within the first epoch (expected same as block 1)"
+        );
+    }
+
+    // At the first epoch boundary (block blocks_per_epoch), state root must change due to reward distribution.
+    assert_ne!(
+        state_roots[blocks_per_epoch],
+        state_roots[blocks_per_epoch - 1],
+        "State root should change at epoch boundary (block {blocks_per_epoch}) due to reward distribution"
+    );
+
+    // Within the second epoch (blocks blocks_per_epoch+1 .. blocks_per_epoch*2-1), state root
+    // should stay the same.
+    let second_epoch_first = blocks_per_epoch + 1;
+    for block_num in (second_epoch_first + 1)..=(blocks_per_epoch * 2 - 1) {
+        assert_eq!(
+            state_roots[block_num], state_roots[second_epoch_first],
+            "State root changed at block {block_num} within the second epoch"
+        );
+    }
+
+    // At the second epoch boundary (block blocks_per_epoch*2), state root must change again.
+    assert_ne!(
+        state_roots[blocks_per_epoch * 2],
+        state_roots[blocks_per_epoch * 2 - 1],
+        "State root should change at second epoch boundary (block {target}) due to reward distribution"
+    );
+}
