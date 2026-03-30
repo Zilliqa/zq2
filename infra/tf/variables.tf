@@ -371,3 +371,14 @@ variable "enable_redis" {
   default     = false
   nullable    = false
 }
+
+variable "redis_tier" {
+  description = "The service tier of the Redis instance. BASIC for standalone, STANDARD_HA for high availability with failover."
+  type        = string
+  default     = "STANDARD_HA"
+
+  validation {
+    condition     = contains(["BASIC", "STANDARD_HA"], var.redis_tier)
+    error_message = "Redis tier must be one of: BASIC, STANDARD_HA."
+  }
+}

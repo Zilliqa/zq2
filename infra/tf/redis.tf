@@ -31,6 +31,7 @@ module "redis" {
   memory_size_gb          = 1
   enable_apis             = "true"
   auth_enabled            = "true"
+  tier                    = var.redis_tier
   name                    = "${var.chain_name}-redis"
   region                  = var.region
   authorized_network      = local.network_name
