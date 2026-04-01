@@ -1152,6 +1152,13 @@ impl Consensus {
                 KeyValue::new("role", "proposer"),
             ];
             earned_reward.add((reward as f64) / 1e18, &attributes);
+            info!(
+                "Proposer of block: (height, view) ({}, {}) with address: {:?} receives: {:?}",
+                block.number(),
+                block.view(),
+                proposer_address,
+                reward
+            );
         }
 
         // Reward the committee
@@ -1174,6 +1181,14 @@ impl Consensus {
                     KeyValue::new("role", "cosigner"),
                 ];
                 earned_reward.add((reward as f64) / 1e18, &attributes);
+
+                info!(
+                    "Cosigner of block: (height, view) ({}, {}) with address: {:?} receives: {:?}",
+                    block.number(),
+                    block.view(),
+                    cosigner,
+                    reward
+                );
             }
         }
 
@@ -1185,6 +1200,13 @@ impl Consensus {
                 .ok_or(anyhow!("No funds left in zero account"))?;
             Ok(())
         })?;
+
+        info!(
+            "Total rewards issued in block: (height, view) ({}, {}) {:?}",
+            block.number(),
+            block.view(),
+            total_rewards_issued
+        );
 
         Ok(())
     }
@@ -3527,10 +3549,12 @@ impl Consensus {
 
         if self.state.root_hash()? != block.state_root_hash() {
             error!(
-                "State root hash mismatch! Our state hash: {}, block hash: {:?} block prop: {:?}",
+                "State root hash mismatch! Our state hash: {}, block hash: {:?} block prop: {:?}, parent_hash: {:?}, txn_count: {}",
                 self.state.root_hash()?,
                 block.state_root_hash(),
                 block,
+                parent.state_root_hash(),
+                transaction_hashes.len(),
             );
             return Err(anyhow!(
                 "state root hash mismatch, expected: {:?}, actual: {:?}",
@@ -3584,6 +3608,13 @@ impl Consensus {
                 .ok_or(anyhow!("Overflow occurred in zero account balance"))?;
             Ok(())
         })?;
+
+        info!(
+            "Zero account receives gas fee-amount in block: (height, view) ({}, {}) {:?}",
+            block.number(),
+            block.view(),
+            gas_fee_amount
+        );
 
         if !fork.fund_accounts_from_zero_account.is_empty()
             && let Some(fork_height) = self
