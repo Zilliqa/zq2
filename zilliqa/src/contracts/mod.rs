@@ -1,5 +1,5 @@
 use alloy::hex;
-pub use deposit_v8 as deposit;
+pub use deposit_v7 as deposit;
 use serde_json::Value;
 
 pub mod deposit_init {
