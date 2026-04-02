@@ -14,7 +14,7 @@ use std::{
 
 use alloy::{
     hex,
-    primitives::{Address, U256},
+    primitives::{Address, B256, FixedBytes, U256},
 };
 use anyhow::{Context, Result, anyhow};
 use bitvec::{bitarr, order::Msb0};
@@ -25,7 +25,7 @@ use k256::pkcs8::der::DateTime;
 use libp2p::PeerId;
 use opentelemetry::KeyValue;
 use parking_lot::{Mutex, RwLock, RwLockWriteGuard};
-use revm::Inspector;
+use revm::{Inspector, primitives::keccak256};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::*;
@@ -53,7 +53,7 @@ use crate::{
         PendingOrQueued, TransactionPool, TxAddResult, TxPoolContent, TxPoolContentFrom,
         TxPoolStatus,
     },
-    state::{Code, State},
+    state::{Code, State, contract_addr},
     static_hardfork_data::{
         XSGD_CODE, XSGD_MAINNET_ADDR, build_ignite_wallet_addr_scilla_code_map,
     },
@@ -3546,6 +3546,55 @@ impl Consensus {
         let mut state = self.state.clone();
         self.apply_proposal_to_state(&mut state, block, &parent, committee, cumulative_gas_fee)?;
         self.state = state;
+
+        // Log the codeHash of the implementation address stored in the Deposit Proxy contract
+        {
+            let impl_slot = B256::from(
+                FixedBytes::try_from(
+                    hex::decode("360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc")
+                        .unwrap()
+                        .as_slice(),
+                )
+                .unwrap(),
+            );
+            match self
+                .state
+                .get_account_storage(contract_addr::DEPOSIT_PROXY, impl_slot)
+            {
+                Ok(impl_value) => {
+                    let impl_addr = Address::from_slice(&impl_value.as_slice()[12..]);
+                    match self.state.get_account(impl_addr) {
+                        Ok(account) => {
+                            let code_hash = match &account.code {
+                                Code::Evm(bytes) => keccak256(bytes),
+                                Code::Scilla { code, .. } => keccak256(code.as_bytes()),
+                            };
+                            warn!(
+                                "Block {}: Deposit Proxy impl address: {:?}, codeHash: {:?}",
+                                block.number(),
+                                impl_addr,
+                                code_hash,
+                            );
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Block {}: Failed to get account for impl address {:?}: {}",
+                                block.number(),
+                                impl_addr,
+                                e
+                            );
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        "Block {}: Failed to read impl slot from Deposit Proxy: {}",
+                        block.number(),
+                        e
+                    );
+                }
+            }
+        }
 
         if self.state.root_hash()? != block.state_root_hash() {
             error!(
