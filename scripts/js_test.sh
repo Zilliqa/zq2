@@ -34,7 +34,7 @@ npm install pnpm
 echo "Installing tests"
 
 # Install tests
-pnpm install > /dev/null 2>&1
+pnpm install --frozen-lockfile > /dev/null 2>&1
 
 # Need to fund scilla addresses which are distinct from zilliqa, or they will fail due to out of funds
 echo "Funding tests"
