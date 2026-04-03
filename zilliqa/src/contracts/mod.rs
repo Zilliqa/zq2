@@ -373,10 +373,15 @@ pub mod deposit_v8 {
     use ethabi::{Constructor, Function};
     use once_cell::sync::Lazy;
 
-    use super::{Contract, COMPILED_DEPOSIT_V8, contract_from};
+    use super::{COMPILED_DEPOSIT_V8, Contract, contract_from};
 
-    pub static CONTRACT: Lazy<Contract> =
-        Lazy::new(|| contract_from(COMPILED_DEPOSIT_V8, "src/contracts/deposit_v8.sol", "Deposit"));
+    pub static CONTRACT: Lazy<Contract> = Lazy::new(|| {
+        contract_from(
+            COMPILED_DEPOSIT_V8,
+            "src/contracts/deposit_v8.sol",
+            "Deposit",
+        )
+    });
     pub static CONSTRUCTOR: Lazy<Constructor> =
         Lazy::new(|| CONTRACT.abi.constructor().unwrap().clone());
     pub static REINITIALIZE: Lazy<Function> =
@@ -561,10 +566,7 @@ mod tests {
 
     fn should_compile(group: &str) -> bool {
         std::env::var("ZQ_COMPILE_CONTRACTS")
-            .map(|v| {
-                v.split(',')
-                    .any(|s| s.trim() == group || s.trim() == "all")
-            })
+            .map(|v| v.split(',').any(|s| s.trim() == group || s.trim() == "all"))
             .unwrap_or(false)
     }
 
@@ -641,7 +643,9 @@ mod tests {
     #[cfg_attr(not(feature = "test_contract_bytecode"), ignore)]
     fn compile_legacy() {
         if !should_compile("legacy") {
-            eprintln!("Skipping legacy compilation (set ZQ_COMPILE_CONTRACTS=legacy or ZQ_COMPILE_CONTRACTS=all)");
+            eprintln!(
+                "Skipping legacy compilation (set ZQ_COMPILE_CONTRACTS=legacy or ZQ_COMPILE_CONTRACTS=all)"
+            );
             return;
         }
 
@@ -672,7 +676,9 @@ mod tests {
     #[cfg_attr(not(feature = "test_contract_bytecode"), ignore)]
     fn compile_deposit_v8() {
         if !should_compile("deposit_v8") {
-            eprintln!("Skipping deposit_v8 compilation (set ZQ_COMPILE_CONTRACTS=deposit_v8 or ZQ_COMPILE_CONTRACTS=all)");
+            eprintln!(
+                "Skipping deposit_v8 compilation (set ZQ_COMPILE_CONTRACTS=deposit_v8 or ZQ_COMPILE_CONTRACTS=all)"
+            );
             return;
         }
 
