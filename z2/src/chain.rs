@@ -355,7 +355,7 @@ impl Chain {
                         "0x0F8aeCCaCA7FEE297cC2aBf7fFC9a81e7122A727",
                     ],
                 }),
-                json!({ "at_height": 23929200, "randao_support": true, "evm_to_scilla_strings_encoded_properly": true}),
+                json!({ "at_height": 99999999, "randao_support": true, "evm_to_scilla_strings_encoded_properly": true}),
             ]),
             _ => None,
         }
