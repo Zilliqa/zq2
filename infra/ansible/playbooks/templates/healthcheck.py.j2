@@ -1,7 +1,6 @@
 from datetime import datetime
 from flask import Flask, jsonify
 import requests
-import socket
 from time import time
 
 app = Flask(__name__)
@@ -20,7 +19,7 @@ pace_latest_block_number_obtained_at = 0
 def get_rpc_response(method, params=[]):
     payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
     try:
-        response = requests.post(NODE_URL, json=payload, headers=HEADERS, timeout=3)
+        response = requests.post(NODE_URL, json=payload, headers=HEADERS, timeout=2)
         response.raise_for_status()
         response_json = response.json()
         if "error" in response_json:
@@ -39,12 +38,12 @@ def get_rpc_response(method, params=[]):
         return (f"Unexpected error in {method}: {e}", 0)
 
 def check_jsonrpc_port():
-    """Check if the external JSON-RPC server on port 4201 is accepting connections."""
+    """Check if the external JSON-RPC server on port 4201 can serve requests."""
     try:
-        sock = socket.create_connection(("localhost", JSONRPC_PORT), timeout=2)
-        sock.close()
-        return True
-    except (socket.timeout, ConnectionRefusedError, OSError):
+        payload = {"jsonrpc": "2.0", "id": 1, "method": "web3_clientVersion", "params": []}
+        resp = requests.post(f"http://localhost:{JSONRPC_PORT}", json=payload, headers=HEADERS, timeout=2)
+        return resp.status_code == 200
+    except requests.exceptions.RequestException:
         return False
 
 
