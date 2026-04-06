@@ -36,7 +36,7 @@ clap = { version = "4.6.0", features = ["derive"] }
 ethabi = "18.0.0"
 futures = "0.3.32"
 http = "1.4.0"
-hyper = "1.8.1"
+hyper = "1.9.0"
 itertools = "0.14.0"
 jsonrpsee = { version = "0.25.1", features = [
     "jsonrpsee-http-client",
