@@ -659,7 +659,7 @@ pub fn save_ckpt(
     zipwriter.start_file("metadata.json", options)?;
     serde_json::to_writer(&mut zipwriter, &meta)?;
 
-    zipwriter.set_comment(CKPT_VERSION_V3);
+    zipwriter.set_comment(CKPT_VERSION_V3)?;
     zipwriter.finish()?;
     Ok(())
 }
