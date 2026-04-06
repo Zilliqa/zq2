@@ -41,7 +41,7 @@ def check_jsonrpc_port():
     """Check if the external JSON-RPC server on port 4201 can serve requests."""
     try:
         payload = {"jsonrpc": "2.0", "id": 1, "method": "web3_clientVersion", "params": []}
-        resp = requests.post(f"http://localhost:{JSONRPC_PORT}", json=payload, headers=HEADERS, timeout=2)
+        resp = requests.post(f"http://localhost:{JSONRPC_PORT}", json=payload, headers=HEADERS, timeout=1)
         return resp.status_code == 200
     except requests.exceptions.RequestException:
         return False
