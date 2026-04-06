@@ -38,9 +38,13 @@ sync.ignore_passive = true
 {%- endif %}
 {%- if role == "private-api" %}
 sync.ignore_passive = true
+db.rocksdb_state_cache_size = 536870912
+db.rocksdb_cache_size = 2684354560
 max_missed_view_age = 1000000000000
 {%- endif %}
 {%- if role == "api" %}
+db.rocksdb_state_cache_size = 536870912
+db.rocksdb_cache_size = 2684354560
 max_missed_view_age = 1000000000000
 {%- endif %}
 {%- if role == "opsnode" %}
