@@ -37,7 +37,10 @@
         cmd: swapon {{ swap_file_path }}
       register: swapon_result
       changed_when: swapon_result.rc == 0
-      failed_when: swapon_result.rc != 0 and 'already' not in (swapon_result.stderr | default(''))
+      failed_when: >-
+        swapon_result.rc != 0
+        and 'already' not in (swapon_result.stderr | default(''))
+        and 'busy' not in (swapon_result.stderr | default(''))
 
     - name: Add swap to fstab
       ansible.builtin.lineinfile:
