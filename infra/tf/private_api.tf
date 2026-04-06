@@ -84,10 +84,15 @@ resource "google_compute_health_check" "private_api" {
   name = "${var.chain_name}-private-api-jsonrpc"
 
   http_health_check {
-    port               = "8080"
+    port               = "4201"
     port_specification = "USE_FIXED_PORT"
     request_path       = "/health"
   }
+
+  healthy_threshold   = 2
+  unhealthy_threshold = 3
+  check_interval_sec  = 5
+  timeout_sec         = 5
 }
 
 resource "google_compute_backend_service" "private_api" {
