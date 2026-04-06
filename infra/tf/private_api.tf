@@ -84,7 +84,7 @@ resource "google_compute_health_check" "private_api" {
   name = "${var.chain_name}-private-api-jsonrpc"
 
   http_health_check {
-    port               = "4201"
+    port               = "8080"
     port_specification = "USE_FIXED_PORT"
     request_path       = "/health"
   }

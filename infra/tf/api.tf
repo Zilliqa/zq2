@@ -56,7 +56,7 @@ resource "google_compute_health_check" "api" {
   name = "${var.chain_name}-jsonrpc"
 
   http_health_check {
-    port               = "4201"
+    port               = "8080"
     port_specification = "USE_FIXED_PORT"
     request_path       = "/health"
   }
@@ -65,16 +65,6 @@ resource "google_compute_health_check" "api" {
   unhealthy_threshold = 3
   check_interval_sec  = 5
   timeout_sec         = 5
-}
-
-resource "google_compute_health_check" "api_health_endpoint" {
-  name = "${var.chain_name}-health-endpoint"
-
-  http_health_check {
-    port               = "8080"
-    port_specification = "USE_FIXED_PORT"
-    request_path       = "/health"
-  }
 }
 
 resource "google_compute_backend_service" "api" {
@@ -101,7 +91,7 @@ resource "google_compute_backend_service" "api" {
 
 resource "google_compute_backend_service" "health" {
   name                  = "${var.chain_name}-api-health-nodes"
-  health_checks         = [google_compute_health_check.api_health_endpoint.id]
+  health_checks         = [google_compute_health_check.api.id]
   port_name             = "health"
   load_balancing_scheme = "EXTERNAL_MANAGED"
   enable_cdn            = false
@@ -147,6 +137,11 @@ resource "google_compute_url_map" "api" {
   path_matcher {
     name            = "api"
     default_service = google_compute_backend_service.api.id
+
+    path_rule {
+      paths   = ["/health", "/health/*"]
+      service = google_compute_backend_service.health.id
+    }
 
     default_route_action {
       cors_policy {
