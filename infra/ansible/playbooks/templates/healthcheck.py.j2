@@ -21,7 +21,12 @@ def get_rpc_response(method, params=[]):
         response = requests.post(NODE_URL, json=payload, headers=HEADERS, timeout=3)
         response.raise_for_status()
         response_json = response.json()
-        return response_json.get("result")
+        if "error" in response_json:
+            return (f"RPC error in {method}: {response_json['error'].get('message', 'unknown')}", 0)
+        result = response_json.get("result")
+        if result is None:
+            return (f"No result in RPC response for {method}", 0)
+        return result
     except requests.exceptions.RequestException as e:
         # Handle connection errors, timeouts, and HTTP errors
         return (f"Request error in {method}: {e}", 0)
@@ -37,6 +42,12 @@ def check_sync_status():
     # Query eth_blockNumber and eth_syncing
     block_number_hex = get_rpc_response("eth_blockNumber")
     sync_status = get_rpc_response("eth_syncing")
+
+    # Handle RPC errors
+    if isinstance(block_number_hex, tuple):
+        return jsonify({"error": f"Failed to get block number: {block_number_hex[0]}", "code": 503}), 503
+    if isinstance(sync_status, tuple):
+        return jsonify({"error": f"Failed to get sync status: {sync_status[0]}", "code": 503}), 503
 
     # Convert hex block number to integer
     block_number = int(block_number_hex, 16)
@@ -71,6 +82,8 @@ def check_pace_status():
     global pace_latest_block_number, pace_latest_block_number_obtained_at
 
     block_number_hex = get_rpc_response("eth_blockNumber")
+    if isinstance(block_number_hex, tuple):
+        return jsonify({"error": f"Failed to get block number: {block_number_hex[0]}", "code": 503}), 503
     block_number = int(block_number_hex, 16)
 
     current_time = time()
