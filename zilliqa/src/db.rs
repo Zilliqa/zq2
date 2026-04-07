@@ -667,8 +667,7 @@ impl Db {
         block_opts.set_partition_pinning_tier(BlockBasedTablePinningTier::All);
         block_opts.set_top_level_index_pinning_tier(BlockBasedTablePinningTier::FlushAndSimilar);
         block_opts.set_unpartitioned_pinning_tier(BlockBasedTablePinningTier::None);
-        let cache =
-            Cache::new_hyper_clock_cache(config.rocksdb_cache_size, config.rocksdb_block_size);
+        let cache = Cache::new_lru_cache(config.rocksdb_cache_size);
         block_opts.set_block_cache(&cache);
 
         // RocksDB configuration
