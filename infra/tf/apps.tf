@@ -128,7 +128,7 @@ resource "google_compute_backend_service" "spout" {
   }
 
   ## Attach Cloud Armor policy to the backend service
-  security_policy = var.apps.enable_faucet ? module.spout_security_policies[0].policy.self_link : null
+  security_policy = var.apps.enable_cloud_armor ? module.spout_security_policies[0].policy.self_link : null
 }
 
 resource "google_compute_backend_service" "stats" {
@@ -297,7 +297,7 @@ resource "google_compute_global_forwarding_rule" "stats_https" {
 }
 
 module "spout_security_policies" {
-  count  = var.apps.enable_faucet ? 1 : 0
+  count  = var.apps.enable_faucet && var.apps.enable_cloud_armor ? 1 : 0
   source = "./modules/google-cloud-armor"
 
   project_id          = var.project_id

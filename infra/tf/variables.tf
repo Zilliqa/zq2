@@ -24,6 +24,7 @@ variable "apps" {
     generate_external_ip       = optional(bool, false)
     detach_load_balancer       = optional(bool, false)
     enable_faucet              = optional(bool, true)
+    enable_cloud_armor         = optional(bool, false)
     faucet_max_hourly_requests = optional(number, 1000000)
     alternative_ssl_domains = optional(object({
       otterscan = optional(list(string), [])
