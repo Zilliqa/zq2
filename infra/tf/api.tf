@@ -85,8 +85,11 @@ resource "google_compute_backend_service" "api" {
     }
   }
 
-  ## Attach Cloud Armor policy to the backend service
-  security_policy = var.api.enable_cloud_armor ? module.api_security_policies[0].policy.self_link : null
+  ## Attach Cloud Armor policy to the backend service.
+  ## Use a splat + one() so Terraform keeps a static dependency edge to the
+  ## module even when count = 0; without it, destroys of the security policy
+  ## race ahead of the backend update and GCP rejects the delete.
+  security_policy = one(module.api_security_policies[*].policy.self_link)
 }
 
 resource "google_compute_backend_service" "health" {
@@ -106,8 +109,9 @@ resource "google_compute_backend_service" "health" {
     }
   }
 
-  ## Attach Cloud Armor policy to the backend service
-  security_policy = var.api.enable_health_cloud_armor ? module.health_security_policies[0].policy.self_link : null
+  ## Attach Cloud Armor policy to the backend service.
+  ## See the note on google_compute_backend_service.api for why we use splat.
+  security_policy = one(module.health_security_policies[*].policy.self_link)
 }
 
 resource "google_compute_url_map" "api_http_redirect" {

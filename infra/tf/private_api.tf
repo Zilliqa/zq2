@@ -114,7 +114,10 @@ resource "google_compute_backend_service" "private_api" {
     }
   }
 
-  security_policy = each.value.config.enable_cloud_armor ? module.private_api_security_policies[each.key].policy.self_link : null
+  # Static reference via try() keeps a dependency edge to the module even when
+  # enable_cloud_armor flips to false, so Terraform updates the backend before
+  # destroying the security policy (avoids GCP "already being used" errors).
+  security_policy = try(module.private_api_security_policies[each.key].policy.self_link, null)
 }
 
 resource "google_compute_url_map" "private_api" {

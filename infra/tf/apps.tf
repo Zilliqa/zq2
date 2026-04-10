@@ -127,8 +127,9 @@ resource "google_compute_backend_service" "spout" {
     }
   }
 
-  ## Attach Cloud Armor policy to the backend service
-  security_policy = var.apps.enable_cloud_armor ? module.spout_security_policies[0].policy.self_link : null
+  ## Attach Cloud Armor policy to the backend service.
+  ## See the note on google_compute_backend_service.api for why we use splat.
+  security_policy = one(module.spout_security_policies[*].policy.self_link)
 }
 
 resource "google_compute_backend_service" "stats" {
