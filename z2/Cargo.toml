@@ -23,7 +23,7 @@ test = false
 [dependencies]
 alloy = { version = "1.8.3", default-features = false, features = ["consensus", "hyper", "provider-http", "provider-ws", "pubsub", "rlp", "serde", "signer-local"] }
 anyhow = "1.0.102"
-arc-swap = "1.9.0"
+arc-swap = "1.9.1"
 base64 = "0.22.1"
 bitvec = "1.0.1"
 clap = { version = "4.6.0", features = ["derive"] }
@@ -63,7 +63,7 @@ strum_macros = "0.28.0"
 tempfile = "3.27.0"
 tera = "1.20.1"
 thiserror = "2.0.18"
-tokio = { version = "1.50.0", features = [
+tokio = { version = "1.51.0", features = [
     "macros",
     "rt-multi-thread",
     "sync",

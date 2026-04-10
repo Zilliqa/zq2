@@ -373,10 +373,15 @@ pub mod deposit_v8 {
     use ethabi::{Constructor, Function};
     use once_cell::sync::Lazy;
 
-    use super::{Contract, contract};
+    use super::{COMPILED_DEPOSIT_V8, Contract, contract_from};
 
-    pub static CONTRACT: Lazy<Contract> =
-        Lazy::new(|| contract("src/contracts/deposit_v8.sol", "Deposit"));
+    pub static CONTRACT: Lazy<Contract> = Lazy::new(|| {
+        contract_from(
+            COMPILED_DEPOSIT_V8,
+            "src/contracts/deposit_v8.sol",
+            "Deposit",
+        )
+    });
     pub static CONSTRUCTOR: Lazy<Constructor> =
         Lazy::new(|| CONTRACT.abi.constructor().unwrap().clone());
     pub static REINITIALIZE: Lazy<Function> =
@@ -517,10 +522,15 @@ pub mod eip1967_proxy {
         Lazy::new(|| CONTRACT.abi.event("Upgraded").unwrap().clone());
 }
 
-const COMPILED: &str = include_str!("compiled.json");
+const COMPILED: &str = include_str!("compiled_legacy.json");
+const COMPILED_DEPOSIT_V8: &str = include_str!("compiled_deposit_v8.json");
 
 fn contract(src: &str, name: &str) -> Contract {
-    let compiled = serde_json::from_str::<Value>(COMPILED).unwrap();
+    contract_from(COMPILED, src, name)
+}
+
+fn contract_from(compiled_json: &str, src: &str, name: &str) -> Contract {
+    let compiled = serde_json::from_str::<Value>(compiled_json).unwrap();
     let contract = &compiled["contracts"][src][name];
     let abi = serde_json::from_value(contract["abi"].clone()).unwrap();
     let bytecode = hex::decode(contract["evm"]["bytecode"]["object"].as_str().unwrap()).unwrap();
@@ -533,10 +543,15 @@ pub struct Contract {
     pub bytecode: Vec<u8>,
 }
 
-/// This test asserts the contract binaries in this module are correct and reproducible, by recompiling the source
+/// These tests assert the contract binaries in this module are correct and reproducible, by recompiling the source
 /// files and checking the result is the same. This means we can keep the compiled source code in-tree, while also
-/// asserting in CI that the compiled source code is genuine. The tests only run when the `test_contract_bytecode`
-/// feature is enabled.
+/// asserting in CI that the compiled source code is genuine.
+///
+/// Each contract group has its own compiled JSON file and test. Tests only run when:
+/// 1. The `test_contract_bytecode` feature is enabled, AND
+/// 2. The `ZQ_COMPILE_CONTRACTS` env var includes the contract group name (comma-separated) or `all`.
+///
+/// By default, no contracts are recompiled. Set `ZQ_CONTRACT_TEST_BLESS=1` to write/update the compiled JSON files.
 #[cfg(test)]
 mod tests {
     use std::{fs::File, path::PathBuf};
@@ -549,50 +564,43 @@ mod tests {
         solc::SolcLanguage,
     };
 
-    #[test]
-    #[cfg_attr(not(feature = "test_contract_bytecode"), ignore)]
-    fn compile_all() {
+    fn should_compile(group: &str) -> bool {
+        std::env::var("ZQ_COMPILE_CONTRACTS")
+            .map(|v| v.split(',').any(|s| s.trim() == group || s.trim() == "all"))
+            .unwrap_or(false)
+    }
+
+    fn solc_settings() -> Settings {
+        Settings {
+            remappings: vec![
+                Remapping {
+                    context: None,
+                    name: "@openzeppelin/contracts-upgradeable".to_owned(),
+                    path: "../vendor/openzeppelin-contracts-upgradeable/contracts".to_owned(),
+                },
+                Remapping {
+                    context: None,
+                    name: "@openzeppelin/contracts".to_owned(),
+                    path: "../vendor/openzeppelin-contracts/contracts".to_owned(),
+                },
+            ],
+            optimizer: Optimizer {
+                enabled: Some(true),
+                runs: Some(4294967295),
+                details: None,
+            },
+            output_selection: OutputSelection::complete_output_selection(),
+            evm_version: Some(EvmVersion::Shanghai),
+            ..Default::default()
+        }
+    }
+
+    fn compile_and_check(sources: &[&str], output_filename: &str) {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let input = SolcInput {
             language: SolcLanguage::Solidity,
-            sources: Source::read_all([
-                "src/contracts/deposit_v1.sol",
-                "src/contracts/deposit_v2.sol",
-                "src/contracts/deposit_v3.sol",
-                "src/contracts/deposit_v4.sol",
-                "src/contracts/deposit_v5.sol",
-                "src/contracts/deposit_v6.sol",
-                "src/contracts/deposit_v7.sol",
-                "src/contracts/deposit_v8.sol",
-                "src/contracts/utils/deque.sol",
-                "src/contracts/intershard_bridge.sol",
-                "src/contracts/shard.sol",
-                "src/contracts/shard_registry.sol",
-                "../vendor/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol",
-            ])
-            .unwrap(),
-            settings: Settings {
-                remappings: vec![
-                    Remapping {
-                        context: None,
-                        name: "@openzeppelin/contracts-upgradeable".to_owned(),
-                        path: "../vendor/openzeppelin-contracts-upgradeable/contracts".to_owned(),
-                    },
-                    Remapping {
-                        context: None,
-                        name: "@openzeppelin/contracts".to_owned(),
-                        path: "../vendor/openzeppelin-contracts/contracts".to_owned(),
-                    },
-                ],
-                optimizer: Optimizer {
-                    enabled: Some(true),
-                    runs: Some(4294967295),
-                    details: None,
-                },
-                output_selection: OutputSelection::complete_output_selection(),
-                evm_version: Some(EvmVersion::Shanghai),
-                ..Default::default()
-            },
+            sources: Source::read_all(sources.iter().copied()).unwrap(),
+            settings: solc_settings(),
         };
 
         let mut solc =
@@ -611,18 +619,75 @@ mod tests {
             }
             panic!("compilation failed");
         }
-        let output_file = root.join("src").join("contracts").join("compiled.json");
+        let output_file = root.join("src").join("contracts").join(output_filename);
 
         if std::env::var_os("ZQ_CONTRACT_TEST_BLESS").is_some() {
             let file = File::create(output_file).unwrap();
             serde_json::to_writer_pretty(file, &output).unwrap();
 
-            println!("`compiled.json` updated, please commit these changes");
+            println!("`{output_filename}` updated, please commit these changes");
         } else {
             let file = File::open(output_file).unwrap();
             let current_output = serde_json::from_reader(file).unwrap();
 
             assert_eq!(output, current_output);
         }
+    }
+
+    /// Legacy contracts (deposit_v1 through v7, shard, intershard_bridge, shard_registry, ERC1967Proxy).
+    ///
+    /// **Do not run this test.** It exists only for historical compatibility. The legacy contracts in
+    /// `compiled_legacy.json` were originally compiled with `foundry-compilers = 0.14.1` and recompiling with
+    /// the current crate version will produce different bytecode.
+    #[test]
+    #[cfg_attr(not(feature = "test_contract_bytecode"), ignore)]
+    fn compile_legacy() {
+        if !should_compile("legacy") {
+            eprintln!(
+                "Skipping legacy compilation (set ZQ_COMPILE_CONTRACTS=legacy or ZQ_COMPILE_CONTRACTS=all)"
+            );
+            return;
+        }
+
+        compile_and_check(
+            &[
+                "src/contracts/deposit_v1.sol",
+                "src/contracts/deposit_v2.sol",
+                "src/contracts/deposit_v3.sol",
+                "src/contracts/deposit_v4.sol",
+                "src/contracts/deposit_v5.sol",
+                "src/contracts/deposit_v6.sol",
+                "src/contracts/deposit_v7.sol",
+                "src/contracts/utils/deque.sol",
+                "src/contracts/intershard_bridge.sol",
+                "src/contracts/shard.sol",
+                "src/contracts/shard_registry.sol",
+                "../vendor/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol",
+            ],
+            "compiled_legacy.json",
+        );
+    }
+
+    /// Compiles deposit_v8 into compiled_deposit_v8.json. Run with:
+    /// ```sh
+    /// ZQ_COMPILE_CONTRACTS=deposit_v8 ZQ_CONTRACT_TEST_BLESS=1 cargo test --features test_contract_bytecode -- contracts::tests::compile_deposit_v8
+    /// ```
+    #[test]
+    #[cfg_attr(not(feature = "test_contract_bytecode"), ignore)]
+    fn compile_deposit_v8() {
+        if !should_compile("deposit_v8") {
+            eprintln!(
+                "Skipping deposit_v8 compilation (set ZQ_COMPILE_CONTRACTS=deposit_v8 or ZQ_COMPILE_CONTRACTS=all)"
+            );
+            return;
+        }
+
+        compile_and_check(
+            &[
+                "src/contracts/deposit_v8.sol",
+                "src/contracts/utils/deque_v2.sol",
+            ],
+            "compiled_deposit_v8.json",
+        );
     }
 }

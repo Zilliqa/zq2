@@ -60,6 +60,11 @@ resource "google_compute_health_check" "api" {
     port_specification = "USE_FIXED_PORT"
     request_path       = "/health"
   }
+
+  healthy_threshold   = 2
+  unhealthy_threshold = 3
+  check_interval_sec  = 5
+  timeout_sec         = 5
 }
 
 resource "google_compute_backend_service" "api" {
@@ -132,6 +137,11 @@ resource "google_compute_url_map" "api" {
   path_matcher {
     name            = "api"
     default_service = google_compute_backend_service.api.id
+
+    path_rule {
+      paths   = ["/health", "/health/*"]
+      service = google_compute_backend_service.health.id
+    }
 
     default_route_action {
       cors_policy {
