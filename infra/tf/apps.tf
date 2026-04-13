@@ -127,6 +127,11 @@ resource "google_compute_backend_service" "spout" {
     }
   }
 
+  log_config {
+    enable      = true
+    sample_rate = 1.0
+  }
+
   ## Attach Cloud Armor policy to the backend service.
   ## See the note on google_compute_backend_service.api for why we use splat.
   security_policy = one(module.spout_security_policies[*].policy.self_link)
