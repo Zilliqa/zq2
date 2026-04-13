@@ -166,8 +166,20 @@ resource "google_compute_url_map" "apps_http_redirect" {
 }
 
 resource "google_compute_url_map" "apps" {
-  name            = "${var.chain_name}-apps"
-  default_service = google_compute_backend_service.otterscan.id
+  name = "${var.chain_name}-apps"
+
+  ## Reject requests whose Host header does not match any host_rule.
+  ## Without a default_url_redirect, unmatched hosts would need a
+  ## default_service (previously Otterscan), and bots downloading the
+  ## 8.56 MB JS bundle on every request caused a massive LB outbound
+  ## data processing cost spike (DEVOPS-313).
+  default_url_redirect {
+    https_redirect         = true
+    redirect_response_code = "FOUND"
+    strip_query            = true
+    host_redirect          = "www.zilliqa.com"
+    path_redirect          = "/"
+  }
 
   host_rule {
     hosts        = concat(["otterscan.${var.subdomain}"], var.apps.alternative_ssl_domains.otterscan)
