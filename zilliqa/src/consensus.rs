@@ -3584,31 +3584,21 @@ impl Consensus {
         self.broadcast_commit_receipts(from, block, block_receipts)
     }
 
-    fn compute_range_gas_fees(
-        &self,
-        canonical_chain: &[db::BlockAndReceiptsAndTransactions],
-    ) -> Result<u128> {
-        let mut total: u128 = 0;
+    fn compute_block_gas_fees(&self, data: &db::BlockAndReceiptsAndTransactions) -> Result<u128> {
+        let tx_map: HashMap<Hash, &SignedTransaction> = data
+            .transactions
+            .iter()
+            .map(|tx| (tx.hash, &tx.tx))
+            .collect();
 
-        for data in canonical_chain {
-            let tx_map: HashMap<Hash, &SignedTransaction> = data
-                .transactions
-                .iter()
-                .map(|tx| (tx.hash, &tx.tx))
-                .collect();
-
-            for receipt in &data.receipts {
-                let tx = tx_map
-                    .get(&receipt.tx_hash)
-                    .ok_or_else(|| anyhow!("missing tx for receipt in gas fee computation"))?;
-                let gas_fee = receipt.gas_used.0 as u128 * tx.gas_price_per_evm_gas();
-                total = total
-                    .checked_add(gas_fee)
-                    .ok_or_else(|| anyhow!("Overflow in gas fee computation"))?;
-            }
-        }
-
-        Ok(total)
+        data.receipts.iter().try_fold(0u128, |acc, receipt| {
+            let tx = tx_map
+                .get(&receipt.tx_hash)
+                .ok_or_else(|| anyhow!("missing tx for receipt in gas fee computation"))?;
+            let gas_fee = receipt.gas_used.0 as u128 * tx.gas_price_per_evm_gas();
+            acc.checked_add(gas_fee)
+                .ok_or_else(|| anyhow!("Overflow in gas fee computation"))
+        })
     }
 
     fn distribute_epoch_rewards(
@@ -3651,8 +3641,6 @@ impl Consensus {
                 range_start..=(range_end.saturating_sub(1)),
             )?;
 
-        let mut total_gas_fees: u128 = 0;
-
         let mut parent_of_first_block = if let Some(first_data) = historical_data.first() {
             self.get_block(&first_data.block.parent_hash())?
                 .ok_or_else(|| {
@@ -3665,10 +3653,6 @@ impl Consensus {
         } else {
             parent.clone()
         };
-
-        let historical_gas_fees = self.compute_range_gas_fees(&historical_data)?;
-        total_gas_fees += historical_gas_fees;
-        total_gas_fees += current_block_gas_fee;
 
         use crate::db::BlockAndReceiptsAndTransactions;
         let current_data = BlockAndReceiptsAndTransactions {
@@ -3683,10 +3667,16 @@ impl Consensus {
             .flatten()
             .and_then(|b| b.header.mix_hash);
 
+        let mut total_gas_fees: u128 = current_block_gas_fee;
+
         for data in historical_data
             .into_iter()
             .chain(std::iter::once(current_data))
         {
+            total_gas_fees = total_gas_fees
+                .checked_add(self.compute_block_gas_fees(&data)?)
+                .ok_or_else(|| anyhow!("Overflow in gas fee accumulation"))?;
+
             let block = data.block;
             let parent_state = state.at_root(parent_of_first_block.state_root_hash().into());
 
