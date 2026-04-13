@@ -63,6 +63,7 @@ infra/
 │   │   ├── install_monitoring.yml # Monitoring setup
 │   │   ├── install_spout.yml      # Faucet service
 │   │   ├── install_otterscan.yml  # Block explorer
+│   │   ├── expand_data_disk.yml      # Data disk filesystem expansion
 │   │   └── configure_*.yml        # Various configuration playbooks
 │   │
 │   ├── templates/              # Jinja2 templates
@@ -198,6 +199,20 @@ Then run the playbook:
 # Restore the GCP snapshot backup in a node /data disk
 ansible-playbook -i inventory.gcp.yml -l network_zq2_infratest,localhost playbooks/restore_persistence_snapshot.yml --limit role_api
 ```
+
+### Expand Data Disk
+
+After increasing the disk size via Terraform, the ext4 filesystem inside the VM needs to be expanded to fill the new space. This operation runs online with no downtime (no service stop or unmount required).
+
+```bash
+# Canary: run on a single node first
+ansible-playbook -i inventory.gcp.yml -l network_zq2_mainnet playbooks/expand_data_disk.yml --limit <node-name>
+
+# Full fleet (serial: 25% for rolling execution)
+ansible-playbook -i inventory.gcp.yml -l network_zq2_mainnet playbooks/expand_data_disk.yml
+```
+
+The playbook reports before/after disk sizes and is idempotent (safe to run multiple times).
 
 ### Upgrade Ubuntu
 ```bash

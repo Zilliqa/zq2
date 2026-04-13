@@ -1,0 +1,128 @@
+---
+- name: Expand ext4 data disk filesystem
+  hosts: all
+  become: true
+  serial: "25%"
+  tags:
+    - install
+    - all
+
+  tasks:
+
+    # --- Phase 1: Disk Discovery and Validation ---
+
+    - name: Check if data disk device exists
+      ansible.builtin.stat:
+        path: /dev/disk/by-id/google-data
+      register: data_disk_device
+      failed_when: false
+      changed_when: false
+
+    - name: Display message if data disk not found
+      ansible.builtin.debug:
+        msg: "Data disk not found on this node, skipping filesystem expansion"
+      when: not data_disk_device.stat.exists
+
+    - name: End play for hosts without data disk
+      ansible.builtin.meta: end_host
+      when: not data_disk_device.stat.exists
+
+    - name: Get real device path for data disk
+      ansible.builtin.command: readlink -f /dev/disk/by-id/google-data
+      register: data_disk_path
+      changed_when: false
+
+    - name: Fail if device path could not be resolved
+      ansible.builtin.fail:
+        msg: "Could not resolve device path for /dev/disk/by-id/google-data"
+      when: data_disk_path.stdout | length == 0
+
+    - name: Check for partition table on data disk
+      ansible.builtin.command: "lsblk -ln -o NAME,TYPE {{ data_disk_path.stdout }}"
+      register: lsblk_output
+      changed_when: false
+
+    - name: Set disk layout facts
+      ansible.builtin.set_fact:
+        disk_has_partitions: "{{ lsblk_output.stdout_lines | select('search', 'part') | list | length > 0 }}"
+        partition_device: >-
+          {{ '/dev/' + (lsblk_output.stdout_lines | select('search', 'part') | first | split() | first)
+             if (lsblk_output.stdout_lines | select('search', 'part') | list | length > 0)
+             else '' }}
+
+    - name: Set resize target device
+      ansible.builtin.set_fact:
+        resize_target: "{{ partition_device if disk_has_partitions else data_disk_path.stdout }}"
+
+    # --- Phase 2: Gather Before-State Metrics ---
+
+    - name: Get filesystem usage before resize
+      ansible.builtin.command: df -BG /data
+      register: df_before
+      changed_when: false
+
+    - name: Get block device size in bytes
+      ansible.builtin.command: "lsblk -bndo SIZE {{ data_disk_path.stdout }}"
+      register: block_device_size_bytes
+      changed_when: false
+
+    - name: Display current disk status
+      ansible.builtin.debug:
+        msg: |
+          === BEFORE RESIZE ===
+          Block device: {{ data_disk_path.stdout }}
+          Block device size: {{ (block_device_size_bytes.stdout | int / 1073741824) | round(1) }} GB
+          Resize target: {{ resize_target }}
+          Disk has partitions: {{ disk_has_partitions }}
+          Filesystem usage:
+          {{ df_before.stdout }}
+
+    # --- Phase 3: Handle Partitioned Disk (edge case) ---
+
+    - name: Install cloud-guest-utils for growpart
+      ansible.builtin.apt:
+        name: cloud-guest-utils
+        state: present
+        update_cache: yes
+        cache_valid_time: 3600
+      when: disk_has_partitions | bool
+
+    - name: Expand partition to fill disk
+      ansible.builtin.command: "growpart {{ data_disk_path.stdout }} 1"
+      register: growpart_result
+      when: disk_has_partitions | bool
+      changed_when: "'CHANGED' in growpart_result.stdout"
+      failed_when:
+        - growpart_result.rc != 0
+        - "'NOCHANGE' not in growpart_result.stdout"
+
+    # --- Phase 4: Resize Filesystem ---
+
+    - name: Expand ext4 filesystem to fill device
+      ansible.builtin.command: "resize2fs {{ resize_target }}"
+      register: resize_result
+      changed_when: "'Nothing to do' not in resize_result.stderr"
+
+    # --- Phase 5: Report Results ---
+
+    - name: Get filesystem usage after resize
+      ansible.builtin.command: df -BG /data
+      register: df_after
+      changed_when: false
+
+    - name: Display resize results
+      ansible.builtin.debug:
+        msg: |
+          === RESIZE COMPLETE ===
+          Host: {{ inventory_hostname }}
+          Device: {{ data_disk_path.stdout }}
+          Partitioned: {{ disk_has_partitions }}
+
+          BEFORE:
+          {{ df_before.stdout }}
+
+          AFTER:
+          {{ df_after.stdout }}
+
+          resize2fs output: {{ resize_result.stderr | default('') }}
+          Filesystem changed: {{ 'Nothing to do' not in resize_result.stderr }}
