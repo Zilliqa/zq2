@@ -127,8 +127,9 @@ resource "google_compute_backend_service" "spout" {
     }
   }
 
-  ## Attach Cloud Armor policy to the backend service
-  security_policy = var.apps.enable_faucet ? module.spout_security_policies[0].policy.self_link : null
+  ## Attach Cloud Armor policy to the backend service.
+  ## See the note on google_compute_backend_service.api for why we use splat.
+  security_policy = one(module.spout_security_policies[*].policy.self_link)
 }
 
 resource "google_compute_backend_service" "stats" {
@@ -160,8 +161,16 @@ resource "google_compute_url_map" "apps_http_redirect" {
 }
 
 resource "google_compute_url_map" "apps" {
-  name            = "${var.chain_name}-apps"
-  default_service = google_compute_backend_service.otterscan.id
+  name = "${var.chain_name}-apps"
+
+  ## Reject requests whose Host header does not match any host_rule.
+  default_url_redirect {
+    https_redirect         = true
+    redirect_response_code = "FOUND"
+    strip_query            = true
+    host_redirect          = "www.zilliqa.com"
+    path_redirect          = "/"
+  }
 
   host_rule {
     hosts        = concat(["otterscan.${var.subdomain}"], var.apps.alternative_ssl_domains.otterscan)
@@ -297,7 +306,7 @@ resource "google_compute_global_forwarding_rule" "stats_https" {
 }
 
 module "spout_security_policies" {
-  count  = var.apps.enable_faucet ? 1 : 0
+  count  = var.apps.enable_faucet && var.apps.enable_cloud_armor ? 1 : 0
   source = "./modules/google-cloud-armor"
 
   project_id          = var.project_id

@@ -85,8 +85,11 @@ resource "google_compute_backend_service" "api" {
     }
   }
 
-  ## Attach Cloud Armor policy to the backend service
-  security_policy = module.api_security_policies.policy.self_link
+  ## Attach Cloud Armor policy to the backend service.
+  ## Use a splat + one() so Terraform keeps a static dependency edge to the
+  ## module even when count = 0; without it, destroys of the security policy
+  ## race ahead of the backend update and GCP rejects the delete.
+  security_policy = one(module.api_security_policies[*].policy.self_link)
 }
 
 resource "google_compute_backend_service" "health" {
@@ -106,8 +109,9 @@ resource "google_compute_backend_service" "health" {
     }
   }
 
-  ## Attach Cloud Armor policy to the backend service
-  security_policy = module.health_security_policies.policy.self_link
+  ## Attach Cloud Armor policy to the backend service.
+  ## See the note on google_compute_backend_service.api for why we use splat.
+  security_policy = one(module.health_security_policies[*].policy.self_link)
 }
 
 resource "google_compute_url_map" "api_http_redirect" {
@@ -237,6 +241,7 @@ resource "google_compute_global_forwarding_rule" "health_https" {
 }
 
 module "api_security_policies" {
+  count  = var.api.enable_cloud_armor ? 1 : 0
   source = "./modules/google-cloud-armor"
 
   project_id          = var.project_id
@@ -324,6 +329,7 @@ module "api_security_policies" {
 }
 
 module "health_security_policies" {
+  count  = var.api.enable_health_cloud_armor ? 1 : 0
   source = "./modules/google-cloud-armor"
 
   project_id          = var.project_id
@@ -340,6 +346,20 @@ module "health_security_policies" {
       src_ip_ranges = [local.monitoring_ip_range]
     }
   }
+}
+
+# State address migration: adding `count` to the modules above changes their
+# resource addresses from `module.<name>` to `module.<name>[0]`. These `moved`
+# blocks keep environments that opt in to Cloud Armor from seeing destroy/create
+# churn on the next apply.
+moved {
+  from = module.api_security_policies
+  to   = module.api_security_policies[0]
+}
+
+moved {
+  from = module.health_security_policies
+  to   = module.health_security_policies[0]
 }
 
 ################################################################################

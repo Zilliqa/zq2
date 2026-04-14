@@ -28,7 +28,7 @@ base64 = "0.22.1"
 bitvec = "1.0.1"
 clap = { version = "4.6.0", features = ["derive"] }
 clap-verbosity-flag = "3.0.4"
-cliclack = "0.5.2"
+cliclack = "0.5.4"
 colored = "3.1.1"
 env_logger = "0.11.10"
 eth_trie = { git = "https://github.com/Zilliqa/eth-trie.rs.git", branch = "zilliqa-revm" }
@@ -63,7 +63,7 @@ strum_macros = "0.28.0"
 tempfile = "3.27.0"
 tera = "1.20.1"
 thiserror = "2.0.18"
-tokio = { version = "1.51.0", features = [
+tokio = { version = "1.51.1", features = [
     "macros",
     "rt-multi-thread",
     "sync",
@@ -72,7 +72,7 @@ tokio = { version = "1.51.0", features = [
     "process",
     "fs",
 ] }
-toml = { version = "1.1.0", features = ["preserve_order"] }
+toml = { version = "1.1.2", features = ["preserve_order"] }
 tracing = "0.1.44"
 zilliqa = { path = "../zilliqa" }
 zilliqa-rs = "0.3.2"
