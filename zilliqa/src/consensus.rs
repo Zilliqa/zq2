@@ -1,5 +1,4 @@
 use std::{
-    cell::LazyCell,
     collections::{BTreeMap, HashMap, VecDeque},
     error::Error,
     fmt::Display,
@@ -12,10 +11,7 @@ use std::{
     time::Duration,
 };
 
-use alloy::{
-    hex,
-    primitives::{Address, U256},
-};
+use alloy::{hex, primitives::Address};
 use anyhow::{Context, Result, anyhow};
 use bitvec::{bitarr, order::Msb0};
 use dashmap::DashMap;
@@ -23,7 +19,6 @@ use eth_trie::{EthTrie, MemoryDB, Trie};
 use itertools::Itertools;
 use k256::pkcs8::der::DateTime;
 use libp2p::PeerId;
-use opentelemetry::KeyValue;
 use parking_lot::{Mutex, RwLock, RwLockWriteGuard};
 use revm::Inspector;
 use serde::{Deserialize, Serialize};
@@ -33,7 +28,7 @@ use tracing::*;
 use crate::{
     api::{admin::merge_history, types::eth::SyncingStruct},
     aux, blockhooks,
-    cfg::{ConsensusConfig, ForkName, NodeConfig},
+    cfg::{ForkName, NodeConfig},
     constants::{
         EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, LAG_BEHIND_CURRENT_VIEW, MISSED_VIEW_WINDOW,
         TIME_TO_ALLOW_PROPOSAL_BROADCAST,
@@ -53,6 +48,7 @@ use crate::{
         PendingOrQueued, TransactionPool, TxAddResult, TxPoolContent, TxPoolContentFrom,
         TxPoolStatus,
     },
+    rewards::{self, Rewards},
     state::{Code, State},
     static_hardfork_data::{
         XSGD_CODE, XSGD_MAINNET_ADDR, build_ignite_wallet_addr_scilla_code_map,
@@ -227,7 +223,7 @@ pub struct Consensus {
     network_message_cache: Option<NetworkMessage>,
     pub high_qc: QuorumCertificate,
     /// The account store.
-    state: State,
+    pub(crate) state: State,
     /// The persistence database
     pub db: Arc<Db>,
     receipts_cache: Mutex<ReceiptsCache>,
@@ -249,6 +245,14 @@ pub struct Consensus {
     in_committee: bool,
     /// Prune interval, if applicable
     prune_period: u64,
+    /// Per-block reward cache used when the `DistributeRewardsEveryEpoch`
+    /// fork is active. Populated as each block is applied and drained at
+    /// epoch boundaries. The `Mutex` is semantically redundant — `Consensus`
+    /// lives inside `Arc<RwLock<Consensus>>` (see `node::Node`), so all
+    /// mutation paths are already serialized — but is required because the
+    /// proposal/vote methods that reach this cache are `&self` (they rely on
+    /// interior mutability for their other caches too).
+    pub(crate) rewards: Mutex<Rewards>,
 }
 
 impl Consensus {
@@ -418,6 +422,7 @@ impl Consensus {
             force_view: None,
             in_committee: true,
             prune_period,
+            rewards: Mutex::new(Rewards::new()),
         };
 
         // If we're at genesis, add the genesis block and return
@@ -635,6 +640,8 @@ impl Consensus {
             consensus.build_new_view()?;
         }
 
+        rewards::warm_reward_cache_on_startup(&consensus)?;
+
         Ok(consensus)
     }
 
@@ -685,6 +692,19 @@ impl Consensus {
             .get_block(BlockFilter::Height(highest_block_number))
             .unwrap()
             .unwrap()
+    }
+
+    /// Size of the per-block reward cache. Intended for tests that want to
+    /// assert the cache was warmed / populated.
+    pub fn rewards_cache_len(&self) -> usize {
+        self.rewards.lock().len()
+    }
+
+    /// Recompute the `Reward` for a given block hash by re-reading it from
+    /// the database. Does not touch the cache. Intended for tests that want
+    /// to compare per-block rewards against the aggregated epoch payout.
+    pub fn preview_reward_at(&self, hash: Hash) -> Result<rewards::Reward> {
+        rewards::reward_from_db(&self.db, &self.state, &self.config.consensus, hash)
     }
 
     pub fn get_highest_canonical_block_number(&self) -> u64 {
@@ -1087,110 +1107,6 @@ impl Consensus {
         }
 
         Ok(None)
-    }
-
-    /// For a given State apply a Proposal's rewards. Must be performed at the tail-end of the Proposal's processing.
-    /// Note that the algorithm below is mentioned in cfg.rs - if you change the way
-    /// rewards are calculated, please change the comments in the configuration structure there.
-    fn apply_rewards_late_at(
-        parent_block: &Block,
-        at_state: &mut State,
-        config: &ConsensusConfig,
-        committee: &[NodePublicKey],
-        proposer: NodePublicKey,
-        block: &Block,
-    ) -> Result<()> {
-        let earned_reward = LazyCell::new(|| {
-            let meter = opentelemetry::global::meter("zilliqa");
-            meter
-                .f64_counter("validator_earned_reward")
-                .with_unit("ZIL")
-                .build()
-        });
-
-        debug!("apply late rewards in view {}", block.view());
-        let rewards_per_block: u128 = *config.rewards_per_hour / config.blocks_per_hour as u128;
-
-        // Get the reward addresses from the parent state
-        let parent_state = at_state.at_root(parent_block.state_root_hash().into());
-
-        let proposer_address = parent_state.get_reward_address(proposer)?;
-
-        let cosigner_stake: Vec<_> = committee
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| block.header.qc.cosigned[*i])
-            .map(|(_, pub_key)| {
-                let reward_address = parent_state.get_reward_address(*pub_key).unwrap();
-                let stake = parent_state
-                    .get_stake(*pub_key, block.header)
-                    .unwrap()
-                    .unwrap()
-                    .get();
-                (reward_address, stake)
-            })
-            .collect();
-
-        let total_cosigner_stake = cosigner_stake.iter().fold(0, |sum, c| sum + c.1);
-        if total_cosigner_stake == 0 {
-            return Err(anyhow!("total stake is 0"));
-        }
-
-        // Track total awards given out. This may be different to rewards_per_block because we round down on division when we split the rewards
-        let mut total_rewards_issued = 0;
-
-        // Reward the Proposer
-        if let Some(proposer_address) = proposer_address {
-            let reward = rewards_per_block / 2;
-            at_state.mutate_account(proposer_address, |a| {
-                a.balance = a
-                    .balance
-                    .checked_add(reward)
-                    .ok_or_else(|| anyhow!("Overflow occured in proposer account balance"))?;
-                Ok(())
-            })?;
-            total_rewards_issued += reward;
-
-            let attributes = [
-                KeyValue::new("address", format!("{proposer_address:?}")),
-                KeyValue::new("role", "proposer"),
-            ];
-            earned_reward.add((reward as f64) / 1e18, &attributes);
-        }
-
-        // Reward the committee
-        for (reward_address, stake) in cosigner_stake {
-            if let Some(cosigner) = reward_address {
-                let reward = (U256::from(rewards_per_block / 2) * U256::from(stake)
-                    / U256::from(total_cosigner_stake))
-                .to::<u128>();
-                at_state.mutate_account(cosigner, |a| {
-                    a.balance = a
-                        .balance
-                        .checked_add(reward)
-                        .ok_or(anyhow!("Overflow occured in cosigner account balance"))?;
-                    Ok(())
-                })?;
-                total_rewards_issued += reward;
-
-                let attributes = [
-                    KeyValue::new("address", format!("{cosigner:?}")),
-                    KeyValue::new("role", "cosigner"),
-                ];
-                earned_reward.add((reward as f64) / 1e18, &attributes);
-            }
-        }
-
-        // ZIP-9: Fund rewards amount from zero account
-        at_state.mutate_account(Address::ZERO, |a| {
-            a.balance = a
-                .balance
-                .checked_sub(total_rewards_issued)
-                .ok_or(anyhow!("No funds left in zero account"))?;
-            Ok(())
-        })?;
-
-        Ok(())
     }
 
     /// For a given State apply the given transaction
@@ -2495,6 +2411,14 @@ impl Consensus {
             }
         }
 
+        // Retain one epoch of reward snapshots behind the finalized tip: at
+        // any epoch boundary we walk back to the start of the current epoch,
+        // so one epoch is the minimum safe retention window.
+        let retention = self.config.consensus.blocks_per_epoch;
+        self.rewards
+            .lock()
+            .prune_below(block.number().saturating_sub(retention));
+
         Ok(())
     }
 
@@ -3138,7 +3062,7 @@ impl Consensus {
         Self::leader_at_state(&state_at, block, parent_mix_hash, view)
     }
 
-    fn leader_at_state(
+    pub(crate) fn leader_at_state(
         state: &State,
         block: &Block,
         parent_mix_hash: Option<Hash>,
@@ -3584,149 +3508,6 @@ impl Consensus {
         self.broadcast_commit_receipts(from, block, block_receipts)
     }
 
-    fn compute_block_gas_fees(&self, data: &db::BlockAndReceiptsAndTransactions) -> Result<u128> {
-        let tx_map: HashMap<Hash, &SignedTransaction> = data
-            .transactions
-            .iter()
-            .map(|tx| (tx.hash, &tx.tx))
-            .collect();
-
-        data.receipts.iter().try_fold(0u128, |acc, receipt| {
-            let tx = tx_map
-                .get(&receipt.tx_hash)
-                .ok_or_else(|| anyhow!("missing tx for receipt in gas fee computation"))?;
-            let gas_fee = receipt.gas_used.0 as u128 * tx.gas_price_per_evm_gas();
-            acc.checked_add(gas_fee)
-                .ok_or_else(|| anyhow!("Overflow in gas fee computation"))
-        })
-    }
-
-    fn distribute_epoch_rewards(
-        &self,
-        state: &mut State,
-        current_block: &Block,
-        parent: &Block,
-        current_block_gas_fee: u128,
-    ) -> Result<()> {
-        if !self.block_is_first_in_epoch(current_block.number()) {
-            return Ok(());
-        }
-
-        let fork_activation_height = self
-            .state
-            .forks
-            .find_height_fork_first_activated(ForkName::DistributeRewardsEveryEpoch)
-            .ok_or(anyhow!(
-                "Missing activation height for DistributeRewardsEveryEpoch"
-            ))?;
-
-        let range_end = current_block.number();
-
-        // Determine the start of our range, clamped to the current epoch.
-        // We don't use a persistent "last_epoch_reward_block" tracker because
-        // it gets persisted during speculative execution and is never rolled
-        // back when a view times out, causing the canonical view to skip rewards.
-        // Epoch clamping ensures each boundary only distributes its own epoch.
-        let epoch_start = range_end - self.config.consensus.blocks_per_epoch + 1;
-        let range_start = std::cmp::max(std::cmp::max(fork_activation_height, 1), epoch_start);
-
-        if range_start > range_end {
-            return Ok(());
-        }
-
-        // range_end is current_block so query only [range_start, range_end-1] blocks from db
-        let historical_data = self
-            .db
-            .get_canonical_blocks_and_receipts_and_transactions_by_height_range(
-                range_start..=(range_end.saturating_sub(1)),
-            )?;
-
-        let mut parent_of_first_block = if let Some(first_data) = historical_data.first() {
-            self.get_block(&first_data.block.parent_hash())?
-                .ok_or_else(|| {
-                    anyhow!(
-                        "missing parent for first block in epoch range: [{}, {}]",
-                        range_start,
-                        range_end
-                    )
-                })?
-        } else {
-            parent.clone()
-        };
-
-        use crate::db::BlockAndReceiptsAndTransactions;
-        let current_data = BlockAndReceiptsAndTransactions {
-            block: current_block.clone(),
-            receipts: vec![],
-            transactions: vec![],
-        };
-
-        let mut grandparent_mix_hash = self
-            .get_block(&parent_of_first_block.parent_hash())
-            .ok()
-            .flatten()
-            .and_then(|b| b.header.mix_hash);
-
-        let mut total_gas_fees: u128 = current_block_gas_fee;
-
-        for data in historical_data
-            .into_iter()
-            .chain(std::iter::once(current_data))
-        {
-            total_gas_fees = total_gas_fees
-                .checked_add(self.compute_block_gas_fees(&data)?)
-                .ok_or_else(|| anyhow!("Overflow in gas fee accumulation"))?;
-
-            let block = data.block;
-            let parent_state = state.at_root(parent_of_first_block.state_root_hash().into());
-
-            let committee = parent_state.get_stakers(block.header)?;
-
-            let proposer = Self::leader_at_state(
-                &parent_state,
-                &parent_of_first_block,
-                grandparent_mix_hash,
-                block.view(),
-            )
-            .ok_or_else(|| {
-                anyhow!(
-                    "no leader for block {} view {}",
-                    block.number(),
-                    block.view()
-                )
-            })?;
-
-            let proposer_key = proposer.public_key;
-
-            Self::apply_rewards_late_at(
-                &parent_of_first_block,
-                state,
-                &self.config.consensus,
-                &committee,
-                proposer_key,
-                &block,
-            )?;
-            grandparent_mix_hash = parent_of_first_block.header.mix_hash;
-            parent_of_first_block = block;
-        }
-
-        let transfer_gas_fee_to_zero_account = state
-            .forks
-            .get(current_block.header.number)
-            .transfer_gas_fee_to_zero_account;
-        if transfer_gas_fee_to_zero_account {
-            state.mutate_account(Address::ZERO, |a| {
-                a.balance = a
-                    .balance
-                    .checked_add(total_gas_fees)
-                    .ok_or_else(|| anyhow!("Overflow in gas fee accumulation"))?;
-                Ok(())
-            })?;
-        }
-
-        Ok(())
-    }
-
     fn apply_proposal_to_state(
         &self,
         state: &mut State,
@@ -3735,10 +3516,17 @@ impl Consensus {
         committee: &[NodePublicKey],
         cumulative_gas_fee: u128,
     ) -> Result<()> {
-        let fork = self.state.forks.get(block.header.number);
+        let fork = self.state.forks.get(block.header.number).clone();
 
         if fork.distribute_rewards_every_epoch {
-            self.distribute_epoch_rewards(state, block, parent, cumulative_gas_fee)?;
+            rewards::apply_for_blocks_in_epoch(
+                self,
+                state,
+                block,
+                parent,
+                committee,
+                cumulative_gas_fee,
+            )?;
         } else {
             // Apply the rewards of previous round
             let grandparent_mix_hash = self
@@ -3750,7 +3538,7 @@ impl Consensus {
             let proposer = self
                 .leader_at_block(parent, grandparent_mix_hash, block.view())
                 .unwrap();
-            Self::apply_rewards_late_at(
+            rewards::apply_for_single_block(
                 parent,
                 state,
                 &self.config.consensus,

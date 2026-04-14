@@ -46,6 +46,7 @@ mod eth;
 mod ots;
 mod penalty;
 mod persistence;
+mod rewards;
 mod staking;
 mod sync;
 mod trace;
