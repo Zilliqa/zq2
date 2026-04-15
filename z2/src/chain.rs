@@ -148,7 +148,7 @@ impl Chain {
                     }), // https://github.com/Zilliqa/zq2/pull/3221
                 }),
                 deposit_v8: Some(ContractUpgradeConfig {
-                    height: 25531200,
+                    height: 25902000,
                     reinitialise_params: Some(ReinitialiseParams {
                         withdrawal_period: 461680,
                     }),
@@ -355,7 +355,7 @@ impl Chain {
                         "0x0F8aeCCaCA7FEE297cC2aBf7fFC9a81e7122A727",
                     ],
                 }),
-                json!({ "at_height": 25534800, "randao_support": true, "evm_to_scilla_strings_encoded_properly": true}),
+                json!({ "at_height": 25905600, "randao_support": true, "evm_to_scilla_strings_encoded_properly": true}),
             ]),
             _ => None,
         }
