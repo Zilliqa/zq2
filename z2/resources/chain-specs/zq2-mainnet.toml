@@ -19,7 +19,7 @@ consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
 # Gas parameters
 consensus.eth_block_gas_limit = 84000000
 consensus.gas_price = "4_761_904_800_000"
-consensus.contract_upgrades = { deposit_v5 = { height = 0, reinitialise_params = { withdrawal_period = 1209600 } }, deposit_v6 = { height = 13514400 }, deposit_v7 = { height = 13514400, reinitialise_params = { withdrawal_period = 461680 } }, deposit_v8 = { height = 99999999, reinitialise_params = { withdrawal_period = 461680 } } }
+consensus.contract_upgrades = { deposit_v5 = { height = 0, reinitialise_params = { withdrawal_period = 1209600 } }, deposit_v6 = { height = 13514400 }, deposit_v7 = { height = 13514400, reinitialise_params = { withdrawal_period = 461680 } }, deposit_v8 = { height = 25531200, reinitialise_params = { withdrawal_period = 461680 } } }
 consensus.new_view_broadcast_interval = { secs = 30, nanos = 0 }
 
 api_servers = [{ default_quota = { balance = 500, period = 1 }, port = 4201, enabled_apis = [{ namespace = "eth", apis = ["blockNumber"] }] }, { port = 4202, enabled_apis = ["admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] }]
@@ -39,5 +39,5 @@ consensus.forks = [
     { at_height = 19486411, scilla_empty_maps_are_encoded_correctly = true },
     { at_height = 19486411, cancun_active = true },
     { at_height = 19486411, scilla_call_gas_exempt_addrs_v2 = ["0x0F8aeCCaCA7FEE297cC2aBf7fFC9a81e7122A727"] },
-    { at_height = 99999999, randao_support = true, evm_to_scilla_strings_encoded_properly = true },
+    { at_height = 25534800, randao_support = true, evm_to_scilla_strings_encoded_properly = true },
 ]
