@@ -1401,6 +1401,8 @@ impl Consensus {
         };
         proposal.header.qc = final_qc;
 
+        let pre_reward_hash = proposal.hash();
+
         self.apply_proposal_to_state(
             &mut state,
             &proposal,
@@ -1428,6 +1430,9 @@ impl Consensus {
             proposal.header.randao_reveal,
             proposal.header.mix_hash,
         );
+
+        self.rewards.lock().rekey(pre_reward_hash, proposal.hash());
+
         self.receipts_cache
             .lock()
             .set_hash(proposal.header.receipts_root_hash);

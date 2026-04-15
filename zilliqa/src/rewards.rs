@@ -38,6 +38,12 @@ impl Rewards {
         Self::default()
     }
 
+    pub fn rekey(&mut self, old_hash: Hash, new_hash: Hash) {
+        if let Some(cum) = self.by_hash.remove(&old_hash) {
+            self.by_hash.insert(new_hash, cum);
+        }
+    }
+
     pub fn insert(&mut self, hash: Hash, reward: Reward) {
         self.by_height.push(Reverse((reward.number, hash)));
         self.by_hash.insert(hash, reward);
@@ -80,7 +86,10 @@ impl Rewards {
     where
         F: FnMut(Hash) -> Result<Reward>,
     {
-        let mut chain: Vec<Reward> = Vec::new();
+        let mut rewards_by_address = HashMap::new();
+        let mut total_rewards_issued: u128 = 0;
+        let mut total_gas_fees: u128 = 0;
+
         let mut hash = head_hash;
 
         loop {
@@ -97,26 +106,50 @@ impl Rewards {
                 break;
             }
 
+            // 1. Fold proposer reward
+            let (proposer_addr, proposer_amount) = reward.proposer;
+            let entry = rewards_by_address.entry(proposer_addr).or_insert(0u128);
+            *entry = (*entry)
+                .checked_add(proposer_amount)
+                .ok_or_else(|| anyhow!("overflow crediting proposer reward"))?;
+
+            total_rewards_issued = total_rewards_issued
+                .checked_add(proposer_amount)
+                .ok_or_else(|| anyhow!("overflow accumulating total rewards"))?;
+
+            // 2. Fold cosigner rewards
+            for (addr, amount) in &reward.cosigners {
+                let entry = rewards_by_address.entry(*addr).or_insert(0u128);
+                *entry = (*entry)
+                    .checked_add(*amount)
+                    .ok_or_else(|| anyhow!("overflow crediting cosigner reward"))?;
+
+                total_rewards_issued = total_rewards_issued
+                    .checked_add(*amount)
+                    .ok_or_else(|| anyhow!("overflow accumulating total rewards"))?;
+            }
+
+            // 3. Fold gas fees
+            total_gas_fees = total_gas_fees
+                .checked_add(reward.gas_fee)
+                .ok_or_else(|| anyhow!("overflow accumulating epoch gas fees"))?;
+
             let next_hash = reward.parent_hash;
-            let reached_start = reward.number == range_start;
-            chain.push(reward);
-            if reached_start {
+            if reward.number == range_start {
                 break;
             }
             hash = next_hash;
         }
 
-        let mut total_rewards_issued: u128 = 0;
-        let mut total_gas_fees: u128 = 0;
-
-        for reward in &chain {
-            let issued = apply_reward(state, reward)?;
-            total_rewards_issued = total_rewards_issued
-                .checked_add(issued)
-                .ok_or_else(|| anyhow!("overflow accumulating total rewards"))?;
-            total_gas_fees = total_gas_fees
-                .checked_add(reward.gas_fee)
-                .ok_or_else(|| anyhow!("overflow accumulating epoch gas fees"))?;
+        // Distribute grouped rewards using a single mutation per address
+        for (addr, amount) in rewards_by_address {
+            state.mutate_account(addr, |a| {
+                a.balance = a
+                    .balance
+                    .checked_add(amount)
+                    .ok_or_else(|| anyhow!("overflow crediting reward"))?;
+                Ok(())
+            })?;
         }
 
         // Rewards are funded from the zero account; gas fees are always sunk
