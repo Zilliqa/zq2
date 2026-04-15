@@ -18,9 +18,6 @@ use crate::{
     transaction::SignedTransaction,
 };
 
-/// Snapshot of the reward distribution for a single block. Addresses and
-/// amounts are resolved at compute time, so applying the reward later is
-/// immune to any intervening state mutations (e.g. stake unbonding).
 #[derive(Debug, Clone)]
 pub struct Reward {
     pub number: u64,
@@ -30,14 +27,9 @@ pub struct Reward {
     pub gas_fee: u128,
 }
 
-/// Per-block reward cache used by the `distribute_rewards_every_epoch` fork.
-/// At epoch boundaries the cache is walked via parent hashes back to the
-/// epoch start and the accumulated deltas are applied to the state in a
-/// single pass.
 #[derive(Debug, Default)]
 pub struct Rewards {
     by_hash: HashMap<Hash, Reward>,
-    /// Min-heap over block heights; used to pop-and-drop during pruning.
     by_height: BinaryHeap<Reverse<(u64, Hash)>>,
 }
 
@@ -78,14 +70,6 @@ impl Rewards {
         }
     }
 
-    /// Walk the parent chain from `head_hash` back to (and including) blocks
-    /// whose height is >= `range_start`, then apply all accumulated rewards
-    /// and gas fees to `state` in a single pass.
-    ///
-    /// On cache miss, `compute_missing(hash)` is invoked to materialize the
-    /// `Reward` for that hash; it is also inserted into the cache for future
-    /// calls. If `compute_missing` cannot produce a `Reward` it must return
-    /// an error.
     pub fn apply_epoch<F>(
         &mut self,
         state: &mut State,
@@ -154,9 +138,6 @@ impl Rewards {
     }
 }
 
-/// Compute the `Reward` distribution for `block`, reading stake and reward
-/// addresses from `parent_state`. Emits the `validator_earned_reward` metric
-/// per recipient. Pure: does not mutate `parent_state`.
 pub fn compute_reward_at(
     parent_state: &State,
     config: &ConsensusConfig,
@@ -244,9 +225,6 @@ pub fn compute_block_gas_fees(data: &db::BlockAndReceiptsAndTransactions) -> Res
     })
 }
 
-/// Compute a `Reward` for a given block hash by re-reading it (and its
-/// parent) from the database. Used as the fallback for `Rewards::apply_epoch`
-/// when the cache has been pruned or never populated for a given hash.
 pub fn reward_from_db(
     db: &Db,
     state: &State,
@@ -299,8 +277,6 @@ pub fn reward_from_db(
     )
 }
 
-/// Warm the reward cache on startup for the currently in-flight epoch so
-/// that the next epoch boundary doesn't need to hit the db.
 pub fn warm_reward_cache_on_startup(consensus: &Consensus) -> Result<()> {
     let Some(fork_activation_height) = consensus
         .state
@@ -346,9 +322,6 @@ pub fn warm_reward_cache_on_startup(consensus: &Consensus) -> Result<()> {
     Ok(())
 }
 
-/// Apply the per-epoch reward distribution as dictated by the
-/// `DistributeRewardsEveryEpoch` fork: compute this block's `Reward`,
-/// cache it, and if this block closes an epoch drain the cache into `state`.
 pub fn apply_for_blocks_in_epoch(
     consensus: &Consensus,
     state: &mut State,
@@ -408,14 +381,6 @@ pub fn apply_for_blocks_in_epoch(
     Ok(())
 }
 
-/// Credit the proposer and cosigners tracked in `reward` to `state`. Returns
-/// the total amount of ZIL issued (proposer + cosigner credits), which the
-/// caller typically debits from the zero account.
-///
-/// Does not touch the zero account and does not account for gas fees —
-/// `reward.gas_fee` is carried on the struct for the epoch-based path to
-/// aggregate, but the per-block zero-account bookkeeping (funding rewards,
-/// sinking gas fees) is the caller's responsibility.
 fn apply_reward(state: &mut State, reward: &Reward) -> Result<u128> {
     let mut total_rewards_issued: u128 = 0;
 
@@ -447,10 +412,6 @@ fn apply_reward(state: &mut State, reward: &Reward) -> Result<u128> {
     Ok(total_rewards_issued)
 }
 
-/// Apply the legacy per-block reward distribution used before the
-/// `DistributeRewardsEveryEpoch` fork. Must run at the tail end of a
-/// proposal's processing. Note: the algorithm below is referenced in
-/// `cfg.rs` — keep those comments in sync if this changes.
 pub fn apply_for_single_block(
     parent_block: &Block,
     at_state: &mut State,

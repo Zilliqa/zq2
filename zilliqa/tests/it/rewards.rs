@@ -117,9 +117,6 @@ async fn state_root_consistent_within_epoch(mut network: Network) {
     );
 }
 
-/// After a restart, the per-block rewards cache must be warmed from the db so
-/// that the next epoch boundary does not silently lose rewards (or crash) when
-/// it walks the parent chain.
 #[zilliqa_macros::test]
 async fn warm_rewards_cache_on_restart(mut network: Network) {
     let wallet = network.genesis_wallet().await;
@@ -192,10 +189,6 @@ async fn warm_rewards_cache_on_restart(mut network: Network) {
     );
 }
 
-/// Compute per-block rewards across an epoch via `preview_reward_at` and
-/// verify that their aggregate matches the balance deltas produced by the
-/// epoch-based distribution. In other words: the epoch distribution is
-/// equivalent to N per-block distributions, just deferred.
 #[zilliqa_macros::test]
 async fn epoch_and_legacy_rewards_match(mut network: Network) {
     let wallet = network.genesis_wallet().await;
@@ -208,12 +201,6 @@ async fn epoch_and_legacy_rewards_match(mut network: Network) {
         reward_addresses.push(get_reward_address(&wallet, staker).await.0.into());
     }
 
-    // Everything below is keyed off node 0's canonical chain: the wallet's
-    // RPC may be served by a different node whose canonical hash at the same
-    // height can transiently differ (pre-finalization fork), and
-    // `preview_reward_at` looks hashes up in node 0's db. Reading balances
-    // from node 0's state too ensures the deltas we compare against are
-    // produced by the same chain as the rewards we sum.
     let read_balance = |network: &Network, height: u64, addr: Address| -> U256 {
         let state = network
             .get_node(0)
@@ -252,36 +239,35 @@ async fn epoch_and_legacy_rewards_match(mut network: Network) {
     }
     let zero_balance_after = read_balance(&network, 10, Address::ZERO);
 
-    // Re-derive each block's reward through the same path the epoch
-    // distribution uses on cache miss (`reward_from_db` via
-    // `preview_reward_at`). Summing across the epoch should reproduce the
-    // observed balance deltas exactly.
-    let node = network.get_node(0);
-    let consensus = node.consensus.read();
-
     let mut expected_delta: HashMap<Address, u128> = HashMap::new();
     let mut expected_rewards_issued: u128 = 0;
+    {
+        // Re-derive each block's reward through the same path the epoch
+        // distribution uses on cache miss (`reward_from_db` via
+        // `preview_reward_at`). Summing across the epoch should reproduce the
+        // observed balance deltas exactly.
+        let node = network.get_node(0);
+        let consensus = node.consensus.read();
 
-    for block_num in 1..=10u64 {
-        let block = consensus
-            .get_canonical_block_by_number(block_num)
-            .unwrap()
-            .unwrap_or_else(|| panic!("node 0 missing canonical block {block_num}"));
-        let reward = consensus
-            .preview_reward_at(block.hash())
-            .expect("preview_reward_at should succeed");
+        for block_num in 1..=10u64 {
+            let block = consensus
+                .get_canonical_block_by_number(block_num)
+                .unwrap()
+                .unwrap_or_else(|| panic!("node 0 missing canonical block {block_num}"));
+            let reward = consensus
+                .preview_reward_at(block.hash())
+                .expect("preview_reward_at should succeed");
 
-        let (proposer_addr, proposer_amount) = reward.proposer;
-        *expected_delta.entry(proposer_addr).or_insert(0) += proposer_amount;
-        expected_rewards_issued += proposer_amount;
+            let (proposer_addr, proposer_amount) = reward.proposer;
+            *expected_delta.entry(proposer_addr).or_insert(0) += proposer_amount;
+            expected_rewards_issued += proposer_amount;
 
-        for (addr, amount) in &reward.cosigners {
-            *expected_delta.entry(*addr).or_insert(0) += *amount;
-            expected_rewards_issued += *amount;
+            for (addr, amount) in &reward.cosigners {
+                *expected_delta.entry(*addr).or_insert(0) += *amount;
+                expected_rewards_issued += *amount;
+            }
         }
     }
-
-    drop(consensus);
 
     // Per-address deltas: actual balance diff must equal summed per-block reward.
     for addr in &reward_addresses {
