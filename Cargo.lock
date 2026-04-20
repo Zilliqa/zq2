@@ -1611,11 +1611,10 @@ dependencies = [
 
 [[package]]
 name = "blsful"
-version = "3.0.0-pre6"
-source = "git+https://github.com/Zilliqa/agora-blsful?branch=update-blstrs_0.3.15#1985d41991066d1c4d72a71ddb3acf8fd254c030"
+version = "3.1.0"
+source = "git+https://github.com/Zilliqa/agora-blsful?branch=update%2Fblstrs-0.3.15#d826811fc3b8ac898cb924f25eb775075d1c56d4"
 dependencies = [
  "anyhow",
- "arrayref",
  "blstrs_plus",
  "hex",
  "hkdf",
@@ -1629,7 +1628,7 @@ dependencies = [
  "sha2 0.10.9",
  "sha3",
  "subtle",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "uint-zigzag",
  "vsss-rs",
  "zeroize",
