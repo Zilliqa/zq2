@@ -55,6 +55,7 @@ use crate::{
     transaction::{
         EvmGas, SignedTransaction, TransactionReceipt, TxIntershard, VerifiedTransaction,
     },
+    uccb::{relayer::Relayer, signer::Signer},
 };
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
@@ -217,6 +218,7 @@ impl Node {
             executable_blocks_height,
             config.db.clone(),
         )?);
+
         let node = Node {
             config: config.clone(),
             peer_id,

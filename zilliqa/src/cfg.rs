@@ -1,7 +1,12 @@
 use std::{collections::HashMap, ops::Deref, str::FromStr, time::Duration};
 
-use alloy::{hex, primitives::Address, rlp::Encodable};
+use alloy::{
+    hex,
+    primitives::{Address, ChainId},
+    rlp::Encodable,
+};
 use anyhow::{Result, anyhow};
+use jsonrpsee::client_transport::ws::Url;
 use libp2p::{Multiaddr, PeerId};
 use rand::{Rng, distributions::Alphanumeric};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
@@ -258,6 +263,26 @@ impl Default for SyncConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BundlerConfig {
+    pub rpc_url: Url,
+    pub chain_id: ChainId,
+}
+
+fn default_bundlers() -> Vec<BundlerConfig> {
+    vec![BundlerConfig {
+        rpc_url: Url::from_str("http://ip6-localhost:4203").unwrap(),
+        chain_id: eth_chain_id_default(),
+    }]
+}
+
+fn default_watchers() -> Vec<BundlerConfig> {
+    vec![BundlerConfig {
+        rpc_url: Url::from_str("http://ip6-localhost:4202").unwrap(),
+        chain_id: eth_chain_id_default(),
+    }]
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NodeConfig {
     /// RPC API endpoints to expose.
@@ -308,6 +333,10 @@ pub struct NodeConfig {
     pub credit_rates: HashMap<String, u64>,
     #[serde(default)]
     pub api_limits: ApiLimits,
+    #[serde(default = "default_bundlers")]
+    pub bundlers: Vec<BundlerConfig>,
+    #[serde(default = "default_watchers")]
+    pub watchers: Vec<BundlerConfig>,
 }
 
 impl Default for NodeConfig {
@@ -329,6 +358,8 @@ impl Default for NodeConfig {
             max_missed_view_age: max_missed_view_age_default(),
             credit_rates: HashMap::new(),
             api_limits: ApiLimits::default(),
+            bundlers: Default::default(),
+            watchers: Default::default(),
         }
     }
 }

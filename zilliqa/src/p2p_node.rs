@@ -40,6 +40,7 @@ use crate::{
     node::{OutgoingMessageFailure, RequestId},
     node_launcher::{NodeInputChannels, NodeLauncher, ResponseChannel},
     sync::SyncPeers,
+    uccb::{relayer::Relayer, signer::Signer, watcher::Watcher},
 };
 
 /// Validator topic is for broadcasts which only apply to validators.
@@ -75,6 +76,7 @@ pub struct P2pNode {
     shard_nodes: HashMap<u64, NodeInputChannels>,
     shard_threads: JoinSet<Result<()>>,
     task_threads: JoinSet<Result<()>>,
+    uccb_threads: JoinSet<Result<()>>,
     secret_key: SecretKey,
     config: Config,
     peer_id: PeerId,
@@ -188,6 +190,7 @@ impl P2pNode {
             swarm,
             shard_threads: JoinSet::new(),
             task_threads: JoinSet::new(),
+            uccb_threads: JoinSet::new(),
             outbound_message_sender,
             local_message_sender,
             request_responses_sender,
@@ -240,12 +243,29 @@ impl P2pNode {
         }
     }
 
+    pub async fn start_uccb(&mut self, config: NodeConfig, secret_key: SecretKey) -> Result<()> {
+        // Start the relayer
+        let mut relayer = Relayer::new(config.clone(), secret_key.clone());
+        self.uccb_threads
+            .spawn(async move { relayer.start_relayer().await });
+
+        let mut signer = Signer::new(config.clone(), secret_key.clone());
+        self.uccb_threads
+            .spawn(async move { signer.start_signer().await });
+
+        let mut watcher = Watcher::new(config.clone(), secret_key.clone());
+        self.uccb_threads
+            .spawn(async move { watcher.start_watcher().await });
+        Ok(())
+    }
+
     pub async fn add_shard_node(&mut self, config: NodeConfig) -> Result<()> {
         let shard_id = config.eth_chain_id;
         if self.shard_nodes.contains_key(&shard_id) {
             info!("LaunchShard message received for a shard we're already running. Ignoring...");
             return Ok(());
         }
+
         let (mut node, input_channels, peers) = NodeLauncher::new(
             self.secret_key,
             config,
@@ -269,6 +289,7 @@ impl P2pNode {
             .behaviour_mut()
             .gossipsub
             .subscribe(&Self::validator_topic(shard_id))?;
+
         Ok(())
     }
 
@@ -546,15 +567,17 @@ impl P2pNode {
                     }
                 }
                 _ = terminate.recv() => {
-                    info!(shards=%self.shard_threads.len(), tasks=%self.task_threads.len(), "SIGTERM. Shutting down.");
+                    info!(shards=%self.shard_threads.len(), tasks=%self.task_threads.len(), uccb=%self.uccb_threads.len(), "SIGTERM. Shutting down.");
                     self.shard_threads.shutdown().await;
                     self.task_threads.shutdown().await;
+                    self.uccb_threads.shutdown().await;
                     break;
                 },
                 _ = signal::ctrl_c() => {
-                    info!(shards=%self.shard_threads.len(), tasks=%self.task_threads.len(), "CTRL-C. Shutting down.");
+                    info!(shards=%self.shard_threads.len(), tasks=%self.task_threads.len(), uccb=%self.uccb_threads.len(), "CTRL-C. Shutting down.");
                     self.shard_threads.shutdown().await;
                     self.task_threads.shutdown().await;
+                    self.uccb_threads.shutdown().await;
                     break;
                 },
             }
