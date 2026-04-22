@@ -98,12 +98,6 @@ async fn app(args: Args, config: Config) -> Result<()> {
     node.add_shard_node(config.nodes.first().unwrap().clone())
         .await?;
 
-    node.start_uccb(
-        config.nodes.first().unwrap().clone(),
-        args.secret_key.clone(),
-    )
-    .await?;
-
     node.start().await
 }
 

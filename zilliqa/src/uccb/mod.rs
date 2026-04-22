@@ -1,3 +1,5 @@
+use std::num::NonZero;
+
 use alloy::{
     primitives::{Address, ChainId},
     providers::{
@@ -34,9 +36,9 @@ pub struct RelayUserOp {
     pub hash: Hash,
 }
 
+#[derive(Default)]
 pub struct BlsUserOp {
-    pub hash: Hash,
-    pub userop: PackedUserOperation,
+    pub userop: Option<PackedUserOperation>,
     pub signatures: Vec<BlsSignature>,
     pub stake: u128,
 }

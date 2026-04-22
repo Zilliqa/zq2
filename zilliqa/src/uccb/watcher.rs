@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use alloy::{
     primitives::Bytes,
     primitives::U256,
@@ -8,20 +10,26 @@ use alloy::{
 use anyhow::Result;
 use futures::StreamExt as _;
 
-use crate::{cfg::NodeConfig, crypto::SecretKey, uccb::SignUserOp};
+use crate::{cfg::NodeConfig, crypto::SecretKey, db::Db, uccb::SignUserOp};
 
 const ERC7786_GATEWAY: Address = address!("0x0000000071727de22e5e9d8baf0edac6f37da032");
 const ERC7786_MESSAGE_SENT: B256 =
     b256!("0x7e7041a74283c799a9a3b681816e897e935a8f5c9e472685714c67cd6a578663");
 
+#[derive(Debug)]
 pub struct Watcher {
     config: NodeConfig,
     secret_key: SecretKey,
+    db: Arc<Db>,
 }
 
 impl Watcher {
-    pub fn new(config: NodeConfig, secret_key: SecretKey) -> Self {
-        Self { secret_key, config }
+    pub fn new(config: NodeConfig, secret_key: SecretKey, db: Arc<Db>) -> Self {
+        Self {
+            secret_key,
+            config,
+            db,
+        }
     }
 
     pub async fn start_watcher(&mut self) -> Result<()> {
@@ -43,6 +51,9 @@ impl Watcher {
 
         while let Some(logs) = watchers.next().await {
             for log in logs {
+                if log.removed {
+                    continue;
+                }
                 // construct partial UserOp
                 let userop = Self::new_user_op();
 

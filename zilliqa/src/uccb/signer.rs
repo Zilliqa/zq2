@@ -19,6 +19,7 @@ use tokio::{
 use crate::{
     cfg::NodeConfig,
     crypto::{Hash, SecretKey},
+    db::Db,
     uccb::{BlsUserOp, RelayUserOp, SignUserOp},
 };
 
@@ -27,6 +28,7 @@ use crate::{
 pub struct Signer {
     config: NodeConfig,
     secret_key: SecretKey,
+    db: Arc<Db>,
     sign_tx: Sender<SignUserOp>,
     sign_rx: Receiver<SignUserOp>,
 }
@@ -36,7 +38,7 @@ impl Signer {
     ///
     /// Spins up one connection for each chain/bundler; and stores them in a Map for later use.
     /// Spawns a number of worker threads to concurrently create and process UserOps.
-    pub fn new(config: NodeConfig, secret_key: SecretKey) -> Self {
+    pub fn new(config: NodeConfig, secret_key: SecretKey, db: Arc<Db>) -> Self {
         let num_threads = crate::available_threads();
         let (sign_tx, sign_rx) = tokio::sync::mpsc::channel::<SignUserOp>(num_threads * 2);
         Self {
@@ -44,6 +46,7 @@ impl Signer {
             config,
             sign_tx,
             sign_rx,
+            db,
         }
     }
 

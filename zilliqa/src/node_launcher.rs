@@ -20,6 +20,7 @@ use opentelemetry_semantic_conventions::{
     },
     metric::MESSAGING_PROCESS_DURATION,
 };
+use parking_lot::Mutex;
 use tokio::{
     select,
     sync::mpsc::{self, UnboundedSender},
@@ -39,6 +40,7 @@ use crate::{
     node::{self, OutgoingMessageFailure},
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
     sync::SyncPeers,
+    uccb::relayer::Relayer,
 };
 
 pub struct NodeLauncher {
@@ -52,6 +54,7 @@ pub struct NodeLauncher {
     /// Channel used to steer next sleep time
     pub reset_timeout_receiver: UnboundedReceiverStream<Duration>,
     node_launched: bool,
+    pub relayer: Arc<Mutex<Relayer>>,
 }
 
 // If the `fake_response_channel` feature is enabled, swap out the libp2p ResponseChannel for a `u64`. In our
@@ -121,9 +124,9 @@ impl NodeLauncher {
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
         let sync_peers = Arc::new(SyncPeers::new(peer_id));
 
-        let node = Node::new(
+        let (node, db) = Node::new(
             config.clone(),
-            secret_key,
+            secret_key.clone(),
             outbound_message_sender,
             local_outbound_message_sender,
             request_responses_sender,
@@ -132,6 +135,8 @@ impl NodeLauncher {
             sync_peers.clone(),
             swarm_peers.clone(),
         )?;
+
+        let relayer = Relayer::new(config.clone(), secret_key.clone(), db.clone())?;
 
         let node = Arc::new(node);
         let credit_store = Arc::new(RpcCreditStore::new());
@@ -203,6 +208,7 @@ impl NodeLauncher {
             reset_timeout_receiver,
             node_launched: false,
             config,
+            relayer: Arc::new(Mutex::new(relayer)),
         };
         let input_channels = NodeInputChannels {
             broadcasts: broadcasts_sender,
