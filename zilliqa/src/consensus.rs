@@ -1885,24 +1885,6 @@ impl Consensus {
         Ok(inserted)
     }
 
-    pub fn try_early_proposal_after_txn_batch(&self) -> Result<()> {
-        if self.create_next_block_on_timeout.load(Ordering::SeqCst) {
-            let early_proposal = self.early_proposal.write();
-            if early_proposal.is_some() {
-                let pool = self.transaction_pool.write();
-                if pool.has_txn_ready() {
-                    trace!(
-                        "add transaction to early proposal {}",
-                        early_proposal.as_ref().unwrap().0.header.view
-                    );
-
-                    self.early_proposal_apply_transactions(pool, early_proposal)?;
-                }
-            }
-        }
-        Ok(())
-    }
-
     /// Provides a (cached) preview of the early proposal.
     pub fn get_pending_block(&self) -> Result<Option<Block>> {
         if let Some(early_proposal) = self.early_proposal.read().as_ref()
@@ -2136,9 +2118,9 @@ impl Consensus {
             return Ok(TxAddResult::Duplicate(txn.hash));
         }
 
-        // Perform insertion under early state, if available
+        // Perform insertion under early state, if available and recent
         let early_account = match self.early_proposal.read().as_ref() {
-            Some((block, _, _, _, _)) => {
+            Some((block, _, _, _, _)) if block.view() == self.get_view()? => {
                 let state = self.state.at_root(block.state_root_hash().into());
                 state.get_account(txn.signer)?
             }
