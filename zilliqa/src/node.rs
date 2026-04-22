@@ -309,10 +309,6 @@ impl Node {
         Ok(())
     }
 
-    pub fn try_to_apply_transactions(&mut self) -> Result<()> {
-        self.consensus.write().try_early_proposal_after_txn_batch()
-    }
-
     pub fn handle_request(
         &self,
         from: PeerId,
