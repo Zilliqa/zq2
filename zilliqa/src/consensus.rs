@@ -2118,14 +2118,8 @@ impl Consensus {
             return Ok(TxAddResult::Duplicate(txn.hash));
         }
 
-        // Perform insertion under early state, if available and recent
-        let early_account = match self.early_proposal.read().as_ref() {
-            Some((block, _, _, _, _)) if block.view() == self.get_view()? => {
-                let state = self.state.at_root(block.state_root_hash().into());
-                state.get_account(txn.signer)?
-            }
-            _ => self.state.get_account(txn.signer)?,
-        };
+        // Perform insertion under present state - https://github.com/Zilliqa/zq2/issues/3596
+        let early_account = self.state.get_account(txn.signer)?;
 
         let eth_chain_id = self.config.eth_chain_id;
 
