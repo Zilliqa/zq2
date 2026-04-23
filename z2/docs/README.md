@@ -35,7 +35,6 @@ To use it:
 
 - Join a network as `zq2` validator: [`z2 join`](./join.md)
 - Install / upgrade a `zq2` network: [`z2 deployer`](./deployer.md)
-- Convert `zq1` to `zq2` persistence: [`z2 converter` ](./converter.md)
 - Promote a node as validator via `$ZIL` deposit: [`z2 deposit` ](./deposit.md)
 
 ## Network specs

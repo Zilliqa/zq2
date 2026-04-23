@@ -2,14 +2,11 @@ use std::{
     collections::{HashMap, HashSet},
     fmt,
     path::PathBuf,
-    str::FromStr,
 };
 
-use alloy::primitives::B256;
 use anyhow::{Context, Result, anyhow};
 use colored::Colorize;
 use tokio::{fs, process::Command};
-use zilliqa::crypto::SecretKey;
 
 use crate::{
     chain::{
@@ -24,7 +21,7 @@ use crate::{
 
 const DEFAULT_API_URL: &str = "https://api.zq2-devnet.zilliqa.com";
 
-use crate::{collector, components::Component, converter, deployer, docgen, setup, zq1};
+use crate::{collector, components::Component, deployer, docgen, setup};
 
 pub enum NetworkType {
     Local(Option<NodeSpec>),
@@ -381,47 +378,6 @@ pub async fn update_depends(base_dir: &str, with_ssh: bool) -> Result<()> {
             }
         }
     }
-    Ok(())
-}
-
-pub async fn run_persistence_converter(
-    zq1_pers_dir: &str,
-    zq2_data_dir: &str,
-    zq2_config: &str,
-    secret_keys: Vec<SecretKey>,
-) -> Result<()> {
-    println!("🐼 Converting {zq1_pers_dir} into {zq2_data_dir}.. ");
-    let zq1_dir = PathBuf::from_str(zq1_pers_dir)?;
-    let zq2_dir = PathBuf::from_str(zq2_data_dir)?;
-    let config_file = PathBuf::from_str(zq2_config)?;
-    let zq2_config = fs::read_to_string(config_file).await?;
-    let zq2_config: zilliqa::cfg::Config = toml::from_str(&zq2_config)?;
-    let node_config = zq2_config.nodes.first().unwrap();
-    let zq2_db = zilliqa::db::Db::new(
-        Some(zq2_dir),
-        node_config.eth_chain_id,
-        // This is None because it makes no difference to the conversion: var is required for fetching ZQ1 blocks and setting their state root hash to zero
-        None,
-        zilliqa::cfg::DbConfig::default(),
-    )?;
-    let zq1_db = zq1::Db::new(zq1_dir)?;
-    converter::convert_persistence(zq1_db, zq2_db, zq2_config, secret_keys).await?;
-    Ok(())
-}
-
-pub async fn run_print_txs_in_block(zq1_pers_dir: &str, block_num: u64) -> Result<()> {
-    println!("🐼 Printing txns into block {block_num} .. ");
-    converter::print_tx_in_block(zq1_pers_dir, block_num).await?;
-    Ok(())
-}
-
-pub async fn run_print_txs_by_hash(
-    zq1_pers_dir: &str,
-    block_num: u64,
-    tx_hash: B256,
-) -> Result<()> {
-    println!("🐼 Printing txn with hash {tx_hash} .. ");
-    converter::print_tx_by_hash(zq1_pers_dir, block_num, tx_hash).await?;
     Ok(())
 }
 
