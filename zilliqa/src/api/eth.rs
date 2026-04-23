@@ -1293,7 +1293,8 @@ fn get_account(params: Params, node: &Arc<Node>) -> Result<GetAccountResult> {
 /// eth_getFilterChanges
 /// Polling method for a filter, which returns an array of events that have occurred since the last poll.
 fn get_filter_changes(params: Params, node: &Arc<Node>) -> Result<serde_json::Value> {
-    let filter_id: u128 = params.one()?;
+    let filter_id: String = params.one()?;
+    let filter_id = u128::from_str_radix(filter_id.strip_prefix("0x").unwrap_or(&filter_id), 16)?;
 
     let filters = { node.filters.clone() };
     let mut filter = filters.get(filter_id).ok_or(anyhow!("filter not found"))?;
@@ -1348,7 +1349,8 @@ fn get_filter_changes(params: Params, node: &Arc<Node>) -> Result<serde_json::Va
 /// eth_getFilterLogs
 /// Returns an array of all logs matching filter with given id.
 fn get_filter_logs(params: Params, node: &Arc<Node>) -> Result<serde_json::Value> {
-    let filter_id: u128 = params.one()?;
+    let filter_id: String = params.one()?;
+    let filter_id = u128::from_str_radix(filter_id.strip_prefix("0x").unwrap_or(&filter_id), 16)?;
 
     if let Some(filter) = node.filters.get(filter_id) {
         match &filter.kind {
@@ -1385,38 +1387,38 @@ fn max_priority_fee_per_gas(params: Params, node: &Arc<Node>) -> Result<String> 
 
 /// eth_newBlockFilter
 /// Creates a filter in the node, to notify when a new block arrives. To check if the state has changed, call eth_getFilterChanges
-fn new_block_filter(params: Params, node: &Arc<Node>) -> Result<u128> {
+fn new_block_filter(params: Params, node: &Arc<Node>) -> Result<String> {
     expect_end_of_params(&mut params.sequence(), 0, 0)?;
 
     let filter = BlockFilter {
         block_receiver: node.subscribe_to_new_blocks(),
     };
     let id = node.filters.add(FilterKind::Block(filter));
-    Ok(id)
+    Ok(id.to_hex())
 }
 
 /// eth_newFilter
 /// Creates a filter object, based on filter options, to notify when the state changes (logs). To check if the state has changed, call eth_getFilterChanges.
-fn new_filter(params: Params, node: &Arc<Node>) -> Result<u128> {
+fn new_filter(params: Params, node: &Arc<Node>) -> Result<String> {
     let criteria: alloy::rpc::types::Filter = params.one()?;
 
     let id = node.filters.add(FilterKind::Log(LogFilter {
         criteria: Box::new(criteria),
         last_block_number: None,
     }));
-    Ok(id)
+    Ok(id.to_hex())
 }
 
 /// eth_newPendingTransactionFilter
 /// Creates a filter in the node to notify when new pending transactions arrive. To check if the state has changed, call eth_getFilterChanges.
-fn new_pending_transaction_filter(params: Params, node: &Arc<Node>) -> Result<u128> {
+fn new_pending_transaction_filter(params: Params, node: &Arc<Node>) -> Result<String> {
     expect_end_of_params(&mut params.sequence(), 0, 0)?;
 
     let filter = PendingTxFilter {
         pending_txn_receiver: node.subscribe_to_new_transactions(),
     };
     let id = node.filters.add(FilterKind::PendingTx(filter));
-    Ok(id)
+    Ok(id.to_hex())
 }
 
 /// eth_signTransaction
@@ -1443,6 +1445,8 @@ fn submit_work(_params: Params, _node: &Arc<Node>) -> Result<()> {
 /// eth_uninstallFilter
 /// It uninstalls a filter with the given filter id.
 fn uninstall_filter(params: Params, node: &Arc<Node>) -> Result<bool> {
-    let filter_id: u128 = params.one()?;
+    let filter_id: String = params.one()?;
+    let filter_id = u128::from_str_radix(filter_id.strip_prefix("0x").unwrap_or(&filter_id), 16)?;
+
     Ok(node.filters.remove(filter_id))
 }
