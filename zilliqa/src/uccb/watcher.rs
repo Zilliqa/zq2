@@ -1,9 +1,7 @@
 use std::sync::Arc;
 
 use alloy::{
-    primitives::Bytes,
-    primitives::U256,
-    primitives::{Address, B256, address, b256},
+    primitives::{Address, B256, Bytes, U256, address, b256},
     providers::{Provider as _, ProviderBuilder},
     rpc::types::{Filter, PackedUserOperation},
 };
@@ -33,22 +31,6 @@ impl Watcher {
     }
 
     pub async fn start_watcher(&mut self) -> Result<()> {
-        // Spawn watchers: one for each SOURCE_CHAIN
-        // Each thread will monitor logs for MESSAGE_SENT events, then:
-        // 1. Construct the initial UserOp
-        // 2. Send it to the processing queue.
-        tracing::info!("Spawn {} SIGNER watchers", self.config.watchers.len());
-        let mut watchers = futures::stream::SelectAll::new();
-        for watcher in self.config.watchers.iter() {
-            let rpc_url = watcher.rpc_url.clone();
-            let provider = ProviderBuilder::new().connect_hyper_http(rpc_url);
-            let filter = Filter::new()
-                .address(ERC7786_GATEWAY)
-                .event_signature(ERC7786_MESSAGE_SENT);
-            let stream = provider.watch_logs(&filter).await?.into_stream();
-            watchers.push(stream);
-        }
-
         while let Some(logs) = watchers.next().await {
             for log in logs {
                 if log.removed {
@@ -56,8 +38,6 @@ impl Watcher {
                 }
                 // construct partial UserOp
                 let userop = Self::new_user_op();
-
-                // sign
                 let op = SignUserOp {
                     blk_hash: log.block_hash.expect("block_hash != none").into(),
                     txn_hash: log.transaction_hash.expect("txn_hash != none").into(),

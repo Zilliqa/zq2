@@ -263,22 +263,19 @@ impl Default for SyncConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BundlerConfig {
-    pub rpc_url: Url,
+pub struct RemoteChain {
     pub chain_id: ChainId,
+    pub bundler_url: String,
+    pub watcher_url: String,
+    pub entrypoint: Address,
 }
 
-fn default_bundlers() -> Vec<BundlerConfig> {
-    vec![BundlerConfig {
-        rpc_url: Url::from_str("http://ip6-localhost:4203").unwrap(),
+fn default_remotes() -> Vec<RemoteChain> {
+    vec![RemoteChain {
+        watcher_url: "http://198.51.100.101:4201".into(),
+        bundler_url: "http://198.51.100.8:3000".into(),
         chain_id: eth_chain_id_default(),
-    }]
-}
-
-fn default_watchers() -> Vec<BundlerConfig> {
-    vec![BundlerConfig {
-        rpc_url: Url::from_str("http://ip6-localhost:4202").unwrap(),
-        chain_id: eth_chain_id_default(),
+        entrypoint: crate::uccb::ENTRYPOINT_V07,
     }]
 }
 
@@ -333,10 +330,8 @@ pub struct NodeConfig {
     pub credit_rates: HashMap<String, u64>,
     #[serde(default)]
     pub api_limits: ApiLimits,
-    #[serde(default = "default_bundlers")]
-    pub bundlers: Vec<BundlerConfig>,
-    #[serde(default = "default_watchers")]
-    pub watchers: Vec<BundlerConfig>,
+    #[serde(default = "default_remotes")]
+    pub remote_chains: Vec<RemoteChain>,
 }
 
 impl Default for NodeConfig {
@@ -358,8 +353,7 @@ impl Default for NodeConfig {
             max_missed_view_age: max_missed_view_age_default(),
             credit_rates: HashMap::new(),
             api_limits: ApiLimits::default(),
-            bundlers: Default::default(),
-            watchers: Default::default(),
+            remote_chains: Default::default(),
         }
     }
 }

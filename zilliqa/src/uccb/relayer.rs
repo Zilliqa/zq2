@@ -1,9 +1,10 @@
-use std::{io::Read, num::NonZeroUsize, sync::Arc, time::Duration};
+use std::{num::NonZeroUsize, sync::Arc};
 
 use alloy::{
-    primitives::Address,
-    providers::{Provider, ProviderBuilder},
+    primitives::{Address, ChainId},
+    providers::Provider,
     rpc::types::{PackedUserOperation, SendUserOperation, SendUserOperationResponse},
+    sol_types::SolValue,
 };
 use anyhow::{Context, Result};
 use blsful::{Bls12381G2Impl, Signature};
@@ -11,27 +12,24 @@ use dashmap::DashMap;
 use itertools::Itertools as _;
 use libp2p::PeerId;
 use parking_lot::RwLock;
-use tokio::{
-    sync::mpsc::{UnboundedReceiver, UnboundedSender},
-    task::JoinSet,
-};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::{
     cfg::NodeConfig,
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey},
     db::Db,
     state::State,
-    uccb::{BlsUserOp, RelayUserOp},
+    uccb::{BlsUserOp, RelayUserOp, uccb::BundlerWallet},
 };
 
 #[derive(Debug)]
 pub struct Relayer {
     peer_id: PeerId,
-    config: NodeConfig,
     address: Address,
     secret_key: SecretKey,
     db: Arc<Db>,
     state: State,
+    bundlers: Arc<DashMap<ChainId, (Address, BundlerWallet)>>,
     relay_tx: UnboundedSender<RelayUserOp>,
     relay_rx: UnboundedReceiver<RelayUserOp>,
     // providers: Arc<DashMap<ChainId, BundlerProvider>>,
@@ -42,13 +40,40 @@ pub struct Relayer {
 impl Relayer {
     /// Constructs a RELAYER node.
     ///
-    pub fn new(config: NodeConfig, secret_key: SecretKey, db: Arc<Db>) -> Result<Self> {
+    pub async fn new(
+        config: NodeConfig,
+        secret_key: SecretKey,
+        db: Arc<Db>,
+        bundlers: Arc<DashMap<ChainId, (Address, BundlerWallet)>>,
+    ) -> Result<Self> {
         let (relay_tx, relay_rx) = tokio::sync::mpsc::unbounded_channel::<RelayUserOp>();
         let address = secret_key.to_evm_address();
         let state = State::new(db.state_trie()?, &config, db.clone())?;
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
+
+        // used for submitting UserOp
+        let bundlers = Arc::new(DashMap::with_capacity(config.remote_chains.len()));
+        for bundler in config.remote_chains.iter() {
+            let url = Url::from_str(&bundler.bundler_url)?;
+            let provider = ProviderBuilder::new().connect(url.as_str()).await?;
+            match provider
+                .raw_request::<(), Vec<Address>>("eth_supportedEntryPoints".into(), ())
+                .await
+            {
+                Ok(entrypoints) => {
+                    let entrypoint = bundler.entrypoint;
+                    if entrypoints.contains(&entrypoint) {
+                        tracing::info!(%url, "Bundler");
+                        bundlers.insert(bundler.chain_id, (entrypoint, provider));
+                        continue;
+                    }
+                    tracing::error!(%url, "Bundler mismatch {} != {:?}", entrypoint, entrypoints);
+                }
+                Err(err) => tracing::error!(%err, "Bundler error"),
+            }
+        }
+
         Ok(Self {
-            config,
             secret_key,
             address,
             relay_tx,
@@ -56,6 +81,7 @@ impl Relayer {
             db,
             state,
             peer_id,
+            bundlers,
             signatures: RwLock::new(lru::LruCache::new(NonZeroUsize::new(1000).unwrap())),
         })
     }
@@ -64,28 +90,20 @@ impl Relayer {
     ///
     /// Spins up one connection for each chain/bundler; and stores them for later use.
     /// Spawns a number of worker threads to concurrently submit UserOps.
-    pub async fn start_relayer(&mut self) -> Result<()> {
-        // Spin up keep-alive connections to each BUNDLER
-        let providers = Arc::new(DashMap::with_capacity(self.config.bundlers.len()));
-        tracing::info!("Spawn {} RELAYER bundlers", self.config.bundlers.len());
-        for bundler in self.config.bundlers.iter() {
-            let provider = ProviderBuilder::new().connect_hyper_http(bundler.rpc_url.clone());
-            let chain_id = bundler.chain_id;
-            providers.insert(chain_id, provider);
-        }
-
-        // Spawn worker threads to concurrently process messages.
+    async fn start_relayer(&mut self) -> Result<()> {
+        // TODO: Spawn worker threads to concurrently process messages.
         while let Some(op) = self.relay_rx.recv().await {
-            let Some(provider) = providers.get(&op.chain) else {
+            let Some(bundler) = self.bundlers.get(&op.chain) else {
                 tracing::warn!(chain_id = %op.chain, "UserOp missing bundler");
                 continue;
             };
+            let (_, (entrypoint, bundler)) = bundler.pair();
 
             let send_op = SendUserOperation::EntryPointV07(op.userop.clone());
-            match provider
+            match bundler
                 .raw_request::<_, SendUserOperationResponse>(
                     "eth_sendUserOperation".into(),
-                    (send_op, super::ENTRYPOINT_V08),
+                    (send_op, entrypoint),
                 )
                 .await
             {
@@ -93,7 +111,7 @@ impl Relayer {
                     let userophash = Hash::from_bytes(user_op_hash)?;
                     anyhow::ensure!(op.hash == userophash, "UserOp hash mismatch");
                     tracing::debug!(hash=%op.hash, chain_id=%op.chain, "UserOp submitted");
-                    break;
+                    continue; // next userop
                 }
                 Err(err) => {
                     tracing::error!(%err, "UserOp error");
@@ -148,7 +166,7 @@ impl Relayer {
             return Err(anyhow::anyhow!("Peer id mismatch"));
         }
 
-        // cache the thing
+        // cache the userops
         let bop = self
             .signatures
             .write()
@@ -171,14 +189,14 @@ impl Relayer {
     ///
     /// Multi-sign the UserOp; and queues it for sending to the Bundler.
     pub fn relay_userop(&self, userop_hash: Hash) -> Result<()> {
-        let bls_uop = self
+        let bop = self
             .signatures
             .write()
             .pop(&userop_hash)
             .context("UserOp signature lost")?;
 
         // multi sign it
-        let signatures = bls_uop
+        let signatures = bop
             .signatures
             .iter()
             .map(|s| {
@@ -194,11 +212,25 @@ impl Relayer {
                 )
             })
             .collect_vec();
-        let multi_signature = blsful::MultiSignature::from_signatures(signatures)?;
+
+        let multi_signature = blsful::MultiSignature::from_signatures(signatures)?
+            .as_raw_value()
+            .to_compressed();
+
+        // collect signers vector
+
+        let message = (multi_signature.as_slice(), self.address).abi_encode();
+        let signature = self.secret_key.sign(message.as_slice());
+
+        let userop_sig = (message, signature.to_bytes()).abi_encode();
 
         // construct final UserOp
+        let bop = bop.userop.unwrap();
         let final_uop = RelayUserOp {
-            userop: bls_uop.userop.unwrap(),
+            userop: PackedUserOperation {
+                signature: userop_sig.into(), // replace the signature with multi-sig
+                ..bop
+            },
             chain: 0,
             hash: userop_hash,
         };

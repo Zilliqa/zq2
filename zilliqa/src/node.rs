@@ -55,7 +55,6 @@ use crate::{
     transaction::{
         EvmGas, SignedTransaction, TransactionReceipt, TxIntershard, VerifiedTransaction,
     },
-    uccb::{relayer::Relayer, signer::Signer, watcher::Watcher},
 };
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]

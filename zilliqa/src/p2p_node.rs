@@ -40,7 +40,6 @@ use crate::{
     node::{OutgoingMessageFailure, RequestId},
     node_launcher::{NodeInputChannels, NodeLauncher, ResponseChannel},
     sync::SyncPeers,
-    uccb::{relayer::Relayer, signer::Signer, watcher::Watcher},
 };
 
 /// Validator topic is for broadcasts which only apply to validators.
@@ -243,22 +242,6 @@ impl P2pNode {
         }
     }
 
-    // pub async fn start_uccb(&mut self, config: NodeConfig, secret_key: SecretKey) -> Result<()> {
-    //     // Start the relayer
-    //     let mut relayer = Signer::new(config.clone(), secret_key.clone(), self.);
-    //     self.uccb_threads
-    //         .spawn(async move { relayer.start_relayer().await });
-
-    //     let mut signer = Signer::new(config.clone(), secret_key.clone());
-    //     self.uccb_threads
-    //         .spawn(async move { signer.start_signer().await });
-
-    //     let mut watcher = Watcher::new(config.clone(), secret_key.clone());
-    //     self.uccb_threads
-    //         .spawn(async move { watcher.start_watcher().await });
-    //     Ok(())
-    // }
-
     pub async fn add_shard_node(&mut self, config: NodeConfig) -> Result<()> {
         let shard_id = config.eth_chain_id;
         if self.shard_nodes.contains_key(&shard_id) {
@@ -276,11 +259,6 @@ impl P2pNode {
             self.swarm_peers.clone(),
         )
         .await?;
-
-        let relayer = node.relayer.clone();
-        self.uccb_threads
-            .spawn(async move { relayer.lock().start_relayer().await });
-
         self.shard_peers.insert(shard_id, peers);
         self.shard_nodes.insert(shard_id, input_channels);
         self.shard_threads

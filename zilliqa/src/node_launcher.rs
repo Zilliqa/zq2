@@ -40,11 +40,12 @@ use crate::{
     node::{self, OutgoingMessageFailure},
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
     sync::SyncPeers,
-    uccb::relayer::Relayer,
+    uccb::uccb::Uccb,
 };
 
 pub struct NodeLauncher {
     pub node: Arc<Node>,
+    pub uccb: Arc<Uccb>,
     pub config: NodeConfig,
     pub broadcasts: UnboundedReceiverStream<(PeerId, ExternalMessage, ResponseChannel)>,
     pub requests: UnboundedReceiverStream<(PeerId, String, ExternalMessage, ResponseChannel)>,
@@ -54,7 +55,6 @@ pub struct NodeLauncher {
     /// Channel used to steer next sleep time
     pub reset_timeout_receiver: UnboundedReceiverStream<Duration>,
     node_launched: bool,
-    pub relayer: Arc<Mutex<Relayer>>,
 }
 
 // If the `fake_response_channel` feature is enabled, swap out the libp2p ResponseChannel for a `u64`. In our
@@ -136,7 +136,7 @@ impl NodeLauncher {
             swarm_peers.clone(),
         )?;
 
-        let relayer = Relayer::new(config.clone(), secret_key.clone(), db.clone())?;
+        let uccb = Arc::new(Uccb::new(config.clone(), secret_key.clone(), db.clone()).await?);
 
         let node = Arc::new(node);
         let credit_store = Arc::new(RpcCreditStore::new());
@@ -200,6 +200,7 @@ impl NodeLauncher {
 
         let launcher = NodeLauncher {
             node,
+            uccb,
             broadcasts: broadcasts_receiver,
             requests: requests_receiver,
             request_failures: request_failures_receiver,
@@ -208,7 +209,6 @@ impl NodeLauncher {
             reset_timeout_receiver,
             node_launched: false,
             config,
-            relayer: Arc::new(Mutex::new(relayer)),
         };
         let input_channels = NodeInputChannels {
             broadcasts: broadcasts_sender,
