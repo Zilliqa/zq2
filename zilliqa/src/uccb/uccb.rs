@@ -1,26 +1,19 @@
-use std::{str::FromStr, sync::Arc};
+use std::sync::Arc;
 
 use alloy::{
-    network::AnyNetwork,
-    primitives::{Address, B256, ChainId, address, b256},
+    primitives::ChainId,
     providers::{
-        Identity, Provider as _, ProviderBuilder, RootProvider,
+        Identity, RootProvider,
         fillers::{BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller},
     },
-    rpc::{
-        client::PollerStream,
-        types::{Filter, Log},
-    },
+    rpc::{client::PollerStream, types::Log},
 };
 use anyhow::Result;
-use dashmap::DashMap;
 use futures::stream::SelectAll;
-use jsonrpsee::client_transport::ws::Url;
 use libp2p::PeerId;
 use tokio::{
     select,
-    sync::mpsc::{Receiver, Sender, UnboundedReceiver, UnboundedSender},
-    task::JoinHandle,
+    sync::mpsc::{Receiver, UnboundedReceiver, UnboundedSender},
 };
 use tokio_stream::{
     StreamExt as _,
@@ -31,7 +24,7 @@ use crate::{
     cfg::NodeConfig,
     crypto::SecretKey,
     db::Db,
-    message::ExternalMessage,
+    message::{ExternalMessage, UccbUserOp},
     node::MessageSender,
     node_launcher::ResponseChannel,
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
@@ -46,10 +39,6 @@ pub type BundlerWallet = FillProvider<
     RootProvider,
 >;
 // pub type BundlerWallet = RootProvider<AnyNetwork>;
-
-const ERC7786_GATEWAY: Address = address!("0x0000000071727de22e5e9d8baf0edac6f37da032");
-const ERC7786_MESSAGE_SENT: B256 =
-    b256!("0x7e7041a74283c799a9a3b681816e897e935a8f5c9e472685714c67cd6a578663");
 
 pub struct Uccb {
     config: NodeConfig,
@@ -114,6 +103,41 @@ impl Uccb {
             message_sender,
             request_responses,
         })
+    }
+
+    pub fn handle_request(
+        &self,
+        from: PeerId,
+        id: &str,
+        message: ExternalMessage,
+        response_channel: ResponseChannel,
+    ) -> Result<()> {
+        tracing::debug!(%from, to = %self.peer_id, %id, %message, "handling request");
+        match message {
+            ExternalMessage::UccbUserOp(UccbUserOp {
+                userop_hash,
+                userop,
+                signature,
+                public_key,
+                block_hash,
+            }) => {
+                // handle
+                self.relayer.collect_userop(
+                    from,
+                    block_hash,
+                    userop_hash,
+                    public_key,
+                    signature,
+                    userop.filter(|_| from == self.peer_id),
+                )?;
+                self.request_responses
+                    .send((response_channel, ExternalMessage::Acknowledgement))?;
+            }
+            msg => {
+                tracing::warn!(%msg, "unexpected message type");
+            }
+        }
+        Ok(())
     }
 
     async fn _start_bridge_node(

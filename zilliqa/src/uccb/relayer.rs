@@ -22,8 +22,6 @@ use crate::{
     cfg::NodeConfig,
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey},
     db::Db,
-    message::ExternalMessage,
-    node::MessageSender,
     state::State,
     uccb::{BlsUserOp, RelayUserOp},
 };
@@ -90,6 +88,7 @@ impl Relayer {
         relay_tx: UnboundedSender<RelayUserOp>,
     ) -> Result<()> {
         // used for submitting UserOp
+        let chain_id = config.eth_chain_id;
         let bundlers = DashMap::with_capacity(config.remote_chains.len());
         for bundler in config.remote_chains.iter() {
             let url = Url::from_str(&bundler.bundler_url)?;
@@ -101,15 +100,17 @@ impl Relayer {
                 Ok(entrypoints) => {
                     let entrypoint = bundler.entrypoint;
                     if entrypoints.contains(&entrypoint) {
-                        tracing::info!(%url, "Bundler");
+                        tracing::debug!(%url, "Relayer");
                         bundlers.insert(bundler.chain_id, (entrypoint, provider));
                         continue;
                     }
-                    tracing::error!(%url, "Bundler mismatch {} != {:?}", entrypoint, entrypoints);
+                    tracing::error!(%url, "Relayer mismatch {} != {:?}", entrypoint, entrypoints);
                 }
-                Err(err) => tracing::error!(%err, "Bundler error"),
+                Err(err) => tracing::error!(%err, "Relayer error"),
             }
         }
+
+        tracing::info!(remotes=%bundlers.len(), "Relayer-{}", chain_id);
 
         // TODO: Spawn worker threads to concurrently process messages.
         while let Some(op) = relay_rx.recv().await {
@@ -128,14 +129,16 @@ impl Relayer {
                 .await
             {
                 Ok(SendUserOperationResponse { user_op_hash }) => {
-                    let userophash = Hash::from_bytes(user_op_hash)?;
-                    anyhow::ensure!(op.hash == userophash, "UserOp hash mismatch");
+                    let userop_hash = Hash::from_bytes(user_op_hash)?;
+                    anyhow::ensure!(op.hash == userop_hash, "UserOp hash mismatch");
                     tracing::debug!(hash=%op.hash, chain_id=%op.chain, "UserOp submitted");
                     continue; // next userop
                 }
                 Err(err) => {
                     tracing::error!(%err, "UserOp error");
-                    relay_tx.send(op)?; // retry until success
+                    if err.is_transport_error() {
+                        relay_tx.send(op)?; // retry until success
+                    }
                 }
             };
         }
@@ -147,20 +150,7 @@ impl Relayer {
     /// Collect signatures, until majority, then compute the final signature.
     pub fn collect_userop(
         &self,
-        peer: PeerId,
-        block_hash: Hash,
-        userop_hash: Hash,
-        public_key: NodePublicKey,
-        signature: BlsSignature,
-    ) -> Result<()> {
-        self.self_collect_userop(peer, block_hash, userop_hash, public_key, signature, None)
-        // self.responses.send()?
-    }
-
-    // Used for the self-node
-    pub fn self_collect_userop(
-        &self,
-        peer: PeerId,
+        from: PeerId,
         block_hash: Hash,
         userop_hash: Hash,
         public_key: NodePublicKey,
@@ -170,22 +160,24 @@ impl Relayer {
         // validate signature
         public_key.verify(userop_hash.as_bytes(), signature)?;
 
+        // fetch related block
         let Some(block) = self.db.get_block(block_hash.into())? else {
             return Err(anyhow::anyhow!("Missing block"));
         };
         let state = self.state.at_root(block.state_root_hash().into());
 
+        // check if peer_id matches
+        let Some(peer_id) = state.get_peer_id(public_key)? else {
+            return Err(anyhow::anyhow!("Missing peer id"));
+        };
+        if peer_id != from {
+            return Err(anyhow::anyhow!("Peer id mismatch"));
+        }
+
         // retrieve stake
         let Some(stake) = state.get_stake(public_key, block.header)? else {
             return Err(anyhow::anyhow!("Missing stake"));
         };
-        let Some(peer_id) = state.get_peer_id(public_key)? else {
-            return Err(anyhow::anyhow!("Missing peer id"));
-        };
-        // check if peer_id matches
-        if peer_id != peer {
-            return Err(anyhow::anyhow!("Peer id mismatch"));
-        }
 
         // cache the userops
         let bop = self

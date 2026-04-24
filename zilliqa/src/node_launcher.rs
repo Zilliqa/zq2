@@ -20,7 +20,6 @@ use opentelemetry_semantic_conventions::{
     },
     metric::MESSAGING_PROCESS_DURATION,
 };
-use parking_lot::Mutex;
 use tokio::{
     select,
     sync::mpsc::{self, UnboundedSender},
@@ -299,9 +298,17 @@ impl NodeLauncher {
                     ];
 
                     let start = SystemTime::now();
-                    if let Err(e) = self.node.handle_request(source, &id, message, response_channel) {
-                        attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));
-                        error!("Failed to process request message: {e}");
+                    match message {
+                        ExternalMessage::UccbUserOp(_) => {
+                            if let Err(e) = self.uccb.handle_request(source, &id, message, response_channel) {
+                                attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));
+                                error!("Failed to process request message: {e}");
+                            }
+                        }
+                        _ => if let Err(e) = self.node.handle_request(source, &id, message, response_channel) {
+                            attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));
+                            error!("Failed to process request message: {e}");
+                        }
                     }
                     messaging_process_duration.record(
                         start.elapsed().map_or(0.0, |d| d.as_secs_f64()),

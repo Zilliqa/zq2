@@ -6,7 +6,6 @@ use alloy::{
     rlp::Encodable,
 };
 use anyhow::{Result, anyhow};
-use jsonrpsee::client_transport::ws::Url;
 use libp2p::{Multiaddr, PeerId};
 use rand::{Rng, distributions::Alphanumeric};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
@@ -268,6 +267,7 @@ pub struct RemoteChain {
     pub bundler_url: String,
     pub watcher_url: String,
     pub entrypoint: Address,
+    pub gateway: Address,
 }
 
 fn default_remotes() -> Vec<RemoteChain> {
@@ -276,6 +276,7 @@ fn default_remotes() -> Vec<RemoteChain> {
         bundler_url: "http://198.51.100.8:3000".into(),
         chain_id: eth_chain_id_default(),
         entrypoint: crate::uccb::ENTRYPOINT_V07,
+        gateway: Address::random(),
     }]
 }
 

@@ -4,7 +4,10 @@ use std::{
     ops::Range,
 };
 
-use alloy::primitives::{Address, B256, U256};
+use alloy::{
+    primitives::{Address, B256, U256},
+    rpc::types::PackedUserOperation,
+};
 use anyhow::{Result, anyhow};
 use bitvec::{bitarr, order::Msb0};
 use itertools::Either;
@@ -234,6 +237,15 @@ pub struct RequestBlocksByHeight {
     pub to_height: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UccbUserOp {
+    pub userop_hash: Hash,
+    pub block_hash: Hash,
+    pub public_key: NodePublicKey,
+    pub userop: Option<PackedUserOperation>,
+    pub signature: BlsSignature,
+}
+
 /// Used to convey proposal processing internally, to avoid blocking threads for too long.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InjectedProposal {
@@ -282,6 +294,8 @@ pub enum ExternalMessage {
     PassiveSyncResponseLZ(Vec<u8>), // compressed block
     /// 0.9.4
     BatchedTransactions(Vec<SignedTransaction>),
+    /// 0.22.0
+    UccbUserOp(UccbUserOp),
 }
 
 impl ExternalMessage {
@@ -362,6 +376,9 @@ impl Display for ExternalMessage {
             ExternalMessage::Acknowledgement => write!(f, "RequestResponse"),
             ExternalMessage::ProcessProposal | ExternalMessage::MetaDataResponse => {
                 unimplemented!("deprecated")
+            }
+            ExternalMessage::UccbUserOp(op) => {
+                write!(f, "UserOp {:?}", op.userop_hash)
             }
         }
     }
