@@ -3,6 +3,7 @@ projects:
   - prj-d-zq2-devnet-c83bkpsd
   - prj-d-zq2-testnet-g13pnaa8
   - prj-p-zq2-mainnet-sn5n8wfl
+  - prj-d-playground-b7i4vh7s
 filters:
   - status = RUNNING
   - scheduling.automaticRestart = true AND status = RUNNING
