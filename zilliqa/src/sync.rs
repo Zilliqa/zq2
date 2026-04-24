@@ -1,6 +1,7 @@
 use std::{
     cmp::{Ordering, Reverse},
     collections::{BTreeMap, BinaryHeap, HashMap, VecDeque},
+    num::NonZeroUsize,
     ops::RangeInclusive,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -9,7 +10,7 @@ use std::{
 use anyhow::Result;
 use itertools::Itertools;
 use libp2p::PeerId;
-use rand::Rng;
+use lru::LruCache;
 use serde::{Deserialize, Serialize};
 use tempfile::tempdir;
 use tracing::{debug, error, info, trace, warn};
@@ -136,7 +137,7 @@ pub struct Sync {
     active_sync_count: usize,
     // internal structure for syncing
     segments: SyncSegments,
-    size_cache: HashMap<Hash, usize>,
+    size_cache: LruCache<Hash, usize>,
     // passive sync
     sync_base_height: u64,
     zq2_floor_height: u64,
@@ -231,7 +232,9 @@ impl Sync {
             last_probe_at: Instant::now().checked_sub(Duration::from_secs(60)).unwrap(), // allow immediate sync at startup
             sync_base_height,
             prune_interval,
-            size_cache: HashMap::with_capacity(Self::MAX_CACHE_SIZE),
+            size_cache: LruCache::new(
+                NonZeroUsize::new(Self::MAX_CACHE_SIZE).expect("non-zero size_cache expected"),
+            ),
             zq2_floor_height,
             ignore_passive,
             checkpoint_period,
@@ -1305,19 +1308,15 @@ impl Sync {
             let header = brt.block.header;
             let parent_hash = brt.block.parent_hash();
 
+            // A large block can cause a node to get stuck syncing since no node can respond to the request in time.
             let encoded_size = self.size_cache.get(&hash).cloned().unwrap_or_else(|| {
-                // pseudo-LRU approximation
-                if self.size_cache.len() > Self::MAX_CACHE_SIZE {
-                    let mut rng = rand::thread_rng();
-                    self.size_cache.retain(|_, _| rng.gen_bool(0.99));
-                }
-                // A large block can cause a node to get stuck syncing since no node can respond to the request in time.
+                // TODO: put this in a new DB column.
                 let proposal = self.brt_to_proposal(brt);
                 let encoded_size =
                     cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024), &proposal)
                         .unwrap()
                         .len();
-                self.size_cache.insert(hash, encoded_size);
+                self.size_cache.push(hash, encoded_size);
                 encoded_size
             });
 
