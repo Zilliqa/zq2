@@ -1,6 +1,6 @@
 ---
 - name: Install and configure Google Cloud SDK
-  hosts: all
+  hosts: all:!role_testnode
   become: true
   tags:
     - install
