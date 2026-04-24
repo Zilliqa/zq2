@@ -11,7 +11,7 @@ use itertools::Itertools as _;
 use jsonrpsee::client_transport::ws::Url;
 use libp2p::PeerId;
 use tokio::{
-    sync::mpsc::{Receiver, Sender},
+    sync::mpsc::{Receiver, Sender, UnboundedSender},
     task::JoinSet,
 };
 use tokio_stream::StreamExt as _;
@@ -20,6 +20,9 @@ use crate::{
     cfg::NodeConfig,
     crypto::{Hash, SecretKey},
     db::Db,
+    message::ExternalMessage,
+    node::MessageSender,
+    node_launcher::ResponseChannel,
     state::State,
     uccb::{SignUserOp, uccb::BundlerWallet},
 };
@@ -45,7 +48,12 @@ impl Signer {
     ///
     /// Spins up one connection for each chain/bundler; and stores them in a Map for later use.
     /// Spawns a number of worker threads to concurrently create and process UserOps.
-    pub async fn new(config: NodeConfig, secret_key: SecretKey, db: Arc<Db>) -> Result<Self> {
+    pub async fn new(
+        config: NodeConfig,
+        secret_key: SecretKey,
+        db: Arc<Db>,
+        message_sender: Arc<MessageSender>,
+    ) -> Result<Self> {
         let state = Arc::new(State::new(db.state_trie()?, &config, db.clone())?);
         let num_threads = crate::available_threads();
         let (sign_tx, sign_rx) = tokio::sync::mpsc::channel::<SignUserOp>(num_threads * 2);
@@ -55,7 +63,9 @@ impl Signer {
         let sign_key = secret_key.clone();
         let sign_config = config.clone();
         workers.spawn(async move {
-            if let Err(err) = Self::start_signer(state, db, sign_config, sign_key, sign_rx).await {
+            if let Err(err) =
+                Self::start_signer(state, db, sign_config, sign_key, sign_rx, message_sender).await
+            {
                 tracing::error!(%err, "SIGNER error");
             }
         });
@@ -120,6 +130,7 @@ impl Signer {
         config: NodeConfig,
         secret_key: SecretKey,
         mut sign_rx: Receiver<SignUserOp>,
+        message_sender: Arc<MessageSender>,
     ) -> Result<()> {
         let chain_id = ChainId::from(config.eth_chain_id);
         // used to call Entrypoint contract
@@ -161,8 +172,9 @@ impl Signer {
             // 4. Send it to the RELAY_SET
             let relay_set =
                 Self::get_relay_set(rop.blk_hash, rop.txn_hash, state.clone(), db.clone())?;
-            for _peer in relay_set {
-                // send to peer
+            for peer in relay_set {
+                // TODO: Send signer information to relayer
+                message_sender.send_external_message(peer, ExternalMessage::Acknowledgement)?;
             }
         }
         Ok(())

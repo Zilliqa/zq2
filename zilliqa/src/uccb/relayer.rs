@@ -1,8 +1,8 @@
-use std::{num::NonZeroUsize, sync::Arc};
+use std::{num::NonZeroUsize, str::FromStr as _, sync::Arc};
 
 use alloy::{
-    primitives::{Address, ChainId},
-    providers::Provider,
+    primitives::Address,
+    providers::{Provider, ProviderBuilder},
     rpc::types::{PackedUserOperation, SendUserOperation, SendUserOperationResponse},
     sol_types::SolValue,
 };
@@ -10,16 +10,22 @@ use anyhow::{Context, Result};
 use blsful::{Bls12381G2Impl, Signature};
 use dashmap::DashMap;
 use itertools::Itertools as _;
+use jsonrpsee::client_transport::ws::Url;
 use libp2p::PeerId;
 use parking_lot::RwLock;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::{
+    sync::mpsc::{UnboundedReceiver, UnboundedSender},
+    task::JoinSet,
+};
 
 use crate::{
     cfg::NodeConfig,
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey},
     db::Db,
+    message::ExternalMessage,
+    node::MessageSender,
     state::State,
-    uccb::{BlsUserOp, RelayUserOp, uccb::BundlerWallet},
+    uccb::{BlsUserOp, RelayUserOp},
 };
 
 #[derive(Debug)]
@@ -29,30 +35,62 @@ pub struct Relayer {
     secret_key: SecretKey,
     db: Arc<Db>,
     state: State,
-    bundlers: Arc<DashMap<ChainId, (Address, BundlerWallet)>>,
     relay_tx: UnboundedSender<RelayUserOp>,
-    relay_rx: UnboundedReceiver<RelayUserOp>,
     // providers: Arc<DashMap<ChainId, BundlerProvider>>,
     // temporarily cache signatures
     signatures: RwLock<lru::LruCache<Hash, BlsUserOp>>,
+    workers: JoinSet<()>,
+}
+
+impl Drop for Relayer {
+    fn drop(&mut self) {
+        self.workers.abort_all();
+    }
 }
 
 impl Relayer {
     /// Constructs a RELAYER node.
     ///
-    pub async fn new(
-        config: NodeConfig,
-        secret_key: SecretKey,
-        db: Arc<Db>,
-        bundlers: Arc<DashMap<ChainId, (Address, BundlerWallet)>>,
-    ) -> Result<Self> {
+    pub async fn new(config: NodeConfig, secret_key: SecretKey, db: Arc<Db>) -> Result<Self> {
         let (relay_tx, relay_rx) = tokio::sync::mpsc::unbounded_channel::<RelayUserOp>();
         let address = secret_key.to_evm_address();
         let state = State::new(db.state_trie()?, &config, db.clone())?;
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
 
+        let mut workers = JoinSet::new();
+        // cache the last 1_000 userops
+        let signatures = RwLock::new(lru::LruCache::new(NonZeroUsize::new(1000).unwrap()));
+
+        let tx = relay_tx.clone();
+        workers.spawn(async move {
+            if let Err(err) = Self::start_relayer(config, relay_rx, tx).await {
+                tracing::error!(%err, "Relayer exception");
+            }
+        });
+
+        Ok(Self {
+            workers,
+            secret_key,
+            address,
+            relay_tx,
+            db,
+            state,
+            peer_id,
+            signatures,
+        })
+    }
+
+    /// Start the RELAYER threads.
+    ///
+    /// Spins up one connection for each chain/bundler; and stores them for later use.
+    /// Spawns a number of worker threads to concurrently submit UserOps.
+    async fn start_relayer(
+        config: NodeConfig,
+        mut relay_rx: UnboundedReceiver<RelayUserOp>,
+        relay_tx: UnboundedSender<RelayUserOp>,
+    ) -> Result<()> {
         // used for submitting UserOp
-        let bundlers = Arc::new(DashMap::with_capacity(config.remote_chains.len()));
+        let bundlers = DashMap::with_capacity(config.remote_chains.len());
         for bundler in config.remote_chains.iter() {
             let url = Url::from_str(&bundler.bundler_url)?;
             let provider = ProviderBuilder::new().connect(url.as_str()).await?;
@@ -73,27 +111,9 @@ impl Relayer {
             }
         }
 
-        Ok(Self {
-            secret_key,
-            address,
-            relay_tx,
-            relay_rx,
-            db,
-            state,
-            peer_id,
-            bundlers,
-            signatures: RwLock::new(lru::LruCache::new(NonZeroUsize::new(1000).unwrap())),
-        })
-    }
-
-    /// Start the RELAYER threads.
-    ///
-    /// Spins up one connection for each chain/bundler; and stores them for later use.
-    /// Spawns a number of worker threads to concurrently submit UserOps.
-    async fn start_relayer(&mut self) -> Result<()> {
         // TODO: Spawn worker threads to concurrently process messages.
-        while let Some(op) = self.relay_rx.recv().await {
-            let Some(bundler) = self.bundlers.get(&op.chain) else {
+        while let Some(op) = relay_rx.recv().await {
+            let Some(bundler) = bundlers.get(&op.chain) else {
                 tracing::warn!(chain_id = %op.chain, "UserOp missing bundler");
                 continue;
             };
@@ -115,7 +135,7 @@ impl Relayer {
                 }
                 Err(err) => {
                     tracing::error!(%err, "UserOp error");
-                    self.relay_tx.send(op)?;
+                    relay_tx.send(op)?; // retry until success
                 }
             };
         }
@@ -134,6 +154,7 @@ impl Relayer {
         signature: BlsSignature,
     ) -> Result<()> {
         self.self_collect_userop(peer, block_hash, userop_hash, public_key, signature, None)
+        // self.responses.send()?
     }
 
     // Used for the self-node

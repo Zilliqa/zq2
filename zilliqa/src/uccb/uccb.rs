@@ -31,7 +31,11 @@ use crate::{
     cfg::NodeConfig,
     crypto::SecretKey,
     db::Db,
-    uccb::{RelayUserOp, SignUserOp, signer::Signer},
+    message::ExternalMessage,
+    node::MessageSender,
+    node_launcher::ResponseChannel,
+    p2p_node::{LocalMessageTuple, OutboundMessageTuple},
+    uccb::{RelayUserOp, SignUserOp, relayer::Relayer, signer::Signer},
 };
 
 pub type BundlerWallet = FillProvider<
@@ -58,80 +62,46 @@ pub struct Uccb {
     // request_responses: UnboundedSender<(ResponseChannel, ExternalMessage)>,
     chain_id: ChainId,
     signer: Signer,
+    relayer: Relayer,
+    message_sender: Arc<MessageSender>,
+    request_responses: UnboundedSender<(ResponseChannel, ExternalMessage)>,
 }
 
 impl Drop for Uccb {
     fn drop(&mut self) {
-        tracing::info!(chain_id=%self.chain_id, "UUCB shutdown");
+        tracing::info!("UUCB-{} stopped", self.chain_id);
     }
 }
 
 impl Uccb {
-    pub async fn new(config: NodeConfig, secret_key: SecretKey, db: Arc<Db>) -> Result<Self> {
+    pub async fn new(
+        config: NodeConfig,
+        secret_key: SecretKey,
+        db: Arc<Db>,
+        message_sender_channel: UnboundedSender<OutboundMessageTuple>,
+        local_sender_channel: UnboundedSender<LocalMessageTuple>,
+        request_responses: UnboundedSender<(ResponseChannel, ExternalMessage)>,
+    ) -> Result<Self> {
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
         let chain_id = ChainId::from(config.eth_chain_id);
 
-        // used for submitting UserOp
-        let bundlers = Arc::new(DashMap::with_capacity(config.remote_chains.len()));
-        for bundler in config.remote_chains.iter() {
-            let url = Url::from_str(&bundler.bundler_url)?;
-            let provider = ProviderBuilder::new().connect(url.as_str()).await?;
-            match provider
-                .raw_request::<(), Vec<Address>>("eth_supportedEntryPoints".into(), ())
-                .await
-            {
-                Ok(entrypoints) => {
-                    let entrypoint = bundler.entrypoint;
-                    if entrypoints.contains(&entrypoint) {
-                        tracing::info!(%url, "UCCB bundler");
-                        bundlers.insert(bundler.chain_id, (entrypoint, provider));
-                        continue;
-                    }
-                    tracing::error!(%url, "UCCB mismatch {} != {:?}", entrypoint, entrypoints);
-                }
-                Err(err) => tracing::error!(%err, "UCCB error"),
-            }
-        }
+        let message_sender = Arc::new(MessageSender {
+            our_shard: chain_id,
+            our_peer_id: peer_id,
+            outbound_channel: message_sender_channel,
+            local_channel: local_sender_channel,
+        });
 
-        // // used to call Entrypoint contract
-        // let watchers = Arc::new(DashMap::with_capacity(config.remote_chains.len()));
+        let relayer = Relayer::new(config.clone(), secret_key.clone(), db.clone()).await?;
+        let signer = Signer::new(
+            config.clone(),
+            secret_key.clone(),
+            db.clone(),
+            message_sender.clone(),
+        )
+        .await?;
 
-        // // used to listen for on-chain Events
-        // let mut watch_rx = futures::stream::SelectAll::new();
-        // for watcher in config.remote_chains.iter() {
-        //     let url = Url::from_str(&watcher.watcher_url)?;
-        //     let provider = ProviderBuilder::new().connect(url.as_str()).await?;
-        //     match provider.get_chain_id().await {
-        //         Ok(id) => {
-        //             if chain_id == id {
-        //                 tracing::info!(%url, "UCCB watcher");
-
-        //                 let filter = Filter::new()
-        //                     .address(ERC7786_GATEWAY)
-        //                     .event_signature(ERC7786_MESSAGE_SENT);
-        //                 let stream = provider.watch_logs(&filter).await?.into_stream();
-        //                 watch_rx.push(stream);
-
-        //                 watchers.insert(id, (watcher.entrypoint, provider));
-        //                 continue;
-        //             }
-        //             tracing::error!(%url, "UCCB mismatch {} != {:?}", id, chain_id);
-        //         }
-        //         Err(err) => tracing::error!(%err, "UCCB error"),
-        //     }
-        // }
-
-        // let num_threads = crate::available_threads();
-        // let (sign_tx, sign_rx) = tokio::sync::mpsc::channel::<SignUserOp>(num_threads * 2);
-        // let (relay_tx, relay_rx) = tokio::sync::mpsc::unbounded_channel::<RelayUserOp>();
-
-        // let handle = tokio::spawn(async move {
-        //     if let Err(err) = Self::start_bridge_node(relay_rx, sign_rx, watch_rx).await {
-        //         tracing::error!(%err, "UCCB error");
-        //     }
-        // });
-
-        let signer = Signer::new(config.clone(), secret_key.clone(), db.clone()).await?;
+        tracing::info!("UUCB-{} started", chain_id);
 
         Ok(Self {
             config,
@@ -140,10 +110,13 @@ impl Uccb {
             db,
             chain_id,
             signer,
+            relayer,
+            message_sender,
+            request_responses,
         })
     }
 
-    async fn start_bridge_node(
+    async fn _start_bridge_node(
         relay_rx: UnboundedReceiver<RelayUserOp>,
         sign_rx: Receiver<SignUserOp>,
         mut watch_rx: SelectAll<PollerStream<Vec<Log>>>,
@@ -154,13 +127,13 @@ impl Uccb {
             select!(
                 //                 message = self.broadcasts.next() => {
                 uop = relay_rx.next() => {
-                    let uop = uop.expect("infinite stream");
+                    let _uop = uop.expect("infinite stream");
                 }
                 uop = sign_rx.next() => {
-                    let uop = uop.expect("infinite stream");
+                    let _uop = uop.expect("infinite stream");
                 }
                 logs = watch_rx.next() => {
-                    let logs = logs.expect("infinite stream");
+                    let _logs = logs.expect("infinite stream");
                 }
             )
         }

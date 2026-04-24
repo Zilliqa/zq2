@@ -127,16 +127,14 @@ impl NodeLauncher {
         let (node, db) = Node::new(
             config.clone(),
             secret_key.clone(),
-            outbound_message_sender,
-            local_outbound_message_sender,
-            request_responses_sender,
+            outbound_message_sender.clone(),
+            local_outbound_message_sender.clone(),
+            request_responses_sender.clone(),
             reset_timeout_sender.clone(),
             peer_num,
             sync_peers.clone(),
             swarm_peers.clone(),
         )?;
-
-        let uccb = Arc::new(Uccb::new(config.clone(), secret_key.clone(), db.clone()).await?);
 
         let node = Arc::new(node);
         let credit_store = Arc::new(RpcCreditStore::new());
@@ -197,6 +195,19 @@ impl NodeLauncher {
                 }
             }
         }
+
+        // Start UCCB **after** JSON-RPC is started, to be able to connect to localhost
+        let uccb = Arc::new(
+            Uccb::new(
+                config.clone(),
+                secret_key.clone(),
+                db.clone(),
+                outbound_message_sender.clone(),
+                local_outbound_message_sender.clone(),
+                request_responses_sender.clone(),
+            )
+            .await?,
+        );
 
         let launcher = NodeLauncher {
             node,
