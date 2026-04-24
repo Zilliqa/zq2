@@ -573,6 +573,10 @@ impl Consensus {
                 .get_transactionless_block(BlockFilter::Hash(ckpt_block.hash()))?
                 .is_none()
             {
+                info!(
+                    "Starting execution of all blocks in checkpoints. Count: {}",
+                    ckpt.blocks.len()
+                );
                 let mut block_parent = &ckpt.parent;
                 for (block, transactions) in &ckpt.blocks {
                     consensus
@@ -583,10 +587,14 @@ impl Consensus {
                         .at_root(block_parent.state_root_hash().into())
                         .get_stakers(block.header)?;
                     consensus.execute_block(None, block, transactions.clone(), &committee, true)?;
+                    consensus.state.finalized_view = block.view();
+                    consensus.db.set_finalized_view(block.view())?;
                     block_parent = block;
                 }
+                info!("Completed execution of all checkpoint blocks");
                 // Update finalized view to the checkpoint block so that RPC
                 // queries using BlockId::finalized() see the full replayed state.
+                consensus.state.finalized_view = ckpt_block.view();
                 consensus.db.set_finalized_view(ckpt_block.view())?;
             }
             // set starting point for state-sync/state-migration
