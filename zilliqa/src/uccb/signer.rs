@@ -133,7 +133,7 @@ impl Signer {
                     blk_hash: log.block_hash.expect("block_hash != none").into(),
                     txn_hash: log.transaction_hash.expect("txn_hash != none").into(),
                     chain: ChainId::from(0u64),
-                    userop: userop,
+                    userop,
                 };
                 sign_tx.send(op)?;
             }
@@ -160,9 +160,9 @@ impl Signer {
 
                 // 1. Retrieve the nonce; if not yet done
                 if userop.nonce.is_zero() {
-                    let key = Self::pack_nonce_key(&gateway, &txn_hash);
-                    let Ok(nonce) = super::INonceManager::new(entrypoint.clone(), provider)
-                        .getNonce(sender.clone(), key)
+                    let key = Self::pack_nonce_key(gateway, &txn_hash);
+                    let Ok(nonce) = super::INonceManager::new(*entrypoint, provider)
+                        .getNonce(*sender, key)
                         .call()
                         .await
                     else {
@@ -184,7 +184,7 @@ impl Signer {
                 // TODO: It is possible to compute this internally
                 if uop_hash == Hash::EMPTY {
                     let uop = Self::pack_user_op(&userop);
-                    let Ok(userophash) = super::IEntryPoint::new(entrypoint.clone(), provider)
+                    let Ok(userophash) = super::IEntryPoint::new(*entrypoint, provider)
                         .getUserOpHash(uop)
                         .call()
                         .await
@@ -223,7 +223,7 @@ impl Signer {
                             public_key: secret_key.node_public_key(),
                             userop: None,
                             signature: BlsSignature::from_bytes(
-                                &userop.signature.iter().as_slice(),
+                                userop.signature.iter().as_slice(),
                             )?,
                         })
                     } else {
@@ -233,7 +233,7 @@ impl Signer {
                             public_key: secret_key.node_public_key(),
                             userop: Some(userop.clone()),
                             signature: BlsSignature::from_bytes(
-                                &userop.signature.iter().as_slice(),
+                                userop.signature.iter().as_slice(),
                             )?,
                         })
                     };
@@ -248,7 +248,7 @@ impl Signer {
     fn pack_nonce_key(gateway: &Address, txn_hash: &Hash) -> U192 {
         // U192 expects big-endian bytes
         let hash = B32::from_slice(&txn_hash.0[..4]);
-        let bytes = (gateway.clone(), hash).abi_encode_packed();
+        let bytes = (*gateway, hash).abi_encode_packed();
         U192::from_be_slice(bytes.as_slice())
     }
 
@@ -279,7 +279,7 @@ impl Signer {
             nonce: userop.nonce,
             initCode: Bytes::from(
                 (
-                    userop.factory.as_ref().unwrap().clone(),
+                    *userop.factory.as_ref().unwrap(),
                     userop.factory_data.as_ref().unwrap().clone(),
                 )
                     .abi_encode_packed(),
@@ -298,7 +298,7 @@ impl Signer {
             ),
             paymasterAndData: Bytes::from(
                 (
-                    userop.paymaster.as_ref().unwrap().clone(),
+                    *userop.paymaster.as_ref().unwrap(),
                     paymasterVerificationGasLimit,
                     paymasterPostOpGasLimit,
                     userop.paymaster_data.as_ref().unwrap().clone(),

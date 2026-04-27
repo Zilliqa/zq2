@@ -39,7 +39,7 @@ use crate::{
     node::{self, OutgoingMessageFailure},
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
     sync::SyncPeers,
-    uccb::uccb::Uccb,
+    uccb::Uccb,
 };
 
 pub struct NodeLauncher {
@@ -125,7 +125,7 @@ impl NodeLauncher {
 
         let (node, db) = Node::new(
             config.clone(),
-            secret_key.clone(),
+            secret_key,
             outbound_message_sender.clone(),
             local_outbound_message_sender.clone(),
             request_responses_sender.clone(),
@@ -199,7 +199,7 @@ impl NodeLauncher {
         let uccb = Arc::new(
             Uccb::new(
                 config.clone(),
-                secret_key.clone(),
+                secret_key,
                 db.clone(),
                 outbound_message_sender.clone(),
                 local_outbound_message_sender.clone(),

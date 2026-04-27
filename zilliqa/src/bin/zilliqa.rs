@@ -93,7 +93,7 @@ async fn app(args: Args, config: Config) -> Result<()> {
         opentelemetry::global::set_meter_provider(provider);
     };
 
-    let mut node = P2pNode::new(args.secret_key.clone(), config.clone())?;
+    let mut node = P2pNode::new(args.secret_key, config.clone())?;
 
     node.add_shard_node(config.nodes.first().unwrap().clone())
         .await?;

@@ -190,7 +190,7 @@ impl Relayer {
         let bop = self
             .signatures
             .write()
-            .get_or_insert_mut_ref(&userop_hash, || BlsUserOp::default());
+            .get_or_insert_mut_ref(&userop_hash, BlsUserOp::default);
 
         if userop.is_some() && peer_id == self.peer_id {
             bop.userop = userop;
