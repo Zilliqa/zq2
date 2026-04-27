@@ -26,7 +26,7 @@ anyhow = "1.0.102"
 arc-swap = "1.9.1"
 base64 = "0.22.1"
 bitvec = "1.0.1"
-clap = { version = "4.6.0", features = ["derive"] }
+clap = { version = "4.6.1", features = ["derive"] }
 clap-verbosity-flag = "3.0.4"
 cliclack = "0.5.4"
 colored = "3.1.1"
@@ -50,7 +50,6 @@ reqwest = { version = "0.13.2", features = [
     "http2",
     "charset",
 ], default-features = false }
-rs-leveldb = { version = "0.1.5", default-features = false }
 rustls = "0.23.31"
 scopeguard = "1.2.0"
 serde = { version = "1.0.228", features = ["derive"] }
@@ -63,7 +62,7 @@ strum_macros = "0.28.0"
 tempfile = "3.27.0"
 tera = "1.20.1"
 thiserror = "2.0.18"
-tokio = { version = "1.51.1", features = [
+tokio = { version = "1.52.1", features = [
     "macros",
     "rt-multi-thread",
     "sync",

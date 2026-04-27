@@ -1454,10 +1454,10 @@ async fn test_block_filter(mut network: Network) {
     println!("Creating new block filter");
     let filter_id = wallet
         .client()
-        .request_noparams::<u128>("eth_newBlockFilter")
+        .request_noparams::<String>("eth_newBlockFilter")
         .await
         .unwrap();
-    println!("Created filter with ID: {filter_id}");
+    println!("Created filter with ID: {}", filter_id.clone());
 
     // Generate some blocks
     println!("Generating blocks");
@@ -1468,7 +1468,7 @@ async fn test_block_filter(mut network: Network) {
     println!("Getting filter changes");
     let changes_result = wallet
         .client()
-        .request::<_, Value>("eth_getFilterChanges", [filter_id])
+        .request::<_, Value>("eth_getFilterChanges", [filter_id.clone()])
         .await
         .unwrap();
     let changes: Vec<TxHash> = serde_json::from_value(changes_result).unwrap();
@@ -1494,7 +1494,7 @@ async fn test_block_filter(mut network: Network) {
     println!("Getting filter changes second time");
     let changes_result = wallet
         .client()
-        .request::<_, Value>("eth_getFilterChanges", [filter_id])
+        .request::<_, Value>("eth_getFilterChanges", [filter_id.clone()])
         .await
         .unwrap();
     let changes: Vec<TxHash> = serde_json::from_value(changes_result).unwrap();
@@ -1505,7 +1505,7 @@ async fn test_block_filter(mut network: Network) {
     println!("Removing filter");
     let filter_removed_successfully = wallet
         .client()
-        .request::<_, bool>("eth_uninstallFilter", [filter_id])
+        .request::<_, bool>("eth_uninstallFilter", [filter_id.clone()])
         .await
         .unwrap();
     println!("Filter removed: {filter_removed_successfully}");
@@ -1520,7 +1520,7 @@ async fn test_pending_transaction_filter(mut network: Network) {
     println!("Creating new pending transaction filter");
     let filter_id = wallet
         .client()
-        .request_noparams::<u128>("eth_newPendingTransactionFilter")
+        .request_noparams::<String>("eth_newPendingTransactionFilter")
         .await
         .unwrap();
     println!("Created filter with ID: {filter_id}");
@@ -1540,7 +1540,7 @@ async fn test_pending_transaction_filter(mut network: Network) {
     println!("Getting filter changes");
     let changes_result = wallet
         .client()
-        .request::<_, Value>("eth_getFilterChanges", [filter_id])
+        .request::<_, Value>("eth_getFilterChanges", [filter_id.clone()])
         .await
         .unwrap();
     let changes: Vec<TxHash> = serde_json::from_value(changes_result).unwrap();
@@ -1552,7 +1552,7 @@ async fn test_pending_transaction_filter(mut network: Network) {
     println!("Getting filter changes second time");
     let changes_result: serde_json::Value = wallet
         .client()
-        .request("eth_getFilterChanges", [filter_id])
+        .request("eth_getFilterChanges", [filter_id.clone()])
         .await
         .unwrap();
     let changes: Vec<TxHash> = serde_json::from_value(changes_result).unwrap();
@@ -1583,7 +1583,7 @@ async fn test_log_filter(mut network: Network) {
     });
     let filter_id = wallet
         .client()
-        .request::<_, u128>("eth_newFilter", [filter])
+        .request::<_, String>("eth_newFilter", [filter])
         .await
         .unwrap();
     println!("Created filter with ID: {filter_id}");
@@ -1595,7 +1595,7 @@ async fn test_log_filter(mut network: Network) {
     println!("Getting filter changes");
     let logs_result = wallet
         .client()
-        .request::<_, Value>("eth_getFilterChanges", [filter_id])
+        .request::<_, Value>("eth_getFilterChanges", [filter_id.clone()])
         .await
         .unwrap();
     dbg!(&logs_result);
@@ -1608,7 +1608,7 @@ async fn test_log_filter(mut network: Network) {
     println!("Testing get_filter_logs");
     let logs_via_get_result = wallet
         .client()
-        .request::<_, Value>("eth_getFilterLogs", [filter_id])
+        .request::<_, Value>("eth_getFilterLogs", [filter_id.clone()])
         .await
         .unwrap();
     let logs_via_get: Vec<serde_json::Value> = serde_json::from_value(logs_via_get_result).unwrap();
@@ -1618,7 +1618,7 @@ async fn test_log_filter(mut network: Network) {
     println!("Getting filter changes second time");
     let changes_result = wallet
         .client()
-        .request::<_, Value>("eth_getFilterChanges", [filter_id])
+        .request::<_, Value>("eth_getFilterChanges", [filter_id.clone()])
         .await
         .unwrap();
     let changes: Vec<serde_json::Value> = serde_json::from_value(changes_result).unwrap();
@@ -1628,7 +1628,7 @@ async fn test_log_filter(mut network: Network) {
     println!("Removing filter");
     let filter_removed_successfully = wallet
         .client()
-        .request::<_, bool>("eth_uninstallFilter", [filter_id])
+        .request::<_, bool>("eth_uninstallFilter", [filter_id.clone()])
         .await
         .unwrap();
     println!("Filter removed: {filter_removed_successfully}");
@@ -1658,7 +1658,7 @@ async fn test_uninstall_filter(mut network: Network) {
     println!("Creating new block filter");
     let filter_id = wallet
         .client()
-        .request_noparams::<u128>("eth_newBlockFilter")
+        .request_noparams::<String>("eth_newBlockFilter")
         .await
         .unwrap();
     println!("Created filter with ID: {filter_id}");
@@ -1667,7 +1667,7 @@ async fn test_uninstall_filter(mut network: Network) {
     println!("Verifying filter exists");
     let _changes: Vec<TxHash> = wallet
         .client()
-        .request("eth_getFilterChanges", [filter_id])
+        .request("eth_getFilterChanges", [filter_id.clone()])
         .await
         .unwrap();
     println!("Filter verified");
@@ -1676,7 +1676,7 @@ async fn test_uninstall_filter(mut network: Network) {
     println!("Uninstalling filter");
     let filter_removed = wallet
         .client()
-        .request::<_, bool>("eth_uninstallFilter", [filter_id])
+        .request::<_, bool>("eth_uninstallFilter", [filter_id.clone()])
         .await
         .unwrap();
     println!("Filter removed: {filter_removed}");
@@ -1686,7 +1686,7 @@ async fn test_uninstall_filter(mut network: Network) {
     println!("Verifying filter no longer exists");
     let result = wallet
         .client()
-        .request::<_, Value>("eth_getFilterChanges", [filter_id])
+        .request::<_, Value>("eth_getFilterChanges", [filter_id.clone()])
         .await;
     assert!(result.is_err());
 }

@@ -32,7 +32,7 @@ base64 = "0.22.1"
 bincode = { version = "2.0.1", features = ["serde"] }
 bitvec = { version = "1.0.1", features = ["serde"] }
 bytes = "1.11.1"
-clap = { version = "4.6.0", features = ["derive"] }
+clap = { version = "4.6.1", features = ["derive"] }
 ethabi = "18.0.0"
 futures = "0.3.32"
 http = "1.4.0"
@@ -75,7 +75,7 @@ serde_json = { version = "1.0.149", features = [
 sha2 = "0.10.8"
 sha3 = "0.10.8"
 tempfile = "3.27.0"
-tokio = { version = "1.51.1", features = [
+tokio = { version = "1.52.1", features = [
     "macros",
     "rt-multi-thread",
     "signal",
@@ -90,7 +90,7 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 cbor4ii = { version = "1.2.2", features = ["serde1"] }
 scilla-parser = "2.0.0"
 scopeguard = "1.2.0"
-blsful = { git = "https://github.com/Zilliqa/agora-blsful", branch = "update-blstrs_0.3.15" }
+blsful = { git = "https://github.com/Zilliqa/agora-blsful", branch = "update/blstrs-0.3.15" }
 bech32 = "0.11.1"
 cfg-if = "1.0.4"
 serde_repr = "0.1.20"
@@ -113,7 +113,7 @@ arc-swap = "1.9.1"
 redis = { version = "0.32.7", features = ["keep-alive", "r2d2", "tcp_nodelay"], default-features = false }
 alloy = { version = "1.8.3", default-features = false, features = ["consensus", "dyn-abi", "eips", "json-abi", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types"] }
 crossbeam = "0.8.4"
-lru = "0.16.3"
+lru = "0.17.0"
 
 [dev-dependencies]
 alloy = { version = "1.8.3", default-features = false, features = ["consensus", "dyn-abi", "eips", "json-abi", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types", "pubsub", "json-rpc", "contract", "signer-local"] }

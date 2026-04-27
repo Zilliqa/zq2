@@ -56,7 +56,7 @@ if NODE_NAME in [
     "zq2-mainnet-opsnode-ase1-0",
     "zq2-mainnet-apps-ase1-0",
 ]:
-    LOG_LEVEL = "zilliqa=trace"
+    LOG_LEVEL = "zilliqa=info"
 else:
     LOG_LEVEL = '{{ log_level }}'
 
