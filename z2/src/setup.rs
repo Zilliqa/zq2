@@ -559,6 +559,7 @@ impl Setup {
                 enable_ots_indices: false,
                 max_missed_view_age: max_missed_view_age_default(),
                 api_limits: ApiLimits::default(),
+                remote_chains: Default::default(),
             };
             println!("🧩  Node {node_index} has RPC port {port}");
 

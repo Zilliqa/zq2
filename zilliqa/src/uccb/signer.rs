@@ -247,7 +247,7 @@ impl Signer {
     /// Compute a nonce key
     fn pack_nonce_key(gateway: &Address, txn_hash: &Hash) -> U192 {
         // U192 expects big-endian bytes
-        let hash = B32::from_slice(txn_hash.as_bytes());
+        let hash = B32::from_slice(&txn_hash.0[..4]);
         let bytes = (gateway.clone(), hash).abi_encode_packed();
         U192::from_be_slice(bytes.as_slice())
     }
@@ -263,6 +263,15 @@ impl Signer {
         let (maxPriorityFeePerGas, maxFeePerGas): (u128, u128) = (
             userop.max_priority_fee_per_gas.to(),
             userop.max_fee_per_gas.to(),
+        );
+        #[allow(non_snake_case)]
+        let (paymasterVerificationGasLimit, paymasterPostOpGasLimit): (u128, u128) = (
+            userop
+                .paymaster_verification_gas_limit
+                .as_ref()
+                .unwrap()
+                .to(),
+            userop.paymaster_post_op_gas_limit.as_ref().unwrap().to(),
         );
 
         super::PackedUserOperation {
@@ -287,7 +296,15 @@ impl Signer {
                     .abi_encode_packed()
                     .as_slice(),
             ),
-            paymasterAndData: Bytes::new(),
+            paymasterAndData: Bytes::from(
+                (
+                    userop.paymaster.as_ref().unwrap().clone(),
+                    paymasterVerificationGasLimit,
+                    paymasterPostOpGasLimit,
+                    userop.paymaster_data.as_ref().unwrap().clone(),
+                )
+                    .abi_encode_packed(),
+            ),
             signature: Bytes::from(B256::ZERO.as_slice()),
         }
     }
