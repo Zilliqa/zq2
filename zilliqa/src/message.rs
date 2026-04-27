@@ -6,7 +6,7 @@ use std::{
 
 use alloy::{
     primitives::{Address, B256, U256},
-    rpc::types::PackedUserOperation,
+    rpc::types::PackedUserOperation as AlloyUserOperation,
 };
 use anyhow::{Result, anyhow};
 use bitvec::{bitarr, order::Msb0};
@@ -242,7 +242,7 @@ pub struct UccbUserOp {
     pub userop_hash: Hash,
     pub block_hash: Hash,
     pub public_key: NodePublicKey,
-    pub userop: Option<PackedUserOperation>,
+    pub userop: Option<AlloyUserOperation>,
     pub signature: BlsSignature,
 }
 

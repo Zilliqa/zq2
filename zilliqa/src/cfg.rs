@@ -268,16 +268,7 @@ pub struct RemoteChain {
     pub watcher_url: String,
     pub entrypoint: Address,
     pub gateway: Address,
-}
-
-fn default_remotes() -> Vec<RemoteChain> {
-    vec![RemoteChain {
-        watcher_url: "http://198.51.100.101:4201".into(),
-        bundler_url: "http://198.51.100.8:3000".into(),
-        chain_id: eth_chain_id_default(),
-        entrypoint: crate::uccb::ENTRYPOINT_V07,
-        gateway: Address::random(),
-    }]
+    pub sender: Address,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -331,7 +322,7 @@ pub struct NodeConfig {
     pub credit_rates: HashMap<String, u64>,
     #[serde(default)]
     pub api_limits: ApiLimits,
-    #[serde(default = "default_remotes")]
+    #[serde(default)]
     pub remote_chains: Vec<RemoteChain>,
 }
 

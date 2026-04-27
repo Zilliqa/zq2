@@ -75,7 +75,6 @@ pub struct P2pNode {
     shard_nodes: HashMap<u64, NodeInputChannels>,
     shard_threads: JoinSet<Result<()>>,
     task_threads: JoinSet<Result<()>>,
-    uccb_threads: JoinSet<Result<()>>,
     secret_key: SecretKey,
     config: Config,
     peer_id: PeerId,
@@ -189,7 +188,6 @@ impl P2pNode {
             swarm,
             shard_threads: JoinSet::new(),
             task_threads: JoinSet::new(),
-            uccb_threads: JoinSet::new(),
             outbound_message_sender,
             local_message_sender,
             request_responses_sender,
@@ -420,7 +418,8 @@ impl P2pNode {
                                                 | ExternalMessage::BlockRequest(_)
                                                 | ExternalMessage::PassiveSyncRequest(_) => self
                                                     .send_to(&_topic.hash(), |c| c.broadcasts.send((_source, _external_message, ResponseChannel::Remote(_channel))))?,
-                                                ExternalMessage::Vote(_)
+                                                ExternalMessage::UccbUserOp(_)
+                                                | ExternalMessage::Vote(_)
                                                 | ExternalMessage::NewView(_) => self.send_to(&_topic.hash(), |c| c.requests.send((_source, _id, _external_message, ResponseChannel::Remote(_channel))))?,
                                                 _ => error!(source = %_source, %to, external_message = %_external_message, request_id = %_request_id, "unhandled libp2p request"),
                                             }
@@ -550,17 +549,15 @@ impl P2pNode {
                     }
                 }
                 _ = terminate.recv() => {
-                    info!(shards=%self.shard_threads.len(), tasks=%self.task_threads.len(), uccb=%self.uccb_threads.len(), "SIGTERM. Shutting down.");
+                    info!(shards=%self.shard_threads.len(), tasks=%self.task_threads.len(), "SIGTERM. Shutting down.");
                     self.shard_threads.shutdown().await;
                     self.task_threads.shutdown().await;
-                    self.uccb_threads.shutdown().await;
                     break;
                 },
                 _ = signal::ctrl_c() => {
-                    info!(shards=%self.shard_threads.len(), tasks=%self.task_threads.len(), uccb=%self.uccb_threads.len(), "CTRL-C. Shutting down.");
+                    info!(shards=%self.shard_threads.len(), tasks=%self.task_threads.len(), "CTRL-C. Shutting down.");
                     self.shard_threads.shutdown().await;
                     self.task_threads.shutdown().await;
-                    self.uccb_threads.shutdown().await;
                     break;
                 },
             }

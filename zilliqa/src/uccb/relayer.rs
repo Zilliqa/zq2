@@ -1,9 +1,12 @@
 use std::{num::NonZeroUsize, str::FromStr as _, sync::Arc};
 
+// use super::AlloyUserOperation;
 use alloy::{
     primitives::Address,
     providers::{Provider, ProviderBuilder},
-    rpc::types::{PackedUserOperation, SendUserOperation, SendUserOperationResponse},
+    rpc::types::{
+        PackedUserOperation as AlloyUserOperation, SendUserOperation, SendUserOperationResponse,
+    },
     sol_types::SolValue,
 };
 use anyhow::{Context, Result};
@@ -110,7 +113,11 @@ impl Relayer {
             }
         }
 
-        tracing::info!(remotes=%bundlers.len(), "Relayer-{}", chain_id);
+        tracing::info!(chains=%bundlers.len(), "Relayer-{}", chain_id);
+        if bundlers.is_empty() {
+            tracing::warn!("Relayer-{} terminated", chain_id);
+            return Ok(());
+        }
 
         // TODO: Spawn worker threads to concurrently process messages.
         while let Some(op) = relay_rx.recv().await {
@@ -155,7 +162,7 @@ impl Relayer {
         userop_hash: Hash,
         public_key: NodePublicKey,
         signature: BlsSignature,
-        userop: Option<PackedUserOperation>,
+        userop: Option<AlloyUserOperation>,
     ) -> Result<()> {
         // validate signature
         public_key.verify(userop_hash.as_bytes(), signature)?;
@@ -240,7 +247,7 @@ impl Relayer {
         // construct final UserOp
         let bop = bop.userop.unwrap();
         let final_uop = RelayUserOp {
-            userop: PackedUserOperation {
+            userop: AlloyUserOperation {
                 signature: userop_sig.into(), // replace the signature with multi-sig
                 ..bop
             },

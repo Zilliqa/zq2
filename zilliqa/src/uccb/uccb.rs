@@ -41,18 +41,18 @@ pub type BundlerWallet = FillProvider<
 // pub type BundlerWallet = RootProvider<AnyNetwork>;
 
 pub struct Uccb {
-    config: NodeConfig,
-    secret_key: SecretKey,
-    db: Arc<Db>,
+    // config: NodeConfig,
+    // secret_key: SecretKey,
+    // db: Arc<Db>,
     peer_id: PeerId,
     // message_sender: MessageSender,
     /// Send responses to requests down this channel. The `ResponseChannel` passed must correspond to a
     /// `ResponseChannel` received via `handle_request`.
     // request_responses: UnboundedSender<(ResponseChannel, ExternalMessage)>,
     chain_id: ChainId,
-    signer: Signer,
+    _signer: Signer,
     relayer: Relayer,
-    message_sender: Arc<MessageSender>,
+    // message_sender: Arc<MessageSender>,
     request_responses: UnboundedSender<(ResponseChannel, ExternalMessage)>,
 }
 
@@ -82,7 +82,7 @@ impl Uccb {
         });
 
         let relayer = Relayer::new(config.clone(), secret_key.clone(), db.clone()).await?;
-        let signer = Signer::new(
+        let _signer = Signer::new(
             config.clone(),
             secret_key.clone(),
             db.clone(),
@@ -93,14 +93,14 @@ impl Uccb {
         tracing::info!("UUCB-{} started", chain_id);
 
         Ok(Self {
-            config,
-            secret_key,
+            // config,
+            // secret_key,
             peer_id,
-            db,
+            // db,
             chain_id,
-            signer,
+            _signer,
             relayer,
-            message_sender,
+            // message_sender,
             request_responses,
         })
     }
