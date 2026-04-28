@@ -1,10 +1,19 @@
 use alloy::{
-    primitives::{Address, B256, U256, keccak256},
+    primitives::{Address, B256, ChainId, U256, keccak256},
     sol_types::SolValue,
 };
 use anyhow::Result;
 
 use super::PackedUserOperation;
+
+pub fn get_chain_id(account_id: &str) -> Result<ChainId> {
+    if let [namespace, chain_id, _address] = account_id.split(':').collect::<Vec<_>>().as_slice()
+        && *namespace == "eip155"
+    {
+        return Ok(ChainId::from_str_radix(chain_id, 10)?);
+    }
+    Err(anyhow::anyhow!("Invalid AccountId"))
+}
 
 /// keccak256("PackedUserOperation(address sender,uint256 nonce,bytes initCode,bytes callData,
 ///            bytes32 accountGasLimits,uint256 preVerificationGas,bytes32 gasFees,bytes paymasterAndData)")

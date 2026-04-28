@@ -53,19 +53,51 @@ sol! {
         );
     }
 }
+//     // https://github.com/eth-infinitism/account-abstraction/tree/develop/contracts/interfaces
+//     #[sol(rpc)]
+//     interface INonceManager {
+//         function getNonce(address sender, uint192 key)
+//         external view returns (uint256 nonce);
+//     }
+
+//     struct PackedUserOperation {
+//         address sender;
+//         uint256 nonce;
+//         bytes initCode; // `abi.encodePacked(factory, factoryData)`
+//         bytes callData;
+//         bytes32 accountGasLimits; // `abi.encodePacked(verificationGasLimit, callGasLimit)` 16 bytes each
+//         uint256 preVerificationGas;
+//         bytes32 gasFees; // `abi.encodePacked(maxPriorityFeePerGas, maxFeePerGas)` 16 bytes each
+//         bytes paymasterAndData; // `abi.encodePacked(paymaster, paymasterVerificationGasLimit, paymasterPostOpGasLimit, paymasterData[, paymasterSignature, paymasterSignatureSize, PAYMASTER_SIG_MAGIC])` (20 bytes, 16 bytes, 16 bytes, dynamic[, dynamic, 2 bytes, 8 bytes])
+//         bytes signature;
+//     }
+
+//     #[sol(rpc)]
+//     interface IEntryPoint {
+//         function getUserOpHash(
+//             PackedUserOperation calldata userOp
+//         ) external view returns (bytes32);
+//         function getNonce(address sender, uint192 key) external view returns (uint256 nonce);
+//     }
+// }
 
 pub struct SignUserOp {
     pub userop: AlloyUserOperation,
-    pub chain: ChainId,
+    pub chain_id: ChainId,
     pub txn_hash: Hash,
     pub blk_hash: Hash,
 }
 
 impl SignUserOp {
-    pub fn new(userop: AlloyUserOperation, chain: ChainId, txn_hash: Hash, blk_hash: Hash) -> Self {
+    pub fn new(
+        userop: AlloyUserOperation,
+        chain_id: ChainId,
+        txn_hash: Hash,
+        blk_hash: Hash,
+    ) -> Self {
         Self {
             userop,
-            chain,
+            chain_id,
             txn_hash,
             blk_hash,
         }

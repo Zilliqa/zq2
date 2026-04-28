@@ -3,7 +3,7 @@ use std::sync::Arc;
 // use super::AlloyUserOperation;
 use alloy::{
     primitives::{
-        Address, Bytes, ChainId, U256,
+        Address, B256, Bytes, ChainId, U256,
         aliases::{B32, U192},
     },
     providers::Provider as _,
@@ -13,6 +13,7 @@ use alloy::{
 use anyhow::{Context, Result};
 use itertools::Itertools as _;
 use libp2p::PeerId;
+use revm::primitives::keccak256;
 use tokio::{
     sync::mpsc::{UnboundedReceiver, UnboundedSender},
     task::JoinSet,
@@ -26,7 +27,11 @@ use crate::{
     message::{ExternalMessage, UccbUserOp},
     node::MessageSender,
     state::State,
-    uccb::{SignUserOp, utils::get_user_op_hash},
+    uccb::{
+        IERC7786GatewaySource::MessageSent,
+        SignUserOp,
+        utils::{get_chain_id, get_user_op_hash},
+    },
 };
 
 /// A signer polls the SOURCE_CHAIN for MessageSent events.
@@ -109,7 +114,6 @@ impl Signer {
             return Ok(());
         }
 
-        // Listen for events
         let mut watch_rx = futures::stream::SelectAll::new();
         for remote in config.remote_chains.iter() {
             if let Some(watcher) = watchers.get(&remote.chain_id) {
@@ -122,21 +126,46 @@ impl Signer {
             }
         }
 
+        // Listen for events
         while let Some(logs) = watch_rx.next().await {
             for log in logs {
                 if log.removed {
                     continue;
                 }
-                // construct partial UserOp
-                let userop = Self::new_user_op();
-
                 let blk_hash = log.block_hash.expect("block_hash != none").into();
                 let txn_hash = log.transaction_hash.expect("txn_hash != none").into();
-                let chain = ChainId::from(0u64);
+                let Ok(MessageSent {
+                    sendId,
+                    recipient,
+                    payload,
+                    value,
+                    ..
+                }) = super::IERC7786GatewaySource::MessageSent::decode_log_data(log.data())
+                else {
+                    tracing::warn!(%txn_hash, "MessageSent invalid");
+                    continue;
+                };
+                // validate the message
+                if !value.is_zero() || sendId != keccak256(payload.iter().as_slice()) {
+                    tracing::warn!(%sendId, "Invalid");
+                    continue;
+                }
+                let chain_id =
+                    get_chain_id(std::str::from_utf8(&recipient).expect("invalid UTF-8"))?;
+
+                let Some(watcher) = watchers.get(&chain_id) else {
+                    tracing::warn!(%chain_id, "Missing provider");
+                    continue;
+                };
+                let (_, (_entrypoint, sender, gateway, _provider)) = watcher.pair();
+
+                // construct partial UserOp
+                let userop = Self::new_user_op(sendId, payload, sender, gateway);
+
                 let op = SignUserOp {
                     blk_hash,
                     txn_hash,
-                    chain,
+                    chain_id,
                     userop,
                 };
                 sign_tx.send(op)?;
@@ -149,6 +178,7 @@ impl Signer {
     ///
     /// Calls the Entrypoint contracts to fill in the `nonce` field, and computes the UserOp hash.
     /// Signs the UserOp hash and transmits the signed UserOp to the selected Relayer.
+    #[allow(clippy::too_many_arguments)]
     async fn start_signer(
         chain_id: ChainId,
         state: Arc<State>,
@@ -169,16 +199,16 @@ impl Signer {
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
         while let Ok(SignUserOp {
             mut userop,
-            chain,
+            chain_id,
             txn_hash,
             blk_hash,
         }) = sign_rx.try_recv()
         {
-            let Some(watcher) = watchers.get(&chain) else {
-                tracing::warn!(chain_id = %chain, "Missing provider");
+            let Some(watcher) = watchers.get(&chain_id) else {
+                tracing::warn!(%chain_id, "Missing provider");
                 continue;
             };
-            let (chain_id, (entrypoint, sender, gateway, provider)) = watcher.pair();
+            let (_chain_id, (entrypoint, sender, gateway, provider)) = watcher.pair();
 
             // 1. Retrieve the nonce
             // TODO: Tackle parallel nonce limits e.g. https://www.alchemy.com/docs/wallets/reference/bundler-faqs#parallel-nonces
@@ -190,14 +220,14 @@ impl Signer {
             else {
                 tracing::error!("getNonce()");
                 // retry
-                sign_tx.send(SignUserOp::new(userop, chain, txn_hash, blk_hash))?;
+                sign_tx.send(SignUserOp::new(userop, chain_id, txn_hash, blk_hash))?;
                 continue;
             };
             userop.nonce = nonce;
 
             // 2. Compute the UserOp hash
             let uop_hash = Hash::from_bytes(
-                get_user_op_hash(&userop.clone().into(), *entrypoint, *chain_id)?.as_slice(),
+                get_user_op_hash(&userop.clone().into(), *entrypoint, chain_id)?.as_slice(),
             )?;
 
             // 3. Sign the UserOp hash;
@@ -282,13 +312,19 @@ impl Signer {
     /// Construct a partial UserOp
     ///
     /// Constructs a partial UserOp during the Watching stage; to be completed during the Signing stage.
-    pub fn new_user_op() -> AlloyUserOperation {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_user_op(
+        send_id: B256,
+        payload: Bytes,
+        sender: &Address,
+        gateway: &Address,
+    ) -> AlloyUserOperation {
         AlloyUserOperation {
-            sender: Address::random(),
+            sender: *sender,
             nonce: U256::ZERO,
-            factory: Some(Address::random()),
-            factory_data: Some(Bytes::copy_from_slice(U256::random().as_le_slice())),
-            call_data: Bytes::copy_from_slice(U256::random().as_le_slice()),
+            factory: Some(*gateway),
+            factory_data: Some(Bytes::copy_from_slice(send_id.as_slice())),
+            call_data: payload,
             call_gas_limit: U256::ZERO,
             verification_gas_limit: U256::ZERO,
             pre_verification_gas: U256::ZERO,
