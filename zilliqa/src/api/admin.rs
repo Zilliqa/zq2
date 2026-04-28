@@ -189,7 +189,11 @@ fn import_history(params: Params, node: &Arc<Node>) -> Result<()> {
     let mut params = params.sequence();
     let param: &str = params.next::<&str>()?;
     let path = std::path::Path::new(param);
-    let (block, _, _, _) = load_ckpt_blocks(path)?;
+    let ckpt = load_ckpt_blocks(path)?;
+    let (block, _) = ckpt
+        .blocks
+        .last()
+        .ok_or_else(|| anyhow!("empty checkpoint"))?;
     {
         if node
             .consensus

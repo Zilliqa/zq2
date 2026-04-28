@@ -135,8 +135,16 @@ sol!(
     #[sol(rpc)]
     "tests/it/contracts/Storage.sol"
 );
-#[zilliqa_macros::test(do_checkpoints, restrict_concurrency)]
+// `blocks_per_epoch = 60` is deliberate: the checkpoint's bundled epoch is
+// `blocks_per_epoch` blocks, so replay traverses 60 views past
+// `ckpt.parent.view()`. That exceeds `LAG_BEHIND_CURRENT_VIEW = 50`, which is
+// the threshold for jailing precompile
+#[zilliqa_macros::test(do_checkpoints, blocks_per_epoch = 60, restrict_concurrency)]
 async fn checkpoints_test(mut network: Network) {
+    // With `blocks_per_epoch = 60` and `epochs_per_checkpoint = 2` (set in
+    // `tests/it/main.rs`), the first auto-checkpoint is written at block 120.
+    const CHECKPOINT_BLOCK: u64 = 120;
+
     // Populate network with transactions
     let wallet = network.genesis_wallet().await;
     let (contract_address, _abi) = deploy_contract(
@@ -167,8 +175,12 @@ async fn checkpoints_test(mut network: Network) {
     let scilla_contract_address =
         deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data, 0_u128).await;
 
-    // Run until we can insert a tx in block 20 (note that this transaction may not *always* appear in the desired block, therefore we do not assert its presence later)
-    network.run_until_block_finalized(17, 400).await.unwrap();
+    // Run until we can insert a tx that should land before the checkpoint
+    // boundary
+    network
+        .run_until_block_finalized(CHECKPOINT_BLOCK - 3, 3000)
+        .await
+        .unwrap();
 
     let _hash = *wallet
         .send_transaction(
@@ -180,8 +192,12 @@ async fn checkpoints_test(mut network: Network) {
         .unwrap()
         .tx_hash();
 
-    // wait for checkpoint to happen; and block #20 is finalized.
-    network.run_until_block_finalized(21, 400).await.unwrap();
+    // wait for the auto-checkpoint to happen and a couple of blocks past it
+    // so the checkpoint file is flushed to disk.
+    network
+        .run_until_block_finalized(CHECKPOINT_BLOCK + 3, 3500)
+        .await
+        .unwrap();
 
     let checkpoint_files = network
         .nodes
@@ -193,7 +209,7 @@ async fn checkpoints_test(mut network: Network) {
                 .path()
                 .join(network.shard_id.to_string())
                 .join("checkpoints")
-                .join("20")
+                .join(CHECKPOINT_BLOCK.to_string())
         })
         .collect::<Vec<_>>();
 
@@ -208,7 +224,7 @@ async fn checkpoints_test(mut network: Network) {
     // Create new node and pass it one of those checkpoint files
     let checkpoint_path = checkpoint_files[0].to_str().unwrap().to_owned();
     let checkpoint_hash = wallet
-        .get_block(BlockId::number(20))
+        .get_block(BlockId::number(CHECKPOINT_BLOCK))
         .await
         .unwrap()
         .unwrap()
@@ -221,10 +237,10 @@ async fn checkpoints_test(mut network: Network) {
         ..Default::default()
     });
 
-    // Confirm wallet and new_node_wallet have the same block and state
+    // Confirm wallet and new_node_wallet have the same block and state.
     let new_node_wallet = network.wallet_of_node(new_node_idx).await;
     let latest_block_number = new_node_wallet.get_block_number().await.unwrap();
-    assert_eq!(latest_block_number, 20);
+    assert_eq!(latest_block_number, CHECKPOINT_BLOCK);
 
     let block = wallet
         .get_block(BlockId::number(latest_block_number))
@@ -243,6 +259,17 @@ async fn checkpoints_test(mut network: Network) {
         block_from_checkpoint.header.beneficiary
     );
 
+    let replayed_finalized = network
+        .get_node(new_node_idx)
+        .consensus
+        .read()
+        .get_finalized_view()
+        .unwrap();
+    assert!(
+        replayed_finalized >= CHECKPOINT_BLOCK,
+        "finalized_view was not advanced during checkpoint replay: {replayed_finalized} < {CHECKPOINT_BLOCK}"
+    );
+
     // Check storage
     // Evm
     let call_val = contract.pos1(evm_addr).call().await.unwrap();
@@ -258,7 +285,10 @@ async fn checkpoints_test(mut network: Network) {
     assert_eq!(state["welcome_msg"], "default");
 
     // check the new node catches up and keeps up with block production
-    network.run_until_block_finalized(25, 400).await.unwrap();
+    network
+        .run_until_block_finalized(CHECKPOINT_BLOCK + 10, 800)
+        .await
+        .unwrap();
     network.run_until_synced(new_node_idx).await;
 
     // check account nonce of old wallet

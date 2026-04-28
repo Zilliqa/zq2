@@ -6,10 +6,13 @@ use crate::Network;
 #[zilliqa_macros::test]
 async fn generate_checkpoint(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    network.run_until_block_finalized(5, 800).await.unwrap();
+    // Wait for enough blocks so that the checkpoint's historical range doesn't
+    // include genesis (whose parent doesn't exist). With blocks_per_epoch=10,
+    // checkpointing block 14 gives hist_start=4, so all parents are available.
+    network.run_until_block_finalized(15, 800).await.unwrap();
     let response: Value = wallet
         .client()
-        .request("admin_generateCheckpoint", ["0x4"])
+        .request("admin_generateCheckpoint", ["0xe"])
         .await
         .unwrap();
     assert!(response["file_name"].is_string());
@@ -21,7 +24,7 @@ async fn generate_checkpoint(mut network: Network) {
             .is_empty()
     );
     assert!(!response["hash"].as_str().unwrap().to_string().is_empty());
-    assert_eq!(response["block"], "0x4");
+    assert_eq!(response["block"], "0xe");
 }
 
 #[zilliqa_macros::test]

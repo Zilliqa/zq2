@@ -46,6 +46,7 @@ mod eth;
 mod ots;
 mod penalty;
 mod persistence;
+mod rewards;
 mod staking;
 mod sync;
 mod trace;
@@ -423,7 +424,7 @@ impl Network {
                 gas_price: 4_761_904_800_000u128.into(),
                 main_shard_id: None,
                 blocks_per_epoch,
-                epochs_per_checkpoint: 1,
+                epochs_per_checkpoint: 2,
                 total_native_token_supply: total_native_token_supply_default(),
                 contract_upgrades,
                 forks: vec![],
@@ -610,7 +611,7 @@ impl Network {
                 main_shard_id: None,
                 scilla_address: self.scilla_address.clone(),
                 blocks_per_epoch: self.blocks_per_epoch,
-                epochs_per_checkpoint: 1,
+                epochs_per_checkpoint: 2,
                 scilla_stdlib_dir: self.scilla_stdlib_dir.clone(),
                 scilla_ext_libs_path: scilla_ext_libs_path_default(),
                 total_native_token_supply: total_native_token_supply_default(),
@@ -1112,32 +1113,17 @@ impl Network {
                             trace!(?message);
                         }
                     }
-                    InternalMessage::ExportBlockCheckpoint(
-                        block,
-                        transactions,
-                        parent,
-                        trie_storage,
-                        view_history,
-                        output,
-                        grandparent,
-                    ) => {
+                    InternalMessage::ExportBlockCheckpoint(export) => {
                         assert!(
                             self.do_checkpoints,
                             "Node requested a checkpoint checkpoint export to {}, despite checkpoints beind disabled in the config",
-                            output.to_string_lossy()
+                            export.output_dir.to_string_lossy()
                         );
-                        trace!("Exporting checkpoint to path {}", output.to_string_lossy());
-                        db::checkpoint_block_with_state(
-                            block,
-                            transactions,
-                            parent,
-                            trie_storage.clone(),
-                            *source_shard,
-                            view_history.clone(),
-                            grandparent,
-                            output,
-                        )
-                        .unwrap();
+                        trace!(
+                            "Exporting checkpoint to path {}",
+                            export.output_dir.to_string_lossy()
+                        );
+                        db::checkpoint_block_with_state(*export.clone(), *source_shard).unwrap();
                     }
                     InternalMessage::SubscribeToGossipSubTopic(topic) => {
                         debug!("subscribing to topic {:?}", topic);
@@ -1227,7 +1213,7 @@ impl Network {
                                 // Send to nodes only in the same shard (having same chain_id)
                                 if inner.config.eth_chain_id == sender_chain_id {
                                     // Re-route Proposals from Broadcast to Requests
-                                    match external_message {
+                                    match &external_message {
                                         ExternalMessage::Proposal(_) => inner
                                             .handle_request(
                                                 source,

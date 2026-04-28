@@ -1,5 +1,4 @@
 use std::{
-    cell::LazyCell,
     collections::{BTreeMap, HashMap, VecDeque},
     error::Error,
     fmt::Display,
@@ -12,10 +11,7 @@ use std::{
     time::Duration,
 };
 
-use alloy::{
-    hex,
-    primitives::{Address, U256},
-};
+use alloy::{hex, primitives::Address};
 use anyhow::{Context, Result, anyhow};
 use bitvec::{bitarr, order::Msb0};
 use dashmap::DashMap;
@@ -23,7 +19,6 @@ use eth_trie::{EthTrie, MemoryDB, Trie};
 use itertools::Itertools;
 use k256::pkcs8::der::DateTime;
 use libp2p::PeerId;
-use opentelemetry::KeyValue;
 use parking_lot::{Mutex, RwLock, RwLockWriteGuard};
 use revm::Inspector;
 use serde::{Deserialize, Serialize};
@@ -33,7 +28,7 @@ use tracing::*;
 use crate::{
     api::{admin::merge_history, types::eth::SyncingStruct},
     aux, blockhooks,
-    cfg::{ConsensusConfig, ForkName, NodeConfig},
+    cfg::{ForkName, NodeConfig},
     constants::{
         EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, LAG_BEHIND_CURRENT_VIEW, MISSED_VIEW_WINDOW,
         TIME_TO_ALLOW_PROPOSAL_BROADCAST,
@@ -53,6 +48,7 @@ use crate::{
         PendingOrQueued, TransactionPool, TxAddResult, TxPoolContent, TxPoolContentFrom,
         TxPoolStatus,
     },
+    rewards::{self, Rewards},
     state::{Code, State},
     static_hardfork_data::{
         XSGD_CODE, XSGD_MAINNET_ADDR, build_ignite_wallet_addr_scilla_code_map,
@@ -227,7 +223,7 @@ pub struct Consensus {
     network_message_cache: Option<NetworkMessage>,
     pub high_qc: QuorumCertificate,
     /// The account store.
-    state: State,
+    pub(crate) state: State,
     /// The persistence database
     pub db: Arc<Db>,
     receipts_cache: Mutex<ReceiptsCache>,
@@ -249,6 +245,14 @@ pub struct Consensus {
     in_committee: bool,
     /// Prune interval, if applicable
     prune_period: u64,
+    /// Per-block reward cache used when the `DistributeRewardsEveryEpoch`
+    /// fork is active. Populated as each block is applied and drained at
+    /// epoch boundaries. The `Mutex` is semantically redundant — `Consensus`
+    /// lives inside `Arc<RwLock<Consensus>>` (see `node::Node`), so all
+    /// mutation paths are already serialized — but is required because the
+    /// proposal/vote methods that reach this cache are `&self` (they rely on
+    /// interior mutability for their other caches too).
+    pub(crate) rewards: Mutex<Rewards>,
 }
 
 impl Consensus {
@@ -303,23 +307,17 @@ impl Consensus {
             State::new_with_genesis(db.state_trie()?, config.clone(), db.clone())
         }?;
 
-        let (ckpt_block, ckpt_transactions, ckpt_parent, ckpt_grandparent) =
-            if let Some((block, transactions, parent, view_history, grandparent)) = checkpoint_data
-            {
-                info!(
-                    history = display(&view_history),
-                    "~~~~~~~~~~> found in checkpoint"
-                );
-                *state.view_history.write() = view_history;
-                (
-                    Some(block),
-                    Some(transactions),
-                    Some(parent),
-                    Some(grandparent),
-                )
-            } else {
-                (None, None, None, None)
-            };
+        let ckpt = if let Some((ckpt, view_history)) = checkpoint_data {
+            info!(
+                history = display(&view_history),
+                blocks = ckpt.blocks.len(),
+                "~~~~~~~~~~> found in checkpoint"
+            );
+            *state.view_history.write() = view_history;
+            Some(ckpt)
+        } else {
+            None
+        };
 
         let (latest_block, latest_block_view) = match latest_block {
             Some(l) => (Some(l.clone()), l.view()),
@@ -424,6 +422,7 @@ impl Consensus {
             force_view: None,
             in_committee: true,
             prune_period,
+            rewards: Mutex::new(Rewards::new()),
         };
 
         // If we're at genesis, add the genesis block and return
@@ -485,15 +484,18 @@ impl Consensus {
         // if the node was started without or with a checkpoint older than its finalized view
         if consensus.config.load_checkpoint.is_none()
             || finalized_view
-                > ckpt_block
+                > ckpt
                     .as_ref()
+                    .and_then(|c| c.blocks.last())
                     .expect("Checkpoint block missing")
+                    .0
                     .view()
         {
             // if state_sync but no checkpoint is specified in the config then
             // the already started state syncing will be resumed, otherwise
             // it will be (re)started from the checkpoint specified
-            if state_sync && let Some(ckpt_block) = ckpt_block.as_ref() {
+            if state_sync && let Some((ckpt_block, _)) = ckpt.as_ref().and_then(|c| c.blocks.last())
+            {
                 let new_history = consensus.state.view_history.read().new_at(
                     finalized_view,
                     finalized_view,
@@ -562,32 +564,45 @@ impl Consensus {
             }
         }
 
-        // If we started from a checkpoint
-        if let (Some(block), Some(transactions), Some(parent), Some(_grandparent)) =
-            (ckpt_block, ckpt_transactions, ckpt_parent, ckpt_grandparent)
-        {
-            // if the checkpoint block does not exist, execute the block
+        // If we started from a checkpoint, execute the blocks
+        if let Some(ckpt) = ckpt {
+            let (ckpt_block, _) = ckpt.blocks.last().expect("blocks must not be empty");
+            // if the checkpoint block does not exist, execute the blocks
             if consensus
                 .db
-                .get_transactionless_block(BlockFilter::Hash(block.hash()))?
+                .get_transactionless_block(BlockFilter::Hash(ckpt_block.hash()))?
                 .is_none()
             {
-                // if block is missing, execute the block
-                consensus.state.set_to_root(parent.state_root_hash().into());
-                consensus.execute_block(
-                    None,
-                    &block,
-                    transactions,
-                    &consensus
+                info!(
+                    "Starting execution of all blocks in checkpoints. Count: {}",
+                    ckpt.blocks.len()
+                );
+                let mut block_parent = &ckpt.parent;
+                for (block, transactions) in &ckpt.blocks {
+                    consensus
                         .state
-                        .at_root(parent.state_root_hash().into())
-                        .get_stakers(block.header)?,
-                    true,
-                )?;
+                        .set_to_root(block_parent.state_root_hash().into());
+                    let committee = consensus
+                        .state
+                        .at_root(block_parent.state_root_hash().into())
+                        .get_stakers(block.header)?;
+                    consensus.execute_block(None, block, transactions.clone(), &committee, true)?;
+                    consensus.state.finalized_view = block.view();
+                    consensus.db.set_finalized_view(block.view())?;
+                    block_parent = block;
+                }
+                info!("Completed execution of all checkpoint blocks");
+                // Update finalized view to the checkpoint block so that RPC
+                // queries using BlockId::finalized() see the full replayed state.
+                consensus.state.finalized_view = ckpt_block.view();
+                consensus.db.set_finalized_view(ckpt_block.view())?;
             }
             // set starting point for state-sync/state-migration
             if state_sync {
-                consensus.db.state_trie()?.set_migrate_at(block.number())?;
+                consensus
+                    .db
+                    .state_trie()?
+                    .set_migrate_at(ckpt_block.number())?;
             }
         }
 
@@ -632,6 +647,8 @@ impl Consensus {
         } else {
             consensus.build_new_view()?;
         }
+
+        rewards::warm_reward_cache_on_startup(&consensus)?;
 
         Ok(consensus)
     }
@@ -683,6 +700,19 @@ impl Consensus {
             .get_block(BlockFilter::Height(highest_block_number))
             .unwrap()
             .unwrap()
+    }
+
+    /// Size of the per-block reward cache. Intended for tests that want to
+    /// assert the cache was warmed / populated.
+    pub fn rewards_cache_len(&self) -> usize {
+        self.rewards.lock().len()
+    }
+
+    /// Recompute the `Reward` for a given block hash by re-reading it from
+    /// the database. Does not touch the cache. Intended for tests that want
+    /// to compare per-block rewards against the aggregated epoch payout.
+    pub fn preview_reward_at(&self, hash: Hash) -> Result<rewards::Reward> {
+        rewards::reward_from_db(&self.db, &self.state, &self.config.consensus, hash)
     }
 
     pub fn get_highest_canonical_block_number(&self) -> u64 {
@@ -1005,6 +1035,8 @@ impl Consensus {
             let from = (self.peer_id() != from || !during_sync).then_some(from);
             self.execute_block(from, &block, transactions, &stakers, during_sync)?;
 
+            self.check_and_commit(&block)?;
+
             if view != proposal_view + 1 {
                 view = proposal_view + 1;
                 // We will send a vote in this view.
@@ -1083,110 +1115,6 @@ impl Consensus {
         }
 
         Ok(None)
-    }
-
-    /// For a given State apply a Proposal's rewards. Must be performed at the tail-end of the Proposal's processing.
-    /// Note that the algorithm below is mentioned in cfg.rs - if you change the way
-    /// rewards are calculated, please change the comments in the configuration structure there.
-    fn apply_rewards_late_at(
-        parent_block: &Block,
-        at_state: &mut State,
-        config: &ConsensusConfig,
-        committee: &[NodePublicKey],
-        proposer: NodePublicKey,
-        block: &Block,
-    ) -> Result<()> {
-        let earned_reward = LazyCell::new(|| {
-            let meter = opentelemetry::global::meter("zilliqa");
-            meter
-                .f64_counter("validator_earned_reward")
-                .with_unit("ZIL")
-                .build()
-        });
-
-        debug!("apply late rewards in view {}", block.view());
-        let rewards_per_block: u128 = *config.rewards_per_hour / config.blocks_per_hour as u128;
-
-        // Get the reward addresses from the parent state
-        let parent_state = at_state.at_root(parent_block.state_root_hash().into());
-
-        let proposer_address = parent_state.get_reward_address(proposer)?;
-
-        let cosigner_stake: Vec<_> = committee
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| block.header.qc.cosigned[*i])
-            .map(|(_, pub_key)| {
-                let reward_address = parent_state.get_reward_address(*pub_key).unwrap();
-                let stake = parent_state
-                    .get_stake(*pub_key, block.header)
-                    .unwrap()
-                    .unwrap()
-                    .get();
-                (reward_address, stake)
-            })
-            .collect();
-
-        let total_cosigner_stake = cosigner_stake.iter().fold(0, |sum, c| sum + c.1);
-        if total_cosigner_stake == 0 {
-            return Err(anyhow!("total stake is 0"));
-        }
-
-        // Track total awards given out. This may be different to rewards_per_block because we round down on division when we split the rewards
-        let mut total_rewards_issued = 0;
-
-        // Reward the Proposer
-        if let Some(proposer_address) = proposer_address {
-            let reward = rewards_per_block / 2;
-            at_state.mutate_account(proposer_address, |a| {
-                a.balance = a
-                    .balance
-                    .checked_add(reward)
-                    .ok_or_else(|| anyhow!("Overflow occured in proposer account balance"))?;
-                Ok(())
-            })?;
-            total_rewards_issued += reward;
-
-            let attributes = [
-                KeyValue::new("address", format!("{proposer_address:?}")),
-                KeyValue::new("role", "proposer"),
-            ];
-            earned_reward.add((reward as f64) / 1e18, &attributes);
-        }
-
-        // Reward the committee
-        for (reward_address, stake) in cosigner_stake {
-            if let Some(cosigner) = reward_address {
-                let reward = (U256::from(rewards_per_block / 2) * U256::from(stake)
-                    / U256::from(total_cosigner_stake))
-                .to::<u128>();
-                at_state.mutate_account(cosigner, |a| {
-                    a.balance = a
-                        .balance
-                        .checked_add(reward)
-                        .ok_or(anyhow!("Overflow occured in cosigner account balance"))?;
-                    Ok(())
-                })?;
-                total_rewards_issued += reward;
-
-                let attributes = [
-                    KeyValue::new("address", format!("{cosigner:?}")),
-                    KeyValue::new("role", "cosigner"),
-                ];
-                earned_reward.add((reward as f64) / 1e18, &attributes);
-            }
-        }
-
-        // ZIP-9: Fund rewards amount from zero account
-        at_state.mutate_account(Address::ZERO, |a| {
-            a.balance = a
-                .balance
-                .checked_sub(total_rewards_issued)
-                .ok_or(anyhow!("No funds left in zero account"))?;
-            Ok(())
-        })?;
-
-        Ok(())
     }
 
     /// For a given State apply the given transaction
@@ -1481,6 +1409,8 @@ impl Consensus {
         };
         proposal.header.qc = final_qc;
 
+        let pre_reward_hash = proposal.hash();
+
         self.apply_proposal_to_state(
             &mut state,
             &proposal,
@@ -1508,6 +1438,9 @@ impl Consensus {
             proposal.header.randao_reveal,
             proposal.header.mix_hash,
         );
+
+        self.rewards.lock().rekey(pre_reward_hash, proposal.hash());
+
         self.receipts_cache
             .lock()
             .set_hash(proposal.header.receipts_root_hash);
@@ -2288,10 +2221,7 @@ impl Consensus {
                     return Ok(false);
                 };
                 match self.block_extends_from(proposal, &qc_block) {
-                    Ok(true) => {
-                        self.check_and_commit(proposal)?;
-                        Ok(true)
-                    }
+                    Ok(true) => Ok(true),
                     Ok(false) => {
                         trace!("block does not extend from parent");
                         Ok(false)
@@ -2311,7 +2241,6 @@ impl Consensus {
                     return Ok(false);
                 };
                 if proposal.view() == 0 || proposal.view() == qc_block.view() + 1 {
-                    self.check_and_commit(proposal)?;
                     Ok(true)
                 } else {
                     trace!(
@@ -2471,6 +2400,14 @@ impl Consensus {
             }
         }
 
+        // Retain one epoch of reward snapshots behind the finalized tip: at
+        // any epoch boundary we walk back to the start of the current epoch,
+        // so one epoch is the minimum safe retention window.
+        let retention = self.config.consensus.blocks_per_epoch;
+        self.rewards
+            .lock()
+            .prune_below(block.number().saturating_sub(retention));
+
         Ok(())
     }
 
@@ -2512,61 +2449,103 @@ impl Consensus {
         let block = self
             .get_canonical_block_by_number(block_number)?
             .ok_or(anyhow!("No such block number {block_number}"))?;
-        let parent = self
-            .db
-            .get_block(block.parent_hash().into())?
-            .ok_or(anyhow!(
-                "Trying to checkpoint block, but we don't have its parent"
-            ))?;
-        let grandparent = self
-            .db
-            .get_block(parent.parent_hash().into())?
-            .ok_or(anyhow!(
-                "Trying to checkpoint block, but we don't have its grandparent"
-            ))?;
         let transactions: Vec<SignedTransaction> = block
             .transactions
             .iter()
             .map(|txn_hash| {
                 let tx = self.db.get_transaction(txn_hash)?.ok_or(anyhow!(
-                    "failed to fetch transaction {} for checkpoint parent {}",
+                    "failed to fetch transaction {} for checkpoint block {}",
                     txn_hash,
-                    parent.hash()
+                    block.hash()
                 ))?;
                 Ok::<_, anyhow::Error>(tx.tx)
             })
             .collect::<Result<Vec<SignedTransaction>>>()?;
+
+        // Collect historical blocks for distribute_rewards_every_epoch.
+        // Range: [block_number - blocks_per_epoch + 1, block_number - 1].
+        // We start one block AFTER the previous epoch boundary so that epoch_parent
+        // (parent of first historical block) is the boundary block whose state already
+        // includes the previous epoch's reward distribution. This avoids needing two
+        // epochs of blocks in the checkpoint.
+        let blocks_per_epoch = self.config.consensus.blocks_per_epoch;
+        let hist_start = block_number.saturating_sub(blocks_per_epoch - 1);
+        let hist_end = block_number.saturating_sub(1);
+        let mut historical_blocks: Vec<(Block, Vec<SignedTransaction>)> = Vec::new();
+        if hist_start < block_number {
+            let hist_data = self
+                .db
+                .get_canonical_blocks_and_receipts_and_transactions_by_height_range(
+                    hist_start..=hist_end,
+                )?;
+            for data in hist_data {
+                let signed_txns: Vec<SignedTransaction> =
+                    data.transactions.into_iter().map(|vt| vt.tx).collect();
+                historical_blocks.push((data.block, signed_txns));
+            }
+        }
+
+        // v3.2: epoch_parent = parent of the first block in the epoch (state root source).
+        // epoch_grandparent = epoch_parent's parent.
+        let epoch_parent = if let Some((first_hist, _)) = historical_blocks.first() {
+            self.db
+                .get_block(first_hist.parent_hash().into())?
+                .ok_or(anyhow!(
+                    "Missing parent of first historical block {}",
+                    first_hist.number()
+                ))?
+        } else {
+            // No historical blocks: fall back to checkpoint block's direct parent
+            self.db
+                .get_block(block.parent_hash().into())?
+                .ok_or(anyhow!(
+                    "Trying to checkpoint block, but we don't have its parent"
+                ))?
+        };
+        let epoch_grandparent = self
+            .db
+            .get_block(epoch_parent.parent_hash().into())?
+            .ok_or(anyhow!(
+                "Trying to checkpoint block, but we don't have the epoch grandparent"
+            ))?;
+
         let checkpoint_dir = self
             .db
             .get_checkpoint_dir()?
             .ok_or(anyhow!("No checkpoint directory configured"))?;
         let file_name = db::get_checkpoint_filename(checkpoint_dir.clone(), &block)?;
         let hash = block.hash();
-        let missed_view_age = self.config.max_missed_view_age; //constants::MISSED_VIEW_WINDOW;
-        // after loading the checkpoint we will need the leader of its parent block, but also
-        // have to include the potential missed views between the checkpoint block and its parent
-        let view_history =
-            self.state
-                .view_history
-                .read()
-                .new_at(parent.view(), block.view(), missed_view_age);
+        let missed_view_age = self.config.max_missed_view_age;
+        // View history must cover from epoch_parent to checkpoint block so that
+        // leaders can be resolved during epoch replay on load.
+        let view_history = self.state.view_history.read().new_at(
+            epoch_parent.view(),
+            block.view(),
+            missed_view_age,
+        );
         info!(
             view = self.get_view()?,
-            ckpt_parent_view = parent.view(),
+            epoch_parent_view = epoch_parent.view(),
             ckpt_block_view = block.view(),
             view_history = display(&view_history),
-            "~~~~~~~~~~> saving checkpoint in current"
+            historical_blocks = historical_blocks.len(),
+            "~~~~~~~~~~> saving checkpoint"
         );
+        historical_blocks.push((block, transactions));
+        let export = crate::checkpoint::CheckpointExport {
+            data: crate::checkpoint::CheckpointBlocks {
+                grandparent: epoch_grandparent,
+                parent: epoch_parent,
+                blocks: historical_blocks,
+            },
+            trie_storage: self.db.state_trie()?,
+            view_history,
+            output_dir: checkpoint_dir,
+        };
         self.message_sender
-            .send_message_to_coordinator(InternalMessage::ExportBlockCheckpoint(
-                Box::new(block),
-                transactions,
-                Box::new(parent),
-                self.db.state_trie()?,
-                view_history,
-                checkpoint_dir,
-                Box::new(grandparent),
-            ))?;
+            .send_message_to_coordinator(InternalMessage::ExportBlockCheckpoint(Box::new(
+                export,
+            )))?;
         Ok((file_name.display().to_string(), hash.to_string()))
     }
 
@@ -3072,7 +3051,7 @@ impl Consensus {
         Self::leader_at_state(&state_at, block, parent_mix_hash, view)
     }
 
-    fn leader_at_state(
+    pub(crate) fn leader_at_state(
         state: &State,
         block: &Block,
         parent_mix_hash: Option<Hash>,
@@ -3526,40 +3505,52 @@ impl Consensus {
         committee: &[NodePublicKey],
         cumulative_gas_fee: u128,
     ) -> Result<()> {
-        // Apply the rewards of previous round
-        let grandparent_mix_hash = self
-            .get_block(&parent.parent_hash())
-            .ok()
-            .flatten()
-            .and_then(|block| block.header.mix_hash);
+        let fork = self.state.forks.get(block.header.number).clone();
 
-        let proposer = self
-            .leader_at_block(parent, grandparent_mix_hash, block.view())
-            .unwrap();
-        Self::apply_rewards_late_at(
-            parent,
-            state,
-            &self.config.consensus,
-            committee,
-            proposer.public_key,
-            block,
-        )?;
-
-        // ZIP-9: Sink gas to zero account
-        let fork = state.forks.get(block.header.number).clone();
-        let gas_fee_amount = if fork.transfer_gas_fee_to_zero_account {
-            cumulative_gas_fee
+        if fork.distribute_rewards_every_epoch {
+            rewards::apply_for_blocks_in_epoch(
+                self,
+                state,
+                block,
+                parent,
+                committee,
+                cumulative_gas_fee,
+            )?;
         } else {
-            block.gas_used().0 as u128
-        };
+            // Apply the rewards of previous round
+            let grandparent_mix_hash = self
+                .get_block(&parent.parent_hash())
+                .ok()
+                .flatten()
+                .and_then(|block| block.header.mix_hash);
 
-        state.mutate_account(Address::ZERO, |a| {
-            a.balance = a
-                .balance
-                .checked_add(gas_fee_amount)
-                .ok_or(anyhow!("Overflow occurred in zero account balance"))?;
-            Ok(())
-        })?;
+            let proposer = self
+                .leader_at_block(parent, grandparent_mix_hash, block.view())
+                .unwrap();
+            rewards::apply_for_single_block(
+                parent,
+                state,
+                &self.config.consensus,
+                committee,
+                proposer.public_key,
+                block,
+            )?;
+
+            // ZIP-9: Sink gas to zero account
+            let gas_fee_amount = if fork.transfer_gas_fee_to_zero_account {
+                cumulative_gas_fee
+            } else {
+                block.gas_used().0 as u128
+            };
+
+            state.mutate_account(Address::ZERO, |a| {
+                a.balance = a
+                    .balance
+                    .checked_add(gas_fee_amount)
+                    .ok_or(anyhow!("Overflow occurred in zero account balance"))?;
+                Ok(())
+            })?;
+        }
 
         if !fork.fund_accounts_from_zero_account.is_empty()
             && let Some(fork_height) = self

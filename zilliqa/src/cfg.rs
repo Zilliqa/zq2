@@ -448,7 +448,7 @@ pub fn failed_request_sleep_duration_default() -> Duration {
 }
 
 pub fn max_missed_view_age_default() -> u64 {
-    MISSED_VIEW_WINDOW
+    MISSED_VIEW_WINDOW * (blocks_per_epoch_default() + 1)
 }
 
 /// Wrapper for [u128] that (de)serializes with a string. `serde_toml` does not support `u128`s.
@@ -719,6 +719,7 @@ impl Forks {
                 ForkName::ScillaCallGasExemptAddrsV2 => {
                     fork.scilla_call_gas_exempt_addrs_v2.length() != 0
                 }
+                ForkName::DistributeRewardsEveryEpoch => fork.distribute_rewards_every_epoch,
             } {
                 return Some(fork.at_height);
             }
@@ -768,6 +769,7 @@ pub struct Fork {
     pub scilla_call_gas_exempt_addrs_v2: Vec<Address>,
     pub randao_support: bool,
     pub evm_to_scilla_strings_encoded_properly: bool,
+    pub distribute_rewards_every_epoch: bool,
 }
 
 pub enum ForkName {
@@ -795,6 +797,7 @@ pub enum ForkName {
     UseMaxGasPriorityFee,
     ValidatorJailing,
     ScillaCallGasExemptAddrsV2,
+    DistributeRewardsEveryEpoch,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -918,6 +921,8 @@ pub struct ForkDelta {
     pub randao_support: Option<bool>,
     /// if true, strings passed from EVM to Scilla via interop are properly JSON-encoded
     pub evm_to_scilla_strings_encoded_properly: Option<bool>,
+    /// if true, rewards are distributed every epoch instead of every block
+    pub distribute_rewards_every_epoch: Option<bool>,
 }
 
 impl Fork {
@@ -1033,6 +1038,9 @@ impl Fork {
             evm_to_scilla_strings_encoded_properly: delta
                 .evm_to_scilla_strings_encoded_properly
                 .unwrap_or(self.evm_to_scilla_strings_encoded_properly),
+            distribute_rewards_every_epoch: delta
+                .distribute_rewards_every_epoch
+                .unwrap_or(self.distribute_rewards_every_epoch),
         }
     }
 }
@@ -1139,6 +1147,7 @@ pub fn genesis_fork_default() -> Fork {
         scilla_call_gas_exempt_addrs_v2: vec![],
         randao_support: true,
         evm_to_scilla_strings_encoded_properly: true,
+        distribute_rewards_every_epoch: true,
     }
 }
 
@@ -1318,6 +1327,7 @@ mod tests {
                 scilla_call_gas_exempt_addrs_v2: vec![],
                 randao_support: None,
                 evm_to_scilla_strings_encoded_properly: None,
+                distribute_rewards_every_epoch: None,
             }],
             ..Default::default()
         };
@@ -1379,6 +1389,7 @@ mod tests {
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: Some(false),
                     evm_to_scilla_strings_encoded_properly: None,
+                    distribute_rewards_every_epoch: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1420,6 +1431,7 @@ mod tests {
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: None,
                     evm_to_scilla_strings_encoded_properly: None,
+                    distribute_rewards_every_epoch: None,
                 },
             ],
             ..Default::default()
@@ -1498,6 +1510,7 @@ mod tests {
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: None,
                     evm_to_scilla_strings_encoded_properly: None,
+                    distribute_rewards_every_epoch: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1539,6 +1552,7 @@ mod tests {
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: None,
                     evm_to_scilla_strings_encoded_properly: None,
+                    distribute_rewards_every_epoch: None,
                 },
             ],
             ..Default::default()
@@ -1605,6 +1619,7 @@ mod tests {
                 scilla_call_gas_exempt_addrs_v2: vec![],
                 randao_support: true,
                 evm_to_scilla_strings_encoded_properly: true,
+                distribute_rewards_every_epoch: true,
             },
             forks: vec![],
             ..Default::default()
@@ -1659,6 +1674,7 @@ mod tests {
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: None,
                     evm_to_scilla_strings_encoded_properly: None,
+                    distribute_rewards_every_epoch: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1700,6 +1716,7 @@ mod tests {
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: None,
                     evm_to_scilla_strings_encoded_properly: None,
+                    distribute_rewards_every_epoch: None,
                 },
             ],
             ..Default::default()
