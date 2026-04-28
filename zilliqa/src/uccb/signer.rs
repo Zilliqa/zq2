@@ -1,4 +1,4 @@
-use std::{str::FromStr as _, sync::Arc};
+use std::sync::Arc;
 
 // use super::AlloyUserOperation;
 use alloy::{
@@ -6,16 +6,17 @@ use alloy::{
         Address, Bytes, ChainId, U256,
         aliases::{B32, U192},
     },
-    providers::{Provider as _, ProviderBuilder},
+    providers::Provider as _,
     rpc::types::{Filter, PackedUserOperation as AlloyUserOperation},
     sol_types::{SolEvent, SolValue},
 };
 use anyhow::{Context, Result};
-use dashmap::DashMap;
 use itertools::Itertools as _;
-use jsonrpsee::client_transport::ws::Url;
 use libp2p::PeerId;
-use tokio::task::JoinSet;
+use tokio::{
+    sync::mpsc::{UnboundedReceiver, UnboundedSender},
+    task::JoinSet,
+};
 use tokio_stream::StreamExt as _;
 
 use crate::{
@@ -50,75 +51,77 @@ impl Signer {
         secret_key: SecretKey,
         db: Arc<Db>,
         message_sender: Arc<MessageSender>,
+        watchers: Arc<super::Providers>,
     ) -> Result<Self> {
+        let chain_id = ChainId::from(config.eth_chain_id);
         let state = Arc::new(State::new(db.state_trie()?, &config, db.clone())?);
         let mut workers = JoinSet::new();
+        let (sign_tx, sign_rx) = tokio::sync::mpsc::unbounded_channel::<SignUserOp>();
 
-        workers.spawn(async move {
-            if let Err(err) =
-                Self::start_signer(state, db, config, secret_key, message_sender).await
-            {
-                tracing::error!(%err, "SIGNER error");
-            }
-        });
+        {
+            let state = state.clone();
+            let db = db.clone();
+            let watchers = watchers.clone();
+            let sign_tx = sign_tx.clone();
+            workers.spawn(async move {
+                if let Err(err) = Self::start_signer(
+                    chain_id,
+                    state,
+                    db,
+                    secret_key,
+                    message_sender,
+                    watchers,
+                    sign_rx,
+                    sign_tx,
+                )
+                .await
+                {
+                    tracing::error!(%err, "SIGNER error");
+                }
+            });
+        }
+
+        {
+            let config = config.clone();
+            let watchers = watchers.clone();
+            workers.spawn(async move {
+                if let Err(err) = Self::start_watcher(chain_id, config, watchers, sign_tx).await {
+                    tracing::error!(%err, "SIGNER error");
+                }
+            });
+        }
 
         Ok(Self { workers })
     }
 
-    /// Signs the UserOp
+    /// Watch for Events
     ///
     /// Opens persistent connections to each remote chain; and monitors the logs for MessageSent events.
-    /// Calls the Entrypoint contracts to fill in the `nonce` field, and computes the UserOp hash.
-    /// Signs the UserOp hash and transmits the signed UserOp to the selected Relayer.
-    async fn start_signer(
-        state: Arc<State>,
-        db: Arc<Db>,
+    async fn start_watcher(
+        chain_id: ChainId,
         config: NodeConfig,
-        secret_key: SecretKey,
-        message_sender: Arc<MessageSender>,
+        watchers: Arc<super::Providers>,
+        sign_tx: UnboundedSender<SignUserOp>,
     ) -> Result<()> {
-        let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
-        let chain_id = ChainId::from(config.eth_chain_id);
-        // used to call Entrypoint contracts
-        let watchers = DashMap::with_capacity(config.remote_chains.len());
-        let mut watch_rx = futures::stream::SelectAll::new();
-        for watcher in config.remote_chains.iter() {
-            let url = Url::from_str(&watcher.watcher_url)?;
-            let provider = ProviderBuilder::new().connect(url.as_str()).await?;
-            match provider.get_chain_id().await {
-                Ok(id) => {
-                    if chain_id == id {
-                        tracing::debug!(%url, "Signer");
-                        let filter = Filter::new().address(watcher.gateway).event_signature(
-                            super::IERC7786GatewaySource::MessageSent::SIGNATURE_HASH,
-                        );
-                        let stream = provider.watch_logs(&filter).await?.into_stream();
-                        watch_rx.push(stream);
-                        watchers.insert(
-                            id,
-                            (
-                                watcher.entrypoint,
-                                watcher.sender,
-                                watcher.gateway,
-                                provider,
-                            ),
-                        );
-                        continue;
-                    }
-                    tracing::error!(%url, "Signer mismatch {} != {:?}", id, chain_id);
-                }
-                Err(err) => tracing::error!(%err, "Signer error"),
-            }
-        }
-
-        tracing::info!(chains=%watchers.len(), "Signer-{}", chain_id);
+        tracing::info!(chains=%watchers.len(), "Watcher-{}", chain_id);
         if watchers.is_empty() {
-            tracing::warn!("Signer-{} terminated", chain_id);
+            tracing::warn!("Watcher-{} terminated", chain_id);
             return Ok(());
         }
 
-        // TODO: Spawn multiple threads to sign messages in parallel
-        let (sign_tx, mut sign_rx) = tokio::sync::mpsc::unbounded_channel::<SignUserOp>();
+        // Listen for events
+        let mut watch_rx = futures::stream::SelectAll::new();
+        for remote in config.remote_chains.iter() {
+            if let Some(watcher) = watchers.get(&remote.chain_id) {
+                let (_, (_, gateway, _, watcher)) = watcher.pair();
+                let filter = Filter::new()
+                    .address(*gateway)
+                    .event_signature(super::IERC7786GatewaySource::MessageSent::SIGNATURE_HASH);
+                let stream = watcher.watch_logs(&filter).await?.into_stream();
+                watch_rx.push(stream);
+            }
+        }
+
         while let Some(logs) = watch_rx.next().await {
             for log in logs {
                 if log.removed {
@@ -126,6 +129,7 @@ impl Signer {
                 }
                 // construct partial UserOp
                 let userop = Self::new_user_op();
+
                 let blk_hash = log.block_hash.expect("block_hash != none").into();
                 let txn_hash = log.transaction_hash.expect("txn_hash != none").into();
                 let chain = ChainId::from(0u64);
@@ -137,77 +141,89 @@ impl Signer {
                 };
                 sign_tx.send(op)?;
             }
+        }
+        Ok(())
+    }
 
-            // process user ops
-            while let Ok(SignUserOp {
-                mut userop,
-                chain,
-                txn_hash,
-                blk_hash,
-            }) = sign_rx.try_recv()
-            {
-                let Some(watcher) = watchers.get(&chain) else {
-                    tracing::warn!(chain_id = %chain, "Missing provider");
-                    continue;
+    /// Sign the UserOps
+    ///
+    /// Calls the Entrypoint contracts to fill in the `nonce` field, and computes the UserOp hash.
+    /// Signs the UserOp hash and transmits the signed UserOp to the selected Relayer.
+    async fn start_signer(
+        chain_id: ChainId,
+        state: Arc<State>,
+        db: Arc<Db>,
+        secret_key: SecretKey,
+        message_sender: Arc<MessageSender>,
+        watchers: Arc<super::Providers>,
+        mut sign_rx: UnboundedReceiver<SignUserOp>,
+        sign_tx: UnboundedSender<SignUserOp>,
+    ) -> Result<()> {
+        tracing::info!(chains=%watchers.len(), "Signer-{}", chain_id);
+        if watchers.is_empty() {
+            tracing::warn!("Signer-{} terminated", chain_id);
+            return Ok(());
+        }
+
+        // process user ops
+        let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
+        while let Ok(SignUserOp {
+            mut userop,
+            chain,
+            txn_hash,
+            blk_hash,
+        }) = sign_rx.try_recv()
+        {
+            let Some(watcher) = watchers.get(&chain) else {
+                tracing::warn!(chain_id = %chain, "Missing provider");
+                continue;
+            };
+            let (chain_id, (entrypoint, sender, gateway, provider)) = watcher.pair();
+
+            // 1. Retrieve the nonce
+            // TODO: Tackle parallel nonce limits e.g. https://www.alchemy.com/docs/wallets/reference/bundler-faqs#parallel-nonces
+            let key = Self::pack_nonce_key(gateway, &txn_hash);
+            let Ok(nonce) = super::IEntryPointNonces::new(*entrypoint, provider)
+                .getNonce(*sender, key)
+                .call()
+                .await
+            else {
+                tracing::error!("getNonce()");
+                // retry
+                sign_tx.send(SignUserOp::new(userop, chain, txn_hash, blk_hash))?;
+                continue;
+            };
+            userop.nonce = nonce;
+
+            // 2. Compute the UserOp hash
+            let uop_hash = Hash::from_bytes(
+                get_user_op_hash(&userop.clone().into(), *entrypoint, *chain_id)?.as_slice(),
+            )?;
+
+            // 3. Sign the UserOp hash;
+            let sig = secret_key
+                .as_bls()
+                .sign(blsful::SignatureSchemes::Basic, uop_hash.as_bytes())
+                .unwrap();
+            userop.signature = sig.as_raw_value().to_compressed().into();
+
+            // 4. Send it to the RELAY_SET
+            let relay_set = Self::get_relay_set(blk_hash, txn_hash, state.clone(), db.clone())?;
+            for peer in relay_set {
+                let uop = if peer == peer_id {
+                    // Only send userop to self - userop_hash assures integrity
+                    Some(userop.clone())
+                } else {
+                    None
                 };
-
-                let (chain_id, (entrypoint, sender, gateway, provider)) = watcher.pair();
-                if chain != *chain_id {
-                    tracing::error!("ChainId mistmatch");
-                    continue;
-                }
-
-                // 1. Retrieve the nonce; if not yet done
-                if userop.nonce.is_zero() {
-                    let key = Self::pack_nonce_key(gateway, &txn_hash);
-                    let Ok(nonce) = super::INonceManager::new(*entrypoint, provider)
-                        .getNonce(*sender, key)
-                        .call()
-                        .await
-                    else {
-                        tracing::error!("getNonce()");
-                        // retry
-                        sign_tx.send(SignUserOp {
-                            userop,
-                            chain,
-                            txn_hash,
-                            blk_hash,
-                        })?;
-                        continue;
-                    };
-                    userop.nonce = nonce;
-                }
-
-                // 2. Compute the UserOp hash
-                let uop_hash = Hash::from_bytes(
-                    get_user_op_hash(&userop.clone().into(), *entrypoint, *chain_id)?.as_slice(),
-                )?;
-
-                // 3. Sign the UserOp hash;
-                let sig = secret_key
-                    .as_bls()
-                    .sign(blsful::SignatureSchemes::Basic, uop_hash.as_bytes())
-                    .unwrap();
-                userop.signature = sig.as_raw_value().to_compressed().into();
-
-                // 4. Send it to the RELAY_SET
-                let relay_set = Self::get_relay_set(blk_hash, txn_hash, state.clone(), db.clone())?;
-                for peer in relay_set {
-                    let uop = if peer == peer_id {
-                        // Only send userop to self - userop_hash assures integrity
-                        Some(userop.clone())
-                    } else {
-                        None
-                    };
-                    let msg = ExternalMessage::UccbUserOp(UccbUserOp {
-                        userop_hash: uop_hash,
-                        block_hash: blk_hash,
-                        public_key: secret_key.node_public_key(),
-                        userop: uop,
-                        signature: sig.into(),
-                    });
-                    message_sender.send_external_message(peer, msg)?;
-                }
+                let msg = ExternalMessage::UccbUserOp(UccbUserOp {
+                    userop_hash: uop_hash,
+                    block_hash: blk_hash,
+                    public_key: secret_key.node_public_key(),
+                    userop: uop,
+                    signature: sig.into(),
+                });
+                message_sender.send_external_message(peer, msg)?;
             }
         }
         Ok(())

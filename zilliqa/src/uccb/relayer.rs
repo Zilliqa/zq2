@@ -1,9 +1,9 @@
-use std::{num::NonZeroUsize, str::FromStr as _, sync::Arc};
+use std::{num::NonZeroUsize, sync::Arc};
 
 // use super::AlloyUserOperation;
 use alloy::{
     primitives::Address,
-    providers::{Provider, ProviderBuilder},
+    providers::Provider,
     rpc::types::{
         PackedUserOperation as AlloyUserOperation, SendUserOperation, SendUserOperationResponse,
     },
@@ -11,9 +11,7 @@ use alloy::{
 };
 use anyhow::{Context, Result};
 use blsful::{Bls12381G2Impl, Signature};
-use dashmap::DashMap;
 use itertools::Itertools as _;
-use jsonrpsee::client_transport::ws::Url;
 use libp2p::PeerId;
 use parking_lot::RwLock;
 use tokio::{
@@ -52,7 +50,12 @@ impl Drop for Relayer {
 impl Relayer {
     /// Constructs a RELAYER node.
     ///
-    pub async fn new(config: NodeConfig, secret_key: SecretKey, db: Arc<Db>) -> Result<Self> {
+    pub async fn new(
+        config: NodeConfig,
+        secret_key: SecretKey,
+        db: Arc<Db>,
+        bundlers: Arc<super::Providers>,
+    ) -> Result<Self> {
         let (relay_tx, relay_rx) = tokio::sync::mpsc::unbounded_channel::<RelayUserOp>();
         let address = secret_key.to_evm_address();
         let state = State::new(db.state_trie()?, &config, db.clone())?;
@@ -64,7 +67,7 @@ impl Relayer {
 
         let tx = relay_tx.clone();
         workers.spawn(async move {
-            if let Err(err) = Self::start_relayer(config, relay_rx, tx).await {
+            if let Err(err) = Self::start_relayer(config, relay_rx, tx, bundlers).await {
                 tracing::error!(%err, "Relayer exception");
             }
         });
@@ -89,30 +92,9 @@ impl Relayer {
         config: NodeConfig,
         mut relay_rx: UnboundedReceiver<RelayUserOp>,
         relay_tx: UnboundedSender<RelayUserOp>,
+        bundlers: Arc<super::Providers>,
     ) -> Result<()> {
-        // used for submitting UserOp
         let chain_id = config.eth_chain_id;
-        let bundlers = DashMap::with_capacity(config.remote_chains.len());
-        for bundler in config.remote_chains.iter() {
-            let url = Url::from_str(&bundler.bundler_url)?;
-            let provider = ProviderBuilder::new().connect(url.as_str()).await?;
-            match provider
-                .raw_request::<(), Vec<Address>>("eth_supportedEntryPoints".into(), ())
-                .await
-            {
-                Ok(entrypoints) => {
-                    let entrypoint = bundler.entrypoint;
-                    if entrypoints.contains(&entrypoint) {
-                        tracing::debug!(%url, "Relayer");
-                        bundlers.insert(bundler.chain_id, (entrypoint, provider));
-                        continue;
-                    }
-                    tracing::error!(%url, "Relayer mismatch {} != {:?}", entrypoint, entrypoints);
-                }
-                Err(err) => tracing::error!(%err, "Relayer error"),
-            }
-        }
-
         tracing::info!(chains=%bundlers.len(), "Relayer-{}", chain_id);
         if bundlers.is_empty() {
             tracing::warn!("Relayer-{} terminated", chain_id);
@@ -125,7 +107,7 @@ impl Relayer {
                 tracing::warn!(chain_id = %op.chain, "UserOp missing bundler");
                 continue;
             };
-            let (_, (entrypoint, bundler)) = bundler.pair();
+            let (_, (entrypoint, _, _, bundler)) = bundler.pair();
 
             let send_op = SendUserOperation::EntryPointV07(op.userop.clone());
             match bundler
@@ -192,6 +174,7 @@ impl Relayer {
             .write()
             .get_or_insert_mut_ref(&userop_hash, BlsUserOp::default);
 
+        // use only the UserOp we constructed ourselves.
         if userop.is_some() && peer_id == self.peer_id {
             bop.userop = userop;
         }

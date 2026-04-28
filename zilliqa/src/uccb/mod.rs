@@ -1,12 +1,18 @@
-use std::sync::Arc;
+use std::{str::FromStr as _, sync::Arc};
 
 use alloy::{
     primitives::{Address, B256, Bytes, ChainId, address},
+    providers::{
+        Identity, Provider as _, ProviderBuilder, RootProvider,
+        fillers::{BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller},
+    },
     rpc::types::PackedUserOperation as AlloyUserOperation,
     sol,
     sol_types::SolValue as _,
 };
 use anyhow::Result;
+use dashmap::DashMap;
+use jsonrpsee::client_transport::ws::Url;
 use libp2p::PeerId;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -29,6 +35,11 @@ pub const ENTRYPOINT_V07: Address = address!("0x0000000071727de22e5e9d8baf0edac6
 pub const ENTRYPOINT_V08: Address = address!("0x4337084d9e255ff0702461cf8895ce9e3b5ff108");
 pub const ENTRYPOINT_V09: Address = address!("0x433709009B8330FDa32311DF1C2AFA402eD8D009");
 
+sol!(
+    #[sol(rpc)]
+    "../vendor/openzeppelin-contracts/contracts/interfaces/draft-IERC4337.sol"
+);
+
 sol! {
     // https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/interfaces/draft-IERC7786.sol
     interface IERC7786GatewaySource {
@@ -41,33 +52,6 @@ sol! {
             bytes[] attributes
         );
     }
-
-    // https://github.com/eth-infinitism/account-abstraction/tree/develop/contracts/interfaces
-    #[sol(rpc)]
-    interface INonceManager {
-        function getNonce(address sender, uint192 key)
-        external view returns (uint256 nonce);
-    }
-
-    struct PackedUserOperation {
-        address sender;
-        uint256 nonce;
-        bytes initCode; // `abi.encodePacked(factory, factoryData)`
-        bytes callData;
-        bytes32 accountGasLimits; // `abi.encodePacked(verificationGasLimit, callGasLimit)` 16 bytes each
-        uint256 preVerificationGas;
-        bytes32 gasFees; // `abi.encodePacked(maxPriorityFeePerGas, maxFeePerGas)` 16 bytes each
-        bytes paymasterAndData; // `abi.encodePacked(paymaster, paymasterVerificationGasLimit, paymasterPostOpGasLimit, paymasterData[, paymasterSignature, paymasterSignatureSize, PAYMASTER_SIG_MAGIC])` (20 bytes, 16 bytes, 16 bytes, dynamic[, dynamic, 2 bytes, 8 bytes])
-        bytes signature;
-    }
-
-    #[sol(rpc)]
-    interface IEntryPoint {
-        function getUserOpHash(
-            PackedUserOperation calldata userOp
-        ) external view returns (bytes32);
-        function getNonce(address sender, uint192 key) external view returns (uint256 nonce);
-    }
 }
 
 pub struct SignUserOp {
@@ -75,6 +59,17 @@ pub struct SignUserOp {
     pub chain: ChainId,
     pub txn_hash: Hash,
     pub blk_hash: Hash,
+}
+
+impl SignUserOp {
+    pub fn new(userop: AlloyUserOperation, chain: ChainId, txn_hash: Hash, blk_hash: Hash) -> Self {
+        Self {
+            userop,
+            chain,
+            txn_hash,
+            blk_hash,
+        }
+    }
 }
 
 pub struct RelayUserOp {
@@ -96,6 +91,15 @@ pub struct BlsUserOp {
 //     threshold: u128,     // majority stake
 //     signers: Vec<(Address, PublicKey<Bls12381G2Impl>, u128)>, // list of signers at epoch above.
 // }
+
+type Wallet = FillProvider<
+    JoinFill<
+        Identity,
+        JoinFill<GasFiller, JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>>,
+    >,
+    RootProvider,
+>;
+type Providers = DashMap<ChainId, (Address, Address, Address, Wallet)>;
 
 pub struct Uccb {
     // config: NodeConfig,
@@ -138,12 +142,43 @@ impl Uccb {
             local_channel: local_sender_channel,
         });
 
-        let relayer = Relayer::new(config.clone(), secret_key, db.clone()).await?;
+        let bundlers = Arc::new(DashMap::with_capacity(config.remote_chains.len()));
+        let watchers = Arc::new(DashMap::with_capacity(config.remote_chains.len()));
+        for remote in config.remote_chains.iter() {
+            let bundler = ProviderBuilder::new()
+                .connect(Url::from_str(&remote.bundler_url)?.as_str())
+                .await?;
+            if let Ok(entrypoints) = bundler
+                .raw_request::<(), Vec<Address>>("eth_supportedEntryPoints".into(), ())
+                .await
+                && entrypoints.contains(&remote.entrypoint)
+            {
+                bundlers.insert(
+                    remote.chain_id,
+                    (remote.entrypoint, Address::ZERO, Address::ZERO, bundler),
+                );
+            }
+            let watcher = ProviderBuilder::new()
+                .connect(Url::from_str(&remote.watcher_url)?.as_str())
+                .await?;
+            if let Ok(id) = watcher.get_chain_id().await
+                && chain_id == id
+            {
+                watchers.insert(
+                    remote.chain_id,
+                    (remote.entrypoint, remote.sender, remote.gateway, watcher),
+                );
+            }
+        }
+
+        let relayer =
+            Relayer::new(config.clone(), secret_key, db.clone(), bundlers.clone()).await?;
         let _signer = Signer::new(
             config.clone(),
             secret_key,
             db.clone(),
             message_sender.clone(),
+            watchers.clone(),
         )
         .await?;
 
