@@ -168,7 +168,7 @@ impl Relayer {
         public_key.verify(userop_hash.as_bytes(), signature)?;
 
         // fetch related block
-        let Some(block) = self.db.get_block(block_hash.into())? else {
+        let Some(block) = self.db.get_transactionless_block(block_hash.into())? else {
             return Err(anyhow::anyhow!("Missing block"));
         };
         let state = self.state.at_root(block.state_root_hash().into());

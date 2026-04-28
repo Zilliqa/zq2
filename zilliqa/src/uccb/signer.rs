@@ -15,7 +15,6 @@ use dashmap::DashMap;
 use itertools::Itertools as _;
 use jsonrpsee::client_transport::ws::Url;
 use libp2p::PeerId;
-use revm::primitives::B256;
 use tokio::task::JoinSet;
 use tokio_stream::StreamExt as _;
 
@@ -183,7 +182,7 @@ impl Signer {
                 // 2. Retrieve the userophash; if not yet done
                 // TODO: It is possible to compute this internally
                 if uop_hash == Hash::EMPTY {
-                    let uop = Self::pack_user_op(&userop);
+                    let uop = userop.clone().into();
                     let Ok(userophash) = super::IEntryPoint::new(*entrypoint, provider)
                         .getUserOpHash(uop)
                         .call()
@@ -245,68 +244,16 @@ impl Signer {
     }
 
     /// Compute a nonce key
-    fn pack_nonce_key(gateway: &Address, txn_hash: &Hash) -> U192 {
+    ///
+    /// The upper 192-bits of the nonce are user-defined; with the lower 64-bits as a sequence.
+    /// This function packs the gateway address and a pseudo-random value into these bits.
+    ///
+    /// NOTE: Some bundlers impose a limit on parallel nonces e.g. https://www.alchemy.com/docs/wallets/reference/bundler-faqs#parallel-nonces
+    pub fn pack_nonce_key(gateway: &Address, txn_hash: &Hash) -> U192 {
         // U192 expects big-endian bytes
         let hash = B32::from_slice(&txn_hash.0[..4]);
         let bytes = (*gateway, hash).abi_encode_packed();
         U192::from_be_slice(bytes.as_slice())
-    }
-
-    /// Convert a PackedUserOperation
-    fn pack_user_op(userop: &AlloyUserOperation) -> super::PackedUserOperation {
-        #[allow(non_snake_case)]
-        let (verificationGasLimit, callGasLimit): (u128, u128) = (
-            userop.verification_gas_limit.to(),
-            userop.call_gas_limit.to(),
-        );
-        #[allow(non_snake_case)]
-        let (maxPriorityFeePerGas, maxFeePerGas): (u128, u128) = (
-            userop.max_priority_fee_per_gas.to(),
-            userop.max_fee_per_gas.to(),
-        );
-        #[allow(non_snake_case)]
-        let (paymasterVerificationGasLimit, paymasterPostOpGasLimit): (u128, u128) = (
-            userop
-                .paymaster_verification_gas_limit
-                .as_ref()
-                .unwrap()
-                .to(),
-            userop.paymaster_post_op_gas_limit.as_ref().unwrap().to(),
-        );
-
-        super::PackedUserOperation {
-            sender: userop.sender,
-            nonce: userop.nonce,
-            initCode: Bytes::from(
-                (
-                    *userop.factory.as_ref().unwrap(),
-                    userop.factory_data.as_ref().unwrap().clone(),
-                )
-                    .abi_encode_packed(),
-            ),
-            callData: userop.call_data.clone(),
-            accountGasLimits: B256::from_slice(
-                (verificationGasLimit, callGasLimit)
-                    .abi_encode_packed()
-                    .as_slice(),
-            ),
-            preVerificationGas: userop.pre_verification_gas,
-            gasFees: B256::from_slice(
-                (maxPriorityFeePerGas, maxFeePerGas)
-                    .abi_encode_packed()
-                    .as_slice(),
-            ),
-            paymasterAndData: Bytes::from(
-                (
-                    *userop.paymaster.as_ref().unwrap(),
-                    paymasterVerificationGasLimit,
-                    paymasterPostOpGasLimit,
-                    userop.paymaster_data.as_ref().unwrap().clone(),
-                )
-                    .abi_encode_packed(),
-            ),
-            signature: Bytes::from(B256::ZERO.as_slice()),
-        }
     }
 
     /// Compute the RELAY_SET
@@ -320,7 +267,7 @@ impl Signer {
     ) -> Result<Vec<PeerId>> {
         // retrieve set of peers at height
         let block = db
-            .get_block(blk_hash.into())
+            .get_transactionless_block(blk_hash.into())
             .transpose()
             .context("missing block")
             .flatten()?;
@@ -356,14 +303,14 @@ impl Signer {
             factory: Some(Address::random()),
             factory_data: Some(Bytes::new()),
             call_data: Bytes::new(),
-            call_gas_limit: U256::random(),
-            verification_gas_limit: U256::random(),
-            pre_verification_gas: U256::random(),
-            max_fee_per_gas: U256::random(),
-            max_priority_fee_per_gas: U256::random(),
+            call_gas_limit: U256::ZERO,
+            verification_gas_limit: U256::ZERO,
+            pre_verification_gas: U256::ZERO,
+            max_fee_per_gas: U256::ZERO,
+            max_priority_fee_per_gas: U256::ZERO,
             paymaster: Some(Address::random()),
-            paymaster_verification_gas_limit: Some(U256::random()),
-            paymaster_post_op_gas_limit: Some(U256::random()),
+            paymaster_verification_gas_limit: Some(U256::ZERO),
+            paymaster_post_op_gas_limit: Some(U256::ZERO),
             paymaster_data: Some(Bytes::new()),
             signature: Bytes::new(),
         }

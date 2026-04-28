@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
 use alloy::{
-    primitives::{Address, ChainId, address},
+    primitives::{Address, B256, Bytes, ChainId, address},
     rpc::types::PackedUserOperation as AlloyUserOperation,
     sol,
+    sol_types::SolValue as _,
 };
 use anyhow::Result;
 use libp2p::PeerId;
@@ -194,5 +195,68 @@ impl Uccb {
             }
         }
         Ok(())
+    }
+}
+
+/// Convert a PackedUserOperation
+///
+/// This packs the unpacked alloy::PackedUserOperation into the packed sol::PackedUserOperation.
+impl From<AlloyUserOperation> for PackedUserOperation {
+    fn from(userop: AlloyUserOperation) -> Self {
+        // pub fn pack_user_op(userop: &AlloyUserOperation) -> super::PackedUserOperation {
+        #[allow(non_snake_case)]
+        let (verificationGasLimit, callGasLimit): (u128, u128) = (
+            userop.verification_gas_limit.to(),
+            userop.call_gas_limit.to(),
+        );
+        #[allow(non_snake_case)]
+        let (maxPriorityFeePerGas, maxFeePerGas): (u128, u128) = (
+            userop.max_priority_fee_per_gas.to(),
+            userop.max_fee_per_gas.to(),
+        );
+        #[allow(non_snake_case)]
+        let (paymasterVerificationGasLimit, paymasterPostOpGasLimit): (u128, u128) = (
+            userop
+                .paymaster_verification_gas_limit
+                .as_ref()
+                .unwrap()
+                .to(),
+            userop.paymaster_post_op_gas_limit.as_ref().unwrap().to(),
+        );
+
+        Self {
+            sender: userop.sender,
+            nonce: userop.nonce,
+            initCode: Bytes::from(
+                (
+                    *userop.factory.as_ref().unwrap(),
+                    userop.factory_data.as_ref().unwrap().clone(),
+                )
+                    .abi_encode_packed(),
+            ),
+            callData: userop.call_data.clone(),
+            accountGasLimits: B256::from_slice(
+                (verificationGasLimit, callGasLimit)
+                    .abi_encode_packed()
+                    .as_slice(),
+            ),
+            preVerificationGas: userop.pre_verification_gas,
+            gasFees: B256::from_slice(
+                (maxPriorityFeePerGas, maxFeePerGas)
+                    .abi_encode_packed()
+                    .as_slice(),
+            ),
+            paymasterAndData: Bytes::from(
+                (
+                    *userop.paymaster.as_ref().unwrap(),
+                    paymasterVerificationGasLimit,
+                    paymasterPostOpGasLimit,
+                    userop.paymaster_data.as_ref().unwrap().clone(),
+                )
+                    .abi_encode_packed(),
+            ),
+            // FIXME: Dummy signature must have correct length
+            signature: Bytes::from(B256::ZERO.as_slice()),
+        }
     }
 }
