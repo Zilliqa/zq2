@@ -39,10 +39,12 @@ use crate::{
     node::{self, OutgoingMessageFailure},
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
     sync::SyncPeers,
+    uccb::Uccb,
 };
 
 pub struct NodeLauncher {
     pub node: Arc<Node>,
+    pub uccb: Arc<Uccb>,
     pub config: NodeConfig,
     pub broadcasts: UnboundedReceiverStream<(PeerId, ExternalMessage, ResponseChannel)>,
     pub requests: UnboundedReceiverStream<(PeerId, String, ExternalMessage, ResponseChannel)>,
@@ -121,12 +123,12 @@ impl NodeLauncher {
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
         let sync_peers = Arc::new(SyncPeers::new(peer_id));
 
-        let node = Node::new(
+        let (node, db) = Node::new(
             config.clone(),
             secret_key,
-            outbound_message_sender,
-            local_outbound_message_sender,
-            request_responses_sender,
+            outbound_message_sender.clone(),
+            local_outbound_message_sender.clone(),
+            request_responses_sender.clone(),
             reset_timeout_sender.clone(),
             peer_num,
             sync_peers.clone(),
@@ -193,8 +195,22 @@ impl NodeLauncher {
             }
         }
 
+        // Start UCCB **after** JSON-RPC is started, to be able to connect to localhost
+        let uccb = Arc::new(
+            Uccb::new(
+                config.clone(),
+                secret_key,
+                db.clone(),
+                outbound_message_sender.clone(),
+                local_outbound_message_sender.clone(),
+                request_responses_sender.clone(),
+            )
+            .await?,
+        );
+
         let launcher = NodeLauncher {
             node,
+            uccb,
             broadcasts: broadcasts_receiver,
             requests: requests_receiver,
             request_failures: request_failures_receiver,
@@ -282,9 +298,17 @@ impl NodeLauncher {
                     ];
 
                     let start = SystemTime::now();
-                    if let Err(e) = self.node.handle_request(source, &id, message, response_channel) {
-                        attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));
-                        error!("Failed to process request message: {e}");
+                    match message {
+                        ExternalMessage::UccbUserOp(_) => {
+                            if let Err(e) = self.uccb.handle_request(source, &id, message, response_channel) {
+                                attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));
+                                error!("Failed to process request message: {e}");
+                            }
+                        }
+                        _ => if let Err(e) = self.node.handle_request(source, &id, message, response_channel) {
+                            attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));
+                            error!("Failed to process request message: {e}");
+                        }
                     }
                     messaging_process_duration.record(
                         start.elapsed().map_or(0.0, |d| d.as_secs_f64()),

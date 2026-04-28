@@ -205,7 +205,7 @@ fn node(
     let sync_peers = Arc::new(SyncPeers::new(peer_id));
     let swarm_peers = Arc::new(ArcSwap::from_pointee(Vec::new()));
 
-    let node = Node::new(
+    let (node, _) = Node::new(
         NodeConfig {
             data_dir: datadir
                 .as_ref()
@@ -455,6 +455,7 @@ impl Network {
             enable_ots_indices: true,
             max_missed_view_age: max_missed_view_age_default(),
             api_limits: ApiLimits::default(),
+            remote_chains: Default::default(),
         };
 
         let (nodes, external_receivers, local_receivers, request_response_receivers): (
@@ -641,6 +642,7 @@ impl Network {
             enable_ots_indices: true,
             max_missed_view_age: max_missed_view_age_default(),
             api_limits: ApiLimits::default(),
+            remote_chains: Default::default(),
         };
 
         let secret_key = options.secret_key_or_random(self.rng.clone());

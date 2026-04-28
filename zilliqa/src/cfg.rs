@@ -1,6 +1,10 @@
 use std::{collections::HashMap, ops::Deref, str::FromStr, time::Duration};
 
-use alloy::{hex, primitives::Address, rlp::Encodable};
+use alloy::{
+    hex,
+    primitives::{Address, ChainId},
+    rlp::Encodable,
+};
 use anyhow::{Result, anyhow};
 use libp2p::{Multiaddr, PeerId};
 use rand::{Rng, distributions::Alphanumeric};
@@ -258,6 +262,16 @@ impl Default for SyncConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteChain {
+    pub chain_id: ChainId,
+    pub bundler_url: String,
+    pub watcher_url: String,
+    pub entrypoint: Address,
+    pub gateway: Address,
+    pub sender: Address,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NodeConfig {
     /// RPC API endpoints to expose.
@@ -308,6 +322,8 @@ pub struct NodeConfig {
     pub credit_rates: HashMap<String, u64>,
     #[serde(default)]
     pub api_limits: ApiLimits,
+    #[serde(default)]
+    pub remote_chains: Vec<RemoteChain>,
 }
 
 impl Default for NodeConfig {
@@ -329,6 +345,7 @@ impl Default for NodeConfig {
             max_missed_view_age: max_missed_view_age_default(),
             credit_rates: HashMap::new(),
             api_limits: ApiLimits::default(),
+            remote_chains: Default::default(),
         }
     }
 }

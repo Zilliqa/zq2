@@ -28,6 +28,12 @@ use sha3::{Digest, Keccak256};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BlsSignature(Signature<Bls12381G2Impl>);
 
+impl From<Signature<Bls12381G2Impl>> for BlsSignature {
+    fn from(s: Signature<Bls12381G2Impl>) -> Self {
+        Self(s)
+    }
+}
+
 impl BlsSignature {
     pub fn identity() -> BlsSignature {
         // Default to Basic signatures - it's the normal signature.

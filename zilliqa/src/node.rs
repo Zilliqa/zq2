@@ -198,7 +198,7 @@ impl Node {
         peer_num: Arc<AtomicUsize>,
         sync_peers: Arc<SyncPeers>,
         swarm_peers: Arc<ArcSwap<Vec<PeerId>>>,
-    ) -> Result<Node> {
+    ) -> Result<(Node, Arc<Db>)> {
         config.validate()?;
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
         let message_sender = MessageSender {
@@ -217,6 +217,7 @@ impl Node {
             executable_blocks_height,
             config.db.clone(),
         )?);
+
         let node = Node {
             config: config.clone(),
             peer_id,
@@ -230,14 +231,14 @@ impl Node {
                 config,
                 message_sender,
                 reset_timeout,
-                db,
+                db.clone(),
                 sync_peers,
             )?)),
             peer_num,
             filters: Arc::new(Filters::new()),
             swarm_peers,
         };
-        Ok(node)
+        Ok((node, db))
     }
 
     pub fn handle_broadcast(
