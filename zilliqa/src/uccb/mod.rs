@@ -23,6 +23,7 @@ use crate::{
 
 pub mod relayer;
 pub mod signer;
+pub mod utils;
 
 pub const ENTRYPOINT_V07: Address = address!("0x0000000071727de22e5e9d8baf0edac6f37da032");
 pub const ENTRYPOINT_V08: Address = address!("0x4337084d9e255ff0702461cf8895ce9e3b5ff108");
@@ -74,7 +75,6 @@ pub struct SignUserOp {
     pub chain: ChainId,
     pub txn_hash: Hash,
     pub blk_hash: Hash,
-    pub uop_hash: Hash,
 }
 
 pub struct RelayUserOp {

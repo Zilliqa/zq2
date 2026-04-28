@@ -20,12 +20,12 @@ use tokio_stream::StreamExt as _;
 
 use crate::{
     cfg::NodeConfig,
-    crypto::{BlsSignature, Hash, SecretKey},
+    crypto::{Hash, SecretKey},
     db::Db,
     message::{ExternalMessage, UccbUserOp},
     node::MessageSender,
     state::State,
-    uccb::SignUserOp,
+    uccb::{SignUserOp, utils::get_user_op_hash},
 };
 
 /// A signer polls the SOURCE_CHAIN for MessageSent events.
@@ -126,12 +126,13 @@ impl Signer {
                 }
                 // construct partial UserOp
                 let userop = Self::new_user_op();
-
+                let blk_hash = log.block_hash.expect("block_hash != none").into();
+                let txn_hash = log.transaction_hash.expect("txn_hash != none").into();
+                let chain = ChainId::from(0u64);
                 let op = SignUserOp {
-                    uop_hash: Hash::EMPTY,
-                    blk_hash: log.block_hash.expect("block_hash != none").into(),
-                    txn_hash: log.transaction_hash.expect("txn_hash != none").into(),
-                    chain: ChainId::from(0u64),
+                    blk_hash,
+                    txn_hash,
+                    chain,
                     userop,
                 };
                 sign_tx.send(op)?;
@@ -143,7 +144,6 @@ impl Signer {
                 chain,
                 txn_hash,
                 blk_hash,
-                mut uop_hash,
             }) = sign_rx.try_recv()
             {
                 let Some(watcher) = watchers.get(&chain) else {
@@ -172,70 +172,40 @@ impl Signer {
                             chain,
                             txn_hash,
                             blk_hash,
-                            uop_hash,
                         })?;
                         continue;
                     };
                     userop.nonce = nonce;
                 }
 
-                // 2. Retrieve the userophash; if not yet done
-                // TODO: It is possible to compute this internally
-                if uop_hash == Hash::EMPTY {
-                    let uop = userop.clone().into();
-                    let Ok(userophash) = super::IEntryPoint::new(*entrypoint, provider)
-                        .getUserOpHash(uop)
-                        .call()
-                        .await
-                    else {
-                        tracing::error!("getUserOpHash()");
-                        // retry
-                        sign_tx.send(SignUserOp {
-                            userop,
-                            chain,
-                            txn_hash,
-                            blk_hash,
-                            uop_hash,
-                        })?;
-                        continue;
-                    };
-                    uop_hash = Hash::from_bytes(userophash.as_slice())?;
-                };
+                // 2. Compute the UserOp hash
+                let uop_hash = Hash::from_bytes(
+                    get_user_op_hash(&userop.clone().into(), *entrypoint, *chain_id)?.as_slice(),
+                )?;
 
-                // 3. Sign the UserOp; if not yet done
-                if userop.signature.is_empty() {
-                    let sig = secret_key
-                        .as_bls()
-                        .sign(blsful::SignatureSchemes::Basic, uop_hash.as_bytes())
-                        .unwrap();
-                    userop.signature = sig.as_raw_value().to_compressed().into();
-                }
+                // 3. Sign the UserOp hash;
+                let sig = secret_key
+                    .as_bls()
+                    .sign(blsful::SignatureSchemes::Basic, uop_hash.as_bytes())
+                    .unwrap();
+                userop.signature = sig.as_raw_value().to_compressed().into();
 
                 // 4. Send it to the RELAY_SET
                 let relay_set = Self::get_relay_set(blk_hash, txn_hash, state.clone(), db.clone())?;
                 for peer in relay_set {
-                    // Send userop to Relayer(s)
-                    let msg = if peer != peer_id {
-                        ExternalMessage::UccbUserOp(UccbUserOp {
-                            userop_hash: uop_hash,
-                            block_hash: blk_hash,
-                            public_key: secret_key.node_public_key(),
-                            userop: None,
-                            signature: BlsSignature::from_bytes(
-                                userop.signature.iter().as_slice(),
-                            )?,
-                        })
+                    let uop = if peer == peer_id {
+                        // Only send userop to self - userop_hash assures integrity
+                        Some(userop.clone())
                     } else {
-                        ExternalMessage::UccbUserOp(UccbUserOp {
-                            userop_hash: uop_hash,
-                            block_hash: blk_hash,
-                            public_key: secret_key.node_public_key(),
-                            userop: Some(userop.clone()),
-                            signature: BlsSignature::from_bytes(
-                                userop.signature.iter().as_slice(),
-                            )?,
-                        })
+                        None
                     };
+                    let msg = ExternalMessage::UccbUserOp(UccbUserOp {
+                        userop_hash: uop_hash,
+                        block_hash: blk_hash,
+                        public_key: secret_key.node_public_key(),
+                        userop: uop,
+                        signature: sig.into(),
+                    });
                     message_sender.send_external_message(peer, msg)?;
                 }
             }
@@ -301,8 +271,8 @@ impl Signer {
             sender: Address::random(),
             nonce: U256::ZERO,
             factory: Some(Address::random()),
-            factory_data: Some(Bytes::new()),
-            call_data: Bytes::new(),
+            factory_data: Some(Bytes::copy_from_slice(U256::random().as_le_slice())),
+            call_data: Bytes::copy_from_slice(U256::random().as_le_slice()),
             call_gas_limit: U256::ZERO,
             verification_gas_limit: U256::ZERO,
             pre_verification_gas: U256::ZERO,
@@ -311,8 +281,8 @@ impl Signer {
             paymaster: Some(Address::random()),
             paymaster_verification_gas_limit: Some(U256::ZERO),
             paymaster_post_op_gas_limit: Some(U256::ZERO),
-            paymaster_data: Some(Bytes::new()),
-            signature: Bytes::new(),
+            paymaster_data: Some(Bytes::copy_from_slice(U256::random().as_le_slice())),
+            signature: Bytes::copy_from_slice(U256::random().as_le_slice()),
         }
     }
 }
