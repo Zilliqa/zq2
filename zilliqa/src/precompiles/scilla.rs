@@ -5,14 +5,12 @@ use alloy::{
 use anyhow::{Result, anyhow};
 use revm::{
     context_interface::ContextTr,
-    interpreter::{
-        Gas, InputsImpl, InstructionResult, InterpreterResult, interpreter_types::InputsTr,
-    },
+    interpreter::{CallInputs, Gas, InstructionResult, InterpreterResult},
     primitives::{Address, Bytes, LogData},
 };
 use revm_context::JournalTr;
 use revm_inspector::JournalExt;
-use revm_precompile::{PrecompileError, PrecompileOutput};
+use revm_precompile::{PrecompileHalt, PrecompileOutput};
 use scilla_parser::{
     ast::nodes::{
         NodeAddressType, NodeByteStr, NodeMetaIdentifier, NodeScillaType, NodeTypeMapKey,
@@ -217,7 +215,7 @@ fn get_indices(
 }
 
 pub enum PrecompileErrors {
-    Error(PrecompileError),
+    Error(PrecompileHalt),
     Fatal { msg: String },
 }
 
@@ -226,7 +224,7 @@ fn oog<T>() -> Result<T, PrecompileErrors> {
     let location = std::panic::Location::caller();
     let msg = "scilla_call out of gas";
     trace!(%location, msg);
-    Err(PrecompileErrors::Error(PrecompileError::OutOfGas))
+    Err(PrecompileErrors::Error(PrecompileHalt::OutOfGas))
 }
 
 #[track_caller]
@@ -242,7 +240,7 @@ fn err_inner(message: impl Into<String>) -> PrecompileErrors {
     let location = std::panic::Location::caller();
     let message = message.into();
     trace!(%location, message, "scilla_call failed");
-    PrecompileErrors::Error(PrecompileError::Other(message))
+    PrecompileErrors::Error(PrecompileHalt::other(message))
 }
 
 #[track_caller]
@@ -264,14 +262,11 @@ impl ContextPrecompile for ScillaRead {
     fn call(
         &self,
         ctx: &mut ZQ2EvmContext,
-        _dest: Address,
-        input: &InputsImpl,
-        _is_static: bool,
-        gas_limit: u64,
+        inputs: &CallInputs,
     ) -> std::result::Result<Option<InterpreterResult>, String> {
-        let gas = Gas::new(gas_limit);
+        let gas = Gas::new(inputs.gas_limit);
 
-        let outcome = scilla_read(input, gas.limit(), ctx);
+        let outcome = scilla_read(inputs, gas.limit(), ctx);
 
         let mut result = InterpreterResult {
             result: InstructionResult::Return,
@@ -281,7 +276,7 @@ impl ContextPrecompile for ScillaRead {
 
         match outcome {
             Ok(output) => {
-                if result.gas.record_cost(output.gas_used) {
+                if result.gas.record_regular_cost(output.gas_used) {
                     result.result = InstructionResult::Return;
                     result.output = output.bytes;
                 } else {
@@ -303,11 +298,11 @@ impl ContextPrecompile for ScillaRead {
 }
 
 fn scilla_read(
-    input: &InputsImpl,
+    input: &CallInputs,
     gas_limit: u64,
     ctx: &mut ZQ2EvmContext,
 ) -> std::result::Result<PrecompileOutput, PrecompileErrors> {
-    let Ok(input_len) = u64::try_from(input.input().len()) else {
+    let Ok(input_len) = u64::try_from(input.input.len()) else {
         return err("input too long");
     };
 
@@ -316,7 +311,7 @@ fn scilla_read(
         return oog();
     }
 
-    let raw_input = input.input().bytes(ctx);
+    let raw_input = input.input.bytes(ctx);
 
     let mut decoder = Decoder::new(&raw_input);
 
@@ -436,7 +431,7 @@ fn scilla_read(
         ScillaType::Map(_, _) => unreachable!("map will not be returned from `get_indices`"),
     };
 
-    Ok(PrecompileOutput::new(required_gas, value.into()))
+    Ok(PrecompileOutput::new(required_gas, value.into(), 0))
 }
 
 pub struct ScillaCall;
@@ -445,22 +440,19 @@ impl ContextPrecompile for ScillaCall {
     fn call(
         &self,
         ctx: &mut ZQ2EvmContext,
-        _dest: Address,
-        input: &InputsImpl,
-        _is_static: bool,
-        gas_limit: u64,
+        inputs: &CallInputs,
     ) -> Result<Option<InterpreterResult>, String> {
-        let gas = Gas::new(gas_limit);
+        let gas = Gas::new(inputs.gas_limit);
         let gas_exempt = ctx
             .chain
             .fork
             .scilla_call_gas_exempt_addrs
-            .contains(&input.caller_address)
+            .contains(&inputs.caller)
             || ctx
                 .chain
                 .fork
                 .scilla_call_gas_exempt_addrs_v2
-                .contains(&input.caller_address);
+                .contains(&inputs.caller);
 
         // Record access of scilla precompile
         ctx.chain.has_called_scilla_precompile = true;
@@ -470,7 +462,7 @@ impl ContextPrecompile for ScillaCall {
         // 2. if precompile failed and gas_exempt -> mark entire txn as failed (not only the current precompile)
         // 3. Otherwise, let it run with what it's given and let the caller decide
 
-        let outcome = scilla_call_precompile(input, gas.limit(), ctx, gas_exempt);
+        let outcome = scilla_call_precompile(inputs, gas.limit(), ctx, gas_exempt);
 
         // Copied from `EvmContext::call_precompile`
         let mut result = InterpreterResult {
@@ -481,7 +473,7 @@ impl ContextPrecompile for ScillaCall {
 
         match outcome {
             Ok(output) => {
-                if result.gas.record_cost(output.gas_used) {
+                if result.gas.record_regular_cost(output.gas_used) {
                     result.result = InstructionResult::Return;
                     result.output = output.bytes;
                 } else {
@@ -519,7 +511,7 @@ impl ContextPrecompile for ScillaCall {
 }
 
 fn scilla_call_precompile(
-    input: &InputsImpl,
+    input: &CallInputs,
     gas_limit: u64,
     ctx: &mut ZQ2EvmContext,
     gas_exempt: bool,
@@ -616,7 +608,7 @@ fn scilla_call_precompile(
             ctx.tx.caller
         }
     } else {
-        input.caller_address
+        input.caller
     };
 
     // 1. if evm_exec_failure_causes_scilla_precompile_to_fail == true then we take converted value
@@ -629,9 +621,9 @@ fn scilla_call_precompile(
                 .evm_exec_failure_causes_scilla_precompile_to_fail,
             ctx.chain.fork.evm_to_scilla_value_transfer_zero,
         ) {
-            (true, _) => ZilAmount::from_amount(input.call_value.to()),
+            (true, _) => ZilAmount::from_amount(input.call_value().to()),
             (false, true) => ZilAmount::from_amount(0),
-            _ => ZilAmount::from_amount(input.call_value.to()),
+            _ => ZilAmount::from_amount(input.call_value().to()),
         }
     };
 
@@ -667,7 +659,7 @@ fn scilla_call_precompile(
     let Ok((result, mut state)) = scilla_call(
         state,
         scilla,
-        input.caller_address,
+        input.caller,
         sender,
         // If this call is gas exempt the gas limit likely is not enough to invoke the Scilla call, therefore we lie
         // and pass a large number instead.
@@ -736,5 +728,6 @@ fn scilla_call_precompile(
             required_gas + result.gas_used.0
         },
         Bytes::default(),
+        0,
     ))
 }

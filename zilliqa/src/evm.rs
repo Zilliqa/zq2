@@ -47,15 +47,16 @@ pub struct ZQ2Evm<I>(
 
 impl<I: Inspector<ZQ2EvmContext>> ZQ2Evm<I> {
     pub fn new(ctx: ZQ2EvmContext, inspector: I) -> ZQ2Evm<I> {
-        let mut precompiles = ZQ2PrecompileProvider::new();
+        let mut precompiles = ZQ2PrecompileProvider::new(ctx.chain.spec_id);
         <ZQ2PrecompileProvider as PrecompileProvider<ZQ2EvmContext>>::set_spec(
             &mut precompiles,
             ctx.chain.spec_id,
         );
+        let spec = ctx.chain.spec_id;
         ZQ2Evm(Evm {
             ctx,
             inspector,
-            instruction: EthInstructions::new_mainnet(),
+            instruction: EthInstructions::new_mainnet_with_spec(spec),
             precompiles,
             frame_stack: FrameStack::new(),
         })
@@ -85,24 +86,26 @@ impl<I> EvmTr for ZQ2Evm<I> {
     type Precompiles = ZQ2PrecompileProvider;
     type Frame = EthFrame<EthInterpreter>;
 
-    fn ctx(&mut self) -> &mut Self::Context {
-        &mut self.0.ctx
+    fn all(
+        &self,
+    ) -> (
+        &Self::Context,
+        &Self::Instructions,
+        &Self::Precompiles,
+        &FrameStack<Self::Frame>,
+    ) {
+        self.0.all()
     }
 
-    fn ctx_ref(&self) -> &Self::Context {
-        self.0.ctx_ref()
-    }
-
-    fn ctx_instructions(&mut self) -> (&mut Self::Context, &mut Self::Instructions) {
-        self.0.ctx_instructions()
-    }
-
-    fn ctx_precompiles(&mut self) -> (&mut Self::Context, &mut Self::Precompiles) {
-        self.0.ctx_precompiles()
-    }
-
-    fn frame_stack(&mut self) -> &mut FrameStack<Self::Frame> {
-        self.0.frame_stack()
+    fn all_mut(
+        &mut self,
+    ) -> (
+        &mut Self::Context,
+        &mut Self::Instructions,
+        &mut Self::Precompiles,
+        &mut FrameStack<Self::Frame>,
+    ) {
+        self.0.all_mut()
     }
 
     fn frame_init(
@@ -126,7 +129,7 @@ impl<I> EvmTr for ZQ2Evm<I> {
         let caller = match &frame_input.frame_input {
             FrameInput::Empty => Address::ZERO,
             FrameInput::Call(call) => call.caller,
-            FrameInput::Create(create) => create.caller,
+            FrameInput::Create(create) => create.caller(),
         };
         let depth = self.0.journaled_state.depth;
         self.0.chain.callers[depth] = caller;
@@ -220,28 +223,27 @@ impl<I: Inspector<ZQ2EvmContext, EthInterpreter>> InspectEvm for ZQ2Evm<I> {
 impl<I: Inspector<ZQ2EvmContext, EthInterpreter>> InspectorEvmTr for ZQ2Evm<I> {
     type Inspector = I;
 
-    fn inspector(&mut self) -> &mut Self::Inspector {
-        self.0.inspector()
+    fn all_inspector(
+        &self,
+    ) -> (
+        &Self::Context,
+        &Self::Instructions,
+        &Self::Precompiles,
+        &FrameStack<Self::Frame>,
+        &Self::Inspector,
+    ) {
+        self.0.all_inspector()
     }
 
-    fn ctx_inspector(&mut self) -> (&mut Self::Context, &mut Self::Inspector) {
-        self.0.ctx_inspector()
-    }
-
-    fn ctx_inspector_frame(
-        &mut self,
-    ) -> (&mut Self::Context, &mut Self::Inspector, &mut Self::Frame) {
-        self.0.ctx_inspector_frame()
-    }
-
-    fn ctx_inspector_frame_instructions(
+    fn all_mut_inspector(
         &mut self,
     ) -> (
         &mut Self::Context,
-        &mut Self::Inspector,
-        &mut Self::Frame,
         &mut Self::Instructions,
+        &mut Self::Precompiles,
+        &mut FrameStack<Self::Frame>,
+        &mut Self::Inspector,
     ) {
-        self.0.ctx_inspector_frame_instructions()
+        self.0.all_mut_inspector()
     }
 }
