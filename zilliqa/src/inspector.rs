@@ -74,7 +74,7 @@ impl<CTX: ContextTr> Inspector<CTX> for TouchedAddressInspector {
     }
 
     fn create_end(&mut self, _: &mut CTX, inputs: &CreateInputs, outcome: &mut CreateOutcome) {
-        self.touched.insert(inputs.caller);
+        self.touched.insert(inputs.caller());
         if let Some(address) = outcome.address {
             self.touched.insert(address);
         }
@@ -127,7 +127,7 @@ impl<CTX> Inspector<CTX> for CreatorInspector {
         if let Some(address) = outcome.address
             && address == self.contract
         {
-            self.creator = Some(inputs.caller);
+            self.creator = Some(inputs.caller());
         }
     }
 }
@@ -172,24 +172,24 @@ impl<CTX: ContextTr> Inspector<CTX> for OtterscanTraceInspector {
     }
 
     fn create(&mut self, context: &mut CTX, inputs: &mut CreateInputs) -> Option<CreateOutcome> {
-        let ty = match inputs.scheme {
+        let ty = match inputs.scheme() {
             CreateScheme::Create => TraceEntryType::Create,
             CreateScheme::Create2 { .. } => TraceEntryType::Create2,
             _ => TraceEntryType::Create,
         };
         let nonce = context
             .journal_mut()
-            .load_account(inputs.caller)
+            .load_account(inputs.caller())
             .unwrap()
             .info
             .nonce;
         self.entries.push(TraceEntry {
             ty,
             depth: context.journal().depth().try_into().unwrap_or_default(),
-            from: inputs.caller,
+            from: inputs.caller(),
             to: inputs.created_address(nonce),
-            value: Some(inputs.value.to()),
-            input: inputs.init_code.to_vec(),
+            value: Some(inputs.value().to()),
+            input: inputs.init_code().to_vec(),
         });
 
         None
@@ -272,22 +272,22 @@ impl<CTX: ContextTr> Inspector<CTX> for OtterscanOperationInspector {
 
     fn create(&mut self, context: &mut CTX, inputs: &mut CreateInputs) -> Option<CreateOutcome> {
         if context.journal().depth() != 0 {
-            let ty = match inputs.scheme {
+            let ty = match inputs.scheme() {
                 CreateScheme::Create => OperationType::Create,
                 CreateScheme::Create2 { .. } => OperationType::Create2,
                 _ => OperationType::Create,
             };
             let nonce = context
                 .journal_mut()
-                .load_account(inputs.caller)
+                .load_account(inputs.caller())
                 .unwrap()
                 .info
                 .nonce;
             self.entries.push(Operation {
                 ty,
-                from: inputs.caller,
+                from: inputs.caller(),
                 to: inputs.created_address(nonce),
-                value: inputs.value.to(),
+                value: inputs.value().to(),
             });
         }
 

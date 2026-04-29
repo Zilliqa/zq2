@@ -5,14 +5,13 @@ mod scilla;
 
 use alloy::primitives::Address;
 use bls_verify::BlsVerify;
-//use penalty::Penalty;
 pub use penalty::ViewHistory;
 use pop_verify::PopVerify;
 use revm::{
     context_interface::{Cfg, ContextTr},
     handler::{EthPrecompiles, PrecompileProvider},
-    interpreter::{InputsImpl, InterpreterResult},
-    primitives::address,
+    interpreter::{CallInputs, InterpreterResult},
+    primitives::{address, hardfork::SpecId},
 };
 use revm_context::{BlockEnv, CfgEnv, Journal, TxEnv};
 use scilla::ScillaRead;
@@ -28,16 +27,10 @@ pub struct ZQ2PrecompileProvider {
     inner: EthPrecompiles,
 }
 
-impl Default for ZQ2PrecompileProvider {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl ZQ2PrecompileProvider {
-    pub fn new() -> Self {
+    pub fn new(spec_id: SpecId) -> Self {
         Self {
-            inner: EthPrecompiles::default(),
+            inner: EthPrecompiles::new(spec_id),
         }
     }
 }
@@ -62,20 +55,15 @@ impl PrecompileProvider<ZQ2EvmContext> for ZQ2PrecompileProvider {
     fn run(
         &mut self,
         context: &mut ZQ2EvmContext,
-        address: &Address,
-        inputs: &InputsImpl,
-        is_static: bool,
-        gas_limit: u64,
+        inputs: &CallInputs,
     ) -> Result<Option<Self::Output>, String> {
+        let address = &inputs.bytecode_address;
         if let Some(custom_precompile) = CUSTOM_PRECOMPILES.iter().find(|&&(a, _)| a == *address) {
-            return custom_precompile
-                .1
-                .call(context, *address, inputs, is_static, gas_limit);
+            return custom_precompile.1.call(context, inputs);
         }
 
         // Otherwise, delegate to standard Ethereum precompiles
-        self.inner
-            .run(context, address, inputs, is_static, gas_limit)
+        self.inner.run(context, inputs)
     }
 
     fn warm_addresses(&self) -> Box<impl Iterator<Item = Address>> {
@@ -103,10 +91,7 @@ pub trait ContextPrecompile {
     fn call(
         &self,
         ctx: &mut ZQ2EvmContext,
-        target: Address,
-        input: &InputsImpl,
-        is_static: bool,
-        gas_limit: u64,
+        inputs: &CallInputs,
     ) -> Result<Option<InterpreterResult>, String>;
 }
 
@@ -114,17 +99,14 @@ impl CustomPrecompile {
     pub fn call(
         &self,
         ctx: &mut ZQ2EvmContext,
-        target: Address,
-        input: &InputsImpl,
-        is_static: bool,
-        gas_limit: u64,
+        inputs: &CallInputs,
     ) -> Result<Option<InterpreterResult>, String> {
         match self {
-            CustomPrecompile::PopVerify(p) => p.call(ctx, target, input, is_static, gas_limit),
-            CustomPrecompile::BlsVerify(p) => p.call(ctx, target, input, is_static, gas_limit),
-            CustomPrecompile::ScillaRead(p) => p.call(ctx, target, input, is_static, gas_limit),
-            CustomPrecompile::ScillaCall(p) => p.call(ctx, target, input, is_static, gas_limit),
-            CustomPrecompile::Penalty(p) => p.call(ctx, target, input, is_static, gas_limit),
+            CustomPrecompile::PopVerify(p) => p.call(ctx, inputs),
+            CustomPrecompile::BlsVerify(p) => p.call(ctx, inputs),
+            CustomPrecompile::ScillaRead(p) => p.call(ctx, inputs),
+            CustomPrecompile::ScillaCall(p) => p.call(ctx, inputs),
+            CustomPrecompile::Penalty(p) => p.call(ctx, inputs),
         }
     }
 }

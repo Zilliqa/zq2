@@ -17,20 +17,27 @@ pub fn ensure_success(result: ExecutionResult) -> Result<Bytes, TransactionError
         ExecutionResult::Revert { output, .. } => {
             Err(TransactionError::Revert(RevertError::new(output)))
         }
-        ExecutionResult::Halt { reason, gas_used } => match reason {
-            HaltReason::OutOfGas(err) => match err {
-                OutOfGasError::Basic => Err(TransactionError::BasicOutOfGas(gas_used)),
-                OutOfGasError::MemoryLimit | OutOfGasError::Memory => {
-                    Err(TransactionError::MemoryOutOfGas(gas_used))
-                }
-                OutOfGasError::Precompile => Err(TransactionError::PrecompileOutOfGas(gas_used)),
-                OutOfGasError::InvalidOperand => {
-                    Err(TransactionError::InvalidOperandOutOfGas(gas_used))
-                }
-                OutOfGasError::ReentrancySentry => Err(TransactionError::BasicOutOfGas(gas_used)),
-            },
-            reason => Err(TransactionError::EvmHalt(reason)),
-        },
+        ExecutionResult::Halt { reason, gas, .. } => {
+            let gas_used = gas.tx_gas_used();
+            match reason {
+                HaltReason::OutOfGas(err) => match err {
+                    OutOfGasError::Basic => Err(TransactionError::BasicOutOfGas(gas_used)),
+                    OutOfGasError::MemoryLimit | OutOfGasError::Memory => {
+                        Err(TransactionError::MemoryOutOfGas(gas_used))
+                    }
+                    OutOfGasError::Precompile => {
+                        Err(TransactionError::PrecompileOutOfGas(gas_used))
+                    }
+                    OutOfGasError::InvalidOperand => {
+                        Err(TransactionError::InvalidOperandOutOfGas(gas_used))
+                    }
+                    OutOfGasError::ReentrancySentry => {
+                        Err(TransactionError::BasicOutOfGas(gas_used))
+                    }
+                },
+                reason => Err(TransactionError::EvmHalt(reason)),
+            }
+        }
     }
 }
 

@@ -7,16 +7,14 @@ use std::{
 use alloy::{
     eips::{BlockId, BlockNumberOrTag, RpcBlockHash},
     primitives::Address,
-    rpc::types::{
-        TransactionInfo,
-        trace::{
-            geth::{
-                FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
-                GethDebugTracingOptions, GethTrace, NoopFrame, TraceResult,
-            },
-            parity::{TraceResults, TraceType},
-        },
+};
+use alloy_consensus::transaction::TransactionInfo;
+use alloy_rpc_types_trace::{
+    geth::{
+        FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingOptions,
+        GethTrace, NoopFrame, TraceResult,
     },
+    parity::{TraceResults, TraceType},
 };
 use anyhow::{Result, anyhow};
 use arc_swap::ArcSwap;
@@ -790,7 +788,7 @@ impl Node {
 
             let builder = inspector.into_geth_builder();
             let trace = builder.geth_traces(
-                result.result.gas_used(),
+                result.result.tx_gas_used(),
                 result.result.into_output().unwrap_or_default(),
                 config,
             );
@@ -820,7 +818,7 @@ impl Node {
 
                     let trace = inspector
                         .into_geth_builder()
-                        .geth_call_traces(call_config, result.result.gas_used());
+                        .geth_call_traces(call_config, result.result.tx_gas_used());
 
                     Ok(Some(TraceResult::Success {
                         result: trace.into(),
@@ -861,6 +859,14 @@ impl Node {
                         index: Some(txn_index as u64),
                         block_hash: Some(block.hash().into()),
                         block_number: Some(block.number()),
+                        block_timestamp: Some(
+                            block
+                                .header
+                                .timestamp
+                                .duration_since(crate::time::SystemTime::UNIX_EPOCH)
+                                .map(|d| d.as_secs())
+                                .unwrap_or_default(),
+                        ),
                         base_fee: state.gas_price.try_into().ok(),
                     };
                     let trace = inspector.try_into_mux_frame(&result, &state_ref, tx_info)?;

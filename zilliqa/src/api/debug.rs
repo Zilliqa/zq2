@@ -1,10 +1,7 @@
 use std::sync::Arc;
 
-use alloy::{
-    eips::BlockNumberOrTag,
-    primitives::B256,
-    rpc::types::trace::geth::{GethDebugTracingOptions, TraceResult},
-};
+use alloy::{eips::BlockNumberOrTag, primitives::B256};
+use alloy_rpc_types_trace::geth::{GethDebugTracingOptions, TraceResult};
 use anyhow::{Result, anyhow};
 use jsonrpsee::{RpcModule, types::Params};
 

@@ -117,7 +117,7 @@ impl TransactionApplyResult {
     pub fn gas_used(&self) -> EvmGas {
         match self {
             TransactionApplyResult::Evm(ResultAndState { result, .. }, ..) => {
-                EvmGas(result.gas_used())
+                EvmGas(result.tx_gas_used())
             }
             TransactionApplyResult::Scilla((ScillaResult { gas_used, .. }, _)) => *gas_used,
         }
@@ -409,6 +409,7 @@ impl State {
             balance: U256::from(account.balance),
             nonce: account.nonce,
             code_hash: code.hash_slow(),
+            account_id: None,
             code: Some(code),
         };
 
@@ -521,7 +522,8 @@ impl State {
         Ok((
             ResultAndState {
                 result: ExecutionResult::Revert {
-                    gas_used: result_and_state.result.gas_used(),
+                    gas: *result_and_state.result.gas(),
+                    logs: Vec::new(),
                     output: Bytes::default(),
                 },
                 state: result_and_state.state,
@@ -656,6 +658,7 @@ impl State {
                 prevrandao: Some(randao_mix_hash.0.into()),
                 blob_excess_gas_and_price,
                 beneficiary: Default::default(),
+                slot_num: 0,
             });
 
         let mut evm = ZQ2Evm::new(evm_ctx, inspector);
@@ -1024,11 +1027,7 @@ impl State {
     }
 
     /// Applies a state delta from an EVM execution to the state.
-    pub fn apply_delta_evm(
-        &mut self,
-        state: &revm::primitives::HashMap<Address, revm::state::Account>,
-        current_block_number: u64,
-    ) -> Result<()> {
+    pub fn apply_delta_evm(&mut self, state: &EvmState, current_block_number: u64) -> Result<()> {
         let only_mutated_accounts_update_state = self
             .forks
             .get(current_block_number)
@@ -1419,7 +1418,7 @@ impl State {
             extra_opts,
         )?;
 
-        let gas_used = result.gas_used();
+        let gas_used = result.tx_gas_used();
         // Return an error if the transaction did not succeed
         ensure_success(result).map_err(ErrorObjectOwned::from)?;
         Ok(gas_used)

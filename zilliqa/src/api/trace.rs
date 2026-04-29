@@ -3,8 +3,8 @@ use std::sync::Arc;
 use alloy::{
     eips::BlockNumberOrTag,
     primitives::{Address, B256},
-    rpc::types::trace::parity::{TraceResults, TraceType},
 };
+use alloy_rpc_types_trace::parity::{TraceResults, TraceType};
 use anyhow::{Result, anyhow};
 use jsonrpsee::{RpcModule, types::Params};
 use revm_inspectors::tracing::{TracingInspector, TracingInspectorConfig};
