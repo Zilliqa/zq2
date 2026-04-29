@@ -1,7 +1,7 @@
 use std::{str::FromStr as _, sync::Arc};
 
 use alloy::{
-    primitives::{Address, B256, Bytes, ChainId, address},
+    primitives::{Address, B256, Bytes, ChainId, U256, address},
     providers::{
         Identity, Provider as _, ProviderBuilder, RootProvider,
         fillers::{BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller},
@@ -14,6 +14,7 @@ use anyhow::Result;
 use dashmap::DashMap;
 use jsonrpsee::client_transport::ws::Url;
 use libp2p::PeerId;
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
@@ -106,8 +107,8 @@ impl SignUserOp {
 
 pub struct RelayUserOp {
     pub userop: AlloyUserOperation,
-    pub chain: ChainId,
-    pub hash: Hash,
+    pub chain_id: ChainId,
+    pub send_id: Hash,
 }
 
 #[derive(Default)]
@@ -131,7 +132,7 @@ type Wallet = FillProvider<
     >,
     RootProvider,
 >;
-type Providers = DashMap<ChainId, (Address, Address, Address, Wallet)>;
+type Providers = DashMap<ChainId, (Address, Address, Address, Address, Wallet, Wallet)>;
 
 pub struct Uccb {
     // config: NodeConfig,
@@ -174,43 +175,45 @@ impl Uccb {
             local_channel: local_sender_channel,
         });
 
-        let bundlers = Arc::new(DashMap::with_capacity(config.remote_chains.len()));
-        let watchers = Arc::new(DashMap::with_capacity(config.remote_chains.len()));
+        let providers = Arc::new(DashMap::with_capacity(config.remote_chains.len()));
         for remote in config.remote_chains.iter() {
             let bundler = ProviderBuilder::new()
                 .connect(Url::from_str(&remote.bundler_url)?.as_str())
                 .await?;
+            let watcher = ProviderBuilder::new()
+                .connect(Url::from_str(&remote.watcher_url)?.as_str())
+                .await?;
+
             if let Ok(entrypoints) = bundler
                 .raw_request::<(), Vec<Address>>("eth_supportedEntryPoints".into(), ())
                 .await
                 && entrypoints.contains(&remote.entrypoint)
-            {
-                bundlers.insert(
-                    remote.chain_id,
-                    (remote.entrypoint, Address::ZERO, Address::ZERO, bundler),
-                );
-            }
-            let watcher = ProviderBuilder::new()
-                .connect(Url::from_str(&remote.watcher_url)?.as_str())
-                .await?;
-            if let Ok(id) = watcher.get_chain_id().await
+                && let Ok(id) = watcher.get_chain_id().await
                 && chain_id == id
             {
-                watchers.insert(
+                providers.insert(
                     remote.chain_id,
-                    (remote.entrypoint, remote.sender, remote.gateway, watcher),
+                    (
+                        remote.entrypoint,
+                        remote.sender,
+                        remote.gateway,
+                        remote.paymaster,
+                        watcher,
+                        bundler,
+                    ),
                 );
             }
         }
+        providers.shrink_to_fit();
 
         let relayer =
-            Relayer::new(config.clone(), secret_key, db.clone(), bundlers.clone()).await?;
+            Relayer::new(config.clone(), secret_key, db.clone(), providers.clone()).await?;
         let _signer = Signer::new(
             config.clone(),
             secret_key,
             db.clone(),
             message_sender.clone(),
-            watchers.clone(),
+            providers.clone(),
         )
         .await?;
 
@@ -322,8 +325,20 @@ impl From<AlloyUserOperation> for PackedUserOperation {
                 )
                     .abi_encode_packed(),
             ),
-            // FIXME: Dummy signature must have correct length
-            signature: Bytes::from(B256::ZERO.as_slice()),
+            signature: userop.signature,
         }
     }
+}
+
+/// Represents the gas estimation for a user operation.
+///
+/// alloy::UserOperationGasEstimation is v0.6, not v0.7/0.8
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UserOperationGasEstimationV07 {
+    pub pre_verification_gas: U256,
+    pub verification_gas: U256,
+    pub paymaster_verification_gas: U256,
+    pub call_gas_limit: U256,
+    pub paymaster_post_op_gas_limit: U256,
 }
