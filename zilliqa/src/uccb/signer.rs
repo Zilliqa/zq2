@@ -156,8 +156,8 @@ impl Signer {
                     continue;
                 };
 
-                // validate the message
-                if !value.is_zero() || sendId != keccak256(payload.iter().as_slice()) {
+                // validate payload integrity
+                if sendId != keccak256(payload.iter().as_slice()) {
                     tracing::warn!(%sendId, "Invalid sendId");
                     continue;
                 }
@@ -172,9 +172,24 @@ impl Signer {
                 let (_entrypoint, sender, gateway, paymaster, _bundler, _provider) =
                     watcher.value();
 
+                // extract EIP1559 fees
+                let limbs = value.as_limbs();
+                let (fee, tip) = (
+                    (limbs[0] as u128) | ((limbs[1] as u128) << 64),
+                    (limbs[2] as u128) | ((limbs[3] as u128) << 64),
+                );
+
                 // construct partial UserOp
-                let userop =
-                    Self::new_user_op(sendId, payload, sender, gateway, paymaster, block_height);
+                let userop = Self::new_user_op(
+                    sendId,
+                    payload,
+                    sender,
+                    gateway,
+                    paymaster,
+                    block_height,
+                    fee,
+                    tip,
+                );
 
                 // send it for signing
                 let op = SignUserOp {
@@ -373,6 +388,8 @@ impl Signer {
         gateway: &Address,
         paymaster: &Address,
         block_height: u64,
+        fee: u128,
+        tip: u128,
     ) -> AlloyUserOperation {
         // we can encode some custom things in here
         let paymaster_data = (block_height).abi_encode_packed();
@@ -385,8 +402,8 @@ impl Signer {
             call_gas_limit: Self::DUMMY_GAS, // estimateUserOpGas
             verification_gas_limit: Self::DUMMY_GAS, // estimateUserOpGas
             pre_verification_gas: Self::DUMMY_GAS, // estimateUserOpGas
-            max_fee_per_gas: Self::DUMMY_GAS,
-            max_priority_fee_per_gas: Self::DUMMY_GAS,
+            max_fee_per_gas: U256::from(fee),
+            max_priority_fee_per_gas: U256::from(tip),
             paymaster: Some(*paymaster),
             paymaster_verification_gas_limit: Some(Self::DUMMY_GAS), // estimateUserOpGas
             paymaster_post_op_gas_limit: Some(Self::DUMMY_GAS),      // estimateUserOpGas
