@@ -269,6 +269,7 @@ pub struct RemoteChain {
     pub entrypoint: Address,
     pub gateway: Address,
     pub sender: Address,
+    pub paymaster: Address,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

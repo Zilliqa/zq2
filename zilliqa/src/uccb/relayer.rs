@@ -2,7 +2,10 @@ use std::{num::NonZeroUsize, sync::Arc};
 
 // use super::AlloyUserOperation;
 use alloy::{
+    eips::BlockNumberOrTag,
     primitives::Address,
+    primitives::Bytes,
+    primitives::U256,
     providers::Provider,
     rpc::types::{
         PackedUserOperation as AlloyUserOperation, SendUserOperation, SendUserOperationResponse,
@@ -24,7 +27,10 @@ use crate::{
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey},
     db::Db,
     state::State,
-    uccb::{BlsUserOp, RelayUserOp},
+    uccb::{
+        BlsUserOp, RelayUserOp, UserOperationGasEstimationV07 as UserOperationGasEstimation,
+        utils::get_user_op_hash,
+    },
 };
 
 #[derive(Debug)]
@@ -54,7 +60,7 @@ impl Relayer {
         config: NodeConfig,
         secret_key: SecretKey,
         db: Arc<Db>,
-        bundlers: Arc<super::Providers>,
+        providers: Arc<super::Providers>,
     ) -> Result<Self> {
         let (relay_tx, relay_rx) = tokio::sync::mpsc::unbounded_channel::<RelayUserOp>();
         let address = secret_key.to_evm_address();
@@ -65,12 +71,16 @@ impl Relayer {
         // cache the last 1_000 userops
         let signatures = RwLock::new(lru::LruCache::new(NonZeroUsize::new(1000).unwrap()));
 
-        let tx = relay_tx.clone();
-        workers.spawn(async move {
-            if let Err(err) = Self::start_relayer(config, relay_rx, tx, bundlers).await {
-                tracing::error!(%err, "Relayer exception");
-            }
-        });
+        {
+            let relay_tx = relay_tx.clone();
+            workers.spawn(async move {
+                if let Err(err) =
+                    Self::start_relayer(config, secret_key, relay_rx, relay_tx, providers).await
+                {
+                    tracing::error!(%err, "Relayer exception");
+                }
+            });
+        }
 
         Ok(Self {
             workers,
@@ -90,46 +100,97 @@ impl Relayer {
     /// Spawns a number of worker threads to concurrently submit UserOps.
     async fn start_relayer(
         config: NodeConfig,
+        secret_key: SecretKey,
         mut relay_rx: UnboundedReceiver<RelayUserOp>,
         relay_tx: UnboundedSender<RelayUserOp>,
-        bundlers: Arc<super::Providers>,
+        providers: Arc<super::Providers>,
     ) -> Result<()> {
+        let bls_key = secret_key.as_bls();
         let chain_id = config.eth_chain_id;
-        tracing::info!(chains=%bundlers.len(), "Relayer-{}", chain_id);
-        if bundlers.is_empty() {
+        tracing::info!(chains=%providers.len(), "Relayer-{}", chain_id);
+        if providers.is_empty() {
             tracing::warn!("Relayer-{} terminated", chain_id);
             return Ok(());
         }
 
         // TODO: Spawn worker threads to concurrently process messages.
-        while let Some(op) = relay_rx.recv().await {
-            let Some(bundler) = bundlers.get(&op.chain) else {
-                tracing::warn!(chain_id = %op.chain, "UserOp missing bundler");
+        while let Some(RelayUserOp {
+            mut userop,
+            chain_id,
+            send_id,
+        }) = relay_rx.recv().await
+        {
+            let Some(provider) = providers.get(&chain_id) else {
+                tracing::warn!(%chain_id, "UserOp missing bundler");
                 continue;
             };
-            let (_, (entrypoint, _, _, bundler)) = bundler.pair();
+            let (_, (entrypoint, _, _, _, bundler, watcher)) = provider.pair();
 
-            let send_op = SendUserOperation::EntryPointV07(op.userop.clone());
-            match bundler
+            // fill up gas
+            if userop.max_fee_per_gas.is_zero() {
+                let (tips, header, est4337) = tokio::join!(
+                    watcher.get_max_priority_fee_per_gas(),
+                    watcher.get_header_by_number(BlockNumberOrTag::Latest),
+                    bundler.raw_request::<_, UserOperationGasEstimation>(
+                        "eth_estimateUserOperationGas".into(),
+                        (userop.clone(), *entrypoint),
+                    )
+                );
+
+                if let Ok(max_priority_fee_per_gas) = tips
+                    && let Ok(Some(h)) = header
+                    && let Ok(est) = est4337
+                {
+                    userop.call_gas_limit = est.call_gas_limit;
+                    userop.pre_verification_gas = est.pre_verification_gas;
+                    userop.verification_gas_limit = est.verification_gas;
+                    userop.paymaster_verification_gas_limit = Some(est.paymaster_verification_gas);
+                    userop.paymaster_post_op_gas_limit = Some(est.paymaster_post_op_gas_limit);
+
+                    let base_fee_per_gas = h.base_fee_per_gas.unwrap_or_default();
+                    let est = alloy::providers::utils::eip1559_default_estimator(
+                        base_fee_per_gas as u128,
+                        &[vec![max_priority_fee_per_gas]],
+                    );
+
+                    userop.max_fee_per_gas = U256::from(est.max_fee_per_gas);
+                    userop.max_priority_fee_per_gas = U256::from(est.max_priority_fee_per_gas);
+                } else {
+                    tracing::warn!(%send_id, "estimateUserOperationGas()");
+                    relay_tx.send(RelayUserOp {
+                        send_id,
+                        chain_id,
+                        userop,
+                    })?; // retry until success
+                    continue;
+                };
+            }
+
+            // sign the UserOp
+            let userop_hash = get_user_op_hash(&userop.clone().into(), *entrypoint, chain_id)?;
+            let sig = bls_key.sign(blsful::SignatureSchemes::Basic, userop_hash.0.as_slice())?;
+            userop.signature = sig.as_raw_value().to_compressed().into();
+
+            // submit the UserOp
+            let send_op = SendUserOperation::EntryPointV07(userop.clone());
+            let Ok(res) = bundler
                 .raw_request::<_, SendUserOperationResponse>(
                     "eth_sendUserOperation".into(),
                     (send_op, entrypoint),
                 )
                 .await
-            {
-                Ok(SendUserOperationResponse { user_op_hash }) => {
-                    let userop_hash = Hash::from_bytes(user_op_hash)?;
-                    anyhow::ensure!(op.hash == userop_hash, "UserOp hash mismatch");
-                    tracing::debug!(hash=%op.hash, chain_id=%op.chain, "UserOp submitted");
-                    continue; // next userop
-                }
-                Err(err) => {
-                    tracing::error!(%err, "UserOp error");
-                    if err.is_transport_error() {
-                        relay_tx.send(op)?; // retry until success
-                    }
-                }
+            else {
+                tracing::error!(%send_id, "sendUserOperation()");
+                relay_tx.send(RelayUserOp {
+                    send_id,
+                    chain_id,
+                    userop,
+                })?; // retry until success
+                continue;
             };
+            let userop_hash = Bytes::from(userop_hash);
+            anyhow::ensure!(res.user_op_hash == userop_hash, "UserOp hash mismatch"); // MUST NEVER HAPPEN!
+            tracing::debug!(%send_id, "sendUserOperation({userop:?})");
         }
         Ok(())
     }
@@ -234,8 +295,8 @@ impl Relayer {
                 signature: userop_sig.into(), // replace the signature with multi-sig
                 ..bop
             },
-            chain: 0,
-            hash: userop_hash,
+            chain_id: 0,
+            send_id: userop_hash,
         };
 
         // push UserOp to the sending queue
