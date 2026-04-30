@@ -148,7 +148,9 @@ impl Signer {
                     sendId,
                     recipient,
                     payload,
-                    value,
+                    // sender,
+                    // value,
+                    // attributes,
                     ..
                 }) = super::IERC7786GatewaySource::MessageSent::decode_log_data(log.data())
                 else {
@@ -156,13 +158,13 @@ impl Signer {
                     continue;
                 };
 
-                // validate payload integrity
+                // 1. Validate payload integrity
                 if sendId != keccak256(payload.iter().as_slice()) {
                     tracing::warn!(%sendId, "Invalid sendId");
                     continue;
                 }
 
-                // check destination route
+                // 2. Get destination route
                 let dest_chain =
                     get_chain_id(std::str::from_utf8(&recipient).expect("Invalid utf-8"))?;
                 let Some(watcher) = watchers.get(&dest_chain) else {
@@ -172,26 +174,18 @@ impl Signer {
                 let (_entrypoint, sender, gateway, paymaster, _bundler, _provider) =
                     watcher.value();
 
-                // extract EIP1559 fees
-                let limbs = value.as_limbs();
-                let (fee, tip) = (
-                    (limbs[0] as u128) | ((limbs[1] as u128) << 64),
-                    (limbs[2] as u128) | ((limbs[3] as u128) << 64),
-                );
+                // // 3. Extract EIP1559 fees
+                // let limbs = value.as_limbs();
+                // let (fee, tip) = (
+                //     (limbs[0] as u128) | ((limbs[1] as u128) << 64),
+                //     (limbs[2] as u128) | ((limbs[3] as u128) << 64),
+                // );
 
-                // construct partial UserOp
-                let userop = Self::new_user_op(
-                    sendId,
-                    payload,
-                    sender,
-                    gateway,
-                    paymaster,
-                    block_height,
-                    fee,
-                    tip,
-                );
+                // 4. Construct partial UserOp
+                let userop =
+                    Self::new_user_op(sendId, payload, sender, gateway, paymaster, block_height);
 
-                // send it for signing
+                // 5. Send it for signing
                 let op = SignUserOp {
                     blk_hash,
                     txn_hash,
@@ -294,14 +288,12 @@ impl Signer {
             }
 
             // 2. Compute the UserOp hash
-            let uop_hash = Hash::from_bytes(
-                get_user_op_hash(&userop.clone().into(), *entrypoint, chain_id)?.as_slice(),
-            )?;
+            let uop_hash = get_user_op_hash(&userop.clone().into(), *entrypoint, chain_id)?;
 
             // 3. Sign the UserOp hash;
             let sig = secret_key
                 .as_bls()
-                .sign(blsful::SignatureSchemes::Basic, uop_hash.as_bytes())
+                .sign(blsful::SignatureSchemes::Basic, uop_hash.as_slice())
                 .unwrap();
             userop.signature = sig.as_raw_value().to_compressed().into();
 
@@ -309,7 +301,7 @@ impl Signer {
             let relay_set = Self::get_relay_set(blk_hash, txn_hash, state.clone(), db.clone())?;
             for peer in relay_set {
                 let msg = ExternalMessage::UccbUserOp(UccbUserOp {
-                    userop_hash: uop_hash,
+                    userop_hash: Hash(uop_hash.0),
                     block_hash: blk_hash,
                     public_key: secret_key.node_public_key(),
                     // Only send userop to self - userop_hash assures integrity from other nodes
@@ -388,8 +380,6 @@ impl Signer {
         gateway: &Address,
         paymaster: &Address,
         block_height: u64,
-        fee: u128,
-        tip: u128,
     ) -> AlloyUserOperation {
         // we can encode some custom things in here
         let paymaster_data = (block_height).abi_encode_packed();
@@ -402,8 +392,8 @@ impl Signer {
             call_gas_limit: Self::DUMMY_GAS, // estimateUserOpGas
             verification_gas_limit: Self::DUMMY_GAS, // estimateUserOpGas
             pre_verification_gas: Self::DUMMY_GAS, // estimateUserOpGas
-            max_fee_per_gas: U256::from(fee),
-            max_priority_fee_per_gas: U256::from(tip),
+            max_fee_per_gas: Self::DUMMY_GAS,
+            max_priority_fee_per_gas: Self::DUMMY_GAS,
             paymaster: Some(*paymaster),
             paymaster_verification_gas_limit: Some(Self::DUMMY_GAS), // estimateUserOpGas
             paymaster_post_op_gas_limit: Some(Self::DUMMY_GAS),      // estimateUserOpGas

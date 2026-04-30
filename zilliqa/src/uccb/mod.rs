@@ -36,13 +36,22 @@ pub const ENTRYPOINT_V07: Address = address!("0x0000000071727de22e5e9d8baf0edac6
 pub const ENTRYPOINT_V08: Address = address!("0x4337084d9e255ff0702461cf8895ce9e3b5ff108");
 pub const ENTRYPOINT_V09: Address = address!("0x433709009B8330FDa32311DF1C2AFA402eD8D009");
 
+#[cfg(not(doctest))]
 sol!(
     #[sol(rpc)]
     "../vendor/openzeppelin-contracts/contracts/interfaces/draft-IERC4337.sol"
 );
+#[cfg(not(doctest))]
+sol!(
+    #[sol(rpc)]
+    "../vendor/openzeppelin-contracts/contracts/interfaces/draft-IERC7786.sol"
+);
 
+// This is to pass doctest
+#[cfg(doctest)]
 sol! {
     // https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/interfaces/draft-IERC7786.sol
+    #[sol(rpc)]
     interface IERC7786GatewaySource {
         event MessageSent(
             bytes32 indexed sendId,
@@ -53,34 +62,34 @@ sol! {
             bytes[] attributes
         );
     }
+
+    struct PackedUserOperation {
+        address sender;
+        uint256 nonce;
+        bytes initCode; // `abi.encodePacked(factory, factoryData)`
+        bytes callData;
+        bytes32 accountGasLimits; // `abi.encodePacked(verificationGasLimit, callGasLimit)` 16 bytes each
+        uint256 preVerificationGas;
+        bytes32 gasFees; // `abi.encodePacked(maxPriorityFeePerGas, maxFeePerGas)` 16 bytes each
+        bytes paymasterAndData; // `abi.encodePacked(paymaster, paymasterVerificationGasLimit, paymasterPostOpGasLimit, paymasterData[, paymasterSignature, paymasterSignatureSize, PAYMASTER_SIG_MAGIC])` (20 bytes, 16 bytes, 16 bytes, dynamic[, dynamic, 2 bytes, 8 bytes])
+        bytes signature;
+    }
+
+    #[sol(rpc)]
+    interface IEntryPoint {
+        function getUserOpHash(
+            PackedUserOperation calldata userOp
+        ) external view returns (bytes32);
+        function getNonce(address sender, uint192 key) external view returns (uint256 nonce);
+    }
+
+    // https://github.com/eth-infinitism/account-abstraction/tree/develop/contracts/interfaces
+    #[sol(rpc)]
+    interface INonceManager {
+        function getNonce(address sender, uint192 key)
+        external view returns (uint256 nonce);
+    }
 }
-//     // https://github.com/eth-infinitism/account-abstraction/tree/develop/contracts/interfaces
-//     #[sol(rpc)]
-//     interface INonceManager {
-//         function getNonce(address sender, uint192 key)
-//         external view returns (uint256 nonce);
-//     }
-
-//     struct PackedUserOperation {
-//         address sender;
-//         uint256 nonce;
-//         bytes initCode; // `abi.encodePacked(factory, factoryData)`
-//         bytes callData;
-//         bytes32 accountGasLimits; // `abi.encodePacked(verificationGasLimit, callGasLimit)` 16 bytes each
-//         uint256 preVerificationGas;
-//         bytes32 gasFees; // `abi.encodePacked(maxPriorityFeePerGas, maxFeePerGas)` 16 bytes each
-//         bytes paymasterAndData; // `abi.encodePacked(paymaster, paymasterVerificationGasLimit, paymasterPostOpGasLimit, paymasterData[, paymasterSignature, paymasterSignatureSize, PAYMASTER_SIG_MAGIC])` (20 bytes, 16 bytes, 16 bytes, dynamic[, dynamic, 2 bytes, 8 bytes])
-//         bytes signature;
-//     }
-
-//     #[sol(rpc)]
-//     interface IEntryPoint {
-//         function getUserOpHash(
-//             PackedUserOperation calldata userOp
-//         ) external view returns (bytes32);
-//         function getNonce(address sender, uint192 key) external view returns (uint256 nonce);
-//     }
-// }
 
 pub struct SignUserOp {
     pub userop: AlloyUserOperation,
