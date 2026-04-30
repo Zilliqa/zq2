@@ -1044,7 +1044,7 @@ async fn subscribe(
             let filter = match params {
                 pubsub::Params::None => None,
                 pubsub::Params::Logs(f) => Some(*f),
-                pubsub::Params::Bool(_) => {
+                _ => {
                     return Err("invalid params for logs".into());
                 }
             };
@@ -1123,7 +1123,7 @@ async fn subscribe(
             let full = match params {
                 pubsub::Params::None => false,
                 pubsub::Params::Bool(b) => b,
-                pubsub::Params::Logs(_) => {
+                _ => {
                     return Err("invalid params for newPendingTransactions".into());
                 }
             };
