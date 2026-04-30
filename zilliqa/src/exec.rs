@@ -556,13 +556,10 @@ impl State {
         // state-sync is going on, use the checkpoint's history instead of the node's history
         let (view_history, finalized_view) = if current_block.view
             < self.view_history.read().min_view
-            && self.ckpt_view_history.is_some()
-            && self.ckpt_finalized_view.is_some()
+            && let Some(ckpt_view_history) = &self.ckpt_view_history
+            && let Some(ckpt_finalized_view) = self.ckpt_finalized_view
         {
-            (
-                self.ckpt_view_history.clone().unwrap(),
-                self.ckpt_finalized_view.unwrap(),
-            )
+            (ckpt_view_history.clone(), ckpt_finalized_view)
         } else {
             (self.view_history.clone(), self.finalized_view)
         };
