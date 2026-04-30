@@ -12,6 +12,7 @@ use alloy::{
     sol_types::{SolEvent, SolValue},
 };
 use anyhow::{Context, Result};
+use dashmap::DashMap;
 use itertools::Itertools as _;
 use libp2p::PeerId;
 use revm::primitives::keccak256;
@@ -19,7 +20,6 @@ use tokio::{
     sync::mpsc::{UnboundedReceiver, UnboundedSender},
     task::JoinSet,
 };
-use tokio_stream::StreamExt as _;
 
 use crate::{
     cfg::NodeConfig,
@@ -123,79 +123,112 @@ impl Signer {
             return Ok(());
         }
 
-        let mut watch_rx = futures::stream::SelectAll::new();
+        // Get last known height
+        let final_number = DashMap::with_capacity(watchers.len());
         for remote in config.remote_chains.iter() {
             if let Some(watcher) = watchers.get(&remote.chain_id) {
-                let (_, (_, gateway, _, _, _, watcher)) = watcher.pair();
+                let (_, _, _, _, _, watcher) = watcher.value();
+                let final_block = watcher
+                    .get_header_by_number(BlockNumberOrTag::Finalized)
+                    .await?
+                    .expect("must exist");
+                final_number.insert(remote.chain_id, final_block.number);
+            }
+        }
+
+        // Poll each chain, one-by-one
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await; // short polling interval
+            for watcher in watchers.iter() {
+                let (chain_id, (_, gateway, _, _, _, watcher)) = watcher.pair();
+
+                // Subscribing to the live-stream results in latest blocks, which may get reorganized.
+                // Manual polling is used to ensure that only finalized blocks are processed.
+                // 1. Check final block number
+                let final_block = watcher
+                    .get_header_by_number(BlockNumberOrTag::Finalized)
+                    .await?
+                    .expect("final block must exist");
+                let mut last_final = final_number.get_mut(chain_id).expect("must exist");
+                if final_block.number <= *last_final.value() {
+                    continue; // skip if stale
+                }
+
+                // 2. Retrieve the latest set of finalized logs
                 let filter = Filter::new()
                     .address(*gateway)
+                    .from_block(BlockNumberOrTag::Number(
+                        last_final.value().saturating_add(1),
+                    ))
+                    .to_block(BlockNumberOrTag::Number(final_block.number)) // ideally, this should be exactly one block length
                     .event_signature(super::IERC7786GatewaySource::MessageSent::SIGNATURE_HASH);
-                let stream = watcher.watch_logs(&filter).await?.into_stream();
-                watch_rx.push(stream);
+                let Ok(logs) = watcher.get_logs(&filter).await else {
+                    tracing::error!("eth_getLogs({chain_id}): transport");
+                    continue; // retry
+                };
+                *last_final.value_mut() = final_block.number; // update final
+
+                // iterate thru logs
+                for log in logs {
+                    if log.removed {
+                        tracing::warn!("eth_getLogs(): removed");
+                        continue; // skip removals
+                    }
+
+                    let blk_hash = log.block_hash.expect("block_hash != none").into();
+                    let txn_hash = log.transaction_hash.expect("txn_hash != none").into();
+                    let block_height = log.block_number.expect("block_number != none");
+                    let MessageSent {
+                        sendId,
+                        recipient,
+                        payload,
+                        value,
+                        // sender,
+                        // attributes,
+                        ..
+                    } = super::IERC7786GatewaySource::MessageSent::decode_log_data(log.data())?;
+
+                    // 1. Validate payload integrity
+                    if !value.is_zero() || sendId != keccak256(payload.iter().as_slice()) {
+                        tracing::warn!(%sendId, "Invalid sendId");
+                        continue;
+                    }
+
+                    // 2. Get destination route
+                    let dest_chain =
+                        get_chain_id(std::str::from_utf8(&recipient).expect("Invalid utf-8"))?;
+                    let Some(watcher) = watchers.get(&dest_chain) else {
+                        tracing::warn!(%sendId, "Invalid route");
+                        continue;
+                    };
+                    let (_entrypoint, sender, gateway, paymaster, _bundler, _provider) =
+                        watcher.value();
+
+                    // 3. Extract EIP1559/ERC4337 fees from Attributes
+                    // TODO:
+
+                    // 4. Construct partial UserOp
+                    let userop = Self::new_user_op(
+                        sendId,
+                        payload,
+                        sender,
+                        gateway,
+                        paymaster,
+                        block_height,
+                    );
+
+                    // 5. Send it for signing
+                    let op = SignUserOp {
+                        blk_hash,
+                        txn_hash,
+                        chain_id: dest_chain, // destination route
+                        userop,
+                    };
+                    sign_tx.send(op)?;
+                }
             }
         }
-
-        // Listen for events
-        while let Some(logs) = watch_rx.next().await {
-            for log in logs {
-                if log.removed {
-                    continue;
-                }
-                let blk_hash = log.block_hash.expect("block_hash != none").into();
-                let txn_hash = log.transaction_hash.expect("txn_hash != none").into();
-                let block_height = log.block_number.expect("block_number != none");
-                let Ok(MessageSent {
-                    sendId,
-                    recipient,
-                    payload,
-                    // sender,
-                    // value,
-                    // attributes,
-                    ..
-                }) = super::IERC7786GatewaySource::MessageSent::decode_log_data(log.data())
-                else {
-                    tracing::warn!(%txn_hash, "Invalid MessageSent");
-                    continue;
-                };
-
-                // 1. Validate payload integrity
-                if sendId != keccak256(payload.iter().as_slice()) {
-                    tracing::warn!(%sendId, "Invalid sendId");
-                    continue;
-                }
-
-                // 2. Get destination route
-                let dest_chain =
-                    get_chain_id(std::str::from_utf8(&recipient).expect("Invalid utf-8"))?;
-                let Some(watcher) = watchers.get(&dest_chain) else {
-                    tracing::warn!(%sendId, "Invalid route");
-                    continue;
-                };
-                let (_entrypoint, sender, gateway, paymaster, _bundler, _provider) =
-                    watcher.value();
-
-                // // 3. Extract EIP1559 fees
-                // let limbs = value.as_limbs();
-                // let (fee, tip) = (
-                //     (limbs[0] as u128) | ((limbs[1] as u128) << 64),
-                //     (limbs[2] as u128) | ((limbs[3] as u128) << 64),
-                // );
-
-                // 4. Construct partial UserOp
-                let userop =
-                    Self::new_user_op(sendId, payload, sender, gateway, paymaster, block_height);
-
-                // 5. Send it for signing
-                let op = SignUserOp {
-                    blk_hash,
-                    txn_hash,
-                    chain_id: dest_chain, // destination route
-                    userop,
-                };
-                sign_tx.send(op)?;
-            }
-        }
-        Ok(())
+        // Ok(())
     }
 
     /// Sign the UserOps

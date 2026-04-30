@@ -47,6 +47,12 @@ sol!(
     "../vendor/openzeppelin-contracts/contracts/interfaces/draft-IERC7786.sol"
 );
 
+sol! {
+    interface IERC7786Attributes {
+        function eip1559_fees(uint128 max_priority_gas_fee,uint128 max_base_gas_fee) external;
+    }
+}
+
 // This is to pass doctest
 #[cfg(doctest)]
 sol! {
