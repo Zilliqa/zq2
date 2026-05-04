@@ -224,11 +224,14 @@ impl Uccb {
                 .connect(Url::from_str(&remote.watcher_url)?.as_str())
                 .await?;
 
-            if let Ok(entrypoints) = bundler
-                .raw_request::<(), Vec<Address>>("eth_supportedEntryPoints".into(), ())
-                .await
+            let (get_entrypoints, get_chain_id) = tokio::join!(
+                bundler.raw_request::<(), Vec<Address>>("eth_supportedEntryPoints".into(), ()),
+                watcher.get_chain_id()
+            );
+
+            if let Ok(ref entrypoints) = get_entrypoints
                 && entrypoints.contains(&remote.entrypoint)
-                && let Ok(id) = watcher.get_chain_id().await
+                && let Ok(id) = get_chain_id
                 && chain_id == id
             {
                 providers.insert(
@@ -242,6 +245,14 @@ impl Uccb {
                         bundler,
                     ),
                 );
+            } else {
+                tracing::info!("{get_entrypoints:?} {get_chain_id:?}");
+                if let Err(err) = get_entrypoints {
+                    tracing::error!(%err, "Bundler-{chain_id}");
+                }
+                if let Err(err) = get_chain_id {
+                    tracing::error!(%err, "Rpc-{chain_id}");
+                }
             }
         }
         providers.shrink_to_fit();

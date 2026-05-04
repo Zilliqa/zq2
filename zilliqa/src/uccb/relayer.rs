@@ -102,9 +102,9 @@ impl Relayer {
     ) -> Result<()> {
         let bls_key = secret_key.as_bls();
         let chain_id = config.eth_chain_id;
-        tracing::info!(chains=%providers.len(), "Relayer-{}", chain_id);
+        tracing::info!(chains=%providers.len(), "Relayer-{chain_id}");
         if providers.is_empty() {
-            tracing::warn!("Relayer-{} terminated", chain_id);
+            tracing::warn!("Relayer-{chain_id} terminated");
             return Ok(());
         }
 

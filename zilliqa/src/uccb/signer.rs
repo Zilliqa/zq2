@@ -118,9 +118,9 @@ impl Signer {
         watchers: Arc<super::Providers>,
         sign_tx: UnboundedSender<SignUserOp>,
     ) -> Result<()> {
-        tracing::info!(chains=%watchers.len(), "Watcher-{}", chain_id);
+        tracing::info!(chains=%watchers.len(), "Watcher-{chain_id}");
         if watchers.is_empty() {
-            tracing::warn!("Watcher-{} terminated", chain_id);
+            tracing::warn!("Watcher-{chain_id} terminated");
             return Ok(());
         }
 
