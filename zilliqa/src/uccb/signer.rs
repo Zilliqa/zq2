@@ -130,10 +130,11 @@ impl Signer {
             if let Some(watcher) = watchers.get(&remote.chain_id) {
                 let (_, _, _, _, _, watcher) = watcher.value();
                 let final_block = watcher
-                    .get_header_by_number(BlockNumberOrTag::Finalized) // fallsback to get-block-by-number
+                    .get_block_by_number(BlockNumberOrTag::Finalized)
+                    .hashes()
                     .await?
                     .expect("must exist");
-                final_number.insert(remote.chain_id, final_block.number);
+                final_number.insert(remote.chain_id, final_block.header.number);
             }
         }
 
@@ -147,11 +148,12 @@ impl Signer {
                 // Manual polling is used to ensure that only finalized blocks are processed.
                 // 1. Check final block number
                 let final_block = watcher
-                    .get_header_by_number(BlockNumberOrTag::Finalized) // fallsback to get-block-by-number
+                    .get_block_by_number(BlockNumberOrTag::Finalized)
+                    .hashes()
                     .await?
                     .expect("final block must exist");
                 let mut last_final = final_number.get_mut(chain_id).expect("must exist");
-                if final_block.number <= *last_final.value() {
+                if final_block.header.number <= *last_final.value() {
                     continue; // skip if stale
                 }
 
@@ -161,13 +163,13 @@ impl Signer {
                     .from_block(BlockNumberOrTag::Number(
                         last_final.value().saturating_add(1),
                     ))
-                    .to_block(BlockNumberOrTag::Number(final_block.number)) // ideally, this should be exactly one block length
+                    .to_block(BlockNumberOrTag::Number(final_block.header.number)) // ideally, this should be exactly one block length
                     .event_signature(super::IERC7786GatewaySource::MessageSent::SIGNATURE_HASH);
                 let Ok(logs) = watcher.get_logs(&filter).await else {
                     tracing::error!("eth_getLogs({chain_id}): transport");
                     continue; // retry
                 };
-                *last_final.value_mut() = final_block.number; // update final
+                *last_final.value_mut() = final_block.header.number; // update final
 
                 // iterate thru logs
                 for log in logs {

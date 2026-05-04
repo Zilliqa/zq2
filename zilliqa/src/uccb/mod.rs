@@ -241,8 +241,8 @@ impl Uccb {
                         remote.sender,
                         remote.gateway,
                         remote.paymaster,
-                        watcher,
                         bundler,
+                        watcher,
                     ),
                 );
             } else {
