@@ -118,23 +118,26 @@ sol! {
 
 pub struct SignUserOp {
     pub userop: AlloyUserOperation,
-    pub chain_id: ChainId,
     pub txn_hash: Hash,
     pub blk_hash: Hash,
+    pub dst_chain: ChainId,
+    pub src_chain: ChainId,
     pub blk_height: u64,
 }
 
 impl SignUserOp {
     pub fn new(
         userop: AlloyUserOperation,
-        chain_id: ChainId,
+        dst_chain: ChainId,
+        src_chain: ChainId,
         txn_hash: Hash,
         blk_hash: Hash,
         blk_height: u64,
     ) -> Self {
         Self {
             userop,
-            chain_id,
+            dst_chain,
+            src_chain,
             txn_hash,
             blk_hash,
             blk_height,

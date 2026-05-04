@@ -8,7 +8,7 @@ use alloy::{
         aliases::{B32, U192},
     },
     providers::Provider as _,
-    rpc::types::{Filter, PackedUserOperation as AlloyUserOperation, UserOperationGasEstimation},
+    rpc::types::{Filter, PackedUserOperation as AlloyUserOperation},
     sol_types::{SolEvent, SolValue},
 };
 use anyhow::{Context, Result};
@@ -130,16 +130,13 @@ impl Signer {
             if let Some(watcher) = watchers.get(&remote.chain_id) {
                 let (_, _, _, _, _, watcher) = watcher.value();
                 let final_block = watcher
-                    .get_header_by_number(BlockNumberOrTag::Finalized)
+                    .get_header_by_number(BlockNumberOrTag::Finalized) // fallsback to get-block-by-number
                     .await?
                     .expect("must exist");
                 final_number.insert(remote.chain_id, final_block.number);
             }
         }
 
-        let mut fee_cache = lru::LruCache::<(u64, u64), IERC4337ExtraFees>::new(
-            NonZeroUsize::new(watchers.len()).unwrap(),
-        );
         // Poll each chain, one-by-one
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(1)).await; // short polling interval
@@ -150,7 +147,7 @@ impl Signer {
                 // Manual polling is used to ensure that only finalized blocks are processed.
                 // 1. Check final block number
                 let final_block = watcher
-                    .get_header_by_number(BlockNumberOrTag::Finalized)
+                    .get_header_by_number(BlockNumberOrTag::Finalized) // fallsback to get-block-by-number
                     .await?
                     .expect("final block must exist");
                 let mut last_final = final_number.get_mut(chain_id).expect("must exist");
@@ -167,17 +164,14 @@ impl Signer {
                     .to_block(BlockNumberOrTag::Number(final_block.number)) // ideally, this should be exactly one block length
                     .event_signature(super::IERC7786GatewaySource::MessageSent::SIGNATURE_HASH);
                 let Ok(logs) = watcher.get_logs(&filter).await else {
-                    tracing::error!(%chain_id, "eth_getLogs(): transport");
+                    tracing::error!("eth_getLogs({chain_id}): transport");
                     continue; // retry
                 };
                 *last_final.value_mut() = final_block.number; // update final
 
                 // iterate thru logs
                 for log in logs {
-                    if log.removed {
-                        tracing::warn!("eth_getLogs(): removed");
-                        continue; // skip removals
-                    }
+                    anyhow::ensure!(!log.removed, "finalized block reorg"); // must never happen
 
                     let blk_hash = log.block_hash.expect("block_hash != none").into();
                     let txn_hash = log.transaction_hash.expect("txn_hash != none").into();
@@ -188,7 +182,7 @@ impl Signer {
                         recipient,
                         payload,
                         value,
-                        // sender,
+                        sender,
                         // attributes,
                         ..
                     } = super::IERC7786GatewaySource::MessageSent::decode_log_data(log.data())?;
@@ -199,17 +193,25 @@ impl Signer {
                         continue;
                     }
 
-                    // 2. Get destination route
-                    let dest_chain =
+                    // 2. Get route
+                    let src_chain =
+                        get_chain_id(std::str::from_utf8(&sender).expect("Invalid utf-8"))?;
+                    anyhow::ensure!(src_chain == *chain_id, "source_chain mismatch");
+
+                    let dst_chain =
                         get_chain_id(std::str::from_utf8(&recipient).expect("Invalid utf-8"))?;
-                    let Some(w) = watchers.get(&dest_chain) else {
-                        tracing::warn!(%sendId, "Invalid route");
+                    // ** DO NOT ALLOW LOOP-BACK **
+                    #[cfg(not(test))]
+                    anyhow::ensure!(dst_chain != *chain_id, "loop-back detected");
+
+                    let Some(p) = watchers.get(&dst_chain) else {
+                        tracing::warn!(send_id=%sendId, "Missing route {src_chain} => {dst_chain}");
                         continue;
                     };
-                    let (_entrypoint, sender, gateway, paymaster, _bundler, _provider) = w.value();
+                    let (_entrypoint, sender, gateway, paymaster, _bundler, _provider) = p.value();
 
                     // 3. Construct partial UserOp
-                    let mut userop = Self::new_user_op(
+                    let userop = Self::new_user_op(
                         sendId,
                         payload,
                         sender,
@@ -218,39 +220,15 @@ impl Signer {
                         block_height,
                     );
 
-                    // 4. Populate EIP1559/ERC4337 fees
-                    //
-                    // To ensure that all signers use the same values, we retrieve the soft-configured values for the destination chain,
-                    // from a contract on the source chain at the block height. Since the fee values are largely static, they can be
-                    // cached. This is cheaper on gas fees, compared to encoding the values in the MessageSent event itself.
-                    let fees = if let Some(fees) = fee_cache.get(&(*chain_id, block_height)) {
-                        fees.clone()
-                    } else {
-                        let Ok(fees) = super::IERC4337Extra::new(*gateway, watcher)
-                            .getFees(dest_chain)
-                            .block(BlockId::number(block_height))
-                            .call()
-                            .await
-                        else {
-                            tracing::error!(%sendId, %chain_id, "getFees(): skipped");
-                            continue;
-                        };
-                        fee_cache.push((*chain_id, block_height), fees.clone());
-                        fees
-                    };
-
-                    userop.max_fee_per_gas = U256::from(fees.max_fee_per_gas);
-                    userop.max_priority_fee_per_gas = U256::from(fees.max_priority_fee_per_gas);
-                    userop.call_gas_limit = U256::from(fees.call_gas_limit);
-                    userop.pre_verification_gas = U256::from(fees.pre_verification_gas);
-                    userop.verification_gas_limit = U256::from(fees.verification_gas_limit);
-                    userop.paymaster_verification_gas_limit =
-                        Some(U256::from(fees.paymaster_verification_gas_limit));
-                    userop.paymaster_post_op_gas_limit =
-                        Some(U256::from(fees.paymaster_verification_gas_limit));
-
-                    // 5. Send it for signing
-                    let op = SignUserOp::new(userop, dest_chain, txn_hash, blk_hash, block_height);
+                    // 4. Send it for signing
+                    let op = SignUserOp::new(
+                        userop,
+                        dst_chain,
+                        src_chain,
+                        txn_hash,
+                        blk_hash,
+                        block_height,
+                    );
                     sign_tx.send(op)?;
                 }
             }
@@ -273,97 +251,109 @@ impl Signer {
         mut sign_rx: UnboundedReceiver<SignUserOp>,
         sign_tx: UnboundedSender<SignUserOp>,
     ) -> Result<()> {
-        tracing::info!(chains=%watchers.len(), "Signer-{}", chain_id);
+        tracing::info!(chains=%watchers.len(), "Signer-{chain_id}");
         if watchers.is_empty() {
-            tracing::warn!("Signer-{} terminated", chain_id);
+            tracing::warn!("Signer-{chain_id} terminated");
             return Ok(());
         }
+
+        let mut fee_cache = lru::LruCache::<(u64, u64), IERC4337ExtraFees>::new(
+            NonZeroUsize::new(watchers.len() * 3).unwrap(),
+        );
 
         // process user ops
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
         while let Ok(SignUserOp {
             mut userop,
-            chain_id,
+            dst_chain,
+            src_chain,
             txn_hash,
             blk_hash,
             blk_height,
         }) = sign_rx.try_recv()
         {
-            let Some(watcher) = watchers.get(&chain_id) else {
-                tracing::warn!(%chain_id, "Missing provider");
-                continue;
-            };
-            let (entrypoint, sender, gateway, _paymaster, bundler, provider) = watcher.value();
-
-            // update UserOp fees
+            // 1. Populate UserOp fees
             if userop.max_fee_per_gas.is_zero() {
-                let (tips, header, est4337) = tokio::join!(
-                    provider.get_max_priority_fee_per_gas(),
-                    provider.get_header_by_number(BlockNumberOrTag::Latest),
-                    bundler.raw_request::<_, UserOperationGasEstimation>(
-                        "eth_estimateUserOperationGas".into(),
-                        (userop.clone(), *entrypoint),
-                    ),
-                );
-                if let Ok(tips) = tips
-                    && let Ok(Some(h)) = header
-                    && let Ok(est) = est4337
-                {
-                    let fee = h.base_fee_per_gas.unwrap_or_default();
-                    let est1559 = alloy::providers::utils::eip1559_default_estimator(
-                        fee as u128,
-                        &[vec![tips]],
-                    );
-
-                    userop.max_fee_per_gas = U256::from(est1559.max_fee_per_gas);
-                    userop.max_priority_fee_per_gas = U256::from(est1559.max_priority_fee_per_gas);
-
-                    userop.call_gas_limit = est.call_gas_limit;
-                    userop.pre_verification_gas = est.pre_verification_gas;
-                    userop.verification_gas_limit = est.verification_gas;
-                    userop.paymaster_verification_gas_limit = Some(est.paymaster_verification_gas);
-                    userop.paymaster_post_op_gas_limit = Some(est.paymaster_verification_gas);
+                let fees = if let Some(fees) = fee_cache.get(&(src_chain, blk_height)) {
+                    fees.clone()
                 } else {
-                    tracing::warn!("estimateUserOperationGas()");
-                    sign_tx.send(SignUserOp::new(
-                        userop, chain_id, txn_hash, blk_hash, blk_height,
-                    ))?; // retry
-                    continue;
-                }
+                    let p = watchers.get(&src_chain).expect("must exist");
+                    let (_entrypoint, _sender, gateway, _paymaster, _bundler, provider) = p.value();
+                    match super::IERC4337Extra::new(*gateway, provider)
+                        .getFees(dst_chain)
+                        .block(BlockId::number(blk_height))
+                        .call()
+                        .await
+                    {
+                        Ok(fees) => {
+                            fee_cache.push((src_chain, blk_height), fees.clone());
+                            fees
+                        }
+                        Err(err) => {
+                            let send_id = keccak256(userop.call_data.iter().as_slice());
+                            tracing::error!(%send_id, %err, "getFees({src_chain}): skipped");
+                            sign_tx.send(SignUserOp::new(
+                                userop, dst_chain, src_chain, txn_hash, blk_hash, blk_height,
+                            ))?; // retry
+                            continue;
+                        }
+                    }
+                };
+
+                // EIP1559 fees
+                userop.max_fee_per_gas = U256::from(fees.max_fee_per_gas);
+                userop.max_priority_fee_per_gas = U256::from(fees.max_priority_fee_per_gas);
+
+                // ERC4337 fees
+                userop.call_gas_limit = U256::from(fees.call_gas_limit);
+                userop.pre_verification_gas = U256::from(fees.pre_verification_gas);
+                userop.verification_gas_limit = U256::from(fees.verification_gas_limit);
+                userop.paymaster_verification_gas_limit =
+                    Some(U256::from(fees.paymaster_verification_gas_limit));
+                userop.paymaster_post_op_gas_limit =
+                    Some(U256::from(fees.paymaster_verification_gas_limit));
             }
 
-            // 1. Retrieve the nonce
-            // TODO: Tackle parallel nonce limits e.g. https://www.alchemy.com/docs/wallets/reference/bundler-faqs#parallel-nonces
+            // 2. Populate the nonce
+            // TODO: Tackle parallel nonce limits e.g.
+            // https://www.alchemy.com/docs/wallets/reference/bundler-faqs#parallel-nonces
+            // https://docs.pimlico.io/guides/how-to/parallel-transactions#parallel-transactions-ordering
+            let Some(p) = watchers.get(&dst_chain) else {
+                tracing::warn!("Missing route {src_chain} => {dst_chain}");
+                continue;
+            };
+            let (entrypoint, sender, gateway, _paymaster, _bundler, provider) = p.value();
+
             if userop.nonce.is_zero() {
                 let key = Self::pack_nonce_key(gateway, &txn_hash);
                 match super::IEntryPointNonces::new(*entrypoint, provider)
                     .getNonce(*sender, key)
                     .call()
-                    // .block(BlockId::number(blk_height))
                     .await
                 {
-                    Ok(nonce) => userop.nonce = nonce,
+                    Ok(nonce) => {
+                        userop.nonce = nonce;
+                    }
                     Err(err) => {
-                        tracing::error!(%err, "getNonce()");
+                        let send_id = keccak256(userop.call_data.iter().as_slice());
+                        tracing::error!(%send_id, %err, "getNonce(dst_chain)");
                         sign_tx.send(SignUserOp::new(
-                            userop, chain_id, txn_hash, blk_hash, blk_height,
+                            userop, dst_chain, src_chain, txn_hash, blk_hash, blk_height,
                         ))?; // retry
                         continue;
                     }
                 };
             }
 
-            // 2. Compute the UserOp hash
-            let uop_hash = get_user_op_hash(&userop.clone().into(), *entrypoint, chain_id)?;
-
-            // 3. Sign the UserOp hash;
+            // 2. Compute + Sign the UserOp hash
+            let uop_hash = get_user_op_hash(&userop.clone().into(), *entrypoint, dst_chain)?;
             let sig = secret_key
                 .as_bls()
                 .sign(blsful::SignatureSchemes::Basic, uop_hash.as_slice())
                 .unwrap();
             userop.signature = sig.as_raw_value().to_compressed().into();
 
-            // 4. Transmit via P2P to the RELAY_SET
+            // 3. Transmit via P2P to the RELAY_SET
             let relay_set = Self::get_relay_set(blk_hash, txn_hash, state.clone(), db.clone())?;
             for peer in relay_set {
                 let msg = ExternalMessage::UccbUserOp(UccbUserOp {
