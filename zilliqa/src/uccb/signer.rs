@@ -434,4 +434,15 @@ impl Signer {
             signature: Bytes::from(Self::DUMMY_SIGNATURE),
         }
     }
+
+    pub fn default_user_op() -> AlloyUserOperation {
+        Self::new_user_op(
+            B256::ZERO,
+            Bytes::new(),
+            &Address::ZERO,
+            &Address::ZERO,
+            &Address::ZERO,
+            0,
+        )
+    }
 }
