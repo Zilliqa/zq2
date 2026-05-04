@@ -1,12 +1,9 @@
 use std::{num::NonZeroUsize, sync::Arc};
 
-// use super::AlloyUserOperation;
 use alloy::{
     eips::BlockNumberOrTag,
-    primitives::Address,
-    primitives::Bytes,
-    primitives::U256,
-    providers::Provider,
+    primitives::{Address, Bytes, ChainId, U256},
+    providers::{Provider, utils::eip1559_default_estimator},
     rpc::types::{
         PackedUserOperation as AlloyUserOperation, SendUserOperation, SendUserOperationResponse,
     },
@@ -22,6 +19,7 @@ use tokio::{
     task::JoinSet,
 };
 
+use super::UserOperationGasEstimationV07;
 use crate::{
     cfg::NodeConfig,
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey},
@@ -126,45 +124,27 @@ impl Relayer {
             };
             let (_, (entrypoint, _, _, _, bundler, watcher)) = provider.pair();
 
-            // fill up gas
-            if userop.max_fee_per_gas.is_zero() {
-                let (tips, header, est4337) = tokio::join!(
-                    watcher.get_max_priority_fee_per_gas(),
-                    watcher.get_header_by_number(BlockNumberOrTag::Latest),
-                    bundler.raw_request::<_, UserOperationGasEstimation>(
-                        "eth_estimateUserOperationGas".into(),
-                        (userop.clone(), *entrypoint),
-                    )
-                );
-
-                if let Ok(max_priority_fee_per_gas) = tips
-                    && let Ok(Some(h)) = header
-                    && let Ok(est) = est4337
-                {
-                    userop.call_gas_limit = est.call_gas_limit;
-                    userop.pre_verification_gas = est.pre_verification_gas;
-                    userop.verification_gas_limit = est.verification_gas;
-                    userop.paymaster_verification_gas_limit = Some(est.paymaster_verification_gas);
-                    userop.paymaster_post_op_gas_limit = Some(est.paymaster_post_op_gas_limit);
-
-                    let base_fee_per_gas = h.base_fee_per_gas.unwrap_or_default();
-                    let est = alloy::providers::utils::eip1559_default_estimator(
-                        base_fee_per_gas as u128,
-                        &[vec![max_priority_fee_per_gas]],
-                    );
-
-                    userop.max_fee_per_gas = U256::from(est.max_fee_per_gas);
-                    userop.max_priority_fee_per_gas = U256::from(est.max_priority_fee_per_gas);
-                } else {
-                    tracing::warn!(%send_id, "estimateUserOperationGas()");
-                    relay_tx.send(RelayUserOp {
-                        send_id,
-                        chain_id,
-                        userop,
-                    })?; // retry until success
-                    continue;
-                };
-            }
+            // If gas is insufficient, delay sending for a while
+            let (tips, header, est4337) = tokio::join!(
+                watcher.get_max_priority_fee_per_gas(),
+                watcher.get_header_by_number(BlockNumberOrTag::Latest),
+                bundler.raw_request::<_, UserOperationGasEstimation>(
+                    "eth_estimateUserOperationGas".into(),
+                    (userop.clone(), *entrypoint),
+                )
+            );
+            if let Ok(tips) = tips
+                && let Ok(Some(h)) = header
+                && let Ok(est) = est4337
+                && Self::validate_gas_fees(tips, h.base_fee_per_gas, est, &userop)
+            {
+                // do nothing
+            } else {
+                tracing::warn!(%send_id, %chain_id, "estimateUserOperationGas()");
+                Self::retry_userop(&relay_tx, send_id, chain_id, userop, relay_rx.is_empty())
+                    .await?;
+                continue;
+            };
 
             // sign the UserOp
             let userop_hash = get_user_op_hash(&userop.clone().into(), *entrypoint, chain_id)?;
@@ -180,19 +160,55 @@ impl Relayer {
                 )
                 .await
             else {
-                tracing::error!(%send_id, "sendUserOperation()");
-                relay_tx.send(RelayUserOp {
-                    send_id,
-                    chain_id,
-                    userop,
-                })?; // retry until success
+                tracing::error!(%send_id,%chain_id,"sendUserOperation()");
+                Self::retry_userop(&relay_tx, send_id, chain_id, userop, relay_rx.is_empty())
+                    .await?;
                 continue;
             };
             let userop_hash = Bytes::from(userop_hash);
             anyhow::ensure!(res.user_op_hash == userop_hash, "UserOp hash mismatch"); // MUST NEVER HAPPEN!
-            tracing::debug!(%send_id, "sendUserOperation({userop:?})");
+            tracing::debug!(%send_id, %chain_id, "sendUserOperation({userop:?})");
         }
         Ok(())
+    }
+
+    async fn retry_userop(
+        relay_tx: &UnboundedSender<RelayUserOp>,
+        send_id: Hash,
+        chain_id: ChainId,
+        userop: AlloyUserOperation,
+        empty: bool,
+    ) -> Result<()> {
+        // delay
+        if empty {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+        Ok(relay_tx.send(RelayUserOp {
+            send_id,
+            chain_id,
+            userop,
+        })?) // retry until success
+    }
+
+    /// Checks that the hard-coded fees/limits are possible to succeed
+    fn validate_gas_fees(
+        max_priority_fee_per_gas: u128,
+        base_fee_per_gas: Option<u64>,
+        est: UserOperationGasEstimationV07,
+        userop: &AlloyUserOperation,
+    ) -> bool {
+        let Some(base_fee_per_gas) = base_fee_per_gas else {
+            return false;
+        };
+        let eip1559est =
+            eip1559_default_estimator(base_fee_per_gas as u128, &[vec![max_priority_fee_per_gas]]);
+        userop.max_priority_fee_per_gas >= U256::from(eip1559est.max_priority_fee_per_gas)
+            && userop.max_fee_per_gas >= U256::from(eip1559est.max_fee_per_gas)
+            && userop.call_gas_limit >= est.call_gas_limit
+            && userop.pre_verification_gas >= est.pre_verification_gas
+            && userop.verification_gas_limit >= est.verification_gas
+            && userop.paymaster_verification_gas_limit.unwrap() >= est.paymaster_verification_gas
+            && userop.paymaster_post_op_gas_limit.unwrap() >= est.paymaster_post_op_gas_limit
     }
 
     /// Collect UserOpHash signature
