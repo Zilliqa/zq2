@@ -1,14 +1,14 @@
-use std::sync::Arc;
+use std::{num::NonZeroUsize, sync::Arc};
 
 // use super::AlloyUserOperation;
 use alloy::{
-    eips::BlockNumberOrTag,
+    eips::{BlockId, BlockNumberOrTag},
     primitives::{
         Address, B256, Bytes, ChainId, U64, U256,
         aliases::{B32, U192},
     },
     providers::Provider as _,
-    rpc::types::{Filter, PackedUserOperation as AlloyUserOperation},
+    rpc::types::{Filter, PackedUserOperation as AlloyUserOperation, UserOperationGasEstimation},
     sol_types::{SolEvent, SolValue},
 };
 use anyhow::{Context, Result};
@@ -29,8 +29,9 @@ use crate::{
     node::MessageSender,
     state::State,
     uccb::{
+        IERC4337ExtraFees,
         IERC7786GatewaySource::MessageSent,
-        SignUserOp, UserOperationGasEstimationV07 as UserOperationGasEstimation,
+        SignUserOp,
         utils::{get_chain_id, get_user_op_hash},
     },
 };
@@ -136,6 +137,9 @@ impl Signer {
             }
         }
 
+        let mut fee_cache = lru::LruCache::<(u64, u64), IERC4337ExtraFees>::new(
+            NonZeroUsize::new(watchers.len()).unwrap(),
+        );
         // Poll each chain, one-by-one
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(1)).await; // short polling interval
@@ -163,7 +167,7 @@ impl Signer {
                     .to_block(BlockNumberOrTag::Number(final_block.number)) // ideally, this should be exactly one block length
                     .event_signature(super::IERC7786GatewaySource::MessageSent::SIGNATURE_HASH);
                 let Ok(logs) = watcher.get_logs(&filter).await else {
-                    tracing::error!("eth_getLogs({chain_id}): transport");
+                    tracing::error!(%chain_id, "eth_getLogs(): transport");
                     continue; // retry
                 };
                 *last_final.value_mut() = final_block.number; // update final
@@ -178,6 +182,7 @@ impl Signer {
                     let blk_hash = log.block_hash.expect("block_hash != none").into();
                     let txn_hash = log.transaction_hash.expect("txn_hash != none").into();
                     let block_height = log.block_number.expect("block_number != none");
+
                     let MessageSent {
                         sendId,
                         recipient,
@@ -197,18 +202,14 @@ impl Signer {
                     // 2. Get destination route
                     let dest_chain =
                         get_chain_id(std::str::from_utf8(&recipient).expect("Invalid utf-8"))?;
-                    let Some(watcher) = watchers.get(&dest_chain) else {
+                    let Some(w) = watchers.get(&dest_chain) else {
                         tracing::warn!(%sendId, "Invalid route");
                         continue;
                     };
-                    let (_entrypoint, sender, gateway, paymaster, _bundler, _provider) =
-                        watcher.value();
+                    let (_entrypoint, sender, gateway, paymaster, _bundler, _provider) = w.value();
 
-                    // 3. Extract EIP1559/ERC4337 fees from Attributes
-                    // TODO:
-
-                    // 4. Construct partial UserOp
-                    let userop = Self::new_user_op(
+                    // 3. Construct partial UserOp
+                    let mut userop = Self::new_user_op(
                         sendId,
                         payload,
                         sender,
@@ -217,13 +218,39 @@ impl Signer {
                         block_height,
                     );
 
-                    // 5. Send it for signing
-                    let op = SignUserOp {
-                        blk_hash,
-                        txn_hash,
-                        chain_id: dest_chain, // destination route
-                        userop,
+                    // 4. Populate EIP1559/ERC4337 fees
+                    //
+                    // To ensure that all signers use the same values, we retrieve the soft-configured values for the destination chain,
+                    // from a contract on the source chain at the block height. Since the fee values are largely static, they can be
+                    // cached. This is cheaper on gas fees, compared to encoding the values in the MessageSent event itself.
+                    let fees = if let Some(fees) = fee_cache.get(&(*chain_id, block_height)) {
+                        fees.clone()
+                    } else {
+                        let Ok(fees) = super::IERC4337Extra::new(*gateway, watcher)
+                            .getFees(dest_chain)
+                            .block(BlockId::number(block_height))
+                            .call()
+                            .await
+                        else {
+                            tracing::error!(%sendId, %chain_id, "getFees(): skipped");
+                            continue;
+                        };
+                        fee_cache.push((*chain_id, block_height), fees.clone());
+                        fees
                     };
+
+                    userop.max_fee_per_gas = U256::from(fees.max_fee_per_gas);
+                    userop.max_priority_fee_per_gas = U256::from(fees.max_priority_fee_per_gas);
+                    userop.call_gas_limit = U256::from(fees.call_gas_limit);
+                    userop.pre_verification_gas = U256::from(fees.pre_verification_gas);
+                    userop.verification_gas_limit = U256::from(fees.verification_gas_limit);
+                    userop.paymaster_verification_gas_limit =
+                        Some(U256::from(fees.paymaster_verification_gas_limit));
+                    userop.paymaster_post_op_gas_limit =
+                        Some(U256::from(fees.paymaster_verification_gas_limit));
+
+                    // 5. Send it for signing
+                    let op = SignUserOp::new(userop, dest_chain, txn_hash, blk_hash, block_height);
                     sign_tx.send(op)?;
                 }
             }
@@ -259,6 +286,7 @@ impl Signer {
             chain_id,
             txn_hash,
             blk_hash,
+            blk_height,
         }) = sign_rx.try_recv()
         {
             let Some(watcher) = watchers.get(&chain_id) else {
@@ -294,10 +322,12 @@ impl Signer {
                     userop.pre_verification_gas = est.pre_verification_gas;
                     userop.verification_gas_limit = est.verification_gas;
                     userop.paymaster_verification_gas_limit = Some(est.paymaster_verification_gas);
-                    userop.paymaster_post_op_gas_limit = Some(est.paymaster_post_op_gas_limit);
+                    userop.paymaster_post_op_gas_limit = Some(est.paymaster_verification_gas);
                 } else {
                     tracing::warn!("estimateUserOperationGas()");
-                    sign_tx.send(SignUserOp::new(userop, chain_id, txn_hash, blk_hash))?; // retry
+                    sign_tx.send(SignUserOp::new(
+                        userop, chain_id, txn_hash, blk_hash, blk_height,
+                    ))?; // retry
                     continue;
                 }
             }
@@ -309,12 +339,15 @@ impl Signer {
                 match super::IEntryPointNonces::new(*entrypoint, provider)
                     .getNonce(*sender, key)
                     .call()
+                    // .block(BlockId::number(blk_height))
                     .await
                 {
                     Ok(nonce) => userop.nonce = nonce,
                     Err(err) => {
                         tracing::error!(%err, "getNonce()");
-                        sign_tx.send(SignUserOp::new(userop, chain_id, txn_hash, blk_hash))?; // retry
+                        sign_tx.send(SignUserOp::new(
+                            userop, chain_id, txn_hash, blk_hash, blk_height,
+                        ))?; // retry
                         continue;
                     }
                 };

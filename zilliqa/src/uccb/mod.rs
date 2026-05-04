@@ -1,7 +1,7 @@
 use std::{str::FromStr as _, sync::Arc};
 
 use alloy::{
-    primitives::{Address, B256, Bytes, ChainId, U256, address},
+    primitives::{Address, B256, Bytes, ChainId, address},
     providers::{
         Identity, Provider as _, ProviderBuilder, RootProvider,
         fillers::{BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller},
@@ -14,7 +14,7 @@ use anyhow::Result;
 use dashmap::DashMap;
 use jsonrpsee::client_transport::ws::Url;
 use libp2p::PeerId;
-use serde::{Deserialize, Serialize};
+// use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
@@ -50,6 +50,25 @@ sol!(
 sol! {
     interface IERC7786Attributes {
         function eip1559_fees(uint128 max_priority_gas_fee,uint128 max_base_gas_fee) external;
+    }
+}
+
+sol! {
+    struct IERC4337ExtraFees {
+        uint128 max_priority_fee_per_gas;
+        uint128 max_fee_per_gas;
+        uint128 call_gas_limit;
+        uint128 pre_verification_gas;
+        uint128 verification_gas_limit;
+        uint128 paymaster_verification_gas_limit;
+        uint128 paymaster_post_op_gas_limit;
+    }
+
+    #[sol(rpc)]
+    interface IERC4337Extra {
+        function getFees(
+            uint64 chain_id
+        ) external view returns (IERC4337ExtraFees);
     }
 }
 
@@ -102,6 +121,7 @@ pub struct SignUserOp {
     pub chain_id: ChainId,
     pub txn_hash: Hash,
     pub blk_hash: Hash,
+    pub blk_height: u64,
 }
 
 impl SignUserOp {
@@ -110,12 +130,14 @@ impl SignUserOp {
         chain_id: ChainId,
         txn_hash: Hash,
         blk_hash: Hash,
+        blk_height: u64,
     ) -> Self {
         Self {
             userop,
             chain_id,
             txn_hash,
             blk_hash,
+            blk_height,
         }
     }
 }
@@ -345,15 +367,15 @@ impl From<AlloyUserOperation> for PackedUserOperation {
     }
 }
 
-/// Represents the gas estimation for a user operation.
-///
-/// alloy::UserOperationGasEstimation is v0.6, not v0.7/0.8
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct UserOperationGasEstimationV07 {
-    pub pre_verification_gas: U256,
-    pub verification_gas: U256,
-    pub paymaster_verification_gas: U256,
-    pub call_gas_limit: U256,
-    pub paymaster_post_op_gas_limit: U256,
-}
+// Represents the gas estimation for a user operation.
+//
+// alloy::UserOperationGasEstimation is v0.6, not v0.7/0.8
+// #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// #[serde(rename_all = "camelCase")]
+// pub(crate) struct UserOperationGasEstimationV07 {
+//     pub pre_verification_gas: U256,
+//     pub verification_gas: U256,
+//     pub paymaster_verification_gas: U256,
+//     pub call_gas_limit: U256,
+//     pub paymaster_post_op_gas_limit: U256,
+// }

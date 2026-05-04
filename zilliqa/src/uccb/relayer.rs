@@ -6,6 +6,7 @@ use alloy::{
     providers::{Provider, utils::eip1559_default_estimator},
     rpc::types::{
         PackedUserOperation as AlloyUserOperation, SendUserOperation, SendUserOperationResponse,
+        UserOperationGasEstimation,
     },
     sol_types::SolValue,
 };
@@ -19,16 +20,12 @@ use tokio::{
     task::JoinSet,
 };
 
-use super::UserOperationGasEstimationV07;
 use crate::{
     cfg::NodeConfig,
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey},
     db::Db,
     state::State,
-    uccb::{
-        BlsUserOp, RelayUserOp, UserOperationGasEstimationV07 as UserOperationGasEstimation,
-        utils::get_user_op_hash,
-    },
+    uccb::{BlsUserOp, RelayUserOp, utils::get_user_op_hash},
 };
 
 #[derive(Debug)]
@@ -194,7 +191,7 @@ impl Relayer {
     fn validate_gas_fees(
         max_priority_fee_per_gas: u128,
         base_fee_per_gas: Option<u64>,
-        est: UserOperationGasEstimationV07,
+        est: UserOperationGasEstimation,
         userop: &AlloyUserOperation,
     ) -> bool {
         let Some(base_fee_per_gas) = base_fee_per_gas else {
@@ -208,7 +205,7 @@ impl Relayer {
             && userop.pre_verification_gas >= est.pre_verification_gas
             && userop.verification_gas_limit >= est.verification_gas
             && userop.paymaster_verification_gas_limit.unwrap() >= est.paymaster_verification_gas
-            && userop.paymaster_post_op_gas_limit.unwrap() >= est.paymaster_post_op_gas_limit
+            && userop.paymaster_post_op_gas_limit.unwrap() >= est.paymaster_verification_gas
     }
 
     /// Collect UserOpHash signature
