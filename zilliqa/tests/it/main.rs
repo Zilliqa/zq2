@@ -51,6 +51,7 @@ mod staking;
 mod sync;
 mod trace;
 mod txpool;
+mod uccb;
 mod unreliable;
 mod web3;
 mod zil;
@@ -60,16 +61,14 @@ use std::{
     env,
     fmt::Debug,
     ops::DerefMut,
-    path::Path,
+    path::PathBuf,
+    str::FromStr as _,
     sync::{Arc, Mutex, atomic::AtomicUsize},
     time::Duration,
 };
 
 use anyhow::{Result, anyhow};
-use foundry_compilers::{
-    artifacts::{EvmVersion, SolcInput, Source},
-    solc::{Solc, SolcLanguage},
-};
+use foundry_compilers::{Project, ProjectPathsConfig, artifacts::Remapping};
 use fs_extra::dir::*;
 use futures::{Future, FutureExt, StreamExt, stream::BoxStream};
 use itertools::Itertools;
@@ -1550,57 +1549,54 @@ fn format_message(
 }
 
 fn compile_contract(path: &str, contract: &str) -> (Contract, Bytes) {
-    // create temporary .sol file to avoid solc compilation error
-    let full_path = format!("{}/{}", env!("CARGO_MANIFEST_DIR"), path);
-    let source_path = Path::new(&full_path);
-    let target_file = tempfile::Builder::new()
-        .suffix(".sol")
-        .tempfile()
-        .expect("tempfile target");
-    let target_pathbuf = target_file.into_temp_path().to_path_buf();
-    let target_path = &target_pathbuf.as_path();
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
-    std::fs::copy(source_path, target_path).expect("copy .sol");
+    let vendor_dir = manifest_dir.join("../vendor/").canonicalize().unwrap();
+    let remappings = [
+        "@openzeppelin/contracts/={}/openzeppelin-contracts/contracts/",
+        "@openzeppelin/lib/={}/openzeppelin-contracts/lib/",
+        "@openzeppelin/contracts-upgradeable/={}/openzeppelin-contracts-upgradeable/contracts/",
+    ]
+    .map(|s| {
+        let expanded = s.replace("{}", vendor_dir.to_str().unwrap());
+        Remapping::from_str(&expanded).unwrap()
+    });
 
-    // configure solc compiler
-    let solc_input = SolcInput::new(
-        SolcLanguage::Solidity,
-        Source::read_all_files(vec![target_pathbuf.clone()]).expect("missing target"),
-        Default::default(),
-    )
-    .evm_version(EvmVersion::Cancun); // ensure compatible with EVM version in exec.rs
+    let temp = tempfile::tempdir().unwrap();
+    let artifacts = temp.path().join("out");
+    let cache = temp.path().join("cache");
+    let paths = ProjectPathsConfig::builder()
+        .root(&manifest_dir)
+        .allowed_path(&vendor_dir)
+        .remappings(remappings)
+        .artifacts(&artifacts)
+        .cache(&cache)
+        .build()
+        .unwrap();
 
-    // compile .sol file
-    let solc = Solc::find_or_install(&semver::Version::new(0, 8, 28)).expect("solc missing");
-    let output = solc.compile_exact(&solc_input).expect("solc compile_exact");
+    let project = Project::builder()
+        .paths(paths)
+        .build(Default::default())
+        .unwrap();
 
-    if output.has_error() {
-        panic!("failed to compile contract with error  {:?}", output.errors);
+    let file_path = manifest_dir.join(path);
+    let output = project.compile_file(file_path).unwrap();
+
+    if output.has_compiler_errors() {
+        println!("{output:?}");
     }
 
-    // extract output
-    let contract = output
-        .get(target_path, contract)
-        .expect("output_contracts error");
-
-    let abi = contract.abi.expect("jsonabi error");
-    let bytecode = contract.bytecode().expect("bytecode error");
-
-    // Convert from the `alloy` representation of an ABI to the `ethers` representation, via JSON
-    let abi = serde_json::from_slice(
-        serde_json::to_vec(abi)
-            .expect("serialisation abi")
-            .as_slice(),
+    let contract = output.find_first(contract).unwrap();
+    (
+        contract.abi.as_ref().unwrap().clone(),
+        contract
+            .bytecode
+            .as_ref()
+            .unwrap()
+            .clone()
+            .into_bytes()
+            .unwrap(),
     )
-    .expect("deserialisation abi");
-    let bytecode = serde_json::from_slice(
-        serde_json::to_vec(bytecode)
-            .expect("serialisation bytecode")
-            .as_slice(),
-    )
-    .expect("deserialisation bytecode");
-
-    (abi, bytecode)
 }
 
 async fn deploy_contract(
