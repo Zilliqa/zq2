@@ -148,6 +148,7 @@ impl SignUserOp {
 pub struct RelayUserOp {
     pub userop: AlloyUserOperation,
     pub chain_id: ChainId,
+    pub userop_hash: Hash,
     pub send_id: Hash,
 }
 
@@ -217,12 +218,10 @@ impl Uccb {
 
         let providers = Arc::new(DashMap::with_capacity(config.remote_chains.len()));
         for remote in config.remote_chains.iter() {
-            let bundler = ProviderBuilder::new()
-                .connect(Url::from_str(&remote.bundler_url)?.as_str())
-                .await?;
-            let watcher = ProviderBuilder::new()
-                .connect(Url::from_str(&remote.watcher_url)?.as_str())
-                .await?;
+            let bundler =
+                ProviderBuilder::new().connect_hyper_http(Url::from_str(&remote.bundler_url)?);
+            let watcher =
+                ProviderBuilder::new().connect_hyper_http(Url::from_str(&remote.watcher_url)?);
 
             let (get_entrypoints, get_chain_id) = tokio::join!(
                 bundler.raw_request::<(), Vec<Address>>("eth_supportedEntryPoints".into(), ()),
@@ -246,7 +245,7 @@ impl Uccb {
                     ),
                 );
             } else {
-                tracing::info!("{get_entrypoints:?} {get_chain_id:?}");
+                tracing::error!("{get_entrypoints:?} {get_chain_id:?}");
                 if let Err(err) = get_entrypoints {
                     tracing::error!(%err, "Bundler-{chain_id}");
                 }
