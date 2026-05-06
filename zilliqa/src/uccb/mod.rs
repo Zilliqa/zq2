@@ -54,21 +54,11 @@ sol! {
 }
 
 sol! {
-    struct IERC4337ExtraFees {
-        uint128 max_priority_fee_per_gas;
-        uint128 max_fee_per_gas;
-        uint128 call_gas_limit;
-        uint128 pre_verification_gas;
-        uint128 verification_gas_limit;
-        uint128 paymaster_verification_gas_limit;
-        uint128 paymaster_post_op_gas_limit;
-    }
-
     #[sol(rpc)]
     interface IERC4337Extra {
         function getFees(
             uint64 chain_id
-        ) external view returns (IERC4337ExtraFees);
+        ) external view returns (uint256);
     }
 }
 

@@ -29,7 +29,6 @@ use crate::{
     node::MessageSender,
     state::State,
     uccb::{
-        IERC4337ExtraFees,
         IERC7786GatewaySource::MessageSent,
         SignUserOp,
         utils::{get_chain_id, get_user_op_hash},
@@ -200,8 +199,7 @@ impl Signer {
                     tracing::info!(send_id=%sendId, "MessageSent({chain_id}): seen");
 
                     // 5. Validate payload integrity
-                    // TODO: Encode EIP1559 fees in value?
-                    if !value.is_zero() || sendId != keccak256(payload.iter().as_slice()) {
+                    if value.is_zero() || sendId != keccak256(payload.iter().as_slice()) {
                         tracing::warn!(send_id=%sendId, "MessageSent({chain_id}): mismatch");
                         continue;
                     }
@@ -230,6 +228,7 @@ impl Signer {
                         sender,
                         gateway,
                         paymaster,
+                        value,
                         block_height,
                     );
                     sign_tx.send(SignUserOp::new(
@@ -244,6 +243,11 @@ impl Signer {
             }
         }
         // Ok(())
+    }
+
+    fn split_u256(value: U256) -> (u64, u64) {
+        let limbs = value.into_limbs(); // [u64; 4]    }
+        (limbs[0], limbs[1])
     }
 
     /// Sign the UserOps
@@ -267,9 +271,8 @@ impl Signer {
             return Ok(());
         }
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
-        let mut cache = lru::LruCache::<(u64, u64), IERC4337ExtraFees>::new(
-            NonZeroUsize::new(watchers.len() * 3).unwrap(),
-        );
+        let mut cache =
+            lru::LruCache::<(u64, u64), U256>::new(NonZeroUsize::new(watchers.len() * 3).unwrap());
 
         // Sign each user op; requeue on failure.
         while let Ok(SignUserOp {
@@ -284,7 +287,7 @@ impl Signer {
             let send_id = keccak256(userop.call_data.iter().as_slice());
 
             // 1. Populate the fees
-            if userop.max_fee_per_gas.is_zero() {
+            if userop.pre_verification_gas.is_zero() {
                 let fees = if let Some(fees) = cache.get(&(src_chain, blk_height)) {
                     // .get_or_insert() does not work with async
                     fees.clone()
@@ -312,18 +315,13 @@ impl Signer {
                 };
                 tracing::debug!(%send_id, "getFees({src_chain}): fees");
 
-                // EIP1559 fees
-                userop.max_fee_per_gas = U256::from(fees.max_fee_per_gas);
-                userop.max_priority_fee_per_gas = U256::from(fees.max_priority_fee_per_gas);
-
                 // ERC4337 fees
-                userop.call_gas_limit = U256::from(fees.call_gas_limit);
-                userop.pre_verification_gas = U256::from(fees.pre_verification_gas);
-                userop.verification_gas_limit = U256::from(fees.verification_gas_limit);
-                userop.paymaster_verification_gas_limit =
-                    Some(U256::from(fees.paymaster_verification_gas_limit));
-                userop.paymaster_post_op_gas_limit =
-                    Some(U256::from(fees.paymaster_verification_gas_limit));
+                let limbs = fees.into_limbs();
+                userop.call_gas_limit = U256::from(limbs[0]);
+                userop.pre_verification_gas = U256::from(limbs[1]);
+                userop.verification_gas_limit = U256::from(limbs[2]);
+                userop.paymaster_verification_gas_limit = Some(U256::from(limbs[3]));
+                userop.paymaster_post_op_gas_limit = Some(U256::from(limbs[3]));
             }
 
             // 2. Populate the nonce
@@ -452,10 +450,12 @@ impl Signer {
         sender: &Address,
         gateway: &Address,
         paymaster: &Address,
+        value: U256,
         block_height: u64,
     ) -> AlloyUserOperation {
         // we can encode some custom things in here
         let paymaster_data = (block_height).abi_encode_packed();
+        let (a, b) = Self::split_u256(value);
         AlloyUserOperation {
             sender: *sender,
             nonce: U256::ZERO, // unpopulated nonce/sig
@@ -465,8 +465,8 @@ impl Signer {
             call_gas_limit: Self::DUMMY_GAS, // estimateUserOpGas
             verification_gas_limit: Self::DUMMY_GAS, // estimateUserOpGas
             pre_verification_gas: Self::DUMMY_GAS, // estimateUserOpGas
-            max_fee_per_gas: U256::ZERO,     // unpopulate gas/fees
-            max_priority_fee_per_gas: Self::DUMMY_GAS,
+            max_fee_per_gas: U256::from(a),
+            max_priority_fee_per_gas: U256::from(b),
             paymaster: Some(*paymaster),
             paymaster_verification_gas_limit: Some(Self::DUMMY_GAS), // estimateUserOpGas
             paymaster_post_op_gas_limit: Some(Self::DUMMY_GAS),      // estimateUserOpGas
@@ -482,6 +482,7 @@ impl Signer {
             &Address::ZERO,
             &Address::ZERO,
             &Address::ZERO,
+            U256::ZERO,
             0,
         )
     }
