@@ -252,6 +252,7 @@ impl Relayer {
     /// Collect UserOpHash signature
     ///
     /// Collect signatures, until majority, then compute the final signature.
+    #[allow(clippy::too_many_arguments)]
     pub fn collect_userop(
         &self,
         from: PeerId,

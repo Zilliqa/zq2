@@ -290,7 +290,7 @@ impl Signer {
             if userop.pre_verification_gas.is_zero() {
                 let fees = if let Some(fees) = cache.get(&(src_chain, blk_height)) {
                     // .get_or_insert() does not work with async
-                    fees.clone()
+                    *fees
                 } else {
                     let p = watchers.get(&src_chain).expect("must exist");
                     let (_entrypoint, _sender, gateway, _paymaster, _bundler, provider) = p.value();
@@ -301,7 +301,7 @@ impl Signer {
                         .await
                     {
                         Ok(fees) => {
-                            cache.push((src_chain, blk_height), fees.clone());
+                            cache.push((src_chain, blk_height), fees);
                             fees
                         }
                         Err(err) => {
