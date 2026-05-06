@@ -11,6 +11,7 @@ use alloy::{
     sol_types::SolValue,
 };
 use anyhow::{Context, Result};
+use bitvec::{bitarr, order::Msb0};
 use blsful::{Bls12381G2Impl, Signature};
 use itertools::Itertools as _;
 use libp2p::PeerId;
@@ -24,6 +25,7 @@ use crate::{
     cfg::NodeConfig,
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey},
     db::Db,
+    message::MAX_COMMITTEE_SIZE,
     state::State,
     uccb::{BlsUserOp, RelayUserOp, utils::get_user_op_hash},
 };
@@ -137,7 +139,7 @@ impl Relayer {
             );
 
             if let Ok(_receipt) = receipt {
-                tracing::debug!(%send_id, "getUserOperationReceipt({chain_id}): skip");
+                tracing::debug!(%send_id, "getUserOperationReceipt({chain_id}): done-skip");
                 continue;
             } else if let Ok(tips) = tips
                 && let Ok(Some(h)) = &header
@@ -186,7 +188,7 @@ impl Relayer {
                     let user_op_hash = res.user_op_hash.iter().as_slice();
                     let userop_hash = userop_hash.as_bytes();
                     anyhow::ensure!(user_op_hash == userop_hash, "UserOp mismatch"); // MUST NEVER HAPPEN!
-                    tracing::debug!(%send_id, "sendUserOperation({chain_id}): success {userop_hash:?}");
+                    tracing::info!(%send_id, "sendUserOperation({chain_id}): done");
                 }
                 Err(err) => {
                     tracing::error!(%send_id, %err, "sendUserOperation({chain_id}): retry");
@@ -253,50 +255,73 @@ impl Relayer {
     pub fn collect_userop(
         &self,
         from: PeerId,
+        chain_id: ChainId,
         block_hash: Hash,
         userop_hash: Hash,
         public_key: NodePublicKey,
         signature: BlsSignature,
         userop: Option<AlloyUserOperation>,
     ) -> Result<()> {
-        // validate signature
+        // 1. Validate inputs
         public_key.verify(userop_hash.as_bytes(), signature)?;
 
         // fetch related block
-        let Some(block) = self.db.get_transactionless_block(block_hash.into())? else {
-            return Err(anyhow::anyhow!("Missing block"));
-        };
-        let state = self.state.at_root(block.state_root_hash().into());
+        let block = self
+            .db
+            .get_transactionless_block(block_hash.into())?
+            .context("block must exist")?;
+        let state_hash = block.state_root_hash().into();
+        let state = self.state.at_root(state_hash);
 
         // check if peer_id matches
-        let Some(peer_id) = state.get_peer_id(public_key)? else {
-            return Err(anyhow::anyhow!("Missing peer id"));
+        let peer_id = state.get_peer_id(public_key)?.context("fake peer-id")?;
+        anyhow::ensure!(peer_id == from, "peer-id mismatch"); // must not happen
+
+        // do this in an inner-scope to release the lock before calling `relay_ops()` below.
+        let promote = {
+            // 2. Get the cache entry
+            let bop = self
+                .signatures
+                .write()
+                .get_or_insert_mut_ref(&userop_hash, || {
+                    let stakers = state.get_stakers(block.header).expect("must exist");
+                    let len = stakers.len();
+                    let total_stake: u128 = stakers
+                        .into_iter()
+                        .map(|pub_key| {
+                            state
+                                .get_stake(pub_key, block.header)
+                                .expect("must have stake")
+                                .expect("stake != 0")
+                                .get()
+                        })
+                        .sum();
+                    BlsUserOp {
+                        userop: None,
+                        threshold: 2 * total_stake / 3 + 1,
+                        signatures: Vec::with_capacity(len),
+                    }
+                });
+
+            // 3. Cache the signature entry
+            let stake = state
+                .get_stake(public_key, block.header)?
+                .context("missing stake")?;
+            bop.threshold = bop.threshold.saturating_sub(stake.get());
+            bop.signatures.push((public_key, signature));
+
+            // use only the UserOp we constructed ourselves.
+            if from == self.peer_id {
+                bop.userop = userop;
+            }
+
+            bop.userop.is_some() && bop.threshold == 0
         };
-        if peer_id != from {
-            return Err(anyhow::anyhow!("Peer id mismatch"));
-        }
 
-        // retrieve stake
-        let Some(stake) = state.get_stake(public_key, block.header)? else {
-            return Err(anyhow::anyhow!("Missing stake"));
-        };
-
-        // cache the userops
-        let bop = self
-            .signatures
-            .write()
-            .get_or_insert_mut_ref(&userop_hash, BlsUserOp::default);
-
-        // use only the UserOp we constructed ourselves.
-        if userop.is_some() && peer_id == self.peer_id {
-            bop.userop = userop;
-        }
-        bop.signatures.push(signature);
-        bop.stake = bop.stake.saturating_sub(stake.get());
-
-        // majority: promote
-        if bop.userop.is_some() && bop.stake == 0 {
-            self.relay_userop(userop_hash)?;
+        // 4. Majority reached: promote
+        if promote {
+            let stakers = state.get_stakers(block.header).expect("must exist");
+            self.relay_userop(userop_hash, chain_id, stakers)?;
         }
         Ok(())
     }
@@ -304,17 +329,24 @@ impl Relayer {
     /// Send UserOpHash
     ///
     /// Multi-sign the UserOp; and queues it for sending to the Bundler.
-    pub fn relay_userop(&self, userop_hash: Hash) -> Result<()> {
+    pub fn relay_userop(
+        &self,
+        userop_hash: Hash,
+        chain_id: ChainId,
+        stakers: Vec<NodePublicKey>,
+    ) -> Result<()> {
         let bop = self
             .signatures
             .write()
             .pop(&userop_hash)
             .context("UserOp signature lost")?;
 
-        // multi sign it
-        let signatures = bop
-            .signatures
-            .iter()
+        let (signers, signatures): (Vec<NodePublicKey>, Vec<BlsSignature>) =
+            bop.signatures.into_iter().unzip();
+
+        // 1. Multi-sig it
+        let signatures = signatures
+            .into_iter()
             .map(|s| {
                 Signature::<Bls12381G2Impl>::Basic(
                     // Underlying type is compressed G2Affine
@@ -328,33 +360,41 @@ impl Relayer {
                 )
             })
             .collect_vec();
-
         let multi_signature = blsful::MultiSignature::from_signatures(signatures)?
             .as_raw_value()
             .to_compressed();
 
-        // collect signers vector
-        let message = (multi_signature.as_slice(), self.address).abi_encode();
+        // 2. Count signers
+        let mut cosigner = bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE];
+        for (index, k) in stakers.iter().enumerate() {
+            if signers.contains(k) {
+                cosigner.set(index, true);
+            }
+        }
+        let message = (
+            self.address,               // Address(20)
+            multi_signature.as_slice(), // Signature(48)
+            cosigner.as_raw_slice(),    // Signers(32)
+        )
+            .abi_encode_packed();
         let signature = self.secret_key.sign(message.as_slice());
-        let userop_sig = (message, signature.to_bytes()).abi_encode();
 
-        // construct final UserOp
+        // 3. Construct final UserOp
         let bop = bop.userop.unwrap();
         let send_id = keccak256(bop.call_data.iter().as_slice()).into();
-        tracing::debug!(%send_id, "relay({userop_hash:?})");
+        tracing::debug!(%send_id, "relay({chain_id})");
         let final_uop = RelayUserOp {
             userop: AlloyUserOperation {
-                signature: userop_sig.into(), // replace the signature with multi-sig
+                signature: (signature.to_bytes(), message).abi_encode_packed().into(), // replace the signature with multi-sig
                 ..bop
             },
-            chain_id: 0,
+            chain_id,
             userop_hash,
             send_id,
         };
 
-        // push UserOp to the sending queue
+        // 4. Push UserOp to the sending queue
         self.relay_tx.send(final_uop)?;
-
         Ok(())
     }
 }

@@ -197,7 +197,7 @@ impl Signer {
                         tracing::warn!(%txn_hash, %block_height, "MessageSent({chain_id}): decode");
                         continue; // skip on failure
                     };
-                    tracing::debug!(send_id=%sendId, "MessageSent({chain_id}): seen");
+                    tracing::info!(send_id=%sendId, "MessageSent({chain_id}): seen");
 
                     // 5. Validate payload integrity
                     // TODO: Encode EIP1559 fees in value?
@@ -370,6 +370,7 @@ impl Signer {
             tracing::debug!(%send_id, "peers({:?})", relay_set);
             for peer in relay_set {
                 let msg = ExternalMessage::UccbUserOp(UccbUserOp {
+                    chain_id: dst_chain,
                     userop_hash: Hash(uop_hash.0),
                     block_hash: blk_hash,
                     public_key: secret_key.node_public_key(),

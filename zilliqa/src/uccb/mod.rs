@@ -19,7 +19,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
     cfg::NodeConfig,
-    crypto::{BlsSignature, Hash, SecretKey},
+    crypto::{BlsSignature, Hash, NodePublicKey, SecretKey},
     db::Db,
     message::{ExternalMessage, UccbUserOp},
     node::MessageSender,
@@ -155,8 +155,8 @@ pub struct RelayUserOp {
 #[derive(Default)]
 pub struct BlsUserOp {
     pub userop: Option<AlloyUserOperation>,
-    pub signatures: Vec<BlsSignature>,
-    pub stake: u128,
+    pub signatures: Vec<(NodePublicKey, BlsSignature)>,
+    pub threshold: u128,
 }
 
 // Used to send an updated list of SIGNER keys
@@ -297,10 +297,12 @@ impl Uccb {
                 signature,
                 public_key,
                 block_hash,
+                chain_id,
             }) => {
                 // handle
                 self.relayer.collect_userop(
                     from,
+                    chain_id,
                     block_hash,
                     userop_hash,
                     public_key,
