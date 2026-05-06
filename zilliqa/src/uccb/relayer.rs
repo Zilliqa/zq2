@@ -159,10 +159,12 @@ impl Relayer {
                 }
                 Self::retry_userop(
                     &relay_tx,
-                    send_id,
-                    userop_hash,
-                    chain_id,
-                    userop,
+                    RelayUserOp {
+                        userop_hash,
+                        chain_id,
+                        userop,
+                        send_id,
+                    },
                     relay_rx.is_empty(),
                 )
                 .await?;
@@ -194,10 +196,12 @@ impl Relayer {
                     tracing::error!(%send_id, %err, "sendUserOperation({chain_id}): retry");
                     Self::retry_userop(
                         &relay_tx,
-                        send_id,
-                        userop_hash,
-                        chain_id,
-                        userop,
+                        RelayUserOp {
+                            userop_hash,
+                            chain_id,
+                            userop,
+                            send_id,
+                        },
                         relay_rx.is_empty(),
                     )
                     .await?;
@@ -210,22 +214,14 @@ impl Relayer {
 
     async fn retry_userop(
         relay_tx: &UnboundedSender<RelayUserOp>,
-        send_id: Hash,
-        userop_hash: Hash,
-        chain_id: ChainId,
-        userop: AlloyUserOperation,
+        userop: RelayUserOp,
         empty: bool,
     ) -> Result<()> {
         // delay
         if empty {
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
         }
-        Ok(relay_tx.send(RelayUserOp {
-            userop_hash,
-            chain_id,
-            userop,
-            send_id,
-        })?) // retry until success
+        Ok(relay_tx.send(userop)?) // retry until success
     }
 
     /// Checks that the hard-coded fees/limits are possible to succeed

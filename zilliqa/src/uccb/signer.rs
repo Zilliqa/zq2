@@ -250,6 +250,17 @@ impl Signer {
         (limbs[0], limbs[1])
     }
 
+    async fn retry_signer(
+        sign_tx: &UnboundedSender<SignUserOp>,
+        userop: SignUserOp,
+        empty: bool,
+    ) -> Result<()> {
+        if empty {
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        }
+        Ok(sign_tx.send(userop)?) // retry
+    }
+
     /// Sign the UserOps
     ///
     /// Populates the missing UserOps fields to compute its full hash.
@@ -306,9 +317,14 @@ impl Signer {
                         }
                         Err(err) => {
                             tracing::error!(%send_id, %err, "getFees({src_chain}): retry");
-                            sign_tx.send(SignUserOp::new(
-                                userop, dst_chain, src_chain, txn_hash, blk_hash, blk_height,
-                            ))?; // retry
+                            Self::retry_signer(
+                                &sign_tx,
+                                SignUserOp::new(
+                                    userop, dst_chain, src_chain, txn_hash, blk_hash, blk_height,
+                                ),
+                                sign_rx.is_empty(),
+                            )
+                            .await?;
                             continue;
                         }
                     }
@@ -316,12 +332,19 @@ impl Signer {
                 tracing::debug!(%send_id, "getFees({src_chain}): fees");
 
                 // ERC4337 fees
-                let limbs = fees.into_limbs();
-                userop.call_gas_limit = U256::from(limbs[0]);
-                userop.pre_verification_gas = U256::from(limbs[1]);
-                userop.verification_gas_limit = U256::from(limbs[2]);
-                userop.paymaster_verification_gas_limit = Some(U256::from(limbs[3]));
-                userop.paymaster_post_op_gas_limit = Some(U256::from(limbs[3]));
+                let [
+                    call_gas_limit,
+                    pre_verification_gas,
+                    verification_gas_limit,
+                    paymaster_verification_gas_limit,
+                ] = fees.into_limbs();
+                userop.call_gas_limit = U256::from(call_gas_limit);
+                userop.pre_verification_gas = U256::from(pre_verification_gas);
+                userop.verification_gas_limit = U256::from(verification_gas_limit);
+                userop.paymaster_verification_gas_limit =
+                    Some(U256::from(paymaster_verification_gas_limit));
+                userop.paymaster_post_op_gas_limit =
+                    Some(U256::from(paymaster_verification_gas_limit));
             }
 
             // 2. Populate the nonce
@@ -347,9 +370,14 @@ impl Signer {
                     }
                     Err(err) => {
                         tracing::error!(%send_id, %err, "getNonce({dst_chain}): retry");
-                        sign_tx.send(SignUserOp::new(
-                            userop, dst_chain, src_chain, txn_hash, blk_hash, blk_height,
-                        ))?; // retry
+                        Self::retry_signer(
+                            &sign_tx,
+                            SignUserOp::new(
+                                userop, dst_chain, src_chain, txn_hash, blk_hash, blk_height,
+                            ),
+                            sign_rx.is_empty(),
+                        )
+                        .await?;
                         continue;
                     }
                 };
