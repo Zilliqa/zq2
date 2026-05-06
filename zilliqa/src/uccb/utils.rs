@@ -1,4 +1,5 @@
 use alloy::{
+    dyn_abi::Eip712Domain,
     primitives::{Address, B256, ChainId, U256, keccak256},
     sol_types::SolValue,
 };
@@ -17,34 +18,8 @@ pub fn get_chain_id(account_id: &str) -> Result<ChainId> {
 
 /// keccak256("PackedUserOperation(address sender,uint256 nonce,bytes initCode,bytes callData,
 ///            bytes32 accountGasLimits,uint256 preVerificationGas,bytes32 gasFees,bytes paymasterAndData)")
-fn packed_userop_typehash() -> B256 {
-    keccak256(
-        b"PackedUserOperation(address sender,uint256 nonce,bytes initCode,bytes callData,\
-bytes32 accountGasLimits,uint256 preVerificationGas,bytes32 gasFees,bytes paymasterAndData)",
-    )
-}
-
-/// Compute the EIP-712 domain separator for the EntryPoint.
-/// Matches: EIP712("ERC4337", "1", chain_id, entry_point_address)
-fn domain_separator(chain_id: u64, entry_point: Address) -> B256 {
-    // keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)")
-    let type_hash = keccak256(
-        b"EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)",
-    );
-    let name_hash = keccak256(b"ERC4337");
-    let version_hash = keccak256(b"1");
-
-    let encoded = (
-        type_hash,
-        name_hash,
-        version_hash,
-        U256::from(chain_id),
-        entry_point,
-    )
-        .abi_encode();
-
-    keccak256(encoded)
-}
+const PACKED_TYPE_HASH: B256 =
+    alloy::primitives::b256!("29a0bca4af4be3421398da00295e58e6d7de38cb492214754cb6a47507dd6f8e");
 
 /// Compute the EIP-712 struct hash of a PackedUserOperation.
 /// Optionally accepts an override for the initCode hash (used for EIP-7702 init codes).
@@ -52,7 +27,7 @@ fn user_op_hash_inner(
     user_op: &PackedUserOperation,
     override_init_code_hash: Option<B256>,
 ) -> B256 {
-    let type_hash = packed_userop_typehash();
+    let type_hash = PACKED_TYPE_HASH;
 
     let init_code_hash = override_init_code_hash.unwrap_or_else(|| keccak256(&user_op.initCode));
     let call_data_hash = keccak256(&user_op.callData);
@@ -75,7 +50,7 @@ fn user_op_hash_inner(
 }
 
 /// Legacy (v0.7) inner hash: keccak256(abi.encode(sender, nonce, hashInitCode, hashCallData, accountGasLimits, preVerificationGas, gasFees, hashPaymasterAndData))
-fn user_op_hash_inner_legacy(
+fn user_op_hash_legacy(
     user_op: &PackedUserOperation,
     override_init_code_hash: Option<B256>,
 ) -> B256 {
@@ -100,7 +75,7 @@ fn user_op_hash_inner_legacy(
     keccak256(encoded)
 }
 
-// FIXME: Needs to be updated from time-to-time
+// FIXME: Keep in sync with newer Entrypoint versions.
 /// EntryPoint.getUserOpHash().
 ///
 /// Returns the final EIP-712 typed data hash. Works against v0.7/0.8/0.9 only!
@@ -113,13 +88,19 @@ pub fn get_user_op_hash(
     match entry_point {
         super::ENTRYPOINT_V07 => {
             // inner hash is keccak256(abi.encode(...)) without the type hash
-            let inner = user_op_hash_inner_legacy(user_op, None);
-            // final = keccak256(abi.encode(inner, entry_point, chainid))
+            let inner = user_op_hash_legacy(user_op, None);
             let encoded = (inner, entry_point, U256::from(chain_id)).abi_encode();
             Ok(keccak256(encoded))
         }
         super::ENTRYPOINT_V08 | super::ENTRYPOINT_V09 => {
-            let domain_sep = domain_separator(chain_id, entry_point);
+            let domain_sep = Eip712Domain::new(
+                Some("ERC4337".into()),
+                Some("1".into()),
+                Some(U256::from(chain_id)),
+                Some(entry_point),
+                None,
+            )
+            .hash_struct();
             let struct_hash = user_op_hash_inner(user_op, None);
 
             // EIP-712: "\x19\x01" ++ domainSeparator ++ structHash

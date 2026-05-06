@@ -1,18 +1,17 @@
 use std::{num::NonZeroUsize, sync::Arc};
 
-// use super::AlloyUserOperation;
 use alloy::{
     eips::BlockNumberOrTag,
-    primitives::Address,
-    primitives::Bytes,
-    primitives::U256,
-    providers::Provider,
+    primitives::{Address, ChainId, U256, keccak256},
+    providers::{Provider, utils::eip1559_default_estimator},
     rpc::types::{
         PackedUserOperation as AlloyUserOperation, SendUserOperation, SendUserOperationResponse,
+        UserOperationGasEstimation, UserOperationReceipt,
     },
     sol_types::SolValue,
 };
 use anyhow::{Context, Result};
+use bitvec::{bitarr, order::Msb0};
 use blsful::{Bls12381G2Impl, Signature};
 use itertools::Itertools as _;
 use libp2p::PeerId;
@@ -26,11 +25,9 @@ use crate::{
     cfg::NodeConfig,
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey},
     db::Db,
+    message::MAX_COMMITTEE_SIZE,
     state::State,
-    uccb::{
-        BlsUserOp, RelayUserOp, UserOperationGasEstimationV07 as UserOperationGasEstimation,
-        utils::get_user_op_hash,
-    },
+    uccb::{BlsUserOp, RelayUserOp, utils::get_user_op_hash},
 };
 
 #[derive(Debug)]
@@ -107,9 +104,9 @@ impl Relayer {
     ) -> Result<()> {
         let bls_key = secret_key.as_bls();
         let chain_id = config.eth_chain_id;
-        tracing::info!(chains=%providers.len(), "Relayer-{}", chain_id);
+        tracing::info!(chains=%providers.len(), "Relayer-{chain_id}");
         if providers.is_empty() {
-            tracing::warn!("Relayer-{} terminated", chain_id);
+            tracing::warn!("Relayer-{chain_id} terminated");
             return Ok(());
         }
 
@@ -117,6 +114,7 @@ impl Relayer {
         while let Some(RelayUserOp {
             mut userop,
             chain_id,
+            userop_hash,
             send_id,
         }) = relay_rx.recv().await
         {
@@ -126,125 +124,201 @@ impl Relayer {
             };
             let (_, (entrypoint, _, _, _, bundler, watcher)) = provider.pair();
 
-            // fill up gas
-            if userop.max_fee_per_gas.is_zero() {
-                let (tips, header, est4337) = tokio::join!(
-                    watcher.get_max_priority_fee_per_gas(),
-                    watcher.get_header_by_number(BlockNumberOrTag::Latest),
-                    bundler.raw_request::<_, UserOperationGasEstimation>(
-                        "eth_estimateUserOperationGas".into(),
-                        (userop.clone(), *entrypoint),
-                    )
-                );
+            // 1. Insufficient gas, delay sending.
+            let (tips, header, est4337, receipt) = tokio::join!(
+                watcher.get_max_priority_fee_per_gas(),
+                watcher.get_header_by_number(BlockNumberOrTag::Latest),
+                bundler.raw_request::<_, UserOperationGasEstimation>(
+                    "eth_estimateUserOperationGas".into(),
+                    (userop.clone(), *entrypoint),
+                ),
+                bundler.raw_request::<_, UserOperationReceipt>(
+                    "eth_getUserOperationReceipt".into(),
+                    userop_hash,
+                )
+            );
 
-                if let Ok(max_priority_fee_per_gas) = tips
-                    && let Ok(Some(h)) = header
-                    && let Ok(est) = est4337
-                {
-                    userop.call_gas_limit = est.call_gas_limit;
-                    userop.pre_verification_gas = est.pre_verification_gas;
-                    userop.verification_gas_limit = est.verification_gas;
-                    userop.paymaster_verification_gas_limit = Some(est.paymaster_verification_gas);
-                    userop.paymaster_post_op_gas_limit = Some(est.paymaster_post_op_gas_limit);
-
-                    let base_fee_per_gas = h.base_fee_per_gas.unwrap_or_default();
-                    let est = alloy::providers::utils::eip1559_default_estimator(
-                        base_fee_per_gas as u128,
-                        &[vec![max_priority_fee_per_gas]],
-                    );
-
-                    userop.max_fee_per_gas = U256::from(est.max_fee_per_gas);
-                    userop.max_priority_fee_per_gas = U256::from(est.max_priority_fee_per_gas);
-                } else {
-                    tracing::warn!(%send_id, "estimateUserOperationGas()");
-                    relay_tx.send(RelayUserOp {
-                        send_id,
+            if let Ok(_receipt) = receipt {
+                tracing::debug!(%send_id, "getUserOperationReceipt({chain_id}): done-skip");
+                continue;
+            } else if let Ok(tips) = tips
+                && let Ok(Some(h)) = &header
+                && let Ok(est) = &est4337
+                && Self::validate_gas_fees(tips, h.base_fee_per_gas, est, &userop)
+            {
+                // do nothing
+            } else {
+                if let Err(err) = tips {
+                    tracing::warn!(%send_id, %err, "get_max_priority_fee_per_gas({chain_id}): retry");
+                }
+                if let Err(err) = header {
+                    tracing::warn!(%send_id, %err, "get_header_by_number({chain_id}): retry");
+                }
+                if let Err(err) = est4337 {
+                    tracing::warn!(%send_id, %err, "estimateUserOperationGas({chain_id}): retry");
+                }
+                Self::retry_userop(
+                    &relay_tx,
+                    RelayUserOp {
+                        userop_hash,
                         chain_id,
                         userop,
-                    })?; // retry until success
-                    continue;
-                };
-            }
+                        send_id,
+                    },
+                    relay_rx.is_empty(),
+                )
+                .await?;
+                continue;
+            };
 
-            // sign the UserOp
-            let userop_hash = get_user_op_hash(&userop.clone().into(), *entrypoint, chain_id)?;
+            // 2. Sign the UserOp
+            let userop_hash: Hash =
+                get_user_op_hash(&userop.clone().into(), *entrypoint, chain_id)?.into();
             let sig = bls_key.sign(blsful::SignatureSchemes::Basic, userop_hash.0.as_slice())?;
             userop.signature = sig.as_raw_value().to_compressed().into();
 
-            // submit the UserOp
+            // 3. Submit the UserOp; retry on failure.
             let send_op = SendUserOperation::EntryPointV07(userop.clone());
-            let Ok(res) = bundler
+            match bundler
                 .raw_request::<_, SendUserOperationResponse>(
                     "eth_sendUserOperation".into(),
                     (send_op, entrypoint),
                 )
                 .await
-            else {
-                tracing::error!(%send_id, "sendUserOperation()");
-                relay_tx.send(RelayUserOp {
-                    send_id,
-                    chain_id,
-                    userop,
-                })?; // retry until success
-                continue;
-            };
-            let userop_hash = Bytes::from(userop_hash);
-            anyhow::ensure!(res.user_op_hash == userop_hash, "UserOp hash mismatch"); // MUST NEVER HAPPEN!
-            tracing::debug!(%send_id, "sendUserOperation({userop:?})");
+            {
+                Ok(res) => {
+                    let user_op_hash = res.user_op_hash.iter().as_slice();
+                    let userop_hash = userop_hash.as_bytes();
+                    anyhow::ensure!(user_op_hash == userop_hash, "UserOp mismatch"); // MUST NEVER HAPPEN!
+                    tracing::info!(%send_id, "sendUserOperation({chain_id}): done");
+                }
+                Err(err) => {
+                    tracing::error!(%send_id, %err, "sendUserOperation({chain_id}): retry");
+                    Self::retry_userop(
+                        &relay_tx,
+                        RelayUserOp {
+                            userop_hash,
+                            chain_id,
+                            userop,
+                            send_id,
+                        },
+                        relay_rx.is_empty(),
+                    )
+                    .await?;
+                    continue;
+                }
+            }
         }
         Ok(())
+    }
+
+    async fn retry_userop(
+        relay_tx: &UnboundedSender<RelayUserOp>,
+        userop: RelayUserOp,
+        empty: bool,
+    ) -> Result<()> {
+        // delay
+        if empty {
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        }
+        Ok(relay_tx.send(userop)?) // retry until success
+    }
+
+    /// Checks that the hard-coded fees/limits are possible to succeed
+    fn validate_gas_fees(
+        max_priority_fee_per_gas: u128,
+        base_fee_per_gas: Option<u64>,
+        est: &UserOperationGasEstimation,
+        userop: &AlloyUserOperation,
+    ) -> bool {
+        let Some(base_fee_per_gas) = base_fee_per_gas else {
+            return false;
+        };
+        let eip1559est =
+            eip1559_default_estimator(base_fee_per_gas as u128, &[vec![max_priority_fee_per_gas]]);
+        userop.max_priority_fee_per_gas >= U256::from(eip1559est.max_priority_fee_per_gas)
+            && userop.max_fee_per_gas >= U256::from(eip1559est.max_fee_per_gas)
+            && userop.call_gas_limit >= est.call_gas_limit
+            && userop.pre_verification_gas >= est.pre_verification_gas
+            && userop.verification_gas_limit >= est.verification_gas
+            && userop.paymaster_verification_gas_limit.unwrap() >= est.paymaster_verification_gas
+            && userop.paymaster_post_op_gas_limit.unwrap() >= est.paymaster_verification_gas
     }
 
     /// Collect UserOpHash signature
     ///
     /// Collect signatures, until majority, then compute the final signature.
+    #[allow(clippy::too_many_arguments)]
     pub fn collect_userop(
         &self,
         from: PeerId,
+        chain_id: ChainId,
         block_hash: Hash,
         userop_hash: Hash,
         public_key: NodePublicKey,
         signature: BlsSignature,
         userop: Option<AlloyUserOperation>,
     ) -> Result<()> {
-        // validate signature
+        // 1. Validate inputs
         public_key.verify(userop_hash.as_bytes(), signature)?;
 
         // fetch related block
-        let Some(block) = self.db.get_transactionless_block(block_hash.into())? else {
-            return Err(anyhow::anyhow!("Missing block"));
-        };
-        let state = self.state.at_root(block.state_root_hash().into());
+        let block = self
+            .db
+            .get_transactionless_block(block_hash.into())?
+            .context("block must exist")?;
+        let state_hash = block.state_root_hash().into();
+        let state = self.state.at_root(state_hash);
 
         // check if peer_id matches
-        let Some(peer_id) = state.get_peer_id(public_key)? else {
-            return Err(anyhow::anyhow!("Missing peer id"));
+        let peer_id = state.get_peer_id(public_key)?.context("fake peer-id")?;
+        anyhow::ensure!(peer_id == from, "peer-id mismatch"); // must not happen
+
+        // do this in an inner-scope to release the lock before calling `relay_ops()` below.
+        let promote = {
+            // 2. Get the cache entry
+            let bop = self
+                .signatures
+                .write()
+                .get_or_insert_mut_ref(&userop_hash, || {
+                    let stakers = state.get_stakers(block.header).expect("must exist");
+                    let len = stakers.len();
+                    let total_stake: u128 = stakers
+                        .into_iter()
+                        .map(|pub_key| {
+                            state
+                                .get_stake(pub_key, block.header)
+                                .expect("must have stake")
+                                .expect("stake != 0")
+                                .get()
+                        })
+                        .sum();
+                    BlsUserOp {
+                        userop: None,
+                        threshold: 2 * total_stake / 3 + 1,
+                        signatures: Vec::with_capacity(len),
+                    }
+                });
+
+            // 3. Cache the signature entry
+            let stake = state
+                .get_stake(public_key, block.header)?
+                .context("missing stake")?;
+            bop.threshold = bop.threshold.saturating_sub(stake.get());
+            bop.signatures.push((public_key, signature));
+
+            // use only the UserOp we constructed ourselves.
+            if from == self.peer_id {
+                bop.userop = userop;
+            }
+
+            bop.userop.is_some() && bop.threshold == 0
         };
-        if peer_id != from {
-            return Err(anyhow::anyhow!("Peer id mismatch"));
-        }
 
-        // retrieve stake
-        let Some(stake) = state.get_stake(public_key, block.header)? else {
-            return Err(anyhow::anyhow!("Missing stake"));
-        };
-
-        // cache the userops
-        let bop = self
-            .signatures
-            .write()
-            .get_or_insert_mut_ref(&userop_hash, BlsUserOp::default);
-
-        // use only the UserOp we constructed ourselves.
-        if userop.is_some() && peer_id == self.peer_id {
-            bop.userop = userop;
-        }
-        bop.signatures.push(signature);
-        bop.stake = bop.stake.saturating_sub(stake.get());
-
-        // majority: promote
-        if bop.userop.is_some() && bop.stake == 0 {
-            self.relay_userop(userop_hash)?;
+        // 4. Majority reached: promote
+        if promote {
+            let stakers = state.get_stakers(block.header).expect("must exist");
+            self.relay_userop(userop_hash, chain_id, stakers)?;
         }
         Ok(())
     }
@@ -252,17 +326,24 @@ impl Relayer {
     /// Send UserOpHash
     ///
     /// Multi-sign the UserOp; and queues it for sending to the Bundler.
-    pub fn relay_userop(&self, userop_hash: Hash) -> Result<()> {
+    pub fn relay_userop(
+        &self,
+        userop_hash: Hash,
+        chain_id: ChainId,
+        stakers: Vec<NodePublicKey>,
+    ) -> Result<()> {
         let bop = self
             .signatures
             .write()
             .pop(&userop_hash)
             .context("UserOp signature lost")?;
 
-        // multi sign it
-        let signatures = bop
-            .signatures
-            .iter()
+        let (signers, signatures): (Vec<NodePublicKey>, Vec<BlsSignature>) =
+            bop.signatures.into_iter().unzip();
+
+        // 1. Multi-sig it
+        let signatures = signatures
+            .into_iter()
             .map(|s| {
                 Signature::<Bls12381G2Impl>::Basic(
                     // Underlying type is compressed G2Affine
@@ -276,32 +357,41 @@ impl Relayer {
                 )
             })
             .collect_vec();
-
         let multi_signature = blsful::MultiSignature::from_signatures(signatures)?
             .as_raw_value()
             .to_compressed();
 
-        // collect signers vector
-
-        let message = (multi_signature.as_slice(), self.address).abi_encode();
+        // 2. Count signers
+        let mut cosigner = bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE];
+        for (index, k) in stakers.iter().enumerate() {
+            if signers.contains(k) {
+                cosigner.set(index, true);
+            }
+        }
+        let message = (
+            self.address,               // Address(20)
+            multi_signature.as_slice(), // Signature(48)
+            cosigner.as_raw_slice(),    // Signers(32)
+        )
+            .abi_encode_packed();
         let signature = self.secret_key.sign(message.as_slice());
 
-        let userop_sig = (message, signature.to_bytes()).abi_encode();
-
-        // construct final UserOp
+        // 3. Construct final UserOp
         let bop = bop.userop.unwrap();
+        let send_id = keccak256(bop.call_data.iter().as_slice()).into();
+        tracing::debug!(%send_id, "relay({chain_id})");
         let final_uop = RelayUserOp {
             userop: AlloyUserOperation {
-                signature: userop_sig.into(), // replace the signature with multi-sig
+                signature: (signature.to_bytes(), message).abi_encode_packed().into(), // replace the signature with multi-sig
                 ..bop
             },
-            chain_id: 0,
-            send_id: userop_hash,
+            chain_id,
+            userop_hash,
+            send_id,
         };
 
-        // push UserOp to the sending queue
+        // 4. Push UserOp to the sending queue
         self.relay_tx.send(final_uop)?;
-
         Ok(())
     }
 }

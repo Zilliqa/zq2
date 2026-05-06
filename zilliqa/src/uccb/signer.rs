@@ -1,8 +1,8 @@
-use std::sync::Arc;
+use std::{num::NonZeroUsize, sync::Arc};
 
 // use super::AlloyUserOperation;
 use alloy::{
-    eips::BlockNumberOrTag,
+    eips::{BlockId, BlockNumberOrTag},
     primitives::{
         Address, B256, Bytes, ChainId, U64, U256,
         aliases::{B32, U192},
@@ -30,7 +30,7 @@ use crate::{
     state::State,
     uccb::{
         IERC7786GatewaySource::MessageSent,
-        SignUserOp, UserOperationGasEstimationV07 as UserOperationGasEstimation,
+        SignUserOp,
         utils::{get_chain_id, get_user_op_hash},
     },
 };
@@ -110,6 +110,7 @@ impl Signer {
     /// Watch for Events
     ///
     /// Opens persistent connections to each remote chain; and monitors the logs for MessageSent events.
+    /// Validates and submits each event for signing.
     async fn start_watcher(
         chain_id: ChainId,
         config: NodeConfig,
@@ -117,9 +118,9 @@ impl Signer {
         watchers: Arc<super::Providers>,
         sign_tx: UnboundedSender<SignUserOp>,
     ) -> Result<()> {
-        tracing::info!(chains=%watchers.len(), "Watcher-{}", chain_id);
+        tracing::info!(chains=%watchers.len(), "Watcher-{chain_id}");
         if watchers.is_empty() {
-            tracing::warn!("Watcher-{} terminated", chain_id);
+            tracing::warn!("Watcher-{chain_id} terminated");
             return Ok(());
         }
 
@@ -129,28 +130,27 @@ impl Signer {
             if let Some(watcher) = watchers.get(&remote.chain_id) {
                 let (_, _, _, _, _, watcher) = watcher.value();
                 let final_block = watcher
-                    .get_header_by_number(BlockNumberOrTag::Finalized)
+                    .get_block_by_number(BlockNumberOrTag::Finalized)
                     .await?
-                    .expect("must exist");
-                final_number.insert(remote.chain_id, final_block.number);
+                    .expect("finalized block must exist");
+                final_number.insert(remote.chain_id, final_block.header.number);
             }
         }
 
-        // Poll each chain, one-by-one
+        // Subscribing to the live-stream results in 'latest' blocks that may get reorganized.
+        // Manual polling is used to ensure that only finalized blocks are processed.
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(1)).await; // short polling interval
             for watcher in watchers.iter() {
                 let (chain_id, (_, gateway, _, _, _, watcher)) = watcher.pair();
 
-                // Subscribing to the live-stream results in latest blocks, which may get reorganized.
-                // Manual polling is used to ensure that only finalized blocks are processed.
-                // 1. Check final block number
+                // 1. Check for progress
                 let final_block = watcher
-                    .get_header_by_number(BlockNumberOrTag::Finalized)
+                    .get_block_by_number(BlockNumberOrTag::Finalized)
                     .await?
-                    .expect("final block must exist");
+                    .expect("finalized block must exist");
                 let mut last_final = final_number.get_mut(chain_id).expect("must exist");
-                if final_block.number <= *last_final.value() {
+                if final_block.header.number <= *last_final.value() {
                     continue; // skip if stale
                 }
 
@@ -160,81 +160,111 @@ impl Signer {
                     .from_block(BlockNumberOrTag::Number(
                         last_final.value().saturating_add(1),
                     ))
-                    .to_block(BlockNumberOrTag::Number(final_block.number)) // ideally, this should be exactly one block length
+                    .to_block(BlockNumberOrTag::Number(final_block.header.number)) // ideally, this should be exactly one block length
                     .event_signature(super::IERC7786GatewaySource::MessageSent::SIGNATURE_HASH);
                 let Ok(logs) = watcher.get_logs(&filter).await else {
                     tracing::error!("eth_getLogs({chain_id}): transport");
                     continue; // retry
                 };
-                *last_final.value_mut() = final_block.number; // update final
+                *last_final.value_mut() = final_block.header.number; // update final
 
-                // iterate thru logs
+                tracing::debug!(
+                    "MessageSent({chain_id}) events: {} in {:?}",
+                    logs.len(),
+                    filter.extract_block_range()
+                );
+
+                // 3. Iterate/Process the Logs
                 for log in logs {
-                    if log.removed {
-                        tracing::warn!("eth_getLogs(): removed");
-                        continue; // skip removals
-                    }
+                    anyhow::ensure!(!log.removed, "finalized block reorg"); // must never happen, since it is finalized
 
                     let blk_hash = log.block_hash.expect("block_hash != none").into();
                     let txn_hash = log.transaction_hash.expect("txn_hash != none").into();
                     let block_height = log.block_number.expect("block_number != none");
-                    let MessageSent {
+
+                    // 4. Decode the MessageSent event.
+                    let Ok(MessageSent {
                         sendId,
                         recipient,
                         payload,
                         value,
-                        // sender,
+                        sender,
                         // attributes,
                         ..
-                    } = super::IERC7786GatewaySource::MessageSent::decode_log_data(log.data())?;
+                    }) = super::IERC7786GatewaySource::MessageSent::decode_log_data(log.data())
+                    else {
+                        tracing::warn!(%txn_hash, %block_height, "MessageSent({chain_id}): decode");
+                        continue; // skip on failure
+                    };
+                    tracing::info!(send_id=%sendId, "MessageSent({chain_id}): seen");
 
-                    // 1. Validate payload integrity
-                    if !value.is_zero() || sendId != keccak256(payload.iter().as_slice()) {
-                        tracing::warn!(%sendId, "Invalid sendId");
+                    // 5. Validate payload integrity
+                    if value.is_zero() || sendId != keccak256(payload.iter().as_slice()) {
+                        tracing::warn!(send_id=%sendId, "MessageSent({chain_id}): mismatch");
                         continue;
                     }
 
-                    // 2. Get destination route
-                    let dest_chain =
+                    // 6. Validate route
+                    let dst_chain =
                         get_chain_id(std::str::from_utf8(&recipient).expect("Invalid utf-8"))?;
-                    let Some(watcher) = watchers.get(&dest_chain) else {
-                        tracing::warn!(%sendId, "Invalid route");
+                    let src_chain =
+                        get_chain_id(std::str::from_utf8(&sender).expect("Invalid utf-8"))?;
+                    anyhow::ensure!(src_chain == *chain_id, "source_chain {chain_id} mismatch");
+
+                    // ** DO NOT ALLOW LOOP-BACK ** except for tests
+                    #[cfg(not(test))]
+                    anyhow::ensure!(dst_chain != *chain_id, "loop-back {chain_id} detected");
+
+                    let Some(p) = watchers.get(&dst_chain) else {
+                        tracing::warn!(send_id=%sendId, "MessageSent({chain_id}): missing => {dst_chain}");
                         continue;
                     };
-                    let (_entrypoint, sender, gateway, paymaster, _bundler, _provider) =
-                        watcher.value();
+                    let (_e, sender, gateway, paymaster, _b, _p) = p.value();
 
-                    // 3. Extract EIP1559/ERC4337 fees from Attributes
-                    // TODO:
-
-                    // 4. Construct partial UserOp
+                    // 7. Construct partial UserOp; send for signing
                     let userop = Self::new_user_op(
                         sendId,
                         payload,
                         sender,
                         gateway,
                         paymaster,
+                        value,
                         block_height,
                     );
-
-                    // 5. Send it for signing
-                    let op = SignUserOp {
-                        blk_hash,
-                        txn_hash,
-                        chain_id: dest_chain, // destination route
+                    sign_tx.send(SignUserOp::new(
                         userop,
-                    };
-                    sign_tx.send(op)?;
+                        dst_chain,
+                        src_chain,
+                        txn_hash,
+                        blk_hash,
+                        block_height,
+                    ))?;
                 }
             }
         }
         // Ok(())
     }
 
+    fn split_u256(value: U256) -> (u64, u64) {
+        let limbs = value.into_limbs(); // [u64; 4]    }
+        (limbs[0], limbs[1])
+    }
+
+    async fn retry_signer(
+        sign_tx: &UnboundedSender<SignUserOp>,
+        userop: SignUserOp,
+        empty: bool,
+    ) -> Result<()> {
+        if empty {
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        }
+        Ok(sign_tx.send(userop)?) // retry
+    }
+
     /// Sign the UserOps
     ///
-    /// Calls the Entrypoint contracts to fill in the `nonce` field, and computes the UserOp hash.
-    /// Signs the UserOp hash and transmits the signed UserOp to the selected Relayer.
+    /// Populates the missing UserOps fields to compute its full hash.
+    /// Signs the hash and transmits the signature to the selected Relayer.
     #[allow(clippy::too_many_arguments)]
     async fn start_signer(
         chain_id: ChainId,
@@ -246,64 +276,87 @@ impl Signer {
         mut sign_rx: UnboundedReceiver<SignUserOp>,
         sign_tx: UnboundedSender<SignUserOp>,
     ) -> Result<()> {
-        tracing::info!(chains=%watchers.len(), "Signer-{}", chain_id);
+        tracing::info!(chains=%watchers.len(), "Signer-{chain_id}");
         if watchers.is_empty() {
-            tracing::warn!("Signer-{} terminated", chain_id);
+            tracing::warn!("Signer-{chain_id} terminated");
             return Ok(());
         }
-
-        // process user ops
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
+        let mut cache =
+            lru::LruCache::<(u64, u64), U256>::new(NonZeroUsize::new(watchers.len() * 3).unwrap());
+
+        // Sign each user op; requeue on failure.
         while let Ok(SignUserOp {
             mut userop,
-            chain_id,
+            dst_chain,
+            src_chain,
             txn_hash,
             blk_hash,
+            blk_height,
         }) = sign_rx.try_recv()
         {
-            let Some(watcher) = watchers.get(&chain_id) else {
-                tracing::warn!(%chain_id, "Missing provider");
-                continue;
-            };
-            let (entrypoint, sender, gateway, _paymaster, bundler, provider) = watcher.value();
+            let send_id = keccak256(userop.call_data.iter().as_slice());
 
-            // update UserOp fees
-            if userop.max_fee_per_gas.is_zero() {
-                let (tips, header, est4337) = tokio::join!(
-                    provider.get_max_priority_fee_per_gas(),
-                    provider.get_header_by_number(BlockNumberOrTag::Latest),
-                    bundler.raw_request::<_, UserOperationGasEstimation>(
-                        "eth_estimateUserOperationGas".into(),
-                        (userop.clone(), *entrypoint),
-                    ),
-                );
-                if let Ok(tips) = tips
-                    && let Ok(Some(h)) = header
-                    && let Ok(est) = est4337
-                {
-                    let fee = h.base_fee_per_gas.unwrap_or_default();
-                    let est1559 = alloy::providers::utils::eip1559_default_estimator(
-                        fee as u128,
-                        &[vec![tips]],
-                    );
-
-                    userop.max_fee_per_gas = U256::from(est1559.max_fee_per_gas);
-                    userop.max_priority_fee_per_gas = U256::from(est1559.max_priority_fee_per_gas);
-
-                    userop.call_gas_limit = est.call_gas_limit;
-                    userop.pre_verification_gas = est.pre_verification_gas;
-                    userop.verification_gas_limit = est.verification_gas;
-                    userop.paymaster_verification_gas_limit = Some(est.paymaster_verification_gas);
-                    userop.paymaster_post_op_gas_limit = Some(est.paymaster_post_op_gas_limit);
+            // 1. Populate the fees
+            if userop.pre_verification_gas.is_zero() {
+                let fees = if let Some(fees) = cache.get(&(src_chain, blk_height)) {
+                    // .get_or_insert() does not work with async
+                    *fees
                 } else {
-                    tracing::warn!("estimateUserOperationGas()");
-                    sign_tx.send(SignUserOp::new(userop, chain_id, txn_hash, blk_hash))?; // retry
-                    continue;
-                }
+                    let p = watchers.get(&src_chain).expect("must exist");
+                    let (_entrypoint, _sender, gateway, _paymaster, _bundler, provider) = p.value();
+                    match super::IERC4337Extra::new(*gateway, provider)
+                        .getFees(dst_chain)
+                        .block(BlockId::number(blk_height))
+                        .call()
+                        .await
+                    {
+                        Ok(fees) => {
+                            cache.push((src_chain, blk_height), fees);
+                            fees
+                        }
+                        Err(err) => {
+                            tracing::error!(%send_id, %err, "getFees({src_chain}): retry");
+                            Self::retry_signer(
+                                &sign_tx,
+                                SignUserOp::new(
+                                    userop, dst_chain, src_chain, txn_hash, blk_hash, blk_height,
+                                ),
+                                sign_rx.is_empty(),
+                            )
+                            .await?;
+                            continue;
+                        }
+                    }
+                };
+                tracing::debug!(%send_id, "getFees({src_chain}): fees");
+
+                // ERC4337 fees
+                let [
+                    call_gas_limit,
+                    pre_verification_gas,
+                    verification_gas_limit,
+                    paymaster_verification_gas_limit,
+                ] = fees.into_limbs();
+                userop.call_gas_limit = U256::from(call_gas_limit);
+                userop.pre_verification_gas = U256::from(pre_verification_gas);
+                userop.verification_gas_limit = U256::from(verification_gas_limit);
+                userop.paymaster_verification_gas_limit =
+                    Some(U256::from(paymaster_verification_gas_limit));
+                userop.paymaster_post_op_gas_limit =
+                    Some(U256::from(paymaster_verification_gas_limit));
             }
 
-            // 1. Retrieve the nonce
-            // TODO: Tackle parallel nonce limits e.g. https://www.alchemy.com/docs/wallets/reference/bundler-faqs#parallel-nonces
+            // 2. Populate the nonce
+            // TODO: Tackle parallel nonce limits e.g.
+            // https://www.alchemy.com/docs/wallets/reference/bundler-faqs#parallel-nonces
+            // https://docs.pimlico.io/guides/how-to/parallel-transactions#parallel-transactions-ordering
+            let Some(p) = watchers.get(&dst_chain) else {
+                tracing::warn!("Missing route {src_chain} => {dst_chain}");
+                continue;
+            };
+            let (entrypoint, sender, gateway, _paymaster, _bundler, provider) = p.value();
+
             if userop.nonce.is_zero() {
                 let key = Self::pack_nonce_key(gateway, &txn_hash);
                 match super::IEntryPointNonces::new(*entrypoint, provider)
@@ -311,19 +364,27 @@ impl Signer {
                     .call()
                     .await
                 {
-                    Ok(nonce) => userop.nonce = nonce,
+                    Ok(nonce) => {
+                        tracing::debug!(%send_id, "getNonce({dst_chain}): {:?}", nonce);
+                        userop.nonce = nonce;
+                    }
                     Err(err) => {
-                        tracing::error!(%err, "getNonce()");
-                        sign_tx.send(SignUserOp::new(userop, chain_id, txn_hash, blk_hash))?; // retry
+                        tracing::error!(%send_id, %err, "getNonce({dst_chain}): retry");
+                        Self::retry_signer(
+                            &sign_tx,
+                            SignUserOp::new(
+                                userop, dst_chain, src_chain, txn_hash, blk_hash, blk_height,
+                            ),
+                            sign_rx.is_empty(),
+                        )
+                        .await?;
                         continue;
                     }
                 };
             }
 
-            // 2. Compute the UserOp hash
-            let uop_hash = get_user_op_hash(&userop.clone().into(), *entrypoint, chain_id)?;
-
-            // 3. Sign the UserOp hash;
+            // 3. Compute + Sign the UserOp hash
+            let uop_hash = get_user_op_hash(&userop.clone().into(), *entrypoint, dst_chain)?;
             let sig = secret_key
                 .as_bls()
                 .sign(blsful::SignatureSchemes::Basic, uop_hash.as_slice())
@@ -332,8 +393,10 @@ impl Signer {
 
             // 4. Transmit via P2P to the RELAY_SET
             let relay_set = Self::get_relay_set(blk_hash, txn_hash, state.clone(), db.clone())?;
+            tracing::debug!(%send_id, "peers({:?})", relay_set);
             for peer in relay_set {
                 let msg = ExternalMessage::UccbUserOp(UccbUserOp {
+                    chain_id: dst_chain,
                     userop_hash: Hash(uop_hash.0),
                     block_hash: blk_hash,
                     public_key: secret_key.node_public_key(),
@@ -367,6 +430,9 @@ impl Signer {
     /// Compute the RELAY_SET
     ///
     /// Uses the given transaction_hash and block_hash to compute a deterministic pseudo-random set of peers.
+    /// Given N number of peers, only 3 are selected to generate the multi-sig and submit the UserOp to the bundler.
+    /// - multiple peers, redundant, to improve delivery.
+    /// - sub-set of peers, to mitigate rogue nodes and reduce spam.
     fn get_relay_set(
         blk_hash: Hash,
         txn_hash: Hash,
@@ -412,26 +478,40 @@ impl Signer {
         sender: &Address,
         gateway: &Address,
         paymaster: &Address,
+        value: U256,
         block_height: u64,
     ) -> AlloyUserOperation {
         // we can encode some custom things in here
         let paymaster_data = (block_height).abi_encode_packed();
+        let (a, b) = Self::split_u256(value);
         AlloyUserOperation {
             sender: *sender,
-            nonce: U256::ZERO, // start_signer
+            nonce: U256::ZERO, // unpopulated nonce/sig
             factory: Some(*gateway),
             factory_data: Some(Bytes::copy_from_slice(send_id.as_slice())),
             call_data: payload,
             call_gas_limit: Self::DUMMY_GAS, // estimateUserOpGas
             verification_gas_limit: Self::DUMMY_GAS, // estimateUserOpGas
             pre_verification_gas: Self::DUMMY_GAS, // estimateUserOpGas
-            max_fee_per_gas: Self::DUMMY_GAS,
-            max_priority_fee_per_gas: Self::DUMMY_GAS,
+            max_fee_per_gas: U256::from(a),
+            max_priority_fee_per_gas: U256::from(b),
             paymaster: Some(*paymaster),
             paymaster_verification_gas_limit: Some(Self::DUMMY_GAS), // estimateUserOpGas
             paymaster_post_op_gas_limit: Some(Self::DUMMY_GAS),      // estimateUserOpGas
             paymaster_data: Some(Bytes::from(paymaster_data)),
-            signature: Bytes::from(Self::DUMMY_SIGNATURE),
+            signature: Bytes::from(Self::DUMMY_SIGNATURE), // unpopulated signature
         }
+    }
+
+    pub fn default_user_op() -> AlloyUserOperation {
+        Self::new_user_op(
+            B256::ZERO,
+            Bytes::new(),
+            &Address::ZERO,
+            &Address::ZERO,
+            &Address::ZERO,
+            U256::ZERO,
+            0,
+        )
     }
 }

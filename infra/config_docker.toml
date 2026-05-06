@@ -27,10 +27,11 @@ remote_chains = [
     {
         watcher_url = "http://198.51.100.103:4201",
         bundler_url = "http://198.51.100.8:3000",
-        chain_id = 0,
+        chain_id = 33468,
         entrypoint = "0x0000000071727de22e5e9d8baf0edac6f37da032",
         gateway = "0x0000000071727de22e5e9d8baf0edac6f37da032",
         sender = "0x0000000071727de22e5e9d8baf0edac6f37da032",
+        paymaster = "0x0000000071727de22e5e9d8baf0edac6f37da032",
     }
 ]
 

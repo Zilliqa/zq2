@@ -1,7 +1,7 @@
 use std::{str::FromStr as _, sync::Arc};
 
 use alloy::{
-    primitives::{Address, B256, Bytes, ChainId, U256, address},
+    primitives::{Address, B256, Bytes, ChainId, address},
     providers::{
         Identity, Provider as _, ProviderBuilder, RootProvider,
         fillers::{BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller},
@@ -14,12 +14,12 @@ use anyhow::Result;
 use dashmap::DashMap;
 use jsonrpsee::client_transport::ws::Url;
 use libp2p::PeerId;
-use serde::{Deserialize, Serialize};
+// use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
     cfg::NodeConfig,
-    crypto::{BlsSignature, Hash, SecretKey},
+    crypto::{BlsSignature, Hash, NodePublicKey, SecretKey},
     db::Db,
     message::{ExternalMessage, UccbUserOp},
     node::MessageSender,
@@ -50,6 +50,15 @@ sol!(
 sol! {
     interface IERC7786Attributes {
         function eip1559_fees(uint128 max_priority_gas_fee,uint128 max_base_gas_fee) external;
+    }
+}
+
+sol! {
+    #[sol(rpc)]
+    interface IERC4337Extra {
+        function getFees(
+            uint64 chain_id
+        ) external view returns (uint256);
     }
 }
 
@@ -99,23 +108,29 @@ sol! {
 
 pub struct SignUserOp {
     pub userop: AlloyUserOperation,
-    pub chain_id: ChainId,
     pub txn_hash: Hash,
     pub blk_hash: Hash,
+    pub dst_chain: ChainId,
+    pub src_chain: ChainId,
+    pub blk_height: u64,
 }
 
 impl SignUserOp {
     pub fn new(
         userop: AlloyUserOperation,
-        chain_id: ChainId,
+        dst_chain: ChainId,
+        src_chain: ChainId,
         txn_hash: Hash,
         blk_hash: Hash,
+        blk_height: u64,
     ) -> Self {
         Self {
             userop,
-            chain_id,
+            dst_chain,
+            src_chain,
             txn_hash,
             blk_hash,
+            blk_height,
         }
     }
 }
@@ -123,14 +138,15 @@ impl SignUserOp {
 pub struct RelayUserOp {
     pub userop: AlloyUserOperation,
     pub chain_id: ChainId,
+    pub userop_hash: Hash,
     pub send_id: Hash,
 }
 
 #[derive(Default)]
 pub struct BlsUserOp {
     pub userop: Option<AlloyUserOperation>,
-    pub signatures: Vec<BlsSignature>,
-    pub stake: u128,
+    pub signatures: Vec<(NodePublicKey, BlsSignature)>,
+    pub threshold: u128,
 }
 
 // Used to send an updated list of SIGNER keys
@@ -192,18 +208,19 @@ impl Uccb {
 
         let providers = Arc::new(DashMap::with_capacity(config.remote_chains.len()));
         for remote in config.remote_chains.iter() {
-            let bundler = ProviderBuilder::new()
-                .connect(Url::from_str(&remote.bundler_url)?.as_str())
-                .await?;
-            let watcher = ProviderBuilder::new()
-                .connect(Url::from_str(&remote.watcher_url)?.as_str())
-                .await?;
+            let bundler =
+                ProviderBuilder::new().connect_hyper_http(Url::from_str(&remote.bundler_url)?);
+            let watcher =
+                ProviderBuilder::new().connect_hyper_http(Url::from_str(&remote.watcher_url)?);
 
-            if let Ok(entrypoints) = bundler
-                .raw_request::<(), Vec<Address>>("eth_supportedEntryPoints".into(), ())
-                .await
+            let (get_entrypoints, get_chain_id) = tokio::join!(
+                bundler.raw_request::<(), Vec<Address>>("eth_supportedEntryPoints".into(), ()),
+                watcher.get_chain_id()
+            );
+
+            if let Ok(ref entrypoints) = get_entrypoints
                 && entrypoints.contains(&remote.entrypoint)
-                && let Ok(id) = watcher.get_chain_id().await
+                && let Ok(id) = get_chain_id
                 && chain_id == id
             {
                 providers.insert(
@@ -213,10 +230,18 @@ impl Uccb {
                         remote.sender,
                         remote.gateway,
                         remote.paymaster,
-                        watcher,
                         bundler,
+                        watcher,
                     ),
                 );
+            } else {
+                tracing::error!("{get_entrypoints:?} {get_chain_id:?}");
+                if let Err(err) = get_entrypoints {
+                    tracing::error!(%err, "Bundler-{chain_id}");
+                }
+                if let Err(err) = get_chain_id {
+                    tracing::error!(%err, "Rpc-{chain_id}");
+                }
             }
         }
         providers.shrink_to_fit();
@@ -262,10 +287,12 @@ impl Uccb {
                 signature,
                 public_key,
                 block_hash,
+                chain_id,
             }) => {
                 // handle
                 self.relayer.collect_userop(
                     from,
+                    chain_id,
                     block_hash,
                     userop_hash,
                     public_key,
@@ -345,15 +372,15 @@ impl From<AlloyUserOperation> for PackedUserOperation {
     }
 }
 
-/// Represents the gas estimation for a user operation.
-///
-/// alloy::UserOperationGasEstimation is v0.6, not v0.7/0.8
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct UserOperationGasEstimationV07 {
-    pub pre_verification_gas: U256,
-    pub verification_gas: U256,
-    pub paymaster_verification_gas: U256,
-    pub call_gas_limit: U256,
-    pub paymaster_post_op_gas_limit: U256,
-}
+// Represents the gas estimation for a user operation.
+//
+// alloy::UserOperationGasEstimation is v0.6, not v0.7/0.8
+// #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// #[serde(rename_all = "camelCase")]
+// pub(crate) struct UserOperationGasEstimationV07 {
+//     pub pre_verification_gas: U256,
+//     pub verification_gas: U256,
+//     pub paymaster_verification_gas: U256,
+//     pub call_gas_limit: U256,
+//     pub paymaster_post_op_gas_limit: U256,
+// }
