@@ -788,6 +788,7 @@ pub struct Fork {
     pub randao_support: bool,
     pub evm_to_scilla_strings_encoded_properly: bool,
     pub distribute_rewards_every_epoch: bool,
+    pub pectra_active: bool,
 }
 
 pub enum ForkName {
@@ -941,6 +942,8 @@ pub struct ForkDelta {
     pub evm_to_scilla_strings_encoded_properly: Option<bool>,
     /// if true, rewards are distributed every epoch instead of every block
     pub distribute_rewards_every_epoch: Option<bool>,
+    /// if true, pectra is activated in evm
+    pub pectra_active: Option<bool>,
 }
 
 impl Fork {
@@ -1059,6 +1062,7 @@ impl Fork {
             distribute_rewards_every_epoch: delta
                 .distribute_rewards_every_epoch
                 .unwrap_or(self.distribute_rewards_every_epoch),
+            pectra_active: delta.pectra_active.unwrap_or(self.pectra_active),
         }
     }
 }
@@ -1166,6 +1170,7 @@ pub fn genesis_fork_default() -> Fork {
         randao_support: true,
         evm_to_scilla_strings_encoded_properly: true,
         distribute_rewards_every_epoch: true,
+        pectra_active: true,
     }
 }
 
@@ -1346,6 +1351,7 @@ mod tests {
                 randao_support: None,
                 evm_to_scilla_strings_encoded_properly: None,
                 distribute_rewards_every_epoch: None,
+                pectra_active: None,
             }],
             ..Default::default()
         };
@@ -1408,6 +1414,7 @@ mod tests {
                     randao_support: Some(false),
                     evm_to_scilla_strings_encoded_properly: None,
                     distribute_rewards_every_epoch: None,
+                    pectra_active: Some(false),
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1450,6 +1457,7 @@ mod tests {
                     randao_support: None,
                     evm_to_scilla_strings_encoded_properly: None,
                     distribute_rewards_every_epoch: None,
+                    pectra_active: None,
                 },
             ],
             ..Default::default()
@@ -1529,6 +1537,7 @@ mod tests {
                     randao_support: None,
                     evm_to_scilla_strings_encoded_properly: None,
                     distribute_rewards_every_epoch: None,
+                    pectra_active: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1571,6 +1580,7 @@ mod tests {
                     randao_support: None,
                     evm_to_scilla_strings_encoded_properly: None,
                     distribute_rewards_every_epoch: None,
+                    pectra_active: None,
                 },
             ],
             ..Default::default()
@@ -1638,6 +1648,7 @@ mod tests {
                 randao_support: true,
                 evm_to_scilla_strings_encoded_properly: true,
                 distribute_rewards_every_epoch: true,
+                pectra_active: true,
             },
             forks: vec![],
             ..Default::default()
@@ -1693,6 +1704,7 @@ mod tests {
                     randao_support: None,
                     evm_to_scilla_strings_encoded_properly: None,
                     distribute_rewards_every_epoch: None,
+                    pectra_active: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1735,6 +1747,7 @@ mod tests {
                     randao_support: None,
                     evm_to_scilla_strings_encoded_properly: None,
                     distribute_rewards_every_epoch: None,
+                    pectra_active: None,
                 },
             ],
             ..Default::default()

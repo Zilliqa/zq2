@@ -44,6 +44,7 @@ mod consensus;
 mod debug;
 mod eth;
 mod ots;
+mod pectra;
 mod penalty;
 mod persistence;
 mod rewards;
@@ -1521,6 +1522,10 @@ impl Network {
         self.run_until_block_finalized(1, 100).await.unwrap();
         let key = SigningKey::random(self.rng.lock().unwrap().deref_mut());
         self.wallet_from_key(key).await
+    }
+
+    pub fn random_signing_key(&self) -> SigningKey {
+        SigningKey::random(self.rng.lock().unwrap().deref_mut())
     }
 }
 

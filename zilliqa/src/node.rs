@@ -22,7 +22,10 @@ use itertools::Itertools;
 use libp2p::{PeerId, request_response::OutboundFailure};
 use parking_lot::RwLock;
 use rand::RngCore;
-use revm::context_interface::{result::ExecutionResult, transaction::AccessList};
+use revm::context_interface::{
+    result::ExecutionResult,
+    transaction::{AccessList, SignedAuthorization},
+};
 use revm_context::TxEnv;
 use revm_inspector::Inspector;
 use revm_inspectors::tracing::{
@@ -1013,6 +1016,7 @@ impl Node {
         max_priority_fee_per_gas: Option<u128>,
         value: u128,
         access_list: Option<AccessList>,
+        authorization_list: Option<Vec<SignedAuthorization>>,
         extra_opts: ExtraOpts,
     ) -> Result<u64> {
         let block = self
@@ -1033,6 +1037,7 @@ impl Node {
             max_priority_fee_per_gas,
             value,
             access_list,
+            authorization_list,
             extra_opts,
         )
     }

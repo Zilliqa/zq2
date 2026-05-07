@@ -1275,6 +1275,16 @@ fn extract_transaction_bodies(block: &Block, db: Arc<Db>) -> Result<Vec<Transact
                 tx.to.is_create().then(|| hex::encode(&tx.input)),
                 tx.to.is_call().then(|| hex::encode(&tx.input)),
             ),
+            SignedTransaction::Eip7702 { tx, sig } => (
+                ((tx.chain_id as u32) << 16) | 6,
+                tx.to,
+                sig.recover_from_prehash(&tx.signature_hash())?
+                    .to_sec1_bytes()
+                    .to_hex(),
+                sig.as_bytes().to_hex(),
+                None,
+                Some(hex::encode(&tx.input)),
+            ),
             SignedTransaction::Intershard { tx, .. } => (
                 ((tx.chain_id as u32) << 16) | 20,
                 tx.to_addr.unwrap_or_default(),
