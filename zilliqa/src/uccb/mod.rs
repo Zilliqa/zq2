@@ -163,7 +163,16 @@ type Wallet = FillProvider<
     >,
     RootProvider,
 >;
-type Providers = DashMap<ChainId, (Address, Address, Address, Address, Wallet, Wallet)>;
+
+pub struct EndPoint {
+    pub gateway: Address,
+    pub sender: Address,
+    pub entrypoint: Address,
+    pub paymaster: Address,
+    pub bundler: Wallet,
+    pub jsonrpc: Wallet,
+}
+type Providers = DashMap<ChainId, EndPoint>;
 
 pub struct Uccb {
     // config: NodeConfig,
@@ -239,14 +248,14 @@ impl Uccb {
             // insert it either way as Relayer/Signer has to handle http errors anyway.
             providers.insert(
                 remote.chain_id,
-                (
-                    remote.entrypoint,
-                    remote.sender,
-                    remote.gateway,
-                    remote.paymaster,
+                EndPoint {
+                    entrypoint: remote.entrypoint,
+                    gateway: remote.gateway,
+                    sender: remote.sender,
+                    paymaster: remote.paymaster,
                     bundler,
-                    watcher,
-                ),
+                    jsonrpc: watcher,
+                },
             );
         }
         providers.shrink_to_fit();

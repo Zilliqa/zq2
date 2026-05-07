@@ -27,7 +27,7 @@ use crate::{
     db::Db,
     message::MAX_COMMITTEE_SIZE,
     state::State,
-    uccb::{BlsUserOp, RelayUserOp, utils::get_user_op_hash},
+    uccb::{BlsUserOp, EndPoint, RelayUserOp, utils::get_user_op_hash},
 };
 
 #[derive(Debug)]
@@ -122,12 +122,17 @@ impl Relayer {
                 tracing::warn!(%chain_id, "UserOp missing bundler");
                 continue;
             };
-            let (_, (entrypoint, _, _, _, bundler, watcher)) = provider.pair();
+            let EndPoint {
+                entrypoint,
+                bundler,
+                jsonrpc,
+                ..
+            } = provider.value();
 
             // 1. Insufficient gas, delay sending.
             let (tips, header, est4337, receipt) = tokio::join!(
-                watcher.get_max_priority_fee_per_gas(),
-                watcher.get_header_by_number(BlockNumberOrTag::Latest),
+                jsonrpc.get_max_priority_fee_per_gas(),
+                jsonrpc.get_header_by_number(BlockNumberOrTag::Latest),
                 bundler.raw_request::<_, UserOperationGasEstimation>(
                     "eth_estimateUserOperationGas".into(),
                     (userop.clone(), *entrypoint),
