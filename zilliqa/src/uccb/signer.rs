@@ -4,7 +4,7 @@ use std::{num::NonZeroUsize, sync::Arc};
 use alloy::{
     eips::{BlockId, BlockNumberOrTag},
     primitives::{
-        Address, B256, Bytes, ChainId, U64, U256,
+        Address, B256, Bytes, ChainId, U256,
         aliases::{B32, U192},
     },
     providers::Provider as _,
@@ -50,7 +50,7 @@ impl Drop for Signer {
 
 impl Signer {
     // This needs to be the same size as the signature scheme for correct gas estimation
-    const DUMMY_SIGNATURE: [u8; 148] = [255u8; 48 + 48 + 32 + 20]; // SIG || MUL-SIG || CO-SIGNER || SIGNER
+    // const DUMMY_SIGNATURE: [u8; 148] = [255u8; 48 + 48 + 32 + 20]; // SIG || MUL-SIG || CO-SIGNER || SIGNER
     const DUMMY_GAS: U256 = U256::ZERO;
 
     /// Construct a SIGNER node.
@@ -242,6 +242,7 @@ impl Signer {
                         value,
                         block_height,
                     );
+                    tracing::debug!(send_id=%sendId, ?userop, "UserOp");
                     sign_tx.send(SignUserOp::new(
                         userop,
                         dst_chain,
@@ -337,15 +338,16 @@ impl Signer {
                         }
                     }
                 };
-                tracing::debug!(%send_id, "getFees({src_chain}): fees");
 
                 // ERC4337 fees
                 let [
-                    call_gas_limit,
-                    pre_verification_gas,
-                    verification_gas_limit,
                     paymaster_verification_gas_limit,
-                ] = fees.into_limbs();
+                    verification_gas_limit,
+                    pre_verification_gas,
+                    call_gas_limit,
+                ] = fees.into_limbs(); // ordering is inverted
+                tracing::debug!(%send_id, %call_gas_limit, %pre_verification_gas, %verification_gas_limit, %paymaster_verification_gas_limit, "getFees({src_chain}): fees");
+
                 userop.call_gas_limit = U256::from(call_gas_limit);
                 userop.pre_verification_gas = U256::from(pre_verification_gas);
                 userop.verification_gas_limit = U256::from(verification_gas_limit);
@@ -379,7 +381,7 @@ impl Signer {
                     .await
                 {
                     Ok(nonce) => {
-                        tracing::debug!(%send_id, "getNonce({dst_chain}): {:?}", nonce);
+                        tracing::debug!(%send_id, ?nonce, "getNonce({dst_chain}): nonce");
                         userop.nonce = nonce;
                     }
                     Err(err) => {
@@ -404,9 +406,20 @@ impl Signer {
                 .sign(blsful::SignatureSchemes::Basic, uop_hash.as_slice())
                 .unwrap();
             userop.signature = sig.as_raw_value().to_compressed().into();
+            tracing::debug!(%send_id, ?userop, "UserOp");
 
             // 4. Transmit via P2P to the RELAY_SET
-            let relay_set = Self::get_relay_set(blk_hash, txn_hash, state.clone(), db.clone())?;
+            let Ok(relay_set) = Self::get_relay_set(blk_hash, txn_hash, state.clone(), db.clone())
+            else {
+                tracing::error!(%send_id, "relay_set(): retry");
+                Self::retry_signer(
+                    &sign_tx,
+                    SignUserOp::new(userop, dst_chain, src_chain, txn_hash, blk_hash, blk_height),
+                    sign_rx.is_empty(),
+                )
+                .await?;
+                continue;
+            };
             tracing::debug!(%send_id, "peers({:?})", relay_set);
             for peer in relay_set {
                 let msg = ExternalMessage::UccbUserOp(UccbUserOp {
@@ -463,19 +476,38 @@ impl Signer {
 
         // sort by XOR-ing keys
         // this produces a deterministic pseudo-random order.
-        let mut stakers = state.get_stakers(block.header)?;
-        let sort_key = U64::from_be_bytes(blk_hash.0).bitxor(U64::from_be_bytes(txn_hash.0));
-        stakers.sort_by(|a, b| {
-            let a = U64::from_be_slice(a.as_bytes().as_slice()).bitxor(sort_key);
-            let b = U64::from_be_slice(b.as_bytes().as_slice()).bitxor(sort_key);
-            a.cmp(&b)
-        });
+        let blk_key = blk_hash
+            .0
+            .chunks_exact(16)
+            .map(|c| u128::from_be_bytes(c.try_into().unwrap()))
+            .fold(0u128, |a, x| a ^ x);
+        let txn_key = txn_hash
+            .0
+            .chunks_exact(16)
+            .map(|c| u128::from_be_bytes(c.try_into().unwrap()))
+            .fold(0u128, |a, x| a ^ x);
+        let sort_key = blk_key ^ txn_key;
+
+        let mut stakers = state
+            .get_stakers(block.header)?
+            .into_iter()
+            .map(|k| {
+                (
+                    k,
+                    k.as_bytes()
+                        .chunks_exact(16)
+                        .map(|c| u128::from_be_bytes(c.try_into().unwrap()))
+                        .fold(sort_key, |a, x| a ^ x),
+                )
+            })
+            .collect_vec();
+        stakers.sort_by_key(|a| a.1);
 
         // grab top 3 only
         let stakers = stakers
             .into_iter()
             .take(3) // the network must have > 3 stakers
-            .map(|k| state.get_peer_id(k).unwrap().unwrap())
+            .map(|k| state.get_peer_id(k.0).unwrap().unwrap())
             .collect_vec();
 
         Ok(stakers)
@@ -497,8 +529,10 @@ impl Signer {
     ) -> AlloyUserOperation {
         // we can encode some custom things in here
         let paymaster_data = (block_height).abi_encode_packed();
-        let a = value.arithmetic_shr(128).to::<u128>();
-        let b = value.to::<u128>();
+        // FIXME: decode the values
+        let [a, b, c, d] = value.into_limbs();
+        let max_fee_per_gas = (b as u128) << 64 | a as u128;
+        let max_priority_fee_per_gas = (d as u128) << 64 | c as u128;
         AlloyUserOperation {
             sender: *sender,
             nonce: U256::ZERO, // unpopulated nonce/sig
@@ -508,13 +542,13 @@ impl Signer {
             call_gas_limit: Self::DUMMY_GAS, // estimateUserOpGas
             verification_gas_limit: Self::DUMMY_GAS, // estimateUserOpGas
             pre_verification_gas: Self::DUMMY_GAS, // estimateUserOpGas
-            max_fee_per_gas: U256::from(a),
-            max_priority_fee_per_gas: U256::from(b),
+            max_fee_per_gas: U256::from(max_fee_per_gas),
+            max_priority_fee_per_gas: U256::from(max_priority_fee_per_gas),
             paymaster: Some(*paymaster),
             paymaster_verification_gas_limit: Some(Self::DUMMY_GAS), // estimateUserOpGas
             paymaster_post_op_gas_limit: Some(Self::DUMMY_GAS),      // estimateUserOpGas
             paymaster_data: Some(Bytes::from(paymaster_data)),
-            signature: Bytes::from(Self::DUMMY_SIGNATURE), // unpopulated signature
+            signature: Bytes::new(), // unpopulated signature
         }
     }
 
