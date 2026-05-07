@@ -5,7 +5,7 @@ use std::{
 };
 
 use alloy::{
-    primitives::{Address, B256, U256},
+    primitives::{Address, B256, ChainId, U256},
     rpc::types::PackedUserOperation as AlloyUserOperation,
 };
 use anyhow::{Result, anyhow};
@@ -239,6 +239,7 @@ pub struct RequestBlocksByHeight {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UccbUserOp {
+    pub chain_id: ChainId,
     pub userop_hash: Hash,
     pub block_hash: Hash,
     pub public_key: NodePublicKey,

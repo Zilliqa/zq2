@@ -109,13 +109,13 @@ sled = { version = "0.34.7", features = ["no_logs"] }
 r2d2 = "0.8.10"
 r2d2_sqlite = "0.31.0"
 rocksdb = { version = "0.24.0", default-features = false, features = ["bindgen-runtime", "jemalloc", "lz4", "snappy", "zstd"] }
-zip = { version = "8.5.1", default-features = false, features = ["zstd"] }
+zip = { version = "8.6.0", default-features = false, features = ["zstd"] }
 eth_trie = { git = "https://github.com/Zilliqa/eth-trie.rs.git", branch = "zilliqa-revm" }
 arc-swap = "1.9.1"
 redis = { version = "0.32.7", features = ["keep-alive", "r2d2", "tcp_nodelay"], default-features = false }
 alloy = { version = "2.0.4", default-features = false, features = ["consensus", "contract", "dyn-abi", "eips", "hyper", "json-abi", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types"] }
 crossbeam = "0.8.4"
-lru = "0.17.0"
+lru = "0.18.0"
 
 [dev-dependencies]
 alloy = { version = "2.0.4", default-features = false, features = ["consensus", "dyn-abi", "eips", "json-abi", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types", "pubsub", "json-rpc", "contract", "signer-local"] }
