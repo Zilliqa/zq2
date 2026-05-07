@@ -277,28 +277,26 @@ impl Relayer {
         // do this in an inner-scope to release the lock before calling `relay_ops()` below.
         let promote = {
             // 2. Get the cache entry
-            let bop = self
-                .signatures
-                .write()
-                .get_or_insert_mut_ref(&userop_hash, || {
-                    let stakers = state.get_stakers(block.header).expect("must exist");
-                    let len = stakers.len();
-                    let total_stake: u128 = stakers
-                        .into_iter()
-                        .map(|pub_key| {
-                            state
-                                .get_stake(pub_key, block.header)
-                                .expect("must have stake")
-                                .expect("stake != 0")
-                                .get()
-                        })
-                        .sum();
-                    BlsUserOp {
-                        userop: None,
-                        threshold: 2 * total_stake / 3 + 1,
-                        signatures: Vec::with_capacity(len),
-                    }
-                });
+            let mut cache = self.signatures.write();
+            let bop = cache.get_or_insert_mut_ref(&userop_hash, || {
+                let stakers = state.get_stakers(block.header).expect("must exist");
+                let len = stakers.len();
+                let total_stake: u128 = stakers
+                    .into_iter()
+                    .map(|pub_key| {
+                        state
+                            .get_stake(pub_key, block.header)
+                            .expect("must have stake")
+                            .expect("stake != 0")
+                            .get()
+                    })
+                    .sum();
+                BlsUserOp {
+                    userop: None,
+                    threshold: 2 * total_stake / 3 + 1,
+                    signatures: Vec::with_capacity(len),
+                }
+            });
 
             // 3. Cache the signature entry
             let stake = state
