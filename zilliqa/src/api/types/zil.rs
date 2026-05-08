@@ -362,6 +362,17 @@ impl GetTxResponse {
                 tx.to.is_create().then(|| hex::encode(&tx.input)),
                 tx.to.is_call().then(|| hex::encode(&tx.input)),
             ),
+            SignedTransaction::Eip7702 { tx, sig } => (
+                tx.nonce,
+                ((tx.chain_id as u32) << 16) | 6,
+                tx.to,
+                sig.recover_from_prehash(&tx.signature_hash())?
+                    .to_sec1_bytes()
+                    .to_hex(),
+                sig.as_bytes().to_hex(),
+                None,
+                Some(hex::encode(&tx.input)),
+            ),
             SignedTransaction::Intershard { tx, .. } => (
                 0,
                 ((tx.chain_id as u32) << 16) | 20,
@@ -783,6 +794,17 @@ impl TransactionStatusResponse {
                 sig.as_bytes().to_hex(),
                 tx.to.is_create().then(|| hex::encode(&tx.input)),
                 tx.to.is_call().then(|| hex::encode(&tx.input)),
+            ),
+            SignedTransaction::Eip7702 { tx, sig } => (
+                tx.nonce,
+                ((tx.chain_id as u32) << 16) | 6,
+                tx.to,
+                sig.recover_from_prehash(&tx.signature_hash())?
+                    .to_sec1_bytes()
+                    .to_hex(),
+                sig.as_bytes().to_hex(),
+                None,
+                Some(hex::encode(&tx.input)),
             ),
             SignedTransaction::Intershard { tx, .. } => (
                 0,

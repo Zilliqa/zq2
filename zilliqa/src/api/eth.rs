@@ -3,7 +3,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use alloy::{
-    consensus::{TxEip1559, TxEip2930, TxLegacy, transaction::RlpEcdsaDecodableTx},
+    consensus::{TxEip1559, TxEip2930, TxEip7702, TxLegacy, transaction::RlpEcdsaDecodableTx},
     eips::{BlockId, BlockNumberOrTag, RpcBlockHash},
     hex,
     primitives::{Address, B256, U64, U256},
@@ -326,6 +326,7 @@ fn estimate_gas(params: Params, node: &Arc<Node>) -> Result<String> {
         call_params.max_priority_fee_per_gas,
         u128::try_from(call_params.value.unwrap_or_default())?,
         call_params.access_list,
+        call_params.authorization_list,
         ExtraOpts {
             tx_type: call_params.transaction_type.unwrap_or_default().into(),
             disable_eip3607: true,
@@ -959,6 +960,7 @@ fn parse_transaction(bytes: &[u8]) -> Result<SignedTransaction> {
         0xc0..=0xfe => parse_legacy_transaction(bytes),
         0x01 => parse_eip2930_transaction(&bytes[1..]),
         0x02 => parse_eip1559_transaction(&bytes[1..]),
+        0x04 => parse_eip7702_transaction(&bytes[1..]),
         _ => Err(anyhow!(
             "invalid transaction with starting byte {}",
             bytes[0]
@@ -979,6 +981,11 @@ fn parse_eip2930_transaction(mut buf: &[u8]) -> Result<SignedTransaction> {
 fn parse_eip1559_transaction(mut buf: &[u8]) -> Result<SignedTransaction> {
     let (tx, sig) = TxEip1559::rlp_decode_with_signature(&mut buf)?;
     Ok(SignedTransaction::Eip1559 { tx, sig })
+}
+
+fn parse_eip7702_transaction(mut buf: &[u8]) -> Result<SignedTransaction> {
+    let (tx, sig) = TxEip7702::rlp_decode_with_signature(&mut buf)?;
+    Ok(SignedTransaction::Eip7702 { tx, sig })
 }
 
 fn get_uncle_count(_: Params, _: &Arc<Node>) -> Result<String> {

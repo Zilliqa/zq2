@@ -20,6 +20,7 @@ pub mod node_launcher;
 pub mod p2p_node;
 mod pool;
 pub mod precompiles;
+pub mod protocol;
 pub mod range_map;
 pub mod rewards;
 pub mod schnorr;

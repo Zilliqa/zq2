@@ -27,6 +27,7 @@ use crate::{
 
 pub(crate) const SPEC_ID_SHANGHAI: SpecId = SpecId::SHANGHAI;
 pub(crate) const SPEC_ID_CANCUN: SpecId = SpecId::CANCUN;
+pub(crate) const SPEC_ID_PRAGUE: SpecId = SpecId::PRAGUE;
 pub type ZQ2EvmContext =
     Context<BlockEnv, TxEnv, CfgEnv, PendingState, Journal<PendingState>, ExternalContext>;
 pub(crate) fn new_zq2_evm_ctx(db: PendingState, chain: ExternalContext) -> ZQ2EvmContext {
