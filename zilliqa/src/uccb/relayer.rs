@@ -2,11 +2,11 @@ use std::{num::NonZeroUsize, sync::Arc};
 
 use alloy::{
     eips::BlockNumberOrTag,
-    primitives::{Address, ChainId, U256, keccak256},
+    primitives::{Address, B256, ChainId, U256, keccak256},
     providers::{Provider, utils::eip1559_default_estimator},
     rpc::types::{
-        PackedUserOperation as AlloyUserOperation, SendUserOperation, SendUserOperationResponse,
-        UserOperationGasEstimation, UserOperationReceipt,
+        PackedUserOperation as AlloyUserOperation, SendUserOperationResponse,
+        UserOperationGasEstimation,
     },
     sol_types::SolValue,
 };
@@ -27,7 +27,7 @@ use crate::{
     db::Db,
     message::MAX_COMMITTEE_SIZE,
     state::State,
-    uccb::{BlsUserOp, EndPoint, RelayUserOp, utils::get_user_op_hash},
+    uccb::{BlsUserOp, EndPoint, RelayUserOp},
 };
 
 #[derive(Debug)]
@@ -91,18 +91,119 @@ impl Relayer {
         })
     }
 
+    /// Submit the UserOp
+    ///
+    /// Handles the submission to the Bundler, skips if the UserOp has been submitted.
+    async fn submit_userop(
+        send_id: B256,
+        relay_uop: &mut RelayUserOp,
+        providers: Arc<super::Providers>,
+    ) -> Result<()> {
+        let RelayUserOp {
+            userop,
+            userop_hash,
+            chain_id,
+            ..
+        } = relay_uop;
+        let d = providers.get(chain_id).context("chain_id missing")?;
+        let EndPoint {
+            entrypoint,
+            bundler,
+            ..
+        } = d.value();
+
+        // skip if the userop already exists
+        let res = bundler
+            .raw_request::<_, serde_json::Value>(
+                "eth_getUserOperationByHash".into(),
+                [userop_hash.clone()],
+            )
+            .await?;
+        // responds with NULL if userop hash does not exist; else userop details.
+        if !res.is_null() {
+            tracing::warn!(%send_id, "sendUserOp({chain_id}): skip");
+            return Ok(());
+        }
+
+        // submit the userop
+        // TODO: make sure the bundler is idempotent i.e. when the same  userop hash is submitted concurrently.
+        let result = bundler
+            .raw_request::<_, SendUserOperationResponse>(
+                "eth_sendUserOperation".into(),
+                (userop.clone(), entrypoint),
+            )
+            .await?;
+
+        let user_op_hash = result.user_op_hash.iter().as_slice();
+        let userop_hash = userop_hash.as_bytes();
+        if user_op_hash == userop_hash {
+            return Ok(());
+        }
+        unreachable!("UserOp mismatch");
+    }
+
+    /// Check for sufficient gas/fees
+    ///
+    /// Checks whether gas/fees are sufficient.
+    async fn _check_gasfees(
+        _send_id: B256,
+        relay_uop: &mut RelayUserOp,
+        providers: Arc<super::Providers>,
+    ) -> Result<()> {
+        let RelayUserOp {
+            userop, chain_id, ..
+        } = relay_uop;
+        let d = providers.get(chain_id).context("chain_id missing")?;
+        let EndPoint {
+            entrypoint,
+            jsonrpc,
+            bundler,
+            ..
+        } = d.value();
+
+        // 1. Insufficient gas, delay sending.
+        let (tips, header, est4337) = tokio::join!(
+            jsonrpc.get_max_priority_fee_per_gas(),
+            jsonrpc.get_header_by_number(BlockNumberOrTag::Latest),
+            bundler.raw_request::<_, UserOperationGasEstimation>(
+                "eth_estimateUserOperationGas".into(),
+                (userop.clone(), *entrypoint),
+            ),
+        );
+
+        let tips = tips?;
+        let base_fee_per_gas = header?
+            .context("header missing")?
+            .base_fee_per_gas
+            .context("base_fee_per_gas missing")?;
+        let est4337 = est4337?;
+        let eip1559 = eip1559_default_estimator(base_fee_per_gas as u128, &[vec![tips]]);
+
+        let res = userop.max_priority_fee_per_gas >= U256::from(eip1559.max_priority_fee_per_gas)
+            && userop.max_fee_per_gas >= U256::from(eip1559.max_fee_per_gas)
+            && userop.call_gas_limit >= est4337.call_gas_limit
+            && userop.pre_verification_gas >= est4337.pre_verification_gas
+            && userop.verification_gas_limit >= est4337.verification_gas
+            && userop.paymaster_verification_gas_limit.unwrap_or_default()
+                >= est4337.paymaster_verification_gas
+            && userop.paymaster_post_op_gas_limit.unwrap_or_default()
+                >= est4337.paymaster_verification_gas;
+
+        anyhow::ensure!(res, "insufficient gas/fees");
+        Ok(())
+    }
+
     /// Start the RELAYER threads.
     ///
     /// Spins up one connection for each chain/bundler; and stores them for later use.
     /// Spawns a number of worker threads to concurrently submit UserOps.
     async fn start_relayer(
         config: NodeConfig,
-        secret_key: SecretKey,
+        _secret_key: SecretKey,
         mut relay_rx: UnboundedReceiver<RelayUserOp>,
         relay_tx: UnboundedSender<RelayUserOp>,
         providers: Arc<super::Providers>,
     ) -> Result<()> {
-        let bls_key = secret_key.as_bls();
         let chain_id = config.eth_chain_id;
         tracing::info!(chains=%providers.len(), "Relayer-{chain_id}");
         if providers.is_empty() {
@@ -111,143 +212,28 @@ impl Relayer {
         }
 
         // TODO: Spawn worker threads to concurrently process messages.
-        while let Some(RelayUserOp {
-            mut userop,
-            chain_id,
-            userop_hash,
-            send_id,
-        }) = relay_rx.recv().await
-        {
-            let Some(provider) = providers.get(&chain_id) else {
-                tracing::warn!(%chain_id, "UserOp missing bundler");
-                continue;
-            };
-            let EndPoint {
-                entrypoint,
-                bundler,
-                jsonrpc,
-                ..
-            } = provider.value();
-
-            // 1. Insufficient gas, delay sending.
-            let (tips, header, est4337, receipt) = tokio::join!(
-                jsonrpc.get_max_priority_fee_per_gas(),
-                jsonrpc.get_header_by_number(BlockNumberOrTag::Latest),
-                bundler.raw_request::<_, UserOperationGasEstimation>(
-                    "eth_estimateUserOperationGas".into(),
-                    (userop.clone(), *entrypoint),
-                ),
-                bundler.raw_request::<_, UserOperationReceipt>(
-                    "eth_getUserOperationReceipt".into(),
-                    userop_hash,
-                )
-            );
-
-            if let Ok(_receipt) = receipt {
-                tracing::debug!(%send_id, "getUserOperationReceipt({chain_id}): done-skip");
-                continue;
-            } else if let Ok(tips) = tips
-                && let Ok(Some(h)) = &header
-                && let Ok(est) = &est4337
-                && Self::validate_gas_fees(tips, h.base_fee_per_gas, est, &userop)
+        while let Some(mut relay_uop) = relay_rx.recv().await {
+            let send_id = keccak256(relay_uop.userop.call_data.iter().as_slice());
+            // TODO: 1. Check for sufficient gas
+            // if let Err(err) = Self::check_gasfees(send_id, &mut relay_uop, providers.clone()).await
+            // {
+            //     tracing::warn!(%send_id, %err, userop=?relay_uop.userop, "Relayer#{chain_id}: gas");
+            // } else
+            // 2. Submit the UserOp
+            if let Err(err) = Self::submit_userop(send_id, &mut relay_uop, providers.clone()).await
             {
-                // do nothing
+                tracing::warn!(%send_id, %err, userop=?relay_uop.userop, "Relayer#{chain_id}: txmt");
             } else {
-                if let Err(err) = tips {
-                    tracing::warn!(%send_id, %err, "get_max_priority_fee_per_gas({chain_id}): retry");
-                }
-                if let Err(err) = header {
-                    tracing::warn!(%send_id, %err, "get_header_by_number({chain_id}): retry");
-                }
-                if let Err(err) = est4337 {
-                    tracing::warn!(%send_id, %err, "estimateUserOperationGas({chain_id}): retry");
-                }
-                Self::retry_userop(
-                    &relay_tx,
-                    RelayUserOp {
-                        userop_hash,
-                        chain_id,
-                        userop,
-                        send_id,
-                    },
-                    relay_rx.is_empty(),
-                )
-                .await?;
+                tracing::debug!(%send_id, "Relayer#{chain_id}: submitted");
                 continue;
-            };
-
-            // 2. Sign the UserOp
-            let userop_hash: Hash =
-                get_user_op_hash(&userop.clone().into(), *entrypoint, chain_id)?.into();
-            let sig = bls_key.sign(blsful::SignatureSchemes::Basic, userop_hash.0.as_slice())?;
-            userop.signature = sig.as_raw_value().to_compressed().into();
-
-            // 3. Submit the UserOp; retry on failure.
-            let send_op = SendUserOperation::EntryPointV07(userop.clone());
-            match bundler
-                .raw_request::<_, SendUserOperationResponse>(
-                    "eth_sendUserOperation".into(),
-                    (send_op, entrypoint),
-                )
-                .await
-            {
-                Ok(res) => {
-                    let user_op_hash = res.user_op_hash.iter().as_slice();
-                    let userop_hash = userop_hash.as_bytes();
-                    anyhow::ensure!(user_op_hash == userop_hash, "UserOp mismatch"); // MUST NEVER HAPPEN!
-                    tracing::info!(%send_id, "sendUserOperation({chain_id}): done");
-                }
-                Err(err) => {
-                    tracing::error!(%send_id, %err, "sendUserOperation({chain_id}): retry");
-                    Self::retry_userop(
-                        &relay_tx,
-                        RelayUserOp {
-                            userop_hash,
-                            chain_id,
-                            userop,
-                            send_id,
-                        },
-                        relay_rx.is_empty(),
-                    )
-                    .await?;
-                    continue;
-                }
             }
+
+            if relay_rx.is_empty() {
+                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+            }
+            relay_tx.send(relay_uop)?
         }
         Ok(())
-    }
-
-    async fn retry_userop(
-        relay_tx: &UnboundedSender<RelayUserOp>,
-        userop: RelayUserOp,
-        empty: bool,
-    ) -> Result<()> {
-        // delay
-        if empty {
-            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        }
-        Ok(relay_tx.send(userop)?) // retry until success
-    }
-
-    /// Checks that the hard-coded fees/limits are possible to succeed
-    fn validate_gas_fees(
-        max_priority_fee_per_gas: u128,
-        base_fee_per_gas: Option<u64>,
-        est: &UserOperationGasEstimation,
-        userop: &AlloyUserOperation,
-    ) -> bool {
-        let Some(base_fee_per_gas) = base_fee_per_gas else {
-            return false;
-        };
-        let eip1559est =
-            eip1559_default_estimator(base_fee_per_gas as u128, &[vec![max_priority_fee_per_gas]]);
-        userop.max_priority_fee_per_gas >= U256::from(eip1559est.max_priority_fee_per_gas)
-            && userop.max_fee_per_gas >= U256::from(eip1559est.max_fee_per_gas)
-            && userop.call_gas_limit >= est.call_gas_limit
-            && userop.pre_verification_gas >= est.pre_verification_gas
-            && userop.verification_gas_limit >= est.verification_gas
-            && userop.paymaster_verification_gas_limit.unwrap() >= est.paymaster_verification_gas
-            && userop.paymaster_post_op_gas_limit.unwrap() >= est.paymaster_verification_gas
     }
 
     /// Collect UserOpHash signature

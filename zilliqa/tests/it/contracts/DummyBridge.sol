@@ -2,16 +2,16 @@
 pragma solidity ^0.8.28;
 
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 import {IEntryPointNonces} from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
-import {
-    IERC7786GatewaySource,
-    IERC7786Recipient
-} from "@openzeppelin/contracts/interfaces/draft-IERC7786.sol";
+import {IERC7786GatewaySource, IERC7786Recipient} from "@openzeppelin/contracts/interfaces/draft-IERC7786.sol";
 import {CAIP10} from "@openzeppelin/contracts/utils/CAIP10.sol";
 
 contract DummyBridge is Pausable, IERC7786GatewaySource, IEntryPointNonces {
     uint nonce;
     mapping(address => mapping(uint192 => uint256)) public nonceSequenceNumber;
+
+    event Received(bytes32 indexed receiveId, address gateway);
 
     constructor() {}
 
@@ -43,8 +43,22 @@ contract DummyBridge is Pausable, IERC7786GatewaySource, IEntryPointNonces {
         return false;
     }
 
+    function receiveMessage(
+        bytes32 receiveId,
+        bytes calldata sender, // CAIP10
+        bytes calldata payload
+    ) external payable returns (bytes4) {
+        (string memory chain, string memory addr) = CAIP10.parse(
+            string(sender)
+        );
+        address gateway = Strings.parseAddress(addr);
+
+        emit Received(receiveId, gateway);
+        return IERC7786Recipient.receiveMessage.selector;
+    }
+
     function sendMessage(
-        bytes calldata recipient, // Binary Interoperable Address
+        bytes calldata recipient, // CAIP10
         bytes calldata payload,
         bytes[] calldata attributes
     ) public payable virtual whenNotPaused returns (bytes32 sendId) {
@@ -63,13 +77,14 @@ contract DummyBridge is Pausable, IERC7786GatewaySource, IEntryPointNonces {
 
         sendId = keccak256(wrappedPayload);
 
-        uint256 value =
-            (uint256(max_priority_fee_per_gas) << 128) |
-                uint256(max_fee_per_gas);
+        uint256 value = (uint256(max_priority_fee_per_gas) << 128) |
+            uint256(max_fee_per_gas);
+
+        bytes memory gw_sender = bytes(CAIP10.local(address(this)));
 
         emit MessageSent(
             sendId,
-            sender,
+            gw_sender,
             recipient,
             wrappedPayload,
             value,
