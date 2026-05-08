@@ -113,6 +113,7 @@ pub struct SignUserOp {
     pub dst_chain: ChainId,
     pub src_chain: ChainId,
     pub blk_height: u64,
+    pub uop_hash: Option<Hash>,
 }
 
 impl SignUserOp {
@@ -131,6 +132,7 @@ impl SignUserOp {
             txn_hash,
             blk_hash,
             blk_height,
+            uop_hash: None,
         }
     }
 }
@@ -163,7 +165,16 @@ type Wallet = FillProvider<
     >,
     RootProvider,
 >;
-type Providers = DashMap<ChainId, (Address, Address, Address, Address, Wallet, Wallet)>;
+
+pub struct EndPoint {
+    pub gateway: Address,
+    pub sender: Address,
+    pub entrypoint: Address,
+    pub paymaster: Address,
+    pub bundler: Wallet,
+    pub jsonrpc: Wallet,
+}
+type Providers = DashMap<ChainId, EndPoint>;
 
 pub struct Uccb {
     // config: NodeConfig,
@@ -183,7 +194,7 @@ pub struct Uccb {
 
 impl Drop for Uccb {
     fn drop(&mut self) {
-        tracing::info!("UUCB-{} stopped", self.chain_id);
+        tracing::info!("UUCB#{} stopped", self.chain_id);
     }
 }
 
@@ -218,31 +229,36 @@ impl Uccb {
                 watcher.get_chain_id()
             );
 
-            if let Ok(ref entrypoints) = get_entrypoints
-                && entrypoints.contains(&remote.entrypoint)
-                && let Ok(id) = get_chain_id
-                && chain_id == id
+            tracing::info!(entrypoint=%remote.entrypoint, "UCCB#{}", remote.chain_id);
+
+            if let Err(err) = get_entrypoints {
+                tracing::warn!(%err, "UCCB#{chain_id} {}", remote.bundler_url);
+            } else if let Ok(ref entrypoints) = get_entrypoints
+                && !entrypoints.contains(&remote.entrypoint)
             {
-                providers.insert(
-                    remote.chain_id,
-                    (
-                        remote.entrypoint,
-                        remote.sender,
-                        remote.gateway,
-                        remote.paymaster,
-                        bundler,
-                        watcher,
-                    ),
-                );
-            } else {
-                tracing::error!("{get_entrypoints:?} {get_chain_id:?}");
-                if let Err(err) = get_entrypoints {
-                    tracing::error!(%err, "Bundler-{chain_id}");
-                }
-                if let Err(err) = get_chain_id {
-                    tracing::error!(%err, "Rpc-{chain_id}");
-                }
-            }
+                tracing::warn!("UCCB#{}: != {:?}", remote.chain_id, entrypoints)
+            };
+
+            if let Err(err) = get_chain_id {
+                tracing::warn!(%err, "UCCB#{chain_id} {}", remote.watcher_url);
+            } else if let Ok(id) = get_chain_id
+                && id != remote.chain_id
+            {
+                tracing::warn!("UCCB#{} != {}", remote.chain_id, id)
+            };
+
+            // insert it either way as Relayer/Signer has to handle http errors anyway.
+            providers.insert(
+                remote.chain_id,
+                EndPoint {
+                    entrypoint: remote.entrypoint,
+                    gateway: remote.gateway,
+                    sender: remote.sender,
+                    paymaster: remote.paymaster,
+                    bundler,
+                    jsonrpc: watcher,
+                },
+            );
         }
         providers.shrink_to_fit();
 
@@ -257,7 +273,7 @@ impl Uccb {
         )
         .await?;
 
-        tracing::info!("UUCB-{} started", chain_id);
+        tracing::info!("UUCB#{} started", chain_id);
 
         Ok(Self {
             // config,
