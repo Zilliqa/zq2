@@ -1,4 +1,4 @@
-use std::{str::FromStr as _, sync::Arc};
+use std::{str::FromStr as _, sync::Arc, time::Duration};
 
 use alloy::{
     primitives::{Address, B256, Bytes, ChainId, address},
@@ -14,6 +14,7 @@ use anyhow::Result;
 use dashmap::DashMap;
 use jsonrpsee::client_transport::ws::Url;
 use libp2p::PeerId;
+use rand::Rng as _;
 // use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -106,6 +107,7 @@ sol! {
     }
 }
 
+#[derive(Debug)]
 pub struct SignUserOp {
     pub userop: AlloyUserOperation,
     pub txn_hash: Hash,
@@ -114,8 +116,8 @@ pub struct SignUserOp {
     pub src_chain: ChainId,
     pub blk_height: u64,
     pub uop_hash: Option<Hash>,
+    pub seconds: u16,
 }
-
 impl SignUserOp {
     pub fn new(
         userop: AlloyUserOperation,
@@ -133,15 +135,62 @@ impl SignUserOp {
             blk_hash,
             blk_height,
             uop_hash: None,
+            seconds: 0,
         }
+    }
+
+    pub fn backoff(&mut self) -> Option<Duration> {
+        if let Some(elapse) = self.seconds.checked_next_power_of_two() {
+            self.seconds = elapse;
+            let run_at = Duration::from_millis(
+                // jitter
+                rand::thread_rng()
+                    .gen_range::<u64, _>(0..500)
+                    .saturating_add(elapse as u64 * 1_000),
+            );
+            return Some(run_at);
+        }
+        None
     }
 }
 
+#[derive(Debug)]
 pub struct RelayUserOp {
     pub userop: AlloyUserOperation,
     pub chain_id: ChainId,
     pub userop_hash: Hash,
     pub send_id: Hash,
+    seconds: u16,
+}
+
+impl RelayUserOp {
+    pub fn new(
+        userop: AlloyUserOperation,
+        chain_id: ChainId,
+        userop_hash: Hash,
+        send_id: Hash,
+    ) -> Self {
+        Self {
+            userop,
+            chain_id,
+            userop_hash,
+            send_id,
+            seconds: 0u16,
+        }
+    }
+    pub fn backoff(&mut self) -> Option<Duration> {
+        if let Some(elapse) = self.seconds.checked_next_power_of_two() {
+            self.seconds = elapse;
+            let run_at = Duration::from_millis(
+                // jitter
+                rand::thread_rng()
+                    .gen_range::<u64, _>(0..500)
+                    .saturating_add(elapse as u64 * 1_000),
+            );
+            return Some(run_at);
+        }
+        None
+    }
 }
 
 #[derive(Default)]

@@ -17,9 +17,12 @@ use libp2p::PeerId;
 use lru::LruCache;
 use revm::primitives::keccak256;
 use tokio::{
+    select,
     sync::mpsc::{UnboundedReceiver, UnboundedSender},
     task::JoinSet,
 };
+use tokio_stream::StreamExt as _;
+use tokio_util::time::DelayQueue;
 
 use crate::{
     cfg::NodeConfig,
@@ -39,7 +42,6 @@ use crate::{
 /// A signer polls the SOURCE_CHAIN for MessageSent events.
 #[derive(Debug)]
 pub struct Signer {
-    _sign_tx: UnboundedSender<SignUserOp>,
     workers: JoinSet<()>,
 }
 
@@ -79,8 +81,8 @@ impl Signer {
                     secret_key,
                     message_sender,
                     providers,
-                    sign_rx,
                     sign_tx,
+                    sign_rx,
                 )
                 .await
                 {
@@ -103,10 +105,7 @@ impl Signer {
             });
         }
 
-        Ok(Self {
-            workers,
-            _sign_tx: sign_tx,
-        })
+        Ok(Self { workers })
     }
 
     /// Watch for Events
@@ -115,7 +114,7 @@ impl Signer {
     /// Validates and submits each event for signing.
     async fn start_watcher(
         chain_id: ChainId,
-        _config: NodeConfig,
+        config: NodeConfig,
         _db: Arc<Db>,
         watchers: Arc<super::Providers>,
         sign_tx: UnboundedSender<SignUserOp>,
@@ -126,15 +125,28 @@ impl Signer {
             return Ok(());
         }
 
+        // New block live-stream
+        let mut watch_rx = futures::stream::SelectAll::new();
+        for remote in config.remote_chains.iter() {
+            if let Some(watcher) = watchers.get(&remote.chain_id) {
+                let EndPoint { jsonrpc, .. } = watcher.value();
+                let stream = jsonrpc
+                    .watch_blocks()
+                    .await?
+                    .into_stream()
+                    .map(|vh| (remote.chain_id, vh)); //  (&filter).await?.into_stream();
+                watch_rx.push(stream);
+            }
+        }
+
         // Cache last known height
         let mut cache =
             lru::LruCache::<ChainId, u64>::new(NonZeroUsize::new(watchers.len()).unwrap());
 
         // Subscribing to the live-stream results in 'latest' blocks that may get reorganized.
         // Manual polling is used to ensure that only finalized blocks are processed.
-        loop {
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await; // short polling interval
-            for watcher in watchers.iter() {
+        while let Some((chain_id, _block_hash)) = watch_rx.next().await {
+            if let Some(watcher) = watchers.get(&chain_id) {
                 let (
                     chain_id,
                     EndPoint {
@@ -251,7 +263,7 @@ impl Signer {
                 }
             }
         }
-        // Ok(())
+        Ok(())
     }
 
     /// Sign the UserOps
@@ -266,8 +278,8 @@ impl Signer {
         secret_key: SecretKey,
         message_sender: Arc<MessageSender>,
         providers: Arc<super::Providers>,
-        mut sign_rx: UnboundedReceiver<SignUserOp>,
         sign_tx: UnboundedSender<SignUserOp>,
+        mut sign_rx: UnboundedReceiver<SignUserOp>,
     ) -> Result<()> {
         tracing::info!(chains=%providers.len(), "Signer#{chain_id}");
         if providers.is_empty() {
@@ -275,51 +287,67 @@ impl Signer {
             return Ok(());
         }
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
+
+        // fee cache
         let mut cache = LruCache::<Hash, U256>::new(NonZeroUsize::new(providers.len()).unwrap());
 
-        while let Some(mut sign_uop) = sign_rx.recv().await {
-            let send_id = keccak256(sign_uop.userop.call_data.iter().as_slice());
-            // 1. Populate the nonce
-            if let Err(err) = Self::populate_nonce(send_id, &mut sign_uop, providers.clone()).await
-            {
-                tracing::warn!(%send_id, %err, userop=?sign_uop.userop, "Signer#{chain_id}: nonce");
-            } else
-            // 2. Populate the gas/fees
-            if let Err(err) =
-                Self::populate_gasfees(send_id, &mut sign_uop, providers.clone(), &mut cache).await
-            {
-                tracing::warn!(%send_id, %err, userop=?sign_uop.userop, "Signer#{chain_id}: gas");
-            } else
-            // 3. Compute the signature/hash
-            if let Err(err) =
-                Self::populate_signature(send_id, &mut sign_uop, providers.clone(), secret_key)
-            {
-                tracing::warn!(%send_id, %err, userop=?sign_uop.userop, "Signer#{chain_id}: sign");
-            } else
-            // 4. Transmit the signed UserOp
-            if let Err(err) = Self::transmit_userop(
-                send_id,
-                &mut sign_uop,
-                message_sender.clone(),
-                state.clone(),
-                db.clone(),
-                peer_id,
-                secret_key,
-            ) {
-                tracing::warn!(%send_id, %err, userop=?sign_uop.userop, "Signer#{chain_id}: txmt");
-            } else {
-                tracing::debug!(%send_id, "Signer#{chain_id}: relayed");
-                continue;
-            }
+        // delay queue
+        let mut dq: DelayQueue<SignUserOp> = DelayQueue::new();
 
-            // TODO: backoff-retry-timeout mechanics
-            if sign_rx.is_empty() {
-                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        loop {
+            select! {
+                Some(mut sign_uop) = sign_rx.recv() => {
+                    let send_id = keccak256(sign_uop.userop.call_data.iter().as_slice());
+                    // 1. Populate the nonce
+                    if let Err(err) = Self::populate_nonce(send_id, &mut sign_uop, providers.clone()).await
+                    {
+                        tracing::warn!(%send_id, %err, userop=?sign_uop.userop, "Signer#{chain_id}: nonce");
+                    } else
+                    // 2. Populate the gas/fees
+                    if let Err(err) =
+                        Self::populate_gasfees(send_id, &mut sign_uop, providers.clone(), &mut cache).await
+                    {
+                        tracing::warn!(%send_id, %err, userop=?sign_uop.userop, "Signer#{chain_id}: gas");
+                    } else
+                    // 3. Compute the signature/hash
+                    if let Err(err) =
+                        Self::populate_signature(send_id, &mut sign_uop, providers.clone(), secret_key)
+                    {
+                        tracing::warn!(%send_id, %err, userop=?sign_uop.userop, "Signer#{chain_id}: sign");
+                    } else
+                    // 4. Transmit the signed UserOp
+                    if let Err(err) = Self::transmit_userop(
+                        send_id,
+                        &mut sign_uop,
+                        message_sender.clone(),
+                        state.clone(),
+                        db.clone(),
+                        peer_id,
+                        secret_key,
+                    ) {
+                        tracing::warn!(%send_id, %err, userop=?sign_uop.userop, "Signer#{chain_id}: txmt");
+                    } else {
+                        // Done
+                        tracing::debug!(%send_id, "Signer#{chain_id}: relayed");
+                        continue;
+                    }
+
+                    // X. Backoff-retry
+                    let Some(backoff) = sign_uop.backoff() else {
+                        // DEAD LETTER OFFICE
+                        tracing::error!(%send_id, "Signer#{chain_id}: dropped");
+                        continue;
+                    };
+                    tracing::warn!(%send_id, ?backoff, "Signer#{chain_id}: retry");
+                    dq.insert(sign_uop, backoff);
+                }
+                // retry processing
+                Some(due) = dq.next() => {
+                    let sign_uop = due.into_inner();
+                    sign_tx.send(sign_uop).map_err(|_| anyhow::anyhow!("sign_rx shutdown"))?;
+                }
             }
-            sign_tx.send(sign_uop)?; // retry later
         }
-
-        Ok(())
     }
 
     /// Transmits to the RelaySet
