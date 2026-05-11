@@ -386,7 +386,7 @@ impl Signer {
             // we use delay-slots to ensure that the first peer always has the priority to submit the userop.
             // the two backup peers should only be able to submit it after a significant delay.
             let delay_slot = Duration::from_millis(
-                8u64.pow(i as u32) * 1_000, // 1s, 8s, 64s
+                10u64.pow(i as u32) * 1_000, // 1s, 10s, 100s
             );
             sendq.insert((peer, uccb_uop), delay_slot);
         }

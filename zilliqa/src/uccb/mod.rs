@@ -140,17 +140,15 @@ impl SignUserOp {
     }
 
     pub fn backoff(&mut self) -> Option<Duration> {
-        if let Some(elapse) = self.seconds.checked_next_power_of_two() {
-            self.seconds = elapse;
-            let run_at = Duration::from_millis(
-                // jitter
-                rand::thread_rng()
-                    .gen_range::<u64, _>(0..500)
-                    .saturating_add(elapse as u64 * 1_000),
-            );
-            return Some(run_at);
-        }
-        None
+        let elapse = self.seconds.saturating_add(1).checked_next_power_of_two()?;
+        self.seconds = elapse;
+        let run_at = Duration::from_millis(
+            // jitter
+            rand::thread_rng()
+                .gen_range::<u64, _>(0..500)
+                .saturating_add(elapse as u64 * 1_000),
+        );
+        Some(run_at)
     }
 }
 
@@ -179,17 +177,15 @@ impl RelayUserOp {
         }
     }
     pub fn backoff(&mut self) -> Option<Duration> {
-        if let Some(elapse) = self.seconds.checked_next_power_of_two() {
-            self.seconds = elapse;
-            let run_at = Duration::from_millis(
-                // jitter
-                rand::thread_rng()
-                    .gen_range::<u64, _>(0..500)
-                    .saturating_add(elapse as u64 * 1_000),
-            );
-            return Some(run_at);
-        }
-        None
+        let elapse = self.seconds.saturating_add(1).checked_next_power_of_two()?;
+        self.seconds = elapse;
+        let run_at = Duration::from_millis(
+            // jitter
+            rand::thread_rng()
+                .gen_range::<u64, _>(0..500)
+                .saturating_add(elapse as u64 * 1_000),
+        );
+        Some(run_at)
     }
 }
 
