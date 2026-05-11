@@ -39,8 +39,8 @@ pub struct Relayer {
     state: State,
     relay_tx: UnboundedSender<RelayUserOp>,
     // providers: Arc<DashMap<ChainId, BundlerProvider>>,
-    // temporarily cache signatures
-    signatures: RwLock<lru::LruCache<Hash, BlsUserOp>>,
+    // temporarily cache bls_uop
+    bls_uop: RwLock<lru::LruCache<Hash, BlsUserOp>>,
     workers: JoinSet<()>,
 }
 
@@ -66,7 +66,7 @@ impl Relayer {
 
         let mut workers = JoinSet::new();
         // cache the last 1_000 userops
-        let signatures = RwLock::new(lru::LruCache::new(NonZeroUsize::new(1000).unwrap()));
+        let bls_uop = RwLock::new(lru::LruCache::new(NonZeroUsize::new(1000).unwrap()));
 
         {
             let relay_tx = relay_tx.clone();
@@ -87,7 +87,7 @@ impl Relayer {
             db,
             state,
             peer_id,
-            signatures,
+            bls_uop,
         })
     }
 
@@ -265,49 +265,45 @@ impl Relayer {
         let peer_id = state.get_peer_id(public_key)?.context("fake peer-id")?;
         anyhow::ensure!(peer_id == from, "peer-id mismatch"); // must not happen
 
-        // do this in an inner-scope to release the lock before calling `relay_ops()` below.
-        let promote = {
-            // 2. Get the cache entry
-            let mut cache = self.signatures.write();
-            let bop = cache.get_or_insert_mut_ref(&userop_hash, || {
-                let stakers = state.get_stakers(block.header).expect("must exist");
-                let len = stakers.len();
-                let total_stake: u128 = stakers
-                    .into_iter()
-                    .map(|pub_key| {
-                        state
-                            .get_stake(pub_key, block.header)
-                            .expect("must have stake")
-                            .expect("stake != 0")
-                            .get()
-                    })
-                    .sum();
-                BlsUserOp {
-                    userop: None,
-                    threshold: 2 * total_stake / 3 + 1,
-                    signatures: Vec::with_capacity(len),
-                }
-            });
-
-            // 3. Cache the signature entry
-            let stake = state
-                .get_stake(public_key, block.header)?
-                .context("missing stake")?;
-            bop.threshold = bop.threshold.saturating_sub(stake.get());
-            bop.signatures.push((public_key, signature));
-
-            // use only the UserOp we constructed ourselves.
-            if from == self.peer_id {
-                bop.userop = userop;
+        // 2. Get the cache entry
+        let mut cache = self.bls_uop.write();
+        let bop = cache.get_or_insert_mut_ref(&userop_hash, || {
+            let stakers = state.get_stakers(block.header).expect("must exist");
+            let len = stakers.len();
+            let total_stake: u128 = stakers
+                .into_iter()
+                .map(|pub_key| {
+                    state
+                        .get_stake(pub_key, block.header)
+                        .expect("must have stake")
+                        .expect("stake != 0")
+                        .get()
+                })
+                .sum();
+            BlsUserOp {
+                userop: None,
+                threshold: 2 * total_stake / 3 + 1,
+                signatures: Vec::with_capacity(len),
             }
+        });
 
-            bop.userop.is_some() && bop.threshold == 0
-        };
+        // 3. Cache the signature entry
+        let stake = state
+            .get_stake(public_key, block.header)?
+            .context("missing stake")?;
+        bop.threshold = bop.threshold.saturating_sub(stake.get());
+        bop.signatures.push((public_key, signature));
+
+        // use only the UserOp we constructed ourselves.
+        if from == self.peer_id {
+            bop.userop = userop;
+        }
 
         // 4. Majority reached: promote
-        if promote {
+        if bop.userop.is_some() && bop.threshold == 0 {
+            let bop = cache.pop(&userop_hash).unwrap();
             let stakers = state.get_stakers(block.header).expect("must exist");
-            self.relay_userop(userop_hash, chain_id, stakers)?;
+            self.relay_userop(userop_hash, chain_id, stakers, bop)?;
         }
         Ok(())
     }
@@ -320,13 +316,8 @@ impl Relayer {
         userop_hash: Hash,
         chain_id: ChainId,
         stakers: Vec<NodePublicKey>,
+        bop: BlsUserOp,
     ) -> Result<()> {
-        let bop = self
-            .signatures
-            .write()
-            .pop(&userop_hash)
-            .context("UserOp signature lost")?;
-
         let (signers, signatures): (Vec<NodePublicKey>, Vec<BlsSignature>) =
             bop.signatures.into_iter().unzip();
 
