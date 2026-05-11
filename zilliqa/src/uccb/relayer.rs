@@ -15,11 +15,15 @@ use bitvec::{bitarr, order::Msb0};
 use blsful::{Bls12381G2Impl, Signature};
 use itertools::Itertools as _;
 use libp2p::PeerId;
-use parking_lot::RwLock;
+use lru::LruCache;
+use parking_lot::Mutex;
 use tokio::{
+    select,
     sync::mpsc::{UnboundedReceiver, UnboundedSender},
     task::JoinSet,
 };
+use tokio_stream::StreamExt as _;
+use tokio_util::time::DelayQueue;
 
 use crate::{
     cfg::NodeConfig,
@@ -38,9 +42,7 @@ pub struct Relayer {
     db: Arc<Db>,
     state: State,
     relay_tx: UnboundedSender<RelayUserOp>,
-    // providers: Arc<DashMap<ChainId, BundlerProvider>>,
-    // temporarily cache signatures
-    signatures: RwLock<lru::LruCache<Hash, BlsUserOp>>,
+    bls_uop: Mutex<LruCache<Hash, BlsUserOp>>,
     workers: JoinSet<()>,
 }
 
@@ -65,14 +67,17 @@ impl Relayer {
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
 
         let mut workers = JoinSet::new();
-        // cache the last 1_000 userops
-        let signatures = RwLock::new(lru::LruCache::new(NonZeroUsize::new(1000).unwrap()));
+
+        // cache recent userops
+        let bls_uop = Mutex::new(LruCache::new(
+            NonZeroUsize::new(providers.len() * 100).unwrap_or(NonZeroUsize::MIN),
+        ));
 
         {
             let relay_tx = relay_tx.clone();
             workers.spawn(async move {
                 if let Err(err) =
-                    Self::start_relayer(config, secret_key, relay_rx, relay_tx, providers).await
+                    Self::start_relayer(config, secret_key, relay_tx, relay_rx, providers).await
                 {
                     tracing::error!(%err, "Relayer exception");
                 }
@@ -87,7 +92,7 @@ impl Relayer {
             db,
             state,
             peer_id,
-            signatures,
+            bls_uop,
         })
     }
 
@@ -200,8 +205,8 @@ impl Relayer {
     async fn start_relayer(
         config: NodeConfig,
         _secret_key: SecretKey,
-        mut relay_rx: UnboundedReceiver<RelayUserOp>,
         relay_tx: UnboundedSender<RelayUserOp>,
+        mut relay_rx: UnboundedReceiver<RelayUserOp>,
         providers: Arc<super::Providers>,
     ) -> Result<()> {
         let chain_id = config.eth_chain_id;
@@ -211,29 +216,45 @@ impl Relayer {
             return Ok(());
         }
 
-        // TODO: Spawn worker threads to concurrently process messages.
-        while let Some(mut relay_uop) = relay_rx.recv().await {
-            let send_id = keccak256(relay_uop.userop.call_data.iter().as_slice());
-            // TODO: 1. Check for sufficient gas
-            // if let Err(err) = Self::check_gasfees(send_id, &mut relay_uop, providers.clone()).await
-            // {
-            //     tracing::warn!(%send_id, %err, userop=?relay_uop.userop, "Relayer#{chain_id}: gas");
-            // } else
-            // 2. Submit the UserOp
-            if let Err(err) = Self::submit_userop(send_id, &mut relay_uop, providers.clone()).await
-            {
-                tracing::warn!(%send_id, %err, userop=?relay_uop.userop, "Relayer#{chain_id}: txmt");
-            } else {
-                tracing::debug!(%send_id, "Relayer#{chain_id}: submitted");
-                continue;
-            }
+        // for exponential-backoff-retry
+        let mut dq: DelayQueue<RelayUserOp> = DelayQueue::new();
 
-            if relay_rx.is_empty() {
-                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        loop {
+            select! {
+                // queue processing
+                Some(mut relay_uop) = relay_rx.recv() => {
+                    let send_id = keccak256(relay_uop.userop.call_data.iter().as_slice());
+                    // TODO: 1. Check for sufficient gas
+                    // if let Err(err) = Self::check_gasfees(send_id, &mut relay_uop, providers.clone()).await
+                    // {
+                    //     tracing::warn!(%send_id, %err, userop=?relay_uop.userop, "Relayer#{chain_id}: gas");
+                    // } else
+                    // 2. Submit the UserOp
+                    if let Err(err) = Self::submit_userop(send_id, &mut relay_uop, providers.clone()).await
+                    {
+                        tracing::warn!(%send_id, %err, userop=?relay_uop.userop, "Relayer#{chain_id}: txmt");
+                    } else {
+                        // Done
+                        tracing::debug!(%send_id, "Relayer#{chain_id}: submitted");
+                        continue;
+                    }
+
+                    // X. Backoff-retry
+                    let Some(backoff) = relay_uop.backoff() else {
+                        // TODO: DEAD LETTER OFFICE
+                        tracing::error!(%send_id, "Relayer#{chain_id}: dropped");
+                        continue;
+                    };
+                    tracing::warn!(%send_id, ?backoff, "Relayer#{chain_id}: retry");
+                    dq.insert(relay_uop, backoff);
+                }
+                // retry processing
+                Some(due) = dq.next() => {
+                    let relay_uop = due.into_inner();
+                    relay_tx.send(relay_uop).map_err(|_| anyhow::anyhow!("relay_rx shutdown"))?;
+                }
             }
-            relay_tx.send(relay_uop)?
         }
-        Ok(())
     }
 
     /// Collect UserOpHash signature
@@ -265,49 +286,45 @@ impl Relayer {
         let peer_id = state.get_peer_id(public_key)?.context("fake peer-id")?;
         anyhow::ensure!(peer_id == from, "peer-id mismatch"); // must not happen
 
-        // do this in an inner-scope to release the lock before calling `relay_ops()` below.
-        let promote = {
-            // 2. Get the cache entry
-            let mut cache = self.signatures.write();
-            let bop = cache.get_or_insert_mut_ref(&userop_hash, || {
-                let stakers = state.get_stakers(block.header).expect("must exist");
-                let len = stakers.len();
-                let total_stake: u128 = stakers
-                    .into_iter()
-                    .map(|pub_key| {
-                        state
-                            .get_stake(pub_key, block.header)
-                            .expect("must have stake")
-                            .expect("stake != 0")
-                            .get()
-                    })
-                    .sum();
-                BlsUserOp {
-                    userop: None,
-                    threshold: 2 * total_stake / 3 + 1,
-                    signatures: Vec::with_capacity(len),
-                }
-            });
-
-            // 3. Cache the signature entry
-            let stake = state
-                .get_stake(public_key, block.header)?
-                .context("missing stake")?;
-            bop.threshold = bop.threshold.saturating_sub(stake.get());
-            bop.signatures.push((public_key, signature));
-
-            // use only the UserOp we constructed ourselves.
-            if from == self.peer_id {
-                bop.userop = userop;
+        // 2. Get the cache entry
+        let mut cache = self.bls_uop.lock();
+        let bop = cache.get_or_insert_mut_ref(&userop_hash, || {
+            let stakers = state.get_stakers(block.header).expect("must exist");
+            let len = stakers.len();
+            let total_stake: u128 = stakers
+                .into_iter()
+                .map(|pub_key| {
+                    state
+                        .get_stake(pub_key, block.header)
+                        .expect("must have stake")
+                        .expect("stake != 0")
+                        .get()
+                })
+                .sum();
+            BlsUserOp {
+                userop: None,
+                threshold: 2 * total_stake / 3 + 1,
+                signatures: Vec::with_capacity(len),
             }
+        });
 
-            bop.userop.is_some() && bop.threshold == 0
-        };
+        // 3. Cache the signature entry
+        let stake = state
+            .get_stake(public_key, block.header)?
+            .context("missing stake")?;
+        bop.threshold = bop.threshold.saturating_sub(stake.get());
+        bop.signatures.push((public_key, signature));
+
+        // use only the UserOp we constructed ourselves.
+        if from == self.peer_id {
+            bop.userop = userop;
+        }
 
         // 4. Majority reached: promote
-        if promote {
+        if bop.userop.is_some() && bop.threshold == 0 {
+            let bop = cache.pop(&userop_hash).unwrap();
             let stakers = state.get_stakers(block.header).expect("must exist");
-            self.relay_userop(userop_hash, chain_id, stakers)?;
+            self.relay_userop(userop_hash, chain_id, stakers, bop)?;
         }
         Ok(())
     }
@@ -320,13 +337,8 @@ impl Relayer {
         userop_hash: Hash,
         chain_id: ChainId,
         stakers: Vec<NodePublicKey>,
+        bop: BlsUserOp,
     ) -> Result<()> {
-        let bop = self
-            .signatures
-            .write()
-            .pop(&userop_hash)
-            .context("UserOp signature lost")?;
-
         let (signers, signatures): (Vec<NodePublicKey>, Vec<BlsSignature>) =
             bop.signatures.into_iter().unzip();
 
@@ -369,15 +381,15 @@ impl Relayer {
         let bop = bop.userop.unwrap();
         let send_id = keccak256(bop.call_data.iter().as_slice()).into();
         tracing::debug!(%send_id, "relay({chain_id})");
-        let final_uop = RelayUserOp {
-            userop: AlloyUserOperation {
+        let final_uop = RelayUserOp::new(
+            AlloyUserOperation {
                 signature: (signature.to_bytes(), message).abi_encode_packed().into(), // replace the signature with multi-sig
                 ..bop
             },
             chain_id,
             userop_hash,
             send_id,
-        };
+        );
 
         // 4. Push UserOp to the sending queue
         self.relay_tx.send(final_uop)?;
