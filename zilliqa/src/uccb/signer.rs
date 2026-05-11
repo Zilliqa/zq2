@@ -125,28 +125,15 @@ impl Signer {
             return Ok(());
         }
 
-        // New block live-stream
-        let mut watch_rx = futures::stream::SelectAll::new();
-        for remote in config.remote_chains.iter() {
-            if let Some(watcher) = watchers.get(&remote.chain_id) {
-                let EndPoint { jsonrpc, .. } = watcher.value();
-                let stream = jsonrpc
-                    .watch_blocks()
-                    .await?
-                    .into_stream()
-                    .map(|vh| (remote.chain_id, vh)); //  (&filter).await?.into_stream();
-                watch_rx.push(stream);
-            }
-        }
-
         // Cache last known height
         let mut cache =
             lru::LruCache::<ChainId, u64>::new(NonZeroUsize::new(watchers.len()).unwrap());
 
         // Subscribing to the live-stream results in 'latest' blocks that may get reorganized.
         // Manual polling is used to ensure that only finalized blocks are processed.
-        while let Some((chain_id, _block_hash)) = watch_rx.next().await {
-            if let Some(watcher) = watchers.get(&chain_id) {
+        loop {
+            tokio::time::sleep(config.consensus.block_time).await;
+            for watcher in watchers.iter() {
                 let (
                     chain_id,
                     EndPoint {
@@ -263,7 +250,6 @@ impl Signer {
                 }
             }
         }
-        Ok(())
     }
 
     /// Sign the UserOps
