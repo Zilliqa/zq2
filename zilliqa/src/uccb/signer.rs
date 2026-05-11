@@ -1,4 +1,4 @@
-use std::{num::NonZeroUsize, sync::Arc};
+use std::{num::NonZeroUsize, sync::Arc, time::Duration};
 
 // use super::AlloyUserOperation;
 use alloy::{
@@ -291,8 +291,10 @@ impl Signer {
         // fee cache
         let mut cache = LruCache::<Hash, U256>::new(NonZeroUsize::new(providers.len()).unwrap());
 
-        // delay queue
+        // exponential backoff queue
         let mut dq: DelayQueue<SignUserOp> = DelayQueue::new();
+        // time-slot sending queue
+        let mut sendq: DelayQueue<(PeerId, UccbUserOp)> = DelayQueue::new();
 
         loop {
             select! {
@@ -315,11 +317,11 @@ impl Signer {
                     {
                         tracing::warn!(%send_id, %err, userop=?sign_uop.userop, "Signer#{chain_id}: sign");
                     } else
-                    // 4. Transmit the signed UserOp
-                    if let Err(err) = Self::transmit_userop(
+                    // 4. Queue the signed UserOp for transmission
+                    if let Err(err) = Self::queue_userop(
                         send_id,
                         &mut sign_uop,
-                        message_sender.clone(),
+                        &mut sendq,
                         state.clone(),
                         db.clone(),
                         peer_id,
@@ -341,23 +343,28 @@ impl Signer {
                     tracing::warn!(%send_id, ?backoff, "Signer#{chain_id}: retry");
                     dq.insert(sign_uop, backoff);
                 }
-                // retry processing
+                // retry
                 Some(due) = dq.next() => {
                     let sign_uop = due.into_inner();
                     sign_tx.send(sign_uop).map_err(|_| anyhow::anyhow!("sign_rx shutdown"))?;
+                }
+                // delay send
+                Some(due) = sendq.next() => {
+                    let (peer, uccb_uop) = due.into_inner();
+                    message_sender.send_external_message(peer, ExternalMessage::UccbUserOp(uccb_uop)).map_err(|_| anyhow::anyhow!("signer error"))?;
                 }
             }
         }
     }
 
-    /// Transmits to the RelaySet
+    /// Queues to the RelaySet
     ///
-    /// Sends the signed UserOp to the selected peers.
+    /// Enqueue the signed UserOp for sending to Peer with a delayed time-slot.
     #[allow(clippy::too_many_arguments)]
-    fn transmit_userop(
+    fn queue_userop(
         send_id: B256,
         sign_uop: &mut SignUserOp,
-        message_sender: Arc<MessageSender>,
+        sendq: &mut DelayQueue<(PeerId, UccbUserOp)>,
         state: Arc<State>,
         db: Arc<Db>,
         peer_id: PeerId,
@@ -376,8 +383,8 @@ impl Signer {
         tracing::debug!(%send_id, "relaySet({:?})", relay_set);
 
         let signature = BlsSignature::from_bytes(userop.signature.iter().as_slice())?;
-        for peer in relay_set {
-            let msg = ExternalMessage::UccbUserOp(UccbUserOp {
+        for (i, peer) in relay_set.into_iter().enumerate() {
+            let uccb_uop = UccbUserOp {
                 chain_id: *dst_chain,
                 userop_hash: uop_hash.context("uop_hash exists")?,
                 block_hash: *blk_hash,
@@ -389,8 +396,13 @@ impl Signer {
                     None
                 },
                 signature,
-            });
-            message_sender.send_external_message(peer, msg)?;
+            };
+            // we use delay-slots to ensure that the first peer always has the priority to submit the userop.
+            // the two backup peers should only be able to submit it after a significant delay.
+            let delay_slot = Duration::from_millis(
+                8u64.pow(i as u32) * 1_000, // 1s, 8s, 64s
+            );
+            sendq.insert((peer, uccb_uop), delay_slot);
         }
         Ok(())
     }
