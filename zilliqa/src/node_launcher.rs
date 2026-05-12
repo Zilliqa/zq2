@@ -134,14 +134,39 @@ impl NodeLauncher {
             sync_peers.clone(),
             swarm_peers.clone(),
         )?;
-
         let node = Arc::new(node);
+
+        // Start Bundler RPC server
+        //
+        // A standalone RPC server is provided mainly to implement the API extensions needed to enable bundler support.
+        // A decision may be made to enable the same extensions on the regular API in the future, and to directly incorporate it to the main JSON-RPC.
+        let bundler_api = api::bundler::rpc_module(node.clone(), &crate::api::bundler_enabled());
+        let bundler_rpc = jsonrpsee::server::ServerBuilder::new()
+            .set_config(
+                ServerConfig::builder()
+                    .max_connections(JSON_RPC_HANDLERS_COUNT)
+                    .set_id_provider(EthIdProvider)
+                    .build(),
+            )
+            .build((Ipv4Addr::UNSPECIFIED, 4200)) // hard-coded port number
+            .await;
+        match bundler_rpc {
+            Ok(server) => {
+                let port = server.local_addr()?.port();
+                info!("BUNDLER-RPC server listening on port {}", port);
+                let handle = server.start(bundler_api);
+                tokio::spawn(handle.stopped());
+            }
+            Err(e) => {
+                error!("Failed to start BUNDLER-RPC server: {}", e);
+            }
+        }
+
         let credit_store = Arc::new(RpcCreditStore::new());
         let credit_rate = RpcCreditRate::new(config.credit_rates.clone());
-
         for api_server in &config.api_servers {
             // Collect all enabled modules
-            let rpc_module = api::rpc_module(Arc::clone(&node), &api_server.enabled_apis);
+            let json_api = api::rpc_module(Arc::clone(&node), &api_server.enabled_apis);
 
             // HTTP middleware
             let cors = CorsLayer::new()
@@ -168,7 +193,7 @@ impl NodeLauncher {
                 );
 
             // Construct the JSON-RPC API server.
-            let server = jsonrpsee::server::ServerBuilder::new()
+            let json_rpc = jsonrpsee::server::ServerBuilder::new()
                 .set_config(
                     ServerConfig::builder()
                         .max_connections(JSON_RPC_HANDLERS_COUNT)
@@ -182,11 +207,11 @@ impl NodeLauncher {
                 .await;
 
             // Start the JSON-RPC server.
-            match server {
+            match json_rpc {
                 Ok(server) => {
                     let port = server.local_addr()?.port();
                     info!("JSON-RPC server listening on port {}", port);
-                    let handle = server.start(rpc_module);
+                    let handle = server.start(json_api);
                     tokio::spawn(handle.stopped());
                 }
                 Err(e) => {
@@ -195,7 +220,7 @@ impl NodeLauncher {
             }
         }
 
-        // Start UCCB **after** JSON-RPC is started, to be able to connect to localhost
+        // Start UCCB **after** RPC is started, to be able to connect to localhost
         let uccb = Arc::new(
             Uccb::new(
                 config.clone(),

@@ -337,7 +337,7 @@ fn estimate_gas(params: Params, node: &Arc<Node>) -> Result<String> {
     Ok(return_value.to_hex())
 }
 
-pub fn get_balance(params: Params, node: &Arc<Node>) -> Result<String> {
+fn get_balance(params: Params, node: &Arc<Node>) -> Result<String> {
     let mut params = params.sequence();
     let address: ZilAddress = params.next()?;
     let address: Address = address.into();
@@ -355,7 +355,7 @@ pub fn get_balance(params: Params, node: &Arc<Node>) -> Result<String> {
     Ok(state.get_account(address)?.balance.to_hex())
 }
 
-pub fn brt_to_eth_receipts(
+fn _brt_to_eth_receipts(
     btr: crate::db::BlockAndReceiptsAndTransactions,
 ) -> Vec<TransactionReceipt> {
     let block = btr.block;
@@ -727,7 +727,7 @@ fn get_block_transaction_count_by_number(
     ))
 }
 
-pub fn get_logs(params: Params, node: &Arc<Node>) -> Result<Vec<eth::Log>> {
+fn get_logs(params: Params, node: &Arc<Node>) -> Result<Vec<eth::Log>> {
     let mut seq = params.sequence();
     let params: alloy::rpc::types::Filter = seq.next()?;
     expect_end_of_params(&mut seq, 1, 1)?;
@@ -1168,7 +1168,7 @@ fn blob_base_fee(_params: Params, _node: &Arc<Node>) -> Result<()> {
 
 /// eth_feeHistory
 /// Returns the collection of historical gas information
-pub fn fee_history(params: Params, node: &Arc<Node>) -> Result<FeeHistory> {
+fn fee_history(params: Params, node: &Arc<Node>) -> Result<FeeHistory> {
     let mut params = params.sequence();
     let block_count: String = params.next()?;
     let block_count = if let Some(block_count) = block_count.strip_prefix("0x") {

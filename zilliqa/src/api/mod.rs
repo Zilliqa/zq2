@@ -44,9 +44,6 @@ pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc
         .merge(web3::rpc_module(node.clone(), enabled_apis))
         .unwrap();
     module
-        .merge(bundler::rpc_module(node.clone(), enabled_apis))
-        .unwrap();
-    module
         .merge(zilliqa::rpc_module(node.clone(), enabled_apis))
         .unwrap();
 
@@ -68,6 +65,13 @@ pub fn all_enabled() -> Vec<crate::cfg::EnabledApi> {
     .into_iter()
     .map(|ns| crate::cfg::EnabledApi::EnableAll(ns.to_owned()))
     .collect()
+}
+
+pub fn bundler_enabled() -> Vec<crate::cfg::EnabledApi> {
+    ["debug", "eth"]
+        .into_iter()
+        .map(|ns| crate::cfg::EnabledApi::EnableAll(ns.to_owned()))
+        .collect()
 }
 
 use std::panic::PanicHookInfo;
