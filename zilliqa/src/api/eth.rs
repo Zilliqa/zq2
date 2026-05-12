@@ -262,7 +262,7 @@ fn call_many(_params: Params, _node: &Arc<Node>) -> Result<()> {
     Err(anyhow!("API method eth_callMany is not implemented yet"))
 }
 
-pub fn call(params: Params, node: &Arc<Node>) -> Result<String> {
+fn call(params: Params, node: &Arc<Node>) -> Result<String> {
     let mut params = params.sequence();
     let call_params: TransactionRequest = params.next()?;
     let block_id: BlockId = params.optional_next()?.unwrap_or_default();
