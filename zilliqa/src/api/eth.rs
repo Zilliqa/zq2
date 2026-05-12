@@ -355,7 +355,7 @@ fn get_balance(params: Params, node: &Arc<Node>) -> Result<String> {
     Ok(state.get_account(address)?.balance.to_hex())
 }
 
-pub fn brt_to_eth_receipts(
+fn _brt_to_eth_receipts(
     btr: crate::db::BlockAndReceiptsAndTransactions,
 ) -> Vec<TransactionReceipt> {
     let block = btr.block;

@@ -1,4 +1,5 @@
 pub mod admin;
+pub mod bundler;
 mod debug;
 mod erigon;
 pub mod eth;
@@ -64,6 +65,13 @@ pub fn all_enabled() -> Vec<crate::cfg::EnabledApi> {
     .into_iter()
     .map(|ns| crate::cfg::EnabledApi::EnableAll(ns.to_owned()))
     .collect()
+}
+
+pub fn bundler_enabled() -> Vec<crate::cfg::EnabledApi> {
+    ["debug", "eth"]
+        .into_iter()
+        .map(|ns| crate::cfg::EnabledApi::EnableAll(ns.to_owned()))
+        .collect()
 }
 
 use std::panic::PanicHookInfo;
