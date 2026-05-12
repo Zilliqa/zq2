@@ -25,7 +25,7 @@ api_servers = [
 # Connects to locally run network
 remote_chains = [
     {
-        watcher_url = "http://198.51.100.103:4201",
+        watcher_url = "http://198.51.100.103:4200",
         bundler_url = "http://198.51.100.8:3000",
         chain_id = 33468,
         entrypoint = "0x0000000071727de22e5e9d8baf0edac6f37da032",
