@@ -8,6 +8,7 @@ use anyhow::{Result, anyhow};
 use arc_swap::ArcSwap;
 use http::{Method, header};
 use jsonrpsee::{
+    core::middleware::layer::RpcLoggerLayer,
     server::{ServerConfig, middleware::http::ProxyGetRequestLayer},
     ws_client::RpcServiceBuilder,
 };
@@ -141,6 +142,7 @@ impl NodeLauncher {
         // A standalone RPC server is provided mainly to implement the API extensions needed to enable bundler support.
         // A decision may be made to enable the same extensions on the regular API in the future, and to directly incorporate it to the main JSON-RPC.
         let bundler_api = api::bundler::rpc_module(node.clone(), &crate::api::bundler_enabled());
+        let rpc_middleware = RpcServiceBuilder::new().layer(RpcLoggerLayer::new(1_000));
         let bundler_rpc = jsonrpsee::server::ServerBuilder::new()
             .set_config(
                 ServerConfig::builder()
@@ -148,6 +150,7 @@ impl NodeLauncher {
                     .set_id_provider(EthIdProvider)
                     .build(),
             )
+            .set_rpc_middleware(rpc_middleware)
             .build((Ipv4Addr::UNSPECIFIED, 4200)) // hard-coded port number
             .await;
         match bundler_rpc {
