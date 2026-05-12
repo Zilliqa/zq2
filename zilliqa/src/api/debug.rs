@@ -102,12 +102,12 @@ fn debug_trace_block_by_number(params: Params, node: &Arc<Node>) -> Result<Vec<T
 }
 
 /// debug_traceCall
-fn debug_trace_call(_params: Params, _node: &Arc<Node>) -> Result<()> {
+pub fn debug_trace_call(_params: Params, _node: &Arc<Node>) -> Result<()> {
     Err(anyhow!("API method debug_traceCall is not implemented yet"))
 }
 
 /// debug_traceTransaction
-fn debug_trace_transaction(params: Params, node: &Arc<Node>) -> Result<TraceResult> {
+pub fn debug_trace_transaction(params: Params, node: &Arc<Node>) -> Result<TraceResult> {
     let mut params = params.sequence();
     let txn_hash: B256 = params.next()?;
     let txn_hash: Hash = txn_hash.into();

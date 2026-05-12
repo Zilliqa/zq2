@@ -262,7 +262,7 @@ fn call_many(_params: Params, _node: &Arc<Node>) -> Result<()> {
     Err(anyhow!("API method eth_callMany is not implemented yet"))
 }
 
-fn call(params: Params, node: &Arc<Node>) -> Result<String> {
+pub fn call(params: Params, node: &Arc<Node>) -> Result<String> {
     let mut params = params.sequence();
     let call_params: TransactionRequest = params.next()?;
     let block_id: BlockId = params.optional_next()?.unwrap_or_default();
@@ -337,7 +337,7 @@ fn estimate_gas(params: Params, node: &Arc<Node>) -> Result<String> {
     Ok(return_value.to_hex())
 }
 
-fn get_balance(params: Params, node: &Arc<Node>) -> Result<String> {
+pub fn get_balance(params: Params, node: &Arc<Node>) -> Result<String> {
     let mut params = params.sequence();
     let address: ZilAddress = params.next()?;
     let address: Address = address.into();
@@ -727,7 +727,7 @@ fn get_block_transaction_count_by_number(
     ))
 }
 
-fn get_logs(params: Params, node: &Arc<Node>) -> Result<Vec<eth::Log>> {
+pub fn get_logs(params: Params, node: &Arc<Node>) -> Result<Vec<eth::Log>> {
     let mut seq = params.sequence();
     let params: alloy::rpc::types::Filter = seq.next()?;
     expect_end_of_params(&mut seq, 1, 1)?;
@@ -1168,7 +1168,7 @@ fn blob_base_fee(_params: Params, _node: &Arc<Node>) -> Result<()> {
 
 /// eth_feeHistory
 /// Returns the collection of historical gas information
-fn fee_history(params: Params, node: &Arc<Node>) -> Result<FeeHistory> {
+pub fn fee_history(params: Params, node: &Arc<Node>) -> Result<FeeHistory> {
     let mut params = params.sequence();
     let block_count: String = params.next()?;
     let block_count = if let Some(block_count) = block_count.strip_prefix("0x") {

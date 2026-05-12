@@ -1,4 +1,5 @@
 pub mod admin;
+pub mod bundler;
 mod debug;
 mod erigon;
 pub mod eth;
@@ -41,6 +42,9 @@ pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc
         .unwrap();
     module
         .merge(web3::rpc_module(node.clone(), enabled_apis))
+        .unwrap();
+    module
+        .merge(bundler::rpc_module(node.clone(), enabled_apis))
         .unwrap();
     module
         .merge(zilliqa::rpc_module(node.clone(), enabled_apis))
