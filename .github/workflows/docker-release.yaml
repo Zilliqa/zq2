@@ -26,6 +26,7 @@ jobs:
       uses: actions/checkout@v6
       with:
         fetch-depth: 0
+        submodules: recursive
     - name: "Configure GCP Credentials"
       id: google-auth
       uses: "google-github-actions/auth@v3"
@@ -100,6 +101,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          submodules: recursive
       - name: Get tag version - private image
         id: set-tag
         uses: Zilliqa/gh-actions-workflows/actions/generate-tag@v4
