@@ -261,11 +261,32 @@ fn checkpoint(params: Params, node: &Arc<Node>) -> Result<CheckpointResponse> {
         .get_block(block_id)?
         .ok_or(anyhow!("Block {block_id} does not exist"))?;
 
-    let (file_name, hash) = node.consensus.read().checkpoint_at(block.number())?;
+    // Checkpoint blocks must be aligned to an epoch boundary; otherwise the
+    // bundled historical blocks wouldn't cover every epoch boundary hit during
+    // replay and the load would fail. Snap down to the nearest lower epoch boundary.
+    let consensus = node.consensus.read();
+    let blocks_per_epoch = consensus.config.consensus.blocks_per_epoch;
+    let aligned = (block.number() / blocks_per_epoch) * blocks_per_epoch;
+    if aligned == 0 {
+        return Err(anyhow!(
+            "Block {} is below the first epoch boundary; cannot checkpoint",
+            block.number()
+        ));
+    }
+    if aligned != block.number() {
+        tracing::info!(
+            requested = block.number(),
+            aligned,
+            blocks_per_epoch,
+            "admin_generateCheckpoint: requested block is not on an epoch boundary; snapping down"
+        );
+    }
+
+    let (file_name, hash) = consensus.checkpoint_at(aligned)?;
     Ok(CheckpointResponse {
         file_name,
         hash,
-        block: block.number().to_hex(),
+        block: aligned.to_hex(),
     })
 }
 
