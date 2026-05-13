@@ -7,7 +7,7 @@ use alloy::{
         state::{AccountOverride, StateOverride},
     },
 };
-use alloy_rpc_types_trace::geth::{GethDebugTracerType, GethDebugTracingCallOptions, GethTrace};
+use alloy_rpc_types_trace::geth::{GethDebugTracingCallOptions, GethTrace};
 use anyhow::{Result, anyhow};
 use eth_trie::{EthTrie, Trie as _};
 use jsonrpsee::{
@@ -68,20 +68,7 @@ pub fn debug_trace_call(params: Params, node: &Arc<Node>) -> Result<GethTrace> {
     );
     anyhow::ensure!(options.tx_index.is_none(), "tx_index unexpected");
 
-    // Javascript payload
-    let Some(GethDebugTracerType::JsTracer(js)) = options.tracing_options.tracer else {
-        unimplemented!()
-    };
-    // Timeout duration
-    let Some(timeout) = options
-        .tracing_options
-        .timeout
-        .and_then(|s| duration_str::parse(s).ok())
-    else {
-        unimplemented!()
-    };
-
-    let overrides = options.state_overrides.unwrap_or_default();
+    let overrides = options.state_overrides.clone().unwrap_or_default();
 
     let (mut evm_state, block) = {
         let block = node.get_block(block_id)?;
@@ -98,15 +85,9 @@ pub fn debug_trace_call(params: Params, node: &Arc<Node>) -> Result<GethTrace> {
 
     apply_state_overrides(&mut evm_state, &node.clone(), overrides)?;
 
-    let _result = evm_state.call_contract(
-        call_params.from.unwrap_or_default(),
-        call_params.to.and_then(|to| to.into_to()),
-        call_params.input.into_input().unwrap_or_default().to_vec(),
-        u128::try_from(call_params.value.unwrap_or_default())?,
-        block.header,
-    )?;
+    let result = node.debug_trace_call(&mut evm_state, &block, call_params, options)?;
 
-    Ok(GethTrace::default())
+    Ok(result)
 }
 
 /// Geth compatible eth_call()

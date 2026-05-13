@@ -1462,6 +1462,40 @@ impl State {
         Ok(result)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn call_contract_debug(
+        &self,
+        from_addr: Address,
+        to_addr: Option<Address>,
+        data: Vec<u8>,
+        amount: u128,
+        current_block: BlockHeader,
+    ) -> Result<(ExecutionResult, EvmState)> {
+        let (ResultAndState { result, state }, ..) = self.apply_transaction_evm(
+            from_addr,
+            to_addr,
+            0,
+            None,
+            self.block_gas_limit,
+            amount,
+            data,
+            None,
+            None,
+            None,
+            current_block,
+            inspector::noop(),
+            false,
+            BaseFeeAndNonceCheck::Ignore,
+            ExtraOpts {
+                disable_eip3607: true,
+                exec_type: ExecType::Call,
+                tx_type: TransactionType::Legacy,
+            },
+        )?;
+
+        Ok((result, state))
+    }
+
     /// Call contract and apply changes to state
     #[allow(clippy::too_many_arguments)]
     pub fn call_contract_apply(

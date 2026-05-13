@@ -7,12 +7,13 @@ use std::{
 use alloy::{
     eips::{BlockId, BlockNumberOrTag, RpcBlockHash},
     primitives::Address,
+    rpc::types::TransactionRequest,
 };
 use alloy_consensus::transaction::TransactionInfo;
 use alloy_rpc_types_trace::{
     geth::{
-        FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingOptions,
-        GethTrace, NoopFrame, TraceResult,
+        FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
+        GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, NoopFrame, TraceResult,
     },
     parity::{TraceResults, TraceType},
 };
@@ -26,7 +27,7 @@ use revm::context_interface::{
     result::ExecutionResult,
     transaction::{AccessList, SignedAuthorization},
 };
-use revm_context::TxEnv;
+use revm_context::{TxEnv, result::ExecResultAndState};
 use revm_inspector::Inspector;
 use revm_inspectors::tracing::{
     FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig, TransactionContext,
@@ -941,6 +942,179 @@ impl Node {
                     tx_hash: Some(txn_hash.0.into()),
                 }))
             }
+        }
+    }
+
+    pub fn debug_trace_call(
+        &self,
+        state: &mut State,
+        block: &Block,
+        call_params: TransactionRequest,
+        call_opts: GethDebugTracingCallOptions,
+    ) -> Result<GethTrace> {
+        let GethDebugTracingOptions {
+            tracer,
+            tracer_config,
+            ..
+        } = call_opts.tracing_options;
+
+        let fork = state.forks.get(block.number()).clone();
+
+        // // Timeout duration
+        // let timeout = timeout
+        //     .and_then(|s| duration_str::parse(s).ok())
+        //     .unwrap_or_default();
+
+        /*
+        GethDebugTracingCallOptions {
+            tracing_options: GethDebugTracingOptions {
+                tracer: Some(GethDebugTracerType::JsTracer(
+                    validation_tracer_js().to_string(),
+                )),
+                timeout: Some(self.tracer_timeout.clone()),
+                ..Default::default()
+            },
+            state_overrides: Some(state_override),
+            block_overrides: None,
+            tx_index: None,
+        },
+        */
+
+        match tracer {
+            Some(GethDebugTracerType::JsTracer(js_code)) => {
+                let config = tracer_config.into_json();
+
+                let transaction_context = TransactionContext::default();
+                let mut inspector =
+                    JsInspector::with_transaction_context(js_code, config, transaction_context)
+                        .map_err(|e| anyhow!("Unable to create js inspector: {e}"))?;
+
+                // run
+                let result = state.call_contract_debug(
+                    call_params.from.clone().unwrap_or_default(),
+                    call_params.to.and_then(|to| to.into_to()),
+                    call_params.input.into_input().unwrap_or_default().to_vec(),
+                    u128::try_from(call_params.value.unwrap_or_default())?,
+                    block.header,
+                )?;
+                let result = ExecResultAndState::new(result.0, result.1);
+
+                let revm_txn = TxEnv::builder()
+                    .call(call_params.from.unwrap_or_default())
+                    .build_fill();
+
+                let pending_state = PendingState::new(state.try_clone()?, fork);
+                let js_result = inspector
+                    .json_result(result, &revm_txn, &block, &pending_state)
+                    .map_err(|e| anyhow!("Unable to create json result: {e}"))?;
+
+                Ok(GethTrace::JS(js_result))
+            }
+            _ => unimplemented!(),
+            // Some(GethDebugTracerType::BuiltInTracer(tracer)) => match tracer {
+            //     GethDebugBuiltInTracerType::Erc7562Tracer => todo!("Implement ERC7562 tracer"),
+            //     GethDebugBuiltInTracerType::CallTracer => {
+            //         let call_config = tracer_config.into_call_config()?;
+            //         let mut inspector = TracingInspector::new(
+            //             TracingInspectorConfig::from_geth_call_config(&call_config),
+            //         );
+
+            //         let result =
+            //             state.apply_transaction(txn, block.header, &mut inspector, true)?;
+
+            //         let TransactionApplyResult::Evm(result, ..) = result else {
+            //             return Ok(None);
+            //         };
+
+            //         let trace = inspector
+            //             .into_geth_builder()
+            //             .geth_call_traces(call_config, result.result.tx_gas_used());
+
+            //         Ok(Some(TraceResult::Success {
+            //             result: trace.into(),
+            //             tx_hash: Some(txn_hash.0.into()),
+            //         }))
+            //     }
+            //     GethDebugBuiltInTracerType::FlatCallTracer => {
+            //         Err(anyhow!("`flatCallTracer` is not implemented"))
+            //     }
+            //     GethDebugBuiltInTracerType::FourByteTracer => {
+            //         let mut inspector = FourByteInspector::default();
+            //         let result =
+            //             state.apply_transaction(txn, block.header, &mut inspector, true)?;
+
+            //         let TransactionApplyResult::Evm(_) = result else {
+            //             return Ok(None);
+            //         };
+
+            //         Ok(Some(TraceResult::Success {
+            //             result: FourByteFrame::from(&inspector).into(),
+            //             tx_hash: Some(txn_hash.0.into()),
+            //         }))
+            //     }
+            //     GethDebugBuiltInTracerType::MuxTracer => {
+            //         let mux_config = tracer_config.into_mux_config()?;
+
+            //         let mut inspector = MuxInspector::try_from_config(mux_config)?;
+            //         let result =
+            //             state.apply_transaction(txn, block.header, &mut inspector, true)?;
+
+            //         let TransactionApplyResult::Evm(result, ..) = result else {
+            //             return Ok(None);
+            //         };
+            //         let pending_state = PendingState::new(state.try_clone()?, fork);
+            //         let state_ref = &pending_state;
+            //         let tx_info = TransactionInfo {
+            //             hash: Some(txn_hash.into()),
+            //             index: Some(txn_index as u64),
+            //             block_hash: Some(block.hash().into()),
+            //             block_number: Some(block.number()),
+            //             block_timestamp: Some(
+            //                 block
+            //                     .header
+            //                     .timestamp
+            //                     .duration_since(crate::time::SystemTime::UNIX_EPOCH)
+            //                     .map(|d| d.as_secs())
+            //                     .unwrap_or_default(),
+            //             ),
+            //             base_fee: state.gas_price.try_into().ok(),
+            //         };
+            //         let trace = inspector.try_into_mux_frame(&result, &state_ref, tx_info)?;
+            //         Ok(Some(TraceResult::Success {
+            //             result: trace.into(),
+            //             tx_hash: Some(txn_hash.0.into()),
+            //         }))
+            //     }
+            //     GethDebugBuiltInTracerType::NoopTracer => Ok(Some(TraceResult::Success {
+            //         result: NoopFrame::default().into(),
+            //         tx_hash: Some(txn_hash.0.into()),
+            //     })),
+            //     GethDebugBuiltInTracerType::PreStateTracer => {
+            //         let prestate_config = tracer_config.into_pre_state_config()?;
+
+            //         let mut inspector = TracingInspector::new(
+            //             TracingInspectorConfig::from_geth_prestate_config(&prestate_config),
+            //         );
+            //         let result =
+            //             state.apply_transaction(txn, block.header, &mut inspector, true)?;
+
+            //         let TransactionApplyResult::Evm(result, ..) = result else {
+            //             return Ok(None);
+            //         };
+            //         let pending_state = PendingState::new(state.try_clone()?, fork);
+            //         let state_ref = &pending_state;
+            //         let trace = inspector.into_geth_builder().geth_prestate_traces(
+            //             &result,
+            //             &prestate_config,
+            //             state_ref,
+            //         )?;
+
+            //         Ok(Some(TraceResult::Success {
+            //             result: trace.into(),
+            //             tx_hash: Some(txn_hash.0.into()),
+            //         }))
+            //     }
+            // },
         }
     }
 
