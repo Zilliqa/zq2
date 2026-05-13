@@ -1010,7 +1010,7 @@ impl Node {
 
                 Ok(GethTrace::JS(js_result))
             }
-            _ => unimplemented!(),
+            _ => unimplemented!("{tracer:?}"),
             // Some(GethDebugTracerType::BuiltInTracer(tracer)) => match tracer {
             //     GethDebugBuiltInTracerType::Erc7562Tracer => todo!("Implement ERC7562 tracer"),
             //     GethDebugBuiltInTracerType::CallTracer => {

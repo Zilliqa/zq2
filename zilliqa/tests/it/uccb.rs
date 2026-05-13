@@ -1,19 +1,27 @@
 use alloy::{
+    eips::BlockNumberOrTag,
     primitives::{Address, Bytes, U256},
-    providers::Provider,
+    providers::{Provider, ext::DebugApi},
     rpc::types::state::StateOverridesBuilder,
     sol,
     sol_types::SolEvent as _,
 };
+use alloy_rpc_types_trace::geth::{
+    GethDebugTracerType, GethDebugTracingCallOptions, GethDebugTracingOptions,
+};
 
 use crate::{Network, deploy_contract, deployed_contract};
+
+fn validation_tracer_js() -> &'static str {
+    include_str!("js/validationTracerV0_7.js").trim_end_matches(";export{};")
+}
 
 sol!(
     #[sol(rpc)]
     "tests/it/contracts/Erc4337.sol"
 );
 #[zilliqa_macros::test(bundler_rpc)]
-async fn erc4337_eth_call_with_state_overrides(mut network: Network) {
+async fn eth_call_with_state_overrides(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let address = Address::random();
 
@@ -44,7 +52,7 @@ async fn erc4337_eth_call_with_state_overrides(mut network: Network) {
 }
 
 #[zilliqa_macros::test(bundler_rpc)]
-async fn erc4337_debug_trace_call_with_state_overrides(mut network: Network) {
+async fn debug_trace_call_with_state_overrides(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let address = Address::random();
 
@@ -61,8 +69,34 @@ async fn erc4337_debug_trace_call_with_state_overrides(mut network: Network) {
         .with_balance(address, U256::from(0x100000))
         .build();
     let contract = Erc4337::new(address, &wallet);
-    let value = contract.getNumber().state(state_overrides).call().await; // should revert
-    assert!(value.is_err());
+    // get block number - should not fail
+    let value = contract
+        .getNumber()
+        .state(state_overrides.clone())
+        .call()
+        .await;
+    assert!(value.is_ok());
+
+    // debug
+    let result = wallet
+        .debug_trace_call(
+            contract.getNumber().into_transaction_request(),
+            BlockNumberOrTag::Latest.into(),
+            GethDebugTracingCallOptions {
+                tracing_options: GethDebugTracingOptions {
+                    tracer: Some(GethDebugTracerType::JsTracer(
+                        validation_tracer_js().to_string(),
+                    )),
+                    // timeout: Some(self.tracer_timeout.clone()),
+                    ..Default::default()
+                },
+                state_overrides: Some(state_overrides),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    println!("{result:?}");
 
     // balance still zero
     let bal = wallet.get_balance(address).await.unwrap();

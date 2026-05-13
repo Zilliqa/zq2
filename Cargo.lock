@@ -425,6 +425,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-pubsub",
  "alloy-rpc-client",
+ "alloy-rpc-types-debug",
  "alloy-rpc-types-eth",
  "alloy-rpc-types-trace",
  "alloy-signer",
@@ -526,6 +527,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ee1257a278f6d293e05c5162c5940a1561b1aa85ded0028b464c81de37ebfa5"
 dependencies = [
  "alloy-primitives",
+ "alloy-rpc-types-debug",
  "alloy-rpc-types-eth",
  "alloy-rpc-types-trace",
  "alloy-serde 2.0.4",
@@ -545,6 +547,19 @@ dependencies = [
  "alloy-serde 2.0.4",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "alloy-rpc-types-debug"
+version = "2.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ab075ac1c25bcf697f133b7cd92e2fb26afe213e872ef79fdf77f0d7bcb3793"
+dependencies = [
+ "alloy-primitives",
+ "alloy-rlp",
+ "derive_more",
+ "serde",
+ "serde_with",
 ]
 
 [[package]]
@@ -11444,6 +11459,7 @@ version = "0.1.0"
 dependencies = [
  "alloy",
  "alloy-consensus",
+ "alloy-rpc-types-debug",
  "alloy-rpc-types-trace",
  "anyhow",
  "arc-swap",
