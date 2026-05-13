@@ -117,6 +117,7 @@ alloy = { version = "2.0.4", default-features = false, features = ["consensus", 
 crossbeam = "0.8.4"
 lru = "0.18.0"
 tokio-util = { version = "0.7.18", default-features = false, features = ["time"] }
+duration-str = { version = "0.21.0", default-features = false, features = ["time"] }
 
 [dev-dependencies]
 alloy = { version = "2.0.4", default-features = false, features = ["consensus", "dyn-abi", "eips", "json-abi", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types", "pubsub", "json-rpc", "contract", "signer-local"] }

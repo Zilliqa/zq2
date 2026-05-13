@@ -7,6 +7,7 @@ use alloy::{
         state::{AccountOverride, StateOverride},
     },
 };
+use alloy_rpc_types_trace::geth::{GethDebugTracerType, GethDebugTracingCallOptions, GethTrace};
 use anyhow::{Result, anyhow};
 use eth_trie::{EthTrie, Trie as _};
 use jsonrpsee::{
@@ -42,7 +43,10 @@ pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc
     let overrides = super::declare_module!(
         node,
         enabled_apis,
-        [("eth_call", eth_call, HandlerType::Fast),],
+        [
+            ("eth_call", eth_call, HandlerType::Fast),
+            ("debug_traceCall", debug_trace_call, HandlerType::Slow),
+        ],
     );
     for method_name in overrides.method_names() {
         module.remove_method(method_name);
@@ -50,6 +54,59 @@ pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc
     module.merge(overrides).unwrap();
 
     module
+}
+
+pub fn debug_trace_call(params: Params, node: &Arc<Node>) -> Result<GethTrace> {
+    let mut params = params.sequence();
+    let call_params: TransactionRequest = params.next()?;
+    let block_id: BlockId = params.optional_next()?.unwrap_or_default();
+    let options: GethDebugTracingCallOptions = params.optional_next()?.unwrap_or_default();
+
+    anyhow::ensure!(
+        options.block_overrides.is_none(),
+        "block_overrides unexpected"
+    );
+    anyhow::ensure!(options.tx_index.is_none(), "tx_index unexpected");
+
+    // Javascript payload
+    let Some(GethDebugTracerType::JsTracer(js)) = options.tracing_options.tracer else {
+        unimplemented!()
+    };
+    // Timeout duration
+    let Some(timeout) = options
+        .tracing_options
+        .timeout
+        .and_then(|s| duration_str::parse(s).ok())
+    else {
+        unimplemented!()
+    };
+
+    let overrides = options.state_overrides.unwrap_or_default();
+
+    let (mut evm_state, block) = {
+        let block = node.get_block(block_id)?;
+        let block = build_errored_response_for_missing_block(block_id, block)?;
+        let state = node.get_state(&block)?;
+        (state, block)
+    };
+    anyhow::ensure!(
+        !evm_state.is_empty(),
+        "State required to execute request does not exist"
+    );
+
+    tracing::trace!("debug contract: block={block:?} overrides={overrides:?}");
+
+    apply_state_overrides(&mut evm_state, &node.clone(), overrides)?;
+
+    let _result = evm_state.call_contract(
+        call_params.from.unwrap_or_default(),
+        call_params.to.and_then(|to| to.into_to()),
+        call_params.input.into_input().unwrap_or_default().to_vec(),
+        u128::try_from(call_params.value.unwrap_or_default())?,
+        block.header,
+    )?;
+
+    Ok(GethTrace::default())
 }
 
 /// Geth compatible eth_call()
@@ -73,6 +130,27 @@ pub fn eth_call(params: Params, node: &Arc<Node>) -> Result<String> {
 
     tracing::trace!("call_contract: block={block:?} overrides={overrides:?}");
 
+    apply_state_overrides(&mut evm_state, &node.clone(), overrides)?;
+
+    let result = evm_state.call_contract(
+        call_params.from.unwrap_or_default(),
+        call_params.to.and_then(|to| to.into_to()),
+        call_params.input.into_input().unwrap_or_default().to_vec(),
+        u128::try_from(call_params.value.unwrap_or_default())?,
+        block.header,
+    )?;
+
+    match ensure_success(result) {
+        Ok(output) => Ok(output.to_hex()),
+        Err(err) => Err(ErrorObjectOwned::from(err).into()),
+    }
+}
+
+fn apply_state_overrides(
+    evm_state: &mut crate::state::State,
+    node: &Arc<Node>,
+    state_overrides: StateOverride,
+) -> Result<()> {
     // override state - skipped if empty
     // TODO: Do not commit changes to disk - simulation only.
     for (
@@ -85,7 +163,7 @@ pub fn eth_call(params: Params, node: &Arc<Node>) -> Result<String> {
             state_diff,
             move_precompile_to,
         },
-    ) in overrides.into_iter()
+    ) in state_overrides.into_iter()
     {
         // The fake balance to set for the account before executing the call
         if let Some(balance) = balance {
@@ -137,17 +215,5 @@ pub fn eth_call(params: Params, node: &Arc<Node>) -> Result<String> {
             unimplemented!()
         }
     }
-
-    let result = evm_state.call_contract(
-        call_params.from.unwrap_or_default(),
-        call_params.to.and_then(|to| to.into_to()),
-        call_params.input.into_input().unwrap_or_default().to_vec(),
-        u128::try_from(call_params.value.unwrap_or_default())?,
-        block.header,
-    )?;
-
-    match ensure_success(result) {
-        Ok(output) => Ok(output.to_hex()),
-        Err(err) => Err(ErrorObjectOwned::from(err).into()),
-    }
+    Ok(())
 }

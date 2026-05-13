@@ -10,9 +10,8 @@ use crate::{Network, deploy_contract, deployed_contract};
 
 sol!(
     #[sol(rpc)]
-    "tests/it/contracts/DummyBridge.sol"
+    "tests/it/contracts/Erc4337.sol"
 );
-
 #[zilliqa_macros::test(bundler_rpc)]
 async fn erc4337_eth_call_with_state_overrides(mut network: Network) {
     let wallet = network.genesis_wallet().await;
@@ -24,13 +23,13 @@ async fn erc4337_eth_call_with_state_overrides(mut network: Network) {
     assert!(bal.is_zero());
 
     // we need to use the deployed bytecode, not compiled bytecode
-    let bytecode = deployed_contract("tests/it/contracts/DummyBridge.sol", "DummyBridge");
+    let bytecode = deployed_contract("tests/it/contracts/Erc4337.sol", "Erc4337");
     // deploy and run fake contract and fake balance
     let state_overrides = StateOverridesBuilder::with_capacity(1)
         .with_code(address, bytecode)
         .with_balance(address, U256::from(0x100000))
         .build();
-    let contract = DummyBridge::new(address, &wallet);
+    let contract = Erc4337::new(address, &wallet);
     let value = contract
         .getBalance()
         .state(state_overrides)
@@ -44,6 +43,10 @@ async fn erc4337_eth_call_with_state_overrides(mut network: Network) {
     assert!(bal.is_zero());
 }
 
+sol!(
+    #[sol(rpc)]
+    "tests/it/contracts/DummyBridge.sol"
+);
 #[zilliqa_macros::test(bundler_rpc)]
 async fn emits_message_sent(mut network: Network) {
     let wallet = network.genesis_wallet().await;

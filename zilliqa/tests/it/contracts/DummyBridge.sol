@@ -15,10 +15,6 @@ contract DummyBridge is Pausable, IERC7786GatewaySource, IEntryPointNonces {
 
     constructor() {}
 
-    function getBalance() public view returns (uint256) {
-        return address(this).balance;
-    }
-
     function getNonce(
         address sender,
         uint192 key
