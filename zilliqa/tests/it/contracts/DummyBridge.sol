@@ -4,10 +4,7 @@ pragma solidity ^0.8.28;
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 import {IEntryPointNonces} from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
-import {
-    IERC7786GatewaySource,
-    IERC7786Recipient
-} from "@openzeppelin/contracts/interfaces/draft-IERC7786.sol";
+import {IERC7786GatewaySource, IERC7786Recipient} from "@openzeppelin/contracts/interfaces/draft-IERC7786.sol";
 import {CAIP10} from "@openzeppelin/contracts/utils/CAIP10.sol";
 
 contract DummyBridge is Pausable, IERC7786GatewaySource, IEntryPointNonces {
@@ -17,6 +14,10 @@ contract DummyBridge is Pausable, IERC7786GatewaySource, IEntryPointNonces {
     event Received(bytes32 indexed receiveId, address gateway);
 
     constructor() {}
+
+    function getBalance() public view returns (uint256) {
+        return address(this).balance;
+    }
 
     function getNonce(
         address sender,
@@ -80,9 +81,8 @@ contract DummyBridge is Pausable, IERC7786GatewaySource, IEntryPointNonces {
 
         sendId = keccak256(wrappedPayload);
 
-        uint256 value =
-            (uint256(max_priority_fee_per_gas) << 128) |
-                uint256(max_fee_per_gas);
+        uint256 value = (uint256(max_priority_fee_per_gas) << 128) |
+            uint256(max_fee_per_gas);
 
         bytes memory gw_sender = bytes(CAIP10.local(address(this)));
 

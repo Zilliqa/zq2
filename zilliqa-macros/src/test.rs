@@ -10,6 +10,7 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
     let mut blocks_per_epoch = 10;
     // Code below reads 0 to be "do not deploy deposit_v3"
     let mut deposit_v3_upgrade_block_height = 0;
+    let mut bundler_rpc = false;
 
     let parsed_args =
         match syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated
@@ -30,6 +31,7 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
                 match name.to_string().as_str() {
                     "restrict_concurrency" => restrict_concurrency = true,
                     "do_checkpoints" => do_checkpoints = true,
+                    "bundler_rpc" => bundler_rpc = true,
                     _ => {
                         return token_stream_with_error(
                             args,
@@ -194,6 +196,7 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
                                 "/scilla/0/_build/default/src/stdlib/".to_owned(),
                                 #do_checkpoints,
                                 #blocks_per_epoch,
+                                #bundler_rpc,
                                 deposit_v3_upgrade_block_height_option,
                                 format!("{temp_dir}/scilla-sockets"),
                             );

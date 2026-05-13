@@ -88,6 +88,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
         SecretKey::new_from_rng(rng.deref_mut()).unwrap(),
         SigningKey::random(rng.deref_mut()),
         0,
+        false,
         Some(dir),
     );
 

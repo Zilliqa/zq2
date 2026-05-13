@@ -16,8 +16,9 @@ use jsonrpsee::{
 
 use crate::{
     api::{
-        HandlerType, disabled_err, format_panic_as_error, into_rpc_error, make_panic_hook,
-        rpc_base_attributes, to_hex::ToHex as _,
+        HandlerType, disabled_err, eth::build_errored_response_for_missing_block,
+        format_panic_as_error, into_rpc_error, make_panic_hook, rpc_base_attributes,
+        to_hex::ToHex as _,
     },
     cfg::EnabledApi,
     error::ensure_success,
@@ -51,14 +52,18 @@ pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc
     module
 }
 
-fn eth_call(params: Params, node: &Arc<Node>) -> Result<String> {
+/// Geth compatible eth_call()
+///
+/// Takes 3 parameters including the optional state overrides.
+pub fn eth_call(params: Params, node: &Arc<Node>) -> Result<String> {
     let mut params = params.sequence();
     let call_params: TransactionRequest = params.next()?;
     let block_id: BlockId = params.optional_next()?.unwrap_or_default();
     let overrides: StateOverride = params.optional_next()?.unwrap_or_default();
 
     let (mut evm_state, block) = {
-        let block = node.get_block(block_id)?.unwrap();
+        let block = node.get_block(block_id)?;
+        let block = build_errored_response_for_missing_block(block_id, block)?;
         let state = node.get_state(&block)?;
         (state, block)
     };
@@ -66,7 +71,9 @@ fn eth_call(params: Params, node: &Arc<Node>) -> Result<String> {
         return Err(anyhow!("State required to execute request does not exist"));
     }
 
-    // override state
+    tracing::trace!("call_contract: block={block:?} overrides={overrides:?}");
+
+    // override state - skipped if empty
     // TODO: Do not commit changes to disk - simulation only.
     for (
         address,
