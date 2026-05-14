@@ -27,7 +27,10 @@ use revm::context_interface::{
     result::ExecutionResult,
     transaction::{AccessList, SignedAuthorization},
 };
-use revm_context::{TxEnv, result::ExecResultAndState};
+use revm_context::{
+    TransactionType, TxEnv,
+    result::{ExecResultAndState, ResultAndState},
+};
 use revm_inspector::Inspector;
 use revm_inspectors::tracing::{
     FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig, TransactionContext,
@@ -43,7 +46,7 @@ use crate::{
     crypto::{Hash, SecretKey},
     db::{BlockFilter, Db},
     evm::ZQ2EvmContext,
-    exec::{ExtraOpts, PendingState, TransactionApplyResult},
+    exec::{BaseFeeAndNonceCheck, ExecType, ExtraOpts, PendingState, TransactionApplyResult},
     inspector::{self, ScillaInspector},
     message::{
         Block, BlockHeader, BlockTransactionsReceipts, ExternalMessage, InjectedProposal,
@@ -947,7 +950,7 @@ impl Node {
 
     pub fn debug_trace_call(
         &self,
-        state: &mut State,
+        evm_state: &mut State,
         block: &Block,
         call_params: TransactionRequest,
         call_opts: GethDebugTracingCallOptions,
@@ -958,7 +961,7 @@ impl Node {
             ..
         } = call_opts.tracing_options;
 
-        let fork = state.forks.get(block.number()).clone();
+        let fork = evm_state.forks.get(block.number()).clone();
 
         // // Timeout duration
         // let timeout = timeout
@@ -989,21 +992,35 @@ impl Node {
                     JsInspector::with_transaction_context(js_code, config, transaction_context)
                         .map_err(|e| anyhow!("Unable to create js inspector: {e}"))?;
 
-                // run
-                let result = state.call_contract_debug(
+                let (ResultAndState { result, state }, ..) = evm_state.apply_transaction_evm(
                     call_params.from.clone().unwrap_or_default(),
                     call_params.to.and_then(|to| to.into_to()),
-                    call_params.input.into_input().unwrap_or_default().to_vec(),
+                    0,
+                    None,
+                    evm_state.block_gas_limit,
                     u128::try_from(call_params.value.unwrap_or_default())?,
+                    call_params.input.into_input().unwrap_or_default().to_vec(),
+                    None,
+                    None,
+                    None,
                     block.header,
+                    &mut inspector,
+                    true,
+                    BaseFeeAndNonceCheck::Ignore,
+                    ExtraOpts {
+                        disable_eip3607: true,
+                        exec_type: ExecType::Call,
+                        tx_type: TransactionType::Legacy,
+                    },
                 )?;
-                let result = ExecResultAndState::new(result.0, result.1);
+
+                let result = ExecResultAndState::new(result, state);
 
                 let revm_txn = TxEnv::builder()
                     .call(call_params.from.unwrap_or_default())
                     .build_fill();
 
-                let pending_state = PendingState::new(state.try_clone()?, fork);
+                let pending_state = PendingState::new(evm_state.try_clone()?, fork);
                 let js_result = inspector
                     .json_result(result, &revm_txn, &block, &pending_state)
                     .map_err(|e| anyhow!("Unable to create json result: {e}"))?;
