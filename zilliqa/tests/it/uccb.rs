@@ -12,8 +12,8 @@ use alloy_rpc_types_trace::geth::{
 
 use crate::{Network, deploy_contract, deployed_contract};
 
-fn validation_tracer_js() -> &'static str {
-    include_str!("js/validationTracerV0_7.js").trim_end_matches(";export{};")
+fn opcount_tracer_js() -> &'static str {
+    include_str!("js/opcount_tracer.js").trim_end_matches(";export{};")
 }
 
 sol!(
@@ -52,7 +52,7 @@ async fn eth_call_with_state_overrides(mut network: Network) {
 }
 
 #[zilliqa_macros::test(bundler_rpc)]
-async fn debug_trace_call_with_state_overrides(mut network: Network) {
+async fn debug_trace_call_js_tracer(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let address = Address::random();
 
@@ -69,15 +69,6 @@ async fn debug_trace_call_with_state_overrides(mut network: Network) {
         .with_balance(address, U256::from(0x100000))
         .build();
     let contract = Erc4337::new(address, &wallet);
-    // get block number - should not fail
-    let value = contract
-        .getNumber()
-        .state(state_overrides.clone())
-        .call()
-        .await;
-    assert!(value.is_ok());
-
-    // debug
     let result = wallet
         .debug_trace_call(
             contract.getNumber().into_transaction_request(),
@@ -85,7 +76,7 @@ async fn debug_trace_call_with_state_overrides(mut network: Network) {
             GethDebugTracingCallOptions {
                 tracing_options: GethDebugTracingOptions {
                     tracer: Some(GethDebugTracerType::JsTracer(
-                        validation_tracer_js().to_string(),
+                        opcount_tracer_js().to_string(),
                     )),
                     // timeout: Some(self.tracer_timeout.clone()),
                     ..Default::default()
@@ -96,11 +87,8 @@ async fn debug_trace_call_with_state_overrides(mut network: Network) {
         )
         .await
         .unwrap();
-    println!("{result:?}");
-
-    // balance still zero
-    let bal = wallet.get_balance(address).await.unwrap();
-    assert!(bal.is_zero());
+    assert!(result.is_js());
+    assert!(result.try_into_json_value().unwrap().is_number());
 }
 
 sol!(

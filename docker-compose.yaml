@@ -109,7 +109,7 @@ services:
     image: alchemyplatform/rundler:v0.11.0
     pull_policy: always
     environment:
-      - RUST_LOG=error
+      - RUST_LOG=info
       - CHAIN_ID=33468
       - CHAIN_NAME="ZQ2-localnet"
       - NODE_HTTP=http://node2:4200
