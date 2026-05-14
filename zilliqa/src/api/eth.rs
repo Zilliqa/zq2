@@ -14,10 +14,10 @@ use alloy::{
 };
 use anyhow::{Result, anyhow};
 use http::Extensions;
-use jsonrpsee::rpc_params;
 use jsonrpsee::{
     PendingSubscriptionSink, RpcModule,
     core::{SubscriptionError, traits::ToRpcParams},
+    rpc_params,
     types::{
         Params,
         error::{ErrorObject, ErrorObjectOwned},

@@ -958,6 +958,7 @@ impl Node {
         let GethDebugTracingOptions {
             tracer,
             tracer_config,
+            timeout,
             ..
         } = call_opts.tracing_options;
 
@@ -983,6 +984,10 @@ impl Node {
         },
         */
 
+        let _timeout = timeout
+            .map(|s| duration_str::parse_std(s).unwrap_or_default())
+            .unwrap_or(Duration::from_mins(1)); // 1-min default
+
         match tracer {
             Some(GethDebugTracerType::JsTracer(js_code)) => {
                 let config = tracer_config.into_json();
@@ -993,7 +998,7 @@ impl Node {
                         .map_err(|e| anyhow!("Unable to create js inspector: {e}"))?;
 
                 let (ResultAndState { result, state }, ..) = evm_state.apply_transaction_evm(
-                    call_params.from.clone().unwrap_or_default(),
+                    call_params.from.unwrap_or_default(),
                     call_params.to.and_then(|to| to.into_to()),
                     0,
                     None,
