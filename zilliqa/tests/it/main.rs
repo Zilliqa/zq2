@@ -33,6 +33,7 @@ use jsonrpsee::types::Request;
 use serde_json::value::{RawValue, Value};
 use tower::Service;
 use zilliqa::{
+    api::bundler,
     cfg::{ApiLimits, DbConfig, max_missed_view_age_default, new_view_broadcast_interval_default},
     contracts,
     crypto::NodePublicKey,
@@ -161,6 +162,7 @@ fn node(
     secret_key: SecretKey,
     onchain_key: SigningKey,
     index: usize,
+    bundler_rpc: bool,
     datadir: Option<TempDir>,
 ) -> Result<(
     TestNode,
@@ -222,7 +224,12 @@ fn node(
         swarm_peers,
     )?;
     let node = Arc::new(node);
-    let rpc_module = api::rpc_module(node.clone(), &api::all_enabled());
+
+    let rpc_module = if !bundler_rpc {
+        api::rpc_module(node.clone(), &api::all_enabled())
+    } else {
+        bundler::rpc_module(node.clone(), &api::bundler_enabled())
+    };
 
     Ok((
         TestNode {
@@ -284,6 +291,7 @@ struct Network {
     scilla_stdlib_dir: String,
     do_checkpoints: bool,
     blocks_per_epoch: u64,
+    bundler_rpc: bool,
     deposit_v3_upgrade_block_height: Option<u64>,
     scilla_server_socket_directory: String,
 }
@@ -301,6 +309,7 @@ impl Network {
         scilla_stdlib_dir: String,
         do_checkpoints: bool,
         blocks_per_epoch: u64,
+        bundler_rpc: bool,
         deposit_v3_upgrade_block_height: Option<u64>,
         scilla_server_socket_directory: String,
     ) -> Network {
@@ -315,6 +324,7 @@ impl Network {
             scilla_stdlib_dir,
             do_checkpoints,
             blocks_per_epoch,
+            bundler_rpc,
             deposit_v3_upgrade_block_height,
             scilla_server_socket_directory,
         )
@@ -332,6 +342,7 @@ impl Network {
         scilla_stdlib_dir: String,
         do_checkpoints: bool,
         blocks_per_epoch: u64,
+        bundler_rpc: bool,
         deposit_v3_upgrade_block_height: Option<u64>,
         scilla_server_socket_directory: String,
     ) -> Network {
@@ -472,6 +483,7 @@ impl Network {
                     key.0,
                     key.1,
                     i,
+                    bundler_rpc,
                     Some(tempfile::tempdir().unwrap()),
                 )
                 .unwrap()
@@ -518,6 +530,7 @@ impl Network {
             scilla_address,
             do_checkpoints,
             blocks_per_epoch,
+            bundler_rpc,
             scilla_stdlib_dir,
             deposit_v3_upgrade_block_height,
             scilla_server_socket_directory,
@@ -648,8 +661,15 @@ impl Network {
 
         let secret_key = options.secret_key_or_random(self.rng.clone());
         let onchain_key = options.onchain_key_or_random(self.rng.clone());
-        let (node, receiver, local_receiver, request_responses) =
-            node(config, secret_key, onchain_key, self.nodes.len(), None).unwrap();
+        let (node, receiver, local_receiver, request_responses) = node(
+            config,
+            secret_key,
+            onchain_key,
+            self.nodes.len(),
+            false,
+            None,
+        )
+        .unwrap();
 
         let mut peers = self.nodes.iter().map(|n| n.peer_id).collect_vec();
         peers.shuffle(self.rng.lock().unwrap().deref_mut());
@@ -749,7 +769,7 @@ impl Network {
                     c
                 };
 
-                node(config, key.0, key.1, i, Some(new_data_dir)).unwrap()
+                node(config, key.0, key.1, i, false, Some(new_data_dir)).unwrap()
             })
             .multiunzip();
 
@@ -1073,6 +1093,7 @@ impl Network {
                                     self.scilla_stdlib_dir.clone(),
                                     self.do_checkpoints,
                                     self.blocks_per_epoch,
+                                    self.bundler_rpc,
                                     self.deposit_v3_upgrade_block_height,
                                     self.scilla_server_socket_directory.clone(),
                                 ),
@@ -1553,7 +1574,7 @@ fn format_message(
     }
 }
 
-fn compile_contract(path: &str, contract: &str) -> (Contract, Bytes) {
+fn compile_contract(path: &str, contract: &str) -> (Contract, Bytes, Bytes) {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
     let vendor_dir = manifest_dir.join("../vendor/").canonicalize().unwrap();
@@ -1601,7 +1622,19 @@ fn compile_contract(path: &str, contract: &str) -> (Contract, Bytes) {
             .clone()
             .into_bytes()
             .unwrap(),
+        contract
+            .deployed_bytecode
+            .as_ref()
+            .unwrap()
+            .clone()
+            .into_bytes()
+            .unwrap(),
     )
+}
+
+fn deployed_contract(path: &str, contract: &str) -> Bytes {
+    let (_, _, bytecode) = compile_contract(path, contract);
+    bytecode
 }
 
 async fn deploy_contract(
@@ -1611,7 +1644,7 @@ async fn deploy_contract(
     wallet: &Wallet,
     network: &mut Network,
 ) -> (Address, TransactionReceipt) {
-    let (abi, bytecode) = compile_contract(path, contract);
+    let (abi, bytecode, _) = compile_contract(path, contract);
     let tx_hash = *wallet
         .send_transaction(
             TransactionRequest::default()

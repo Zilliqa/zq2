@@ -16,7 +16,8 @@ use anyhow::{Result, anyhow};
 use http::Extensions;
 use jsonrpsee::{
     PendingSubscriptionSink, RpcModule,
-    core::SubscriptionError,
+    core::{SubscriptionError, traits::ToRpcParams},
+    rpc_params,
     types::{
         Params,
         error::{ErrorObject, ErrorObjectOwned},
@@ -46,7 +47,6 @@ use crate::{
     crypto::Hash,
     data_access,
     db::Db,
-    error::ensure_success,
     exec::{ExecType::Estimate, ExtraOpts, zil_contract_address},
     message::Block,
     node::Node,
@@ -189,7 +189,7 @@ pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc
 }
 
 // See https://eips.ethereum.org/EIPS/eip-1898
-fn build_errored_response_for_missing_block(
+pub fn build_errored_response_for_missing_block(
     request: BlockId,
     result: Option<Block>,
 ) -> Result<Block> {
@@ -268,30 +268,10 @@ fn call(params: Params, node: &Arc<Node>) -> Result<String> {
     let block_id: BlockId = params.optional_next()?.unwrap_or_default();
     expect_end_of_params(&mut params, 1, 2)?;
 
-    let (state, block) = {
-        let block = node.get_block(block_id)?;
-        let block = build_errored_response_for_missing_block(block_id, block)?;
-        let state = node.get_state(&block)?;
-        (state, block)
-    };
-    if state.is_empty() {
-        return Err(anyhow!("State required to execute request does not exist"));
-    }
-
-    trace!("call_contract: block={:?}", block);
-
-    let result = state.call_contract(
-        call_params.from.unwrap_or_default(),
-        call_params.to.and_then(|to| to.into_to()),
-        call_params.input.into_input().unwrap_or_default().to_vec(),
-        u128::try_from(call_params.value.unwrap_or_default())?,
-        block.header,
-    )?;
-
-    match ensure_success(result) {
-        Ok(output) => Ok(output.to_hex()),
-        Err(err) => Err(ErrorObjectOwned::from(err).into()),
-    }
+    let array_params = rpc_params!(call_params, block_id);
+    let param_value = array_params.to_rpc_params()?;
+    let params = Params::new(param_value.as_deref().map(|s| s.get()));
+    super::bundler::eth_call(params, node)
 }
 
 fn chain_id(params: Params, node: &Arc<Node>) -> Result<String> {
