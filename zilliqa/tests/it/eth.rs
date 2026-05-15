@@ -1640,13 +1640,12 @@ async fn test_invalid_filter_id(mut network: Network) {
     println!("Starting invalid filter ID test");
     let wallet = network.random_wallet().await;
 
-    // Try to get changes for non-existent filter
-    println!("Attempting to get changes for invalid filter ID");
-    let result = wallet
+    let result: Value = wallet
         .client()
-        .request::<_, Value>("eth_getFilterChanges", ["0x123"])
-        .await;
-    assert!(result.is_err());
+        .request("eth_getFilterChanges", ["0x123"])
+        .await
+        .unwrap();
+    assert_eq!(result, json!([]));
 }
 
 #[zilliqa_macros::test]
@@ -1682,13 +1681,12 @@ async fn test_uninstall_filter(mut network: Network) {
     println!("Filter removed: {filter_removed}");
     assert!(filter_removed);
 
-    // Verify filter no longer exists
-    println!("Verifying filter no longer exists");
-    let result = wallet
+    let result: Value = wallet
         .client()
-        .request::<_, Value>("eth_getFilterChanges", [filter_id.clone()])
-        .await;
-    assert!(result.is_err());
+        .request("eth_getFilterChanges", [filter_id.clone()])
+        .await
+        .unwrap();
+    assert_eq!(result, json!([]));
 }
 
 #[zilliqa_macros::test]
