@@ -1284,7 +1284,9 @@ fn get_filter_changes(params: Params, node: &Arc<Node>) -> Result<serde_json::Va
     let filter_id = u128::from_str_radix(filter_id.strip_prefix("0x").unwrap_or(&filter_id), 16)?;
 
     let filters = { node.filters.clone() };
-    let mut filter = filters.get(filter_id).ok_or(anyhow!("filter not found"))?;
+    let Some(mut filter) = filters.get(filter_id) else {
+        return Ok(json!([]));
+    };
 
     match &mut filter.kind {
         FilterKind::Block(block_filter) => {
@@ -1349,7 +1351,7 @@ fn get_filter_logs(params: Params, node: &Arc<Node>) -> Result<serde_json::Value
             }
         }
     } else {
-        Err(anyhow!("filter not found"))
+        Ok(json!([]))
     }
 }
 
