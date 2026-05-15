@@ -5,9 +5,10 @@ use std::{
 };
 
 use alloy::{
-    primitives::{Address, B256, ChainId, U256},
+    primitives::{Address, B256, U256},
     rpc::types::PackedUserOperation as AlloyUserOperation,
 };
+use alloy_chains::Chain;
 use anyhow::{Result, anyhow};
 use bitvec::{bitarr, order::Msb0};
 use itertools::Either;
@@ -239,7 +240,7 @@ pub struct RequestBlocksByHeight {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UccbUserOp {
-    pub chain_id: ChainId,
+    pub chain: Chain,
     pub userop_hash: Hash,
     pub block_hash: Hash,
     pub public_key: NodePublicKey,

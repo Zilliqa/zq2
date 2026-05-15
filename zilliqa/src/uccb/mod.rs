@@ -6,10 +6,12 @@ use alloy::{
         Identity, Provider as _, ProviderBuilder, RootProvider,
         fillers::{BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller},
     },
-    rpc::types::PackedUserOperation as AlloyUserOperation,
+    rpc::{client::RpcClient, types::PackedUserOperation as AlloyUserOperation},
     sol,
     sol_types::SolValue as _,
+    transports::layers::RetryBackoffLayer,
 };
+use alloy_chains::Chain;
 use anyhow::Result;
 use dashmap::DashMap;
 use jsonrpsee::client_transport::ws::Url;
@@ -19,7 +21,7 @@ use rand::Rng as _;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
-    cfg::NodeConfig,
+    cfg::{NodeConfig, RemoteChain},
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey},
     db::Db,
     message::{ExternalMessage, UccbUserOp},
@@ -112,17 +114,17 @@ pub struct SignUserOp {
     pub userop: AlloyUserOperation,
     pub txn_hash: Hash,
     pub blk_hash: Hash,
-    pub dst_chain: ChainId,
-    pub src_chain: ChainId,
+    pub dst_chain: Chain,
+    pub src_chain: Chain,
     pub blk_height: u64,
     pub uop_hash: Option<Hash>,
-    pub seconds: u16,
+    retry_s: u16,
 }
 impl SignUserOp {
     pub fn new(
         userop: AlloyUserOperation,
-        dst_chain: ChainId,
-        src_chain: ChainId,
+        dst_chain: Chain,
+        src_chain: Chain,
         txn_hash: Hash,
         blk_hash: Hash,
         blk_height: u64,
@@ -135,13 +137,13 @@ impl SignUserOp {
             blk_hash,
             blk_height,
             uop_hash: None,
-            seconds: 0,
+            retry_s: 0,
         }
     }
 
     pub fn backoff(&mut self) -> Option<Duration> {
-        let elapse = self.seconds.saturating_add(1).checked_next_power_of_two()?;
-        self.seconds = elapse;
+        let elapse = self.retry_s.saturating_add(1).checked_next_power_of_two()?;
+        self.retry_s = elapse;
         let run_at = Duration::from_millis(
             // jitter
             rand::thread_rng()
@@ -155,30 +157,25 @@ impl SignUserOp {
 #[derive(Debug)]
 pub struct RelayUserOp {
     pub userop: AlloyUserOperation,
-    pub chain_id: ChainId,
+    pub chain: Chain,
     pub userop_hash: Hash,
     pub send_id: Hash,
-    seconds: u16,
+    retry_s: u16,
 }
 
 impl RelayUserOp {
-    pub fn new(
-        userop: AlloyUserOperation,
-        chain_id: ChainId,
-        userop_hash: Hash,
-        send_id: Hash,
-    ) -> Self {
+    pub fn new(userop: AlloyUserOperation, chain: Chain, userop_hash: Hash, send_id: Hash) -> Self {
         Self {
             userop,
-            chain_id,
+            chain,
             userop_hash,
             send_id,
-            seconds: 0u16,
+            retry_s: 0,
         }
     }
     pub fn backoff(&mut self) -> Option<Duration> {
-        let elapse = self.seconds.saturating_add(1).checked_next_power_of_two()?;
-        self.seconds = elapse;
+        let elapse = self.retry_s.saturating_add(1).checked_next_power_of_two()?;
+        self.retry_s = elapse;
         let run_at = Duration::from_millis(
             // jitter
             rand::thread_rng()
@@ -211,13 +208,30 @@ type Wallet = FillProvider<
     RootProvider,
 >;
 
+fn build_wallet(uri: &str) -> Result<Wallet> {
+    let url = Url::from_str(uri)?;
+
+    let retry_layer = RetryBackoffLayer::new(
+        10,
+        1_000,
+        url.fragment()
+            .map_or_else(|| 500u64, |s| s.parse::<u64>().unwrap()),
+    );
+
+    let client = RpcClient::builder().layer(retry_layer).hyper_http(url);
+    let provider = ProviderBuilder::new().connect_client(client);
+    Ok(provider)
+}
+
 pub struct EndPoint {
+    pub chain: Chain,
     pub gateway: Address,
     pub sender: Address,
     pub entrypoint: Address,
     pub paymaster: Address,
     pub bundler: Wallet,
     pub jsonrpc: Wallet,
+    pub testnet: bool,
 }
 type Providers = DashMap<ChainId, EndPoint>;
 
@@ -253,55 +267,66 @@ impl Uccb {
         request_responses: UnboundedSender<(ResponseChannel, ExternalMessage)>,
     ) -> Result<Self> {
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
-        let chain_id = ChainId::from(config.eth_chain_id);
+        let eth_chain_id = ChainId::from(config.eth_chain_id);
 
         let message_sender = Arc::new(MessageSender {
-            our_shard: chain_id,
+            our_shard: eth_chain_id,
             our_peer_id: peer_id,
             outbound_channel: message_sender_channel,
             local_channel: local_sender_channel,
         });
 
         let providers = Arc::new(DashMap::with_capacity(config.remote_chains.len()));
-        for remote in config.remote_chains.iter() {
-            let bundler =
-                ProviderBuilder::new().connect_hyper_http(Url::from_str(&remote.bundler_url)?);
-            let watcher =
-                ProviderBuilder::new().connect_hyper_http(Url::from_str(&remote.watcher_url)?);
+        for RemoteChain {
+            chain_id,
+            bundler_url,
+            watcher_url,
+            entrypoint,
+            gateway,
+            sender,
+            paymaster,
+        } in config.remote_chains.clone().into_iter()
+        {
+            let bundler = build_wallet(&bundler_url)?;
+            let jsonrpc = build_wallet(&watcher_url)?;
 
             let (get_entrypoints, get_chain_id) = tokio::join!(
                 bundler.raw_request::<(), Vec<Address>>("eth_supportedEntryPoints".into(), ()),
-                watcher.get_chain_id()
+                jsonrpc.get_chain_id()
             );
 
-            tracing::info!(entrypoint=%remote.entrypoint, "UCCB#{}", remote.chain_id);
-
             if let Err(err) = get_entrypoints {
-                tracing::warn!(%err, "UCCB#{chain_id} {}", remote.bundler_url);
+                tracing::warn!(%err, "UCCB#{eth_chain_id} {bundler_url}");
             } else if let Ok(ref entrypoints) = get_entrypoints
-                && !entrypoints.contains(&remote.entrypoint)
+                && !entrypoints.contains(&entrypoint)
             {
-                tracing::warn!("UCCB#{}: != {:?}", remote.chain_id, entrypoints)
+                tracing::warn!("UCCB#{eth_chain_id}: != {entrypoints:?}");
             };
 
             if let Err(err) = get_chain_id {
-                tracing::warn!(%err, "UCCB#{chain_id} {}", remote.watcher_url);
+                tracing::warn!(%err, "UCCB#{eth_chain_id} {}", watcher_url);
             } else if let Ok(id) = get_chain_id
-                && id != remote.chain_id
+                && id != chain_id
             {
-                tracing::warn!("UCCB#{} != {}", remote.chain_id, id)
+                tracing::warn!("UCCB#{eth_chain_id} != {id}")
             };
 
+            let chain = Chain::from_id(chain_id);
+            let testnet = chain.named().map(|c| c.is_testnet()).unwrap_or_default();
+
+            tracing::info!("UCCB#{eth_chain_id} => {chain}");
             // insert it either way as Relayer/Signer has to handle http errors anyway.
             providers.insert(
-                remote.chain_id,
+                chain_id,
                 EndPoint {
-                    entrypoint: remote.entrypoint,
-                    gateway: remote.gateway,
-                    sender: remote.sender,
-                    paymaster: remote.paymaster,
+                    entrypoint,
+                    gateway,
+                    sender,
+                    paymaster,
                     bundler,
-                    jsonrpc: watcher,
+                    jsonrpc,
+                    chain,
+                    testnet,
                 },
             );
         }
@@ -318,14 +343,14 @@ impl Uccb {
         )
         .await?;
 
-        tracing::info!("UUCB#{} started", chain_id);
+        tracing::info!("UUCB#{eth_chain_id} started");
 
         Ok(Self {
             // config,
             // secret_key,
             peer_id,
             // db,
-            chain_id,
+            chain_id: eth_chain_id,
             _signer,
             relayer,
             // message_sender,
@@ -348,12 +373,12 @@ impl Uccb {
                 signature,
                 public_key,
                 block_hash,
-                chain_id,
+                chain,
             }) => {
                 // handle
                 self.relayer.collect_userop(
                     from,
-                    chain_id,
+                    chain,
                     block_hash,
                     userop_hash,
                     public_key,

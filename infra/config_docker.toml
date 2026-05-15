@@ -105,6 +105,15 @@ consensus.genesis_accounts = [
         "99F7f7C00526426b8dCA99302e96d85A0e5fd400",
         "5000000000000000000000",
     ],
+    # Rundler spec-tests
+    [
+        "f39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "5000000000000000000000",
+    ],
+    [
+        "90F8bf6A479f320ead074411a4B0e7944Ea8c9C1",
+        "5000000000000000000000",
+    ],
 ]
 
 # speed up local/docker epochs

@@ -1,17 +1,19 @@
 use alloy::{
     dyn_abi::Eip712Domain,
-    primitives::{Address, B256, ChainId, U256, keccak256},
+    primitives::{Address, B256, U256, keccak256},
     sol_types::SolValue,
 };
+use alloy_chains::Chain;
 use anyhow::Result;
 
 use super::PackedUserOperation;
 
-pub fn get_chain_id(account_id: &str) -> Result<ChainId> {
+/// Retrieve the chain from a given CAIP-10 account
+pub fn get_chain_id(account_id: &str) -> Result<Chain> {
     if let [namespace, chain_id, _address] = account_id.split(':').collect::<Vec<_>>().as_slice()
         && *namespace == "eip155"
     {
-        return Ok(ChainId::from_str_radix(chain_id, 10)?);
+        return Ok(Chain::from_id(chain_id.parse::<u64>()?));
     }
     Err(anyhow::anyhow!("Invalid AccountId"))
 }
