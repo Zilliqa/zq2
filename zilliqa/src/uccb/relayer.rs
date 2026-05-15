@@ -2,7 +2,7 @@ use std::{num::NonZeroUsize, sync::Arc};
 
 use alloy::{
     eips::BlockNumberOrTag,
-    primitives::{Address, B256, ChainId, U256, keccak256},
+    primitives::{Address, B256, U256, keccak256},
     providers::{Provider, utils::eip1559_default_estimator},
     rpc::types::{
         PackedUserOperation as AlloyUserOperation, SendUserOperationResponse,
@@ -10,6 +10,7 @@ use alloy::{
     },
     sol_types::SolValue,
 };
+use alloy_chains::Chain;
 use anyhow::{Context, Result};
 use bitvec::{bitarr, order::Msb0};
 use blsful::{Bls12381G2Impl, Signature};
@@ -44,6 +45,7 @@ pub struct Relayer {
     relay_tx: UnboundedSender<RelayUserOp>,
     bls_uop: Mutex<LruCache<Hash, BlsUserOp>>,
     workers: JoinSet<()>,
+    chain: Chain,
 }
 
 impl Drop for Relayer {
@@ -65,6 +67,7 @@ impl Relayer {
         let address = secret_key.to_evm_address();
         let state = State::new(db.state_trie()?, &config, db.clone())?;
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
+        let chain = Chain::from_id(config.eth_chain_id);
 
         let mut workers = JoinSet::new();
 
@@ -93,6 +96,7 @@ impl Relayer {
             state,
             peer_id,
             bls_uop,
+            chain,
         })
     }
 
@@ -107,10 +111,10 @@ impl Relayer {
         let RelayUserOp {
             userop,
             userop_hash,
-            chain_id,
+            chain,
             ..
         } = relay_uop;
-        let d = providers.get(chain_id).context("chain_id missing")?;
+        let d = providers.get(&chain.id()).context("{chain} missing")?;
         let EndPoint {
             entrypoint,
             bundler,
@@ -126,7 +130,7 @@ impl Relayer {
             .await?;
         // responds with NULL if userop hash does not exist; else userop details.
         if !res.is_null() {
-            tracing::warn!(%send_id, "sendUserOp({chain_id}): skip");
+            tracing::warn!(%send_id, "sendUserOp({chain}): skip");
             return Ok(());
         }
 
@@ -144,7 +148,7 @@ impl Relayer {
         if user_op_hash == userop_hash {
             return Ok(());
         }
-        unreachable!("UserOp mismatch");
+        unreachable!("UserOp mismatch"); // this should **never** happen
     }
 
     /// Check for sufficient gas/fees
@@ -155,10 +159,8 @@ impl Relayer {
         relay_uop: &mut RelayUserOp,
         providers: Arc<super::Providers>,
     ) -> Result<()> {
-        let RelayUserOp {
-            userop, chain_id, ..
-        } = relay_uop;
-        let d = providers.get(chain_id).context("chain_id missing")?;
+        let RelayUserOp { userop, chain, .. } = relay_uop;
+        let d = providers.get(&chain.id()).context("{chain} missing")?;
         let EndPoint {
             entrypoint,
             jsonrpc,
@@ -209,20 +211,21 @@ impl Relayer {
         mut relay_rx: UnboundedReceiver<RelayUserOp>,
         providers: Arc<super::Providers>,
     ) -> Result<()> {
-        let chain_id = config.eth_chain_id;
-        tracing::info!(chains=%providers.len(), "Relayer-{chain_id}");
+        let chain = Chain::from_id(config.eth_chain_id);
         if providers.is_empty() {
-            tracing::warn!("Relayer-{chain_id} terminated");
+            tracing::warn!("Relayer {chain} terminated");
             return Ok(());
         }
+        tracing::info!(chains=%providers.len(), "Relayer {chain}");
 
         // for exponential-backoff-retry
-        let mut dq: DelayQueue<RelayUserOp> = DelayQueue::new();
+        let mut delayq: DelayQueue<RelayUserOp> = DelayQueue::new();
 
         loop {
             select! {
                 // queue processing
                 Some(mut relay_uop) = relay_rx.recv() => {
+                    let dest = relay_uop.chain;
                     let send_id = keccak256(relay_uop.userop.call_data.iter().as_slice());
                     // TODO: 1. Check for sufficient gas
                     // if let Err(err) = Self::check_gasfees(send_id, &mut relay_uop, providers.clone()).await
@@ -232,26 +235,29 @@ impl Relayer {
                     // 2. Submit the UserOp
                     if let Err(err) = Self::submit_userop(send_id, &mut relay_uop, providers.clone()).await
                     {
-                        tracing::warn!(%send_id, %err, userop=?relay_uop.userop, "Relayer#{chain_id}: txmt");
+                        tracing::warn!(%send_id, %err, userop=?relay_uop.userop, "Relayer({chain} => {dest}): transmit");
                     } else {
                         // Done
-                        tracing::debug!(%send_id, "Relayer#{chain_id}: submitted");
+                        tracing::debug!(%send_id, "Relayer({chain} => {dest}): submitted");
                         continue;
                     }
 
                     // X. Backoff-retry
                     let Some(backoff) = relay_uop.backoff() else {
                         // TODO: DEAD LETTER OFFICE
-                        tracing::error!(%send_id, "Relayer#{chain_id}: dropped");
+                        tracing::error!(%send_id, "Relayer({chain} => {dest}): dropped");
                         continue;
                     };
-                    tracing::warn!(%send_id, ?backoff, "Relayer#{chain_id}: retry");
-                    dq.insert(relay_uop, backoff);
+                    tracing::warn!(%send_id, ?backoff, "Relayer({chain} => {dest}): retry");
+                    delayq.insert(relay_uop, backoff);
                 }
                 // retry processing
-                Some(due) = dq.next() => {
+                Some(due) = delayq.next() => {
                     let relay_uop = due.into_inner();
-                    relay_tx.send(relay_uop).map_err(|_| anyhow::anyhow!("relay_rx shutdown"))?;
+                    if let Err(err) = relay_tx.send(relay_uop) {
+                        tracing::error!(%err, "relay_tx closed");
+                        break Ok(());
+                    };
                 }
             }
         }
@@ -264,7 +270,7 @@ impl Relayer {
     pub fn collect_userop(
         &self,
         from: PeerId,
-        chain_id: ChainId,
+        chain: Chain,
         block_hash: Hash,
         userop_hash: Hash,
         public_key: NodePublicKey,
@@ -324,7 +330,7 @@ impl Relayer {
         if bop.userop.is_some() && bop.threshold == 0 {
             let bop = cache.pop(&userop_hash).unwrap();
             let stakers = state.get_stakers(block.header).expect("must exist");
-            self.relay_userop(userop_hash, chain_id, stakers, bop)?;
+            self.relay_userop(userop_hash, chain, stakers, bop)?;
         }
         Ok(())
     }
@@ -335,7 +341,7 @@ impl Relayer {
     pub fn relay_userop(
         &self,
         userop_hash: Hash,
-        chain_id: ChainId,
+        chain: Chain,
         stakers: Vec<NodePublicKey>,
         bop: BlsUserOp,
     ) -> Result<()> {
@@ -380,19 +386,21 @@ impl Relayer {
         // 3. Construct final UserOp
         let bop = bop.userop.unwrap();
         let send_id = keccak256(bop.call_data.iter().as_slice()).into();
-        tracing::debug!(%send_id, "relay({chain_id})");
+        tracing::debug!(%send_id, "Relayer({} => {chain}): relayed", self.chain);
         let final_uop = RelayUserOp::new(
             AlloyUserOperation {
                 signature: (signature.to_bytes(), message).abi_encode_packed().into(), // replace the signature with multi-sig
                 ..bop
             },
-            chain_id,
+            chain,
             userop_hash,
             send_id,
         );
 
         // 4. Push UserOp to the sending queue
-        self.relay_tx.send(final_uop)?;
+        if let Err(err) = self.relay_tx.send(final_uop) {
+            tracing::error!(%err, "relay_tx closed");
+        };
         Ok(())
     }
 }

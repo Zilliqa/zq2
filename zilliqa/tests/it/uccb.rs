@@ -12,8 +12,16 @@ use alloy_rpc_types_trace::geth::{
 
 use crate::{Network, deploy_contract, deployed_contract};
 
+// https://github.com/ethereum/go-ethereum/blob/master/eth/tracers/js/internal/tracers/opcount_tracer.js
 fn opcount_tracer_js() -> &'static str {
-    include_str!("js/opcount_tracer.js").trim_end_matches(";export{};")
+    r#"
+    {
+	count: 0,
+	step: function(log, db) { this.count++ },
+	fault: function(log, db) { },
+	result: function(ctx, db) { return this.count }
+    }
+    "#
 }
 
 sol!(
@@ -78,7 +86,7 @@ async fn debug_trace_call_js_tracer(mut network: Network) {
                     tracer: Some(GethDebugTracerType::JsTracer(
                         opcount_tracer_js().to_string(),
                     )),
-                    // timeout: Some(self.tracer_timeout.clone()),
+                    timeout: Some("10s".to_string()),
                     ..Default::default()
                 },
                 state_overrides: Some(state_overrides),
