@@ -116,12 +116,13 @@ dependencies = [
 
 [[package]]
 name = "alloy-chains"
-version = "0.2.8"
+version = "0.2.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e2672194d5865f00b03e5c7844d2c6f172a842e5c3bc49d7f9b871c42c95ae65"
+checksum = "84e0378e959aa6a885897522080a990e80eb317f1e9a222a604492ea50e13096"
 dependencies = [
  "alloy-primitives",
  "num_enum",
+ "serde",
  "strum 0.27.2",
 ]
 
@@ -11458,6 +11459,7 @@ name = "zilliqa"
 version = "0.1.0"
 dependencies = [
  "alloy",
+ "alloy-chains",
  "alloy-consensus",
  "alloy-rpc-types-debug",
  "alloy-rpc-types-trace",
