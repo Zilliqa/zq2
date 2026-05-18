@@ -370,7 +370,7 @@ pub mod deposit_v7 {
 }
 
 pub mod deposit_v8 {
-    use ethabi::{Constructor, Function};
+    use ethabi::{Constructor, Function, ParamType};
     use once_cell::sync::Lazy;
 
     use super::{COMPILED_DEPOSIT_V8, Contract, contract_from};
@@ -410,8 +410,34 @@ pub mod deposit_v8 {
         Lazy::new(|| CONTRACT.abi.function("depositTopup").unwrap().clone());
     pub static UNSTAKE: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("unstake").unwrap().clone());
-    pub static WITHDRAW: Lazy<Function> =
-        Lazy::new(|| CONTRACT.abi.function("withdraw").unwrap().clone());
+    // `withdraw` is overloaded: `withdraw(bytes)` drains all available unstaked
+    // funds, `withdraw(bytes,uint256)` drains up to `count` entries. Resolve each
+    // by exact signature so the selector cannot drift if more overloads are added.
+    pub static WITHDRAW: Lazy<Function> = Lazy::new(|| {
+        CONTRACT
+            .abi
+            .functions_by_name("withdraw")
+            .unwrap()
+            .iter()
+            .find(|f| matches!(f.inputs.as_slice(), [p] if p.kind == ParamType::Bytes))
+            .expect("withdraw(bytes) overload missing from deposit_v8 ABI")
+            .clone()
+    });
+    pub static WITHDRAW_COUNT: Lazy<Function> = Lazy::new(|| {
+        CONTRACT
+            .abi
+            .functions_by_name("withdraw")
+            .unwrap()
+            .iter()
+            .find(|f| {
+                matches!(
+                    f.inputs.as_slice(),
+                    [p1, p2] if p1.kind == ParamType::Bytes && p2.kind == ParamType::Uint(256)
+                )
+            })
+            .expect("withdraw(bytes,uint256) overload missing from deposit_v8 ABI")
+            .clone()
+    });
     pub static CURRENT_EPOCH: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("currentEpoch").unwrap().clone());
     pub static GET_STAKE: Lazy<Function> =
