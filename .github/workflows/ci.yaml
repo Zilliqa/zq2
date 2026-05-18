@@ -108,3 +108,23 @@ jobs:
           CXX: clang++
           CC: clang
         run: export PATH="/scilla/0/bin:$PATH" && ./scripts/js_test.sh
+  bundler_test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - name: Install Rust
+        run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Install default toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Install foundry
+        uses: foundry-rs/foundry-toolchain@v1
+      - name: Install PDM
+        uses: pdm-project/setup-pdm@v4
+      - uses: Swatinem/rust-cache@v2
+      - name: bundler-spec-test framework
+        env:
+          CXX: clang++
+          CC: clang
+        run: ./scripts/bundler_test.sh
