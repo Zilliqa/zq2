@@ -22,7 +22,7 @@ use crate::{
 pub struct Reward {
     pub number: u64,
     pub parent_hash: Hash,
-    pub proposer: (Address, u128),
+    pub proposer: Option<(Address, u128)>,
     pub cosigners: Vec<(Address, u128)>,
     pub gas_fee: u128,
 }
@@ -107,15 +107,16 @@ impl Rewards {
             }
 
             // 1. Fold proposer reward
-            let (proposer_addr, proposer_amount) = reward.proposer;
-            let entry = rewards_by_address.entry(proposer_addr).or_insert(0u128);
-            *entry = (*entry)
-                .checked_add(proposer_amount)
-                .ok_or_else(|| anyhow!("overflow crediting proposer reward"))?;
+            if let Some((proposer_addr, proposer_amount)) = reward.proposer {
+                let entry = rewards_by_address.entry(proposer_addr).or_insert(0u128);
+                *entry = (*entry)
+                    .checked_add(proposer_amount)
+                    .ok_or_else(|| anyhow!("overflow crediting proposer reward"))?;
 
-            total_rewards_issued = total_rewards_issued
-                .checked_add(proposer_amount)
-                .ok_or_else(|| anyhow!("overflow accumulating total rewards"))?;
+                total_rewards_issued = total_rewards_issued
+                    .checked_add(proposer_amount)
+                    .ok_or_else(|| anyhow!("overflow accumulating total rewards"))?;
+            }
 
             // 2. Fold cosigner rewards
             for (addr, amount) in &reward.cosigners {
@@ -187,15 +188,14 @@ pub fn compute_reward_at(
     let rewards_per_block: u128 = *config.rewards_per_hour / config.blocks_per_hour as u128;
     let half = rewards_per_block / 2;
 
-    let proposer_address = parent_state
-        .get_reward_address(proposer)?
-        .ok_or_else(|| anyhow!("proposer has no reward address"))?;
-    let proposer_entry = (proposer_address, half);
-    let attributes = [
-        KeyValue::new("address", format!("{proposer_address:?}")),
-        KeyValue::new("role", "proposer"),
-    ];
-    earned_reward.add((half as f64) / 1e18, &attributes);
+    let proposer_entry = parent_state.get_reward_address(proposer)?.map(|addr| {
+        let attributes = [
+            KeyValue::new("address", format!("{addr:?}")),
+            KeyValue::new("role", "proposer"),
+        ];
+        earned_reward.add((half as f64) / 1e18, &attributes);
+        (addr, half)
+    });
 
     let cosigner_stake: Vec<(Option<Address>, u128)> = committee
         .iter()
@@ -417,17 +417,18 @@ pub fn apply_for_blocks_in_epoch(
 fn apply_reward(state: &mut State, reward: &Reward) -> Result<u128> {
     let mut total_rewards_issued: u128 = 0;
 
-    let (proposer_addr, proposer_amount) = reward.proposer;
-    state.mutate_account(proposer_addr, |a| {
-        a.balance = a
-            .balance
+    if let Some((proposer_addr, proposer_amount)) = reward.proposer {
+        state.mutate_account(proposer_addr, |a| {
+            a.balance = a
+                .balance
+                .checked_add(proposer_amount)
+                .ok_or_else(|| anyhow!("overflow crediting proposer reward"))?;
+            Ok(())
+        })?;
+        total_rewards_issued = total_rewards_issued
             .checked_add(proposer_amount)
-            .ok_or_else(|| anyhow!("overflow crediting proposer reward"))?;
-        Ok(())
-    })?;
-    total_rewards_issued = total_rewards_issued
-        .checked_add(proposer_amount)
-        .ok_or_else(|| anyhow!("overflow accumulating total rewards"))?;
+            .ok_or_else(|| anyhow!("overflow accumulating total rewards"))?;
+    }
 
     for (addr, amount) in &reward.cosigners {
         state.mutate_account(*addr, |a| {
