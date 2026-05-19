@@ -61,7 +61,7 @@ importers:
         specifier: ^6.1.6
         version: 6.1.6(@ethersproject/abi@5.8.0)(@ethersproject/providers@5.7.2(bufferutil@4.0.8)(utf-8-validate@5.0.10))(@typechain/ethers-v5@10.2.1(@ethersproject/abi@5.8.0)(@ethersproject/providers@5.7.2(bufferutil@4.0.8)(utf-8-validate@5.0.10))(ethers@5.7.2(bufferutil@4.0.8)(utf-8-validate@5.0.10))(typechain@8.3.2(typescript@5.7.2))(typescript@5.7.2))(ethers@5.7.2(bufferutil@4.0.8)(utf-8-validate@5.0.10))(hardhat@2.22.17(bufferutil@4.0.8)(ts-node@10.9.2(@types/node@22.10.2)(typescript@5.7.2))(typescript@5.7.2)(utf-8-validate@5.0.10))(typechain@8.3.2(typescript@5.7.2))
       '@types/chai':
-        specifier: ^4.3.20
+        specifier: ^4.3.6
         version: 4.3.20
       '@types/cli-color':
         specifier: ^2.0.6
@@ -76,7 +76,7 @@ importers:
         specifier: 1.15.2
         version: 1.15.2
       chai:
-        specifier: ^4.5.0
+        specifier: ^4.3.10
         version: 4.5.0
       eslint:
         specifier: ^9.26.0
