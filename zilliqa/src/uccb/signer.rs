@@ -132,21 +132,37 @@ impl Signer {
         let mut cache =
             lru::LruCache::<ChainId, u64>::new(NonZeroUsize::new(watchers.len()).unwrap());
 
+        // Schedule the polls according to average block-times.
+        let mut poll_sched: DelayQueue<Chain> = DelayQueue::new();
+        for remote in config.remote_chains.iter() {
+            let chain = Chain::from_id(remote.chain_id);
+            let period = chain
+                .average_blocktime_hint()
+                .unwrap_or(Duration::from_secs(1));
+            poll_sched.insert(chain, period);
+        }
+
         // Subscribing to the live-stream results in 'latest' blocks that may get reorganized.
         // Manual polling is used to ensure that only finalized blocks are processed.
-        loop {
-            tokio::time::sleep(config.consensus.block_time).await;
-            for watcher in watchers.iter() {
-                let (
-                    _chain_id,
-                    EndPoint {
-                        gateway,
-                        jsonrpc,
-                        chain,
-                        testnet: src_test,
-                        ..
-                    },
-                ) = watcher.pair();
+        while let Some(due) = poll_sched.next().await {
+            // reschedule the poll
+            let chain = due.into_inner();
+            let period = chain
+                .average_blocktime_hint()
+                .unwrap_or(Duration::from_secs(1));
+            tracing::trace!("Poll {chain:?} every {period:?}");
+            let chain_id = chain.id();
+            poll_sched.insert(chain, period);
+
+            //  poll the chain
+            if let Some(watcher) = watchers.get(&chain_id) {
+                let EndPoint {
+                    gateway,
+                    jsonrpc,
+                    chain,
+                    testnet: src_test,
+                    ..
+                } = watcher.value();
 
                 // 1. Check for progress
                 let (cache_height, final_height) = if let Ok(Some(final_block)) = jsonrpc
@@ -267,6 +283,7 @@ impl Signer {
                 }
             }
         }
+        Ok(())
     }
 
     /// Sign the UserOps
