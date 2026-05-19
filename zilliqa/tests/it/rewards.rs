@@ -258,9 +258,10 @@ async fn epoch_and_legacy_rewards_match(mut network: Network) {
                 .preview_reward_at(block.hash())
                 .expect("preview_reward_at should succeed");
 
-            let (proposer_addr, proposer_amount) = reward.proposer;
-            *expected_delta.entry(proposer_addr).or_insert(0) += proposer_amount;
-            expected_rewards_issued += proposer_amount;
+            if let Some((proposer_addr, proposer_amount)) = reward.proposer {
+                *expected_delta.entry(proposer_addr).or_insert(0) += proposer_amount;
+                expected_rewards_issued += proposer_amount;
+            }
 
             for (addr, amount) in &reward.cosigners {
                 *expected_delta.entry(*addr).or_insert(0) += *amount;
