@@ -33,9 +33,10 @@ timeout 60 bash -c 'until curl -sf http://localhost:4201/health; do sleep 1; don
 
 # Pre install contracts
 echo "Install Entrypoint v0.8"
-npm install @account-abstraction/contracts
+npm install @account-abstraction/contracts@0.8.0
 cast publish --rpc-url http://localhost:4200 0xf8a58085174876e800830186a08080b853604580600e600039806000f350fe7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf31ba02222222222222222222222222222222222222222222222222222222222222222a02222222222222222222222222222222222222222222222222222222222222222
 cast send --rpc-url http://localhost:4200 --private-key 0x0000000000000000000000000000000000000000000000000000000000000004 0x4e59b44847b379578588920cA78FbF26c0B4956C   "$(node -e "const {bytecode} = require('@account-abstraction/contracts/artifacts/EntryPoint.json'); console.log('0x0a59dbff790c23c976a548690c27297883cc66b4c67024f9117b0238995e35e9' + bytecode.slice(2))")"
+# cast send --rpc-url http://localhost:4200 --private-key 0x0000000000000000000000000000000000000000000000000000000000000004 0x4e59b44847b379578588920cA78FbF26c0B4956C   "$(node -e "const {bytecode} = require('@account-abstraction/contracts/artifacts/SimpleAccountFactory.json'); console.log('0x0000000000000000000000000000000000000000000000000000000000000000' + bytecode.slice(2))")"
 
 # Install Bundler
 echo "Install Alto-Bundler"
