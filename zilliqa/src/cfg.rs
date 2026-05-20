@@ -719,6 +719,9 @@ impl Forks {
                 ForkName::ScillaCallGasExemptAddrsV2 => {
                     fork.scilla_call_gas_exempt_addrs_v2.length() != 0
                 }
+                ForkName::DontOverwriteAccountsFromStaleScillaState => {
+                    fork.dont_overwrite_evm_accounts_from_stale_scilla_state
+                }
             } {
                 return Some(fork.at_height);
             }
@@ -768,6 +771,7 @@ pub struct Fork {
     pub scilla_call_gas_exempt_addrs_v2: Vec<Address>,
     pub randao_support: bool,
     pub evm_to_scilla_strings_encoded_properly: bool,
+    pub dont_overwrite_evm_accounts_from_stale_scilla_state: bool,
 }
 
 pub enum ForkName {
@@ -795,6 +799,7 @@ pub enum ForkName {
     UseMaxGasPriorityFee,
     ValidatorJailing,
     ScillaCallGasExemptAddrsV2,
+    DontOverwriteAccountsFromStaleScillaState,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -918,6 +923,8 @@ pub struct ForkDelta {
     pub randao_support: Option<bool>,
     /// if true, strings passed from EVM to Scilla via interop are properly JSON-encoded
     pub evm_to_scilla_strings_encoded_properly: Option<bool>,
+    /// If true, addresses modified also by EVM are skipped while applying the Scilla state delta
+    pub dont_overwrite_evm_accounts_from_stale_scilla_state: Option<bool>,
 }
 
 impl Fork {
@@ -1033,6 +1040,9 @@ impl Fork {
             evm_to_scilla_strings_encoded_properly: delta
                 .evm_to_scilla_strings_encoded_properly
                 .unwrap_or(self.evm_to_scilla_strings_encoded_properly),
+            dont_overwrite_evm_accounts_from_stale_scilla_state: delta
+                .dont_overwrite_evm_accounts_from_stale_scilla_state
+                .unwrap_or(self.dont_overwrite_evm_accounts_from_stale_scilla_state),
         }
     }
 }
@@ -1139,6 +1149,7 @@ pub fn genesis_fork_default() -> Fork {
         scilla_call_gas_exempt_addrs_v2: vec![],
         randao_support: true,
         evm_to_scilla_strings_encoded_properly: true,
+        dont_overwrite_evm_accounts_from_stale_scilla_state: true,
     }
 }
 
@@ -1318,6 +1329,7 @@ mod tests {
                 scilla_call_gas_exempt_addrs_v2: vec![],
                 randao_support: None,
                 evm_to_scilla_strings_encoded_properly: None,
+                dont_overwrite_evm_accounts_from_stale_scilla_state: None,
             }],
             ..Default::default()
         };
@@ -1379,6 +1391,7 @@ mod tests {
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: Some(false),
                     evm_to_scilla_strings_encoded_properly: None,
+                    dont_overwrite_evm_accounts_from_stale_scilla_state: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1420,6 +1433,7 @@ mod tests {
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: None,
                     evm_to_scilla_strings_encoded_properly: None,
+                    dont_overwrite_evm_accounts_from_stale_scilla_state: None,
                 },
             ],
             ..Default::default()
@@ -1498,6 +1512,7 @@ mod tests {
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: None,
                     evm_to_scilla_strings_encoded_properly: None,
+                    dont_overwrite_evm_accounts_from_stale_scilla_state: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1539,6 +1554,7 @@ mod tests {
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: None,
                     evm_to_scilla_strings_encoded_properly: None,
+                    dont_overwrite_evm_accounts_from_stale_scilla_state: None,
                 },
             ],
             ..Default::default()
@@ -1605,6 +1621,7 @@ mod tests {
                 scilla_call_gas_exempt_addrs_v2: vec![],
                 randao_support: true,
                 evm_to_scilla_strings_encoded_properly: true,
+                dont_overwrite_evm_accounts_from_stale_scilla_state: true,
             },
             forks: vec![],
             ..Default::default()
@@ -1659,6 +1676,7 @@ mod tests {
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: None,
                     evm_to_scilla_strings_encoded_properly: None,
+                    dont_overwrite_evm_accounts_from_stale_scilla_state: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1700,6 +1718,7 @@ mod tests {
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: None,
                     evm_to_scilla_strings_encoded_properly: None,
+                    dont_overwrite_evm_accounts_from_stale_scilla_state: None,
                 },
             ],
             ..Default::default()

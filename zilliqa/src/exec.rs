@@ -866,7 +866,7 @@ impl State {
                 .apply_state_changes_only_if_transaction_succeeds;
 
             if !update_state_only_if_transaction_succeeds || result.success {
-                self.apply_delta_scilla(&state, current_block.number)?;
+                self.apply_delta_scilla(&state, None, current_block.number)?;
             } else {
                 // If the transaction rejected, we must update the nonce and balance of the sender account.
                 let from_account = state
@@ -920,10 +920,10 @@ impl State {
 
             if apply_scilla_delta_when_evm_succeeded {
                 if let ExecutionResult::Success { .. } = result {
-                    self.apply_delta_scilla(&scilla_state, current_block.number)?;
+                    self.apply_delta_scilla(&scilla_state, Some(&state), current_block.number)?;
                 }
             } else {
-                self.apply_delta_scilla(&scilla_state, current_block.number)?;
+                self.apply_delta_scilla(&scilla_state, Some(&state), current_block.number)?;
             }
 
             Ok(TransactionApplyResult::Evm(ResultAndState {
@@ -937,13 +937,23 @@ impl State {
     fn apply_delta_scilla(
         &mut self,
         state: &HashMap<Address, PendingAccount>,
+        evm_state: Option<&EvmState>,
         current_block_number: u64,
     ) -> Result<()> {
         let fork = self.forks.get(current_block_number);
         let only_mutated_accounts_update_state = fork.only_mutated_accounts_update_state;
         let scilla_delta_maps_are_applied_correctly = fork.scilla_delta_maps_are_applied_correctly;
+        let dont_overwrite_evm_accounts_from_stale_scilla_state =
+            fork.dont_overwrite_evm_accounts_from_stale_scilla_state;
         for (&address, account) in state {
             if only_mutated_accounts_update_state && !account.touched {
+                continue;
+            }
+            // Modified addresses by EVM are skipped
+            if dont_overwrite_evm_accounts_from_stale_scilla_state
+                && let Some(evm) = evm_state
+                && evm.contains_key(&address)
+            {
                 continue;
             }
 

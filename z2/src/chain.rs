@@ -201,6 +201,7 @@ impl Chain {
                 "scilla_call_gas_exempt_addrs_v2": [],
                 "randao_support": false,
                 "evm_to_scilla_strings_encoded_properly": false,
+                "dont_overwrite_evm_accounts_from_stale_scilla_state": false,
             })),
             Chain::Zq2Mainnet => Some(json!({
                 "at_height": 0,
@@ -242,6 +243,7 @@ impl Chain {
                 "scilla_call_gas_exempt_addrs_v2": [],
                 "randao_support": false,
                 "evm_to_scilla_strings_encoded_properly": false,
+                "dont_overwrite_evm_accounts_from_stale_scilla_state": false,
             })),
             _ => None,
         }
@@ -300,6 +302,7 @@ impl Chain {
                 }),
                 json!({ "at_height": 28281600, "randao_support": true}),
                 json!({ "at_height": 29230131, "evm_to_scilla_strings_encoded_properly": true}),
+                json!({ "at_height": 999999999, "dont_overwrite_evm_accounts_from_stale_scilla_state": true}),
             ]),
             Chain::Zq2Mainnet => Some(vec![
                 json!({ "at_height": 4770088, "executable_blocks": true }),
@@ -356,6 +359,7 @@ impl Chain {
                     ],
                 }),
                 json!({ "at_height": 25905600, "randao_support": true, "evm_to_scilla_strings_encoded_properly": true}),
+                json!({ "at_height": 27081150, "dont_overwrite_evm_accounts_from_stale_scilla_state": true}),
             ]),
             _ => None,
         }
