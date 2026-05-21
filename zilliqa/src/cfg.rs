@@ -722,6 +722,12 @@ impl Forks {
                 ForkName::DontOverwriteAccountsFromStaleScillaState => {
                     fork.dont_overwrite_evm_accounts_from_stale_scilla_state
                 }
+                ForkName::MakeTransfersInScillaPrecompilesWithJournalApi => {
+                    fork.make_transfers_in_scilla_precompiles_with_journal_api
+                }
+                ForkName::DisableInteropNativeZilTransfers0 => {
+                    fork.disable_interop_native_zil_transfers_0
+                }
             } {
                 return Some(fork.at_height);
             }
@@ -772,6 +778,8 @@ pub struct Fork {
     pub randao_support: bool,
     pub evm_to_scilla_strings_encoded_properly: bool,
     pub dont_overwrite_evm_accounts_from_stale_scilla_state: bool,
+    pub make_transfers_in_scilla_precompiles_with_journal_api: bool,
+    pub disable_interop_native_zil_transfers_0: bool,
 }
 
 pub enum ForkName {
@@ -800,6 +808,8 @@ pub enum ForkName {
     ValidatorJailing,
     ScillaCallGasExemptAddrsV2,
     DontOverwriteAccountsFromStaleScillaState,
+    MakeTransfersInScillaPrecompilesWithJournalApi,
+    DisableInteropNativeZilTransfers0,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -925,6 +935,12 @@ pub struct ForkDelta {
     pub evm_to_scilla_strings_encoded_properly: Option<bool>,
     /// If true, addresses modified also by EVM are skipped while applying the Scilla state delta
     pub dont_overwrite_evm_accounts_from_stale_scilla_state: Option<bool>,
+    /// If true, the `scilla_call` precompile performs its value refund through revm's journaled
+    /// transfer API
+    pub make_transfers_in_scilla_precompiles_with_journal_api: Option<bool>,
+    /// If true, a call to the `scilla_call` precompile that carries a non-zero native ZIL value fails
+    /// immediately.
+    pub disable_interop_native_zil_transfers_0: Option<bool>,
 }
 
 impl Fork {
@@ -1043,6 +1059,12 @@ impl Fork {
             dont_overwrite_evm_accounts_from_stale_scilla_state: delta
                 .dont_overwrite_evm_accounts_from_stale_scilla_state
                 .unwrap_or(self.dont_overwrite_evm_accounts_from_stale_scilla_state),
+            make_transfers_in_scilla_precompiles_with_journal_api: delta
+                .make_transfers_in_scilla_precompiles_with_journal_api
+                .unwrap_or(self.make_transfers_in_scilla_precompiles_with_journal_api),
+            disable_interop_native_zil_transfers_0: delta
+                .disable_interop_native_zil_transfers_0
+                .unwrap_or(self.disable_interop_native_zil_transfers_0),
         }
     }
 }
@@ -1150,6 +1172,8 @@ pub fn genesis_fork_default() -> Fork {
         randao_support: true,
         evm_to_scilla_strings_encoded_properly: true,
         dont_overwrite_evm_accounts_from_stale_scilla_state: true,
+        make_transfers_in_scilla_precompiles_with_journal_api: true,
+        disable_interop_native_zil_transfers_0: true,
     }
 }
 
@@ -1330,6 +1354,8 @@ mod tests {
                 randao_support: None,
                 evm_to_scilla_strings_encoded_properly: None,
                 dont_overwrite_evm_accounts_from_stale_scilla_state: None,
+                make_transfers_in_scilla_precompiles_with_journal_api: None,
+                disable_interop_native_zil_transfers_0: None,
             }],
             ..Default::default()
         };
@@ -1392,6 +1418,8 @@ mod tests {
                     randao_support: Some(false),
                     evm_to_scilla_strings_encoded_properly: None,
                     dont_overwrite_evm_accounts_from_stale_scilla_state: None,
+                    make_transfers_in_scilla_precompiles_with_journal_api: None,
+                    disable_interop_native_zil_transfers_0: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1434,6 +1462,8 @@ mod tests {
                     randao_support: None,
                     evm_to_scilla_strings_encoded_properly: None,
                     dont_overwrite_evm_accounts_from_stale_scilla_state: None,
+                    make_transfers_in_scilla_precompiles_with_journal_api: None,
+                    disable_interop_native_zil_transfers_0: None,
                 },
             ],
             ..Default::default()
@@ -1513,6 +1543,8 @@ mod tests {
                     randao_support: None,
                     evm_to_scilla_strings_encoded_properly: None,
                     dont_overwrite_evm_accounts_from_stale_scilla_state: None,
+                    make_transfers_in_scilla_precompiles_with_journal_api: None,
+                    disable_interop_native_zil_transfers_0: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1555,6 +1587,8 @@ mod tests {
                     randao_support: None,
                     evm_to_scilla_strings_encoded_properly: None,
                     dont_overwrite_evm_accounts_from_stale_scilla_state: None,
+                    make_transfers_in_scilla_precompiles_with_journal_api: None,
+                    disable_interop_native_zil_transfers_0: None,
                 },
             ],
             ..Default::default()
@@ -1622,6 +1656,8 @@ mod tests {
                 randao_support: true,
                 evm_to_scilla_strings_encoded_properly: true,
                 dont_overwrite_evm_accounts_from_stale_scilla_state: true,
+                make_transfers_in_scilla_precompiles_with_journal_api: true,
+                disable_interop_native_zil_transfers_0: true,
             },
             forks: vec![],
             ..Default::default()
@@ -1677,6 +1713,8 @@ mod tests {
                     randao_support: None,
                     evm_to_scilla_strings_encoded_properly: None,
                     dont_overwrite_evm_accounts_from_stale_scilla_state: None,
+                    make_transfers_in_scilla_precompiles_with_journal_api: None,
+                    disable_interop_native_zil_transfers_0: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1719,6 +1757,8 @@ mod tests {
                     randao_support: None,
                     evm_to_scilla_strings_encoded_properly: None,
                     dont_overwrite_evm_accounts_from_stale_scilla_state: None,
+                    make_transfers_in_scilla_precompiles_with_journal_api: None,
+                    disable_interop_native_zil_transfers_0: None,
                 },
             ],
             ..Default::default()

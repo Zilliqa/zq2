@@ -202,6 +202,8 @@ impl Chain {
                 "randao_support": false,
                 "evm_to_scilla_strings_encoded_properly": false,
                 "dont_overwrite_evm_accounts_from_stale_scilla_state": false,
+                "make_transfers_in_scilla_precompiles_with_journal_api": false,
+                "disable_interop_native_zil_transfers_0": false,
             })),
             Chain::Zq2Mainnet => Some(json!({
                 "at_height": 0,
@@ -244,6 +246,8 @@ impl Chain {
                 "randao_support": false,
                 "evm_to_scilla_strings_encoded_properly": false,
                 "dont_overwrite_evm_accounts_from_stale_scilla_state": false,
+                "make_transfers_in_scilla_precompiles_with_journal_api": false,
+                "disable_interop_native_zil_transfers_0": false,
             })),
             _ => None,
         }
@@ -303,6 +307,8 @@ impl Chain {
                 json!({ "at_height": 28281600, "randao_support": true}),
                 json!({ "at_height": 29230131, "evm_to_scilla_strings_encoded_properly": true}),
                 json!({ "at_height": 999999999, "dont_overwrite_evm_accounts_from_stale_scilla_state": true}),
+                json!({ "at_height": 999999999, "disable_interop_native_zil_transfers_0": true}),
+                json!({ "at_height": 999999999, "make_transfers_in_scilla_precompiles_with_journal_api": true}),
             ]),
             Chain::Zq2Mainnet => Some(vec![
                 json!({ "at_height": 4770088, "executable_blocks": true }),
@@ -360,6 +366,8 @@ impl Chain {
                 }),
                 json!({ "at_height": 25905600, "randao_support": true, "evm_to_scilla_strings_encoded_properly": true}),
                 json!({ "at_height": 27081150, "dont_overwrite_evm_accounts_from_stale_scilla_state": true}),
+                json!({ "at_height": 27152370, "disable_interop_native_zil_transfers_0": true}),
+                json!({ "at_height": 27152370, "make_transfers_in_scilla_precompiles_with_journal_api": true}),
             ]),
             _ => None,
         }

@@ -524,6 +524,10 @@ fn scilla_call_precompile(
     ctx: &mut ZQ2EvmContext,
     gas_exempt: bool,
 ) -> std::result::Result<PrecompileOutput, PrecompileErrors> {
+    if ctx.chain.fork.disable_interop_native_zil_transfers_0 && !input.call_value.is_zero() {
+        return err("native ZIL transfers to the scilla_call precompile are disabled");
+    }
+
     let Ok(input_len) = u64::try_from(input.input.len()) else {
         return err("input too long");
     };
@@ -643,14 +647,33 @@ fn scilla_call_precompile(
         .get()
         .map_err(|e| PrecompileErrors::Fatal { msg: e.to_string() })?;
     if effective_value_get > 0 {
-        let evm_state = ctx.journal_mut().evm_state_mut();
-        let precompile_acc = evm_state.get_mut(&input.target_address).unwrap();
-        precompile_acc.info.balance = precompile_acc
-            .info
-            .balance
-            .saturating_sub(U256::from(effective_value_get));
-        let sender_acc = evm_state.get_mut(&sender).unwrap();
-        sender_acc.info.balance += U256::from(effective_value_get);
+        if ctx
+            .chain
+            .fork
+            .make_transfers_in_scilla_precompiles_with_journal_api
+        {
+            match ctx.journal_mut().transfer(
+                input.target_address,
+                sender,
+                U256::from(effective_value_get),
+            ) {
+                Ok(None) => {}
+                Ok(Some(e)) => return err(format!("scilla precompile refund failed: {e:?}")),
+                Err(e) => {
+                    tracing::error!(?e, "state access failed");
+                    return fatal("state access failed");
+                }
+            }
+        } else {
+            let evm_state = ctx.journal_mut().evm_state_mut();
+            let precompile_acc = evm_state.get_mut(&input.target_address).unwrap();
+            precompile_acc.info.balance = precompile_acc
+                .info
+                .balance
+                .saturating_sub(U256::from(effective_value_get));
+            let sender_acc = evm_state.get_mut(&sender).unwrap();
+            sender_acc.info.balance += U256::from(effective_value_get);
+        }
     }
 
     let empty_state =
@@ -698,6 +721,7 @@ fn scilla_call_precompile(
             return err("scilla call failed");
         }
     }
+    let mut evm_account_updates = Vec::new();
     state.new_state.retain(|address, account| {
         if !account.touched {
             return true;
@@ -705,18 +729,60 @@ fn scilla_call_precompile(
         if !account.from_evm {
             return true;
         }
-
-        // Apply changes made to EVM accounts back to the EVM `JournaledState`.
-        let before = ctx.journal_mut().state.get_mut(address).unwrap();
-
         // The only thing that Scilla is able to update is the balance.
-        if before.info.balance.to::<u128>() != account.account.balance {
-            before.info.balance = account.account.balance.try_into().unwrap();
-            before.mark_touch();
-        }
-
+        evm_account_updates.push((*address, account.account.balance));
         false
     });
+
+    for (address, target_balance) in evm_account_updates {
+        if ctx
+            .chain
+            .fork
+            .make_transfers_in_scilla_precompiles_with_journal_api
+        {
+            // Apply through the journal so the change is reverted with the surrounding EVM frame. A
+            // raw write is not journaled and would survive a revert, minting the credit on a failed
+            // transaction. Decreases are routed to the precompile address (filtered from the committed
+            // delta) so they stay journaled with no external effect.
+            let current = ctx
+                .journal_mut()
+                .state
+                .get(&address)
+                .map(|a| a.info.balance)
+                .unwrap_or_default();
+            let target = U256::from(target_balance);
+            if target > current {
+                ctx.journal_mut()
+                    .balance_incr(address, target - current)
+                    .map_err(|e| {
+                        tracing::error!(?e, "state access failed");
+                        PrecompileErrors::Fatal {
+                            msg: "state access failed".to_string(),
+                        }
+                    })?;
+            } else if current > target
+                && let Some(transfer_err) = ctx
+                    .journal_mut()
+                    .transfer(address, input.target_address, current - target)
+                    .map_err(|e| {
+                        tracing::error!(?e, "state access failed");
+                        PrecompileErrors::Fatal {
+                            msg: "state access failed".to_string(),
+                        }
+                    })?
+            {
+                return err(format!(
+                    "scilla precompile balance reconciliation failed: {transfer_err:?}"
+                ));
+            }
+        } else {
+            let before = ctx.journal_mut().state.get_mut(&address).unwrap();
+            if before.info.balance.to::<u128>() != target_balance {
+                before.info.balance = target_balance.try_into().unwrap();
+                before.mark_touch();
+            }
+        }
+    }
     ctx.journaled_state.database = state;
 
     for log in result.logs {

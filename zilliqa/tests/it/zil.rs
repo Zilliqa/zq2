@@ -1731,7 +1731,9 @@ async fn call_scilla_precompile_with_value(mut network: Network) {
         .to::<u128>();
     assert_eq!(scilla_contract_zero_balance, 0);
 
-    // Call precompile that sends the value
+    // Call precompile that sends the value. With `disable_interop_native_zil_transfers_0` active, a
+    // value-carrying call to the `scilla_call` precompile fails immediately, so the precompile call
+    // returns failure and the EVM contract reverts.
     let hash = *contract
         .callScillaValue(scilla_contract_address, "justAccept".into(), value_to_send)
         .gas(84_000_000)
@@ -1740,26 +1742,23 @@ async fn call_scilla_precompile_with_value(mut network: Network) {
         .unwrap()
         .tx_hash();
     let receipt = network.run_until_receipt(&wallet, &hash, 100).await;
-    assert!(receipt.status());
+    assert!(!receipt.status(), "value-carrying scilla_call must fail");
 
-    // Scilla contract balance received the value
+    // The value was not transferred: the Scilla contract balance is still zero.
     let scilla_contract_zero_balance = wallet
         .get_balance(scilla_contract_address)
         .await
         .unwrap()
         .to::<u128>();
-    assert_eq!(scilla_contract_zero_balance, value_to_send);
+    assert_eq!(scilla_contract_zero_balance, 0);
 
-    // Evm contract balance modified by sent amount
+    // The EVM contract balance is unchanged.
     let evm_contract_zero_balance = wallet
         .get_balance(evm_contract_address)
         .await
         .unwrap()
         .to::<u128>();
-    assert_eq!(
-        evm_contract_zero_balance,
-        evm_contract_value - value_to_send
-    );
+    assert_eq!(evm_contract_zero_balance, evm_contract_value);
 }
 
 #[zilliqa_macros::test(restrict_concurrency)]
