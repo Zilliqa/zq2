@@ -22,50 +22,47 @@ export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
 
 echo "Installing nvm"
-nvm install 22.12
+nvm install 22.22
 
-echo "Using node version 22.12"
-nvm use 22.12
+echo "Using node version 22.22"
+nvm use 22.22
 node --version
-
-# wait till ZQ2 runs
-timeout 60 bash -c 'until curl -sf http://localhost:4201/health; do sleep 1; done'
-
-# Pre install contracts
-echo "Install Entrypoint v0.8"
-npm install @account-abstraction/contracts@0.8.0
-cast publish --rpc-url http://localhost:4200 0xf8a58085174876e800830186a08080b853604580600e600039806000f350fe7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf31ba02222222222222222222222222222222222222222222222222222222222222222a02222222222222222222222222222222222222222222222222222222222222222
-cast send --rpc-url http://localhost:4200 --private-key 0x0000000000000000000000000000000000000000000000000000000000000004 0x4e59b44847b379578588920cA78FbF26c0B4956C   "$(node -e "const {bytecode} = require('@account-abstraction/contracts/artifacts/EntryPoint.json'); console.log('0x0a59dbff790c23c976a548690c27297883cc66b4c67024f9117b0238995e35e9' + bytecode.slice(2))")"
-# cast send --rpc-url http://localhost:4200 --private-key 0x0000000000000000000000000000000000000000000000000000000000000004 0x4e59b44847b379578588920cA78FbF26c0B4956C   "$(node -e "const {bytecode} = require('@account-abstraction/contracts/artifacts/SimpleAccountFactory.json'); console.log('0x0000000000000000000000000000000000000000000000000000000000000000' + bytecode.slice(2))")"
-
-# Install Bundler
-echo "Install Alto-Bundler"
-npm install @pimlico/alto
-npx alto \
-    -r http://localhost:4200 \
-    --port 3000 \
-    -e 0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108 \
-    -x 0x0000000000000000000000000000000000000000000000000000000000000002 \
-    -u 0x0000000000000000000000000000000000000000000000000000000000000003 \
-    --enable-debug-endpoints true > /tmp/alto_log.txt 2>&1 &
-timeout 60 bash -c 'until curl -sf http://localhost:3000/health; do sleep 1; done'
-
-# Update bundler-spec-tests, hacking the remote origin url as SSH does not work in CI
-git clone --depth 1 https://github.com/eth-infinitism/bundler-spec-tests.git --branch version-0.8-addrs
-cd bundler-spec-tests/
-git config --file=.gitmodules submodule.@rip7560.url https://github.com/eth-infinitism/rip7560_contracts.git
-pdm install && pdm run update-deps
 
 # link solc directly to skip download
 mkdir -p $HOME/.solcx/
 ln -s $(which solc) $HOME/.solcx/solc-v0.8.28
 
+# Update bundler-spec-tests, hacking the remote origin url as SSH does not work in CI
+git clone --depth 1 https://github.com/eth-infinitism/bundler-spec-tests.git --branch version-0.8-addrs
+pushd bundler-spec-tests/
+git config --file=.gitmodules submodule.@rip7560.url https://github.com/eth-infinitism/rip7560_contracts.git
+pdm install && pdm run update-deps-remote
+popd
+
+# wait till ZQ2 runs
+timeout 60 bash -c 'until curl -o /dev/null -sf http://localhost:4201/health; do sleep 1; done'
+
+# Pre install contracts
+echo "Install Entrypoint v0.8"
+npm install hardhat@3.5.0
+pushd bundler-spec-tests/@account-abstraction/
+yarn deploy --network proxy
+popd
+
+# Install Bundler
+echo "Install Alto-Bundler"
+npm install @pimlico/alto
+npx alto --config bundler_tests/alto-config.json > /tmp/alto_log.txt 2>&1 &
+timeout 60 bash -c 'until curl -o /dev/null -sf http://localhost:3000/health; do sleep 1; done'
+
 # Run spec tests
+pushd bundler-spec-tests/
 pdm test \
     --url http://localhost:3000 \
     --entry-point 0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108 \
     --ethereum-node http://localhost:4200 \
     tests/single/rpc/
+popd
 
 # cleanup
 retVal=$?
