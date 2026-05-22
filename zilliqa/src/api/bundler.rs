@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
 use alloy::{
-    eips::{BlockId, RpcBlockHash},
+    eips::BlockId,
     rpc::types::{
         TransactionRequest,
         state::{AccountOverride, StateOverride},
     },
 };
 use alloy_rpc_types_trace::geth::{GethDebugTracingCallOptions, GethTrace};
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Result, anyhow};
 use eth_trie::{EthTrie, Trie as _};
 use jsonrpsee::{
     RpcModule,
@@ -72,15 +72,7 @@ pub fn debug_trace_call(params: Params, node: &Arc<Node>) -> Result<GethTrace> {
     let (mut evm_state, block) = {
         let block = node.get_block(block_id)?;
         let block = build_errored_response_for_missing_block(block_id, block)?;
-
-        // use parent state - https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugtracecall
-        let parent = node
-            .get_block(BlockId::Hash(RpcBlockHash {
-                block_hash: block.parent_hash().into(),
-                require_canonical: None,
-            }))?
-            .context("parent must exist")?;
-        let state = node.get_state(&parent)?;
+        let state = node.get_state(&block)?;
         (state, block)
     };
     anyhow::ensure!(
