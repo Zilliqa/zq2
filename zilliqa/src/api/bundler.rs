@@ -3,7 +3,7 @@ use std::sync::Arc;
 use alloy::{
     eips::BlockId,
     rpc::types::{
-        TransactionRequest,
+        BlockOverrides, TransactionRequest,
         state::{AccountOverride, StateOverride},
     },
 };
@@ -61,14 +61,13 @@ pub fn debug_trace_call(params: Params, node: &Arc<Node>) -> Result<GethTrace> {
     let call_params: TransactionRequest = params.next()?;
     let block_id: BlockId = params.optional_next()?.unwrap_or_default();
     let options: GethDebugTracingCallOptions = params.optional_next()?.unwrap_or_default();
+    crate::api::eth::expect_end_of_params(&mut params, 1, 3)?;
 
     anyhow::ensure!(
         options.block_overrides.is_none(),
         "block_overrides unexpected"
     );
     anyhow::ensure!(options.tx_index.is_none(), "tx_index unexpected");
-
-    let overrides = options.state_overrides.clone().unwrap_or_default();
 
     let (mut evm_state, block) = {
         let block = node.get_block(block_id)?;
@@ -81,9 +80,12 @@ pub fn debug_trace_call(params: Params, node: &Arc<Node>) -> Result<GethTrace> {
         "State required to execute request does not exist"
     );
 
-    tracing::trace!("debug contract: block={block:?} overrides={overrides:?}");
+    let state_overrides = options.state_overrides.clone().unwrap_or_default();
+    let block_overrides = options.block_overrides.clone().unwrap_or_default();
 
-    apply_state_overrides(&mut evm_state, &node.clone(), overrides)?;
+    tracing::trace!(?state_overrides, ?block_overrides, ?block, "debug contract");
+
+    apply_state_overrides(&mut evm_state, &node.clone(), state_overrides)?;
 
     let result = node.debug_trace_call(&mut evm_state, &block, call_params, options)?;
 
@@ -97,7 +99,9 @@ pub fn eth_call(params: Params, node: &Arc<Node>) -> Result<String> {
     let mut params = params.sequence();
     let call_params: TransactionRequest = params.next()?;
     let block_id: BlockId = params.optional_next()?.unwrap_or_default();
-    let overrides: StateOverride = params.optional_next()?.unwrap_or_default();
+    let state_overrides: StateOverride = params.optional_next()?.unwrap_or_default();
+    let block_overrides: BlockOverrides = params.optional_next()?.unwrap_or_default();
+    crate::api::eth::expect_end_of_params(&mut params, 1, 4)?;
 
     let (mut evm_state, block) = {
         let block = node.get_block(block_id)?;
@@ -109,9 +113,9 @@ pub fn eth_call(params: Params, node: &Arc<Node>) -> Result<String> {
         return Err(anyhow!("State required to execute request does not exist"));
     }
 
-    tracing::trace!("call_contract: block={block:?} overrides={overrides:?}");
+    tracing::trace!(?block, ?state_overrides, ?block_overrides, "call_contract");
 
-    apply_state_overrides(&mut evm_state, &node.clone(), overrides)?;
+    apply_state_overrides(&mut evm_state, &node.clone(), state_overrides)?;
 
     let result = evm_state.call_contract(
         call_params.from.unwrap_or_default(),

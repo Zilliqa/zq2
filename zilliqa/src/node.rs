@@ -969,21 +969,6 @@ impl Node {
         //     .and_then(|s| duration_str::parse(s).ok())
         //     .unwrap_or_default();
 
-        /*
-        GethDebugTracingCallOptions {
-            tracing_options: GethDebugTracingOptions {
-                tracer: Some(GethDebugTracerType::JsTracer(
-                    validation_tracer_js().to_string(),
-                )),
-                timeout: Some(self.tracer_timeout.clone()),
-                ..Default::default()
-            },
-            state_overrides: Some(state_override),
-            block_overrides: None,
-            tx_index: None,
-        },
-        */
-
         let _timeout = timeout
             .map(|s| duration_str::parse_std(s).unwrap_or_default())
             .unwrap_or(Duration::from_mins(1)); // 1-min default
