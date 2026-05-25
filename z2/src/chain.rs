@@ -204,6 +204,7 @@ impl Chain {
                 "dont_overwrite_evm_accounts_from_stale_scilla_state": false,
                 "make_transfers_in_scilla_precompiles_with_journal_api": false,
                 "disable_interop_native_zil_transfers_0": false,
+                "tighten_precompile_rules": false,
             })),
             Chain::Zq2Mainnet => Some(json!({
                 "at_height": 0,
@@ -248,6 +249,7 @@ impl Chain {
                 "dont_overwrite_evm_accounts_from_stale_scilla_state": false,
                 "make_transfers_in_scilla_precompiles_with_journal_api": false,
                 "disable_interop_native_zil_transfers_0": false,
+                "tighten_precompile_rules": false,
             })),
             _ => None,
         }
@@ -309,6 +311,7 @@ impl Chain {
                 json!({ "at_height": 999999999, "dont_overwrite_evm_accounts_from_stale_scilla_state": true}),
                 json!({ "at_height": 999999999, "disable_interop_native_zil_transfers_0": true}),
                 json!({ "at_height": 999999999, "make_transfers_in_scilla_precompiles_with_journal_api": true}),
+                json!({ "at_height": 999999999, "tighten_precompile_rules": true}),
             ]),
             Chain::Zq2Mainnet => Some(vec![
                 json!({ "at_height": 4770088, "executable_blocks": true }),
@@ -368,6 +371,7 @@ impl Chain {
                 json!({ "at_height": 27081150, "dont_overwrite_evm_accounts_from_stale_scilla_state": true}),
                 json!({ "at_height": 27152370, "disable_interop_native_zil_transfers_0": true}),
                 json!({ "at_height": 27152370, "make_transfers_in_scilla_precompiles_with_journal_api": true}),
+                json!({ "at_height": 999999999, "tighten_precompile_rules": true}),
             ]),
             _ => None,
         }

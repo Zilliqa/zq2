@@ -447,10 +447,25 @@ impl ContextPrecompile for ScillaCall {
         ctx: &mut ZQ2EvmContext,
         _dest: Address,
         input: &InputsImpl,
-        _is_static: bool,
+        is_static: bool,
         gas_limit: u64,
     ) -> Result<Option<InterpreterResult>, String> {
         let gas = Gas::new(gas_limit);
+
+        // Record access of scilla precompile
+        ctx.chain.has_called_scilla_precompile = true;
+
+        // The `scilla_call` precompile mutates Scilla state, so it must not be invoked from a static
+        // context (STATICCALL). Under the tightened rules, reject it and fail the whole transaction.
+        if is_static && ctx.chain.fork.tighten_precompile_rules {
+            ctx.chain.enforce_transaction_failure = true;
+            return Ok(Some(InterpreterResult {
+                result: InstructionResult::PrecompileError,
+                gas,
+                output: Bytes::new(),
+            }));
+        }
+
         let gas_exempt = ctx
             .chain
             .fork
@@ -461,9 +476,6 @@ impl ContextPrecompile for ScillaCall {
                 .fork
                 .scilla_call_gas_exempt_addrs_v2
                 .contains(&input.caller_address);
-
-        // Record access of scilla precompile
-        ctx.chain.has_called_scilla_precompile = true;
 
         // The behaviour is different for contracts having 21k gas and/or deployed with zq1
         // 1. If gas == 21k and gas_exempt -> allow it to run with gas_left()
@@ -512,6 +524,14 @@ impl ContextPrecompile for ScillaCall {
                     }
                 }
             }
+        }
+
+        // Under the tightened rules, any failure of the `scilla_call` precompile rolls back the
+        // entire transaction, regardless of whether the caller is gas-exempt.
+        if ctx.chain.fork.tighten_precompile_rules
+            && !matches!(result.result, InstructionResult::Return)
+        {
+            ctx.chain.enforce_transaction_failure = true;
         }
 
         Ok(Some(result))
@@ -578,6 +598,18 @@ fn scilla_call_precompile(
         ));
     };
 
+    // Reject calldata that does not contain a head word for every transition parameter. The ABI head
+    // is `(address, string, keep_origin)` plus one word per parameter, and the dynamic `string` tail
+    // must begin at or after the end of that head. Otherwise a missing trailing parameter would be
+    // read from the string tail (e.g. its length word) instead of failing.
+    if ctx.chain.fork.tighten_precompile_rules {
+        let min_head = (3 + transition.params.len()) * 32;
+        let transition_offset = U256::from_be_slice(&bytes_input[32..64]);
+        if transition_offset < U256::from(min_head as u64) {
+            return err("scilla_call calldata omits transition parameters");
+        }
+    }
+
     let params: Vec<_> = transition
         .params
         .into_iter()
@@ -612,11 +644,14 @@ fn scilla_call_precompile(
 
     let depth = ctx.journal().depth;
     let sender = if keep_origin {
-        if ctx.chain.fork.call_mode_1_sets_caller_to_parent_caller {
+        if ctx.chain.fork.call_mode_1_sets_caller_to_parent_caller && depth >= 2 {
             // Use the caller of the parent call-stack.
             ctx.chain.callers[depth - 2]
         } else {
-            // Use the original transaction signer.
+            // Use the original transaction signer. This also covers a direct/shallow call with no
+            // parent call-stack frame (`depth < 2`), which would otherwise underflow
+            // `callers[depth - 2]` and panic the node. Not fork-gated: the panicking path never
+            // produced a valid state transition, so there is no historical behaviour to preserve.
             ctx.tx.caller
         }
     } else {
@@ -706,6 +741,9 @@ fn scilla_call_precompile(
         &scilla_ext_libs_path_default(),
         &ctx.chain.fork,
         ctx.block.number.to(),
+        // This call originates from the `scilla_call` precompile; the tightened-rules behaviour is
+        // gated on `fork.tighten_precompile_rules` inside `scilla_call`.
+        true,
     ) else {
         return fatal("scilla call failed");
     };

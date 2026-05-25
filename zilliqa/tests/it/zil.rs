@@ -2,10 +2,12 @@ use std::{ops::DerefMut, str::FromStr};
 
 use alloy::{
     hex::{self, FromHex},
-    primitives::{Address, B256, TxHash, U256, keccak256},
+    network::TransactionBuilder,
+    primitives::{Address, B256, Bytes, TxHash, U256, address, keccak256},
     providers::{Provider as _, WalletProvider},
-    rpc::types::TransactionRequest,
+    rpc::types::{TransactionInput, TransactionRequest},
     sol,
+    sol_types::SolValue,
 };
 use anyhow::Result;
 use bech32::{Bech32, Hrp};
@@ -1198,6 +1200,16 @@ sol!(
     "tests/it/contracts/ScillaInterop.sol",
 );
 
+sol!(
+    #[sol(rpc)]
+    "tests/it/contracts/ScillaBalanceRestore.sol",
+);
+
+sol!(
+    #[sol(rpc)]
+    "tests/it/contracts/ScillaDebitSkipMinter.sol",
+);
+
 #[zilliqa_macros::test(restrict_concurrency)]
 async fn scilla_precompiles(mut network: Network) {
     let wallet = network.genesis_wallet().await;
@@ -1622,7 +1634,9 @@ async fn interop_send_funds_from_scilla(mut network: Network) {
 
     // Run the transaction.
     let receipt = network.run_until_receipt(&wallet, &hash, 100).await;
-    assert!(receipt.status());
+    // tighten_precompile_rules: a Scilla message to an EOA via the precompile reverts the whole txn,
+    // but the sender is still charged for the gas it used.
+    assert!(!receipt.status());
 
     let tx_count_after = wallet
         .get_transaction_count(wallet.default_signer_address())
@@ -1634,24 +1648,164 @@ async fn interop_send_funds_from_scilla(mut network: Network) {
         .unwrap()
         .to::<u128>();
 
-    // Sender of the txn pays for gas
+    // The failed txn still costs gas, so the nonce advances and the fee is deducted.
     assert_eq!(tx_count_before + 1, tx_count_after);
     assert_eq!(
         balance_before - (receipt.gas_used as u128 * receipt.effective_gas_price),
         balance_after
     );
 
-    // Contract doesn't hold any funds
+    // Revert leaves funds untouched: the contract keeps its balance and the recipient gets nothing.
     let contract_final_balance = wallet
         .get_balance(scilla_contract_address)
         .await
         .unwrap()
         .to::<u128>();
-    assert_eq!(contract_final_balance, 0u128);
+    assert_eq!(contract_final_balance, 1_000_000u128);
 
+    assert_eq!(wallet.get_balance(recipient).await.unwrap().to::<u128>(), 0);
+}
+
+#[zilliqa_macros::test(restrict_concurrency)]
+async fn interop_scilla_send_funds_to_contract_is_rejected(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
+
+    // Sender contract: forwards 1 qa to `addr` via a Scilla message tagged so a contract can accept.
+    let sender_code = r#"
+        scilla_version 0
+
+        library HelloWorld
+        let one = Uint128 1
+
+        let one_msg =
+          fun (msg : Message) =>
+          let nil_msg = Nil {Message} in
+            Cons {Message} msg nil_msg
+
+        contract Test
+        ()
+
+        transition SendTo(addr: ByStr20)
+          msg = { _tag : "Accept"; _recipient : addr; _amount : one };
+          msgs = one_msg msg;
+          send msgs
+        end
+    "#;
+
+    let data = r#"[
+        {
+            "vname": "_scilla_version",
+            "type": "Uint32",
+            "value": "0"
+        }
+    ]"#;
+
+    // Deploy the sender with 1 ZIL of balance to send.
+    let (sender_contract, _) = send_transaction(
+        &mut network,
+        &wallet,
+        &secret_key,
+        1,
+        ToAddr::Address(H160::zero()),
+        1,
+        50_000,
+        Some(sender_code),
+        Some(data),
+    )
+    .await;
+    let sender_contract = sender_contract.unwrap();
+
+    // The recipient is a *Scilla contract* that would accept the funds (so without the rejection the
+    // transfer would succeed).
+    let recipient_code = r#"
+        scilla_version 0
+
+        contract Recipient
+        ()
+
+        transition Accept()
+          accept
+        end
+    "#;
+    let (recipient_contract, _) = send_transaction(
+        &mut network,
+        &wallet,
+        &secret_key,
+        2,
+        ToAddr::Address(H160::zero()),
+        0,
+        50_000,
+        Some(recipient_code),
+        Some(data),
+    )
+    .await;
+    let recipient_contract = recipient_contract.unwrap();
+
+    let (evm_contract_address, _) = deploy_contract(
+        "tests/it/contracts/ScillaInterop.sol",
+        "ScillaInterop",
+        0u128,
+        &wallet,
+        &mut network,
+    )
+    .await;
+    let contract = ScillaInterop::new(evm_contract_address, &wallet);
+
+    let balance_before = wallet
+        .get_balance(wallet.default_signer_address())
+        .await
+        .unwrap()
+        .to::<u128>();
+    let tx_count_before = wallet
+        .get_transaction_count(wallet.default_signer_address())
+        .await
+        .unwrap();
+
+    // The Scilla call would transfer 1 qa to another *contract*. Under tighten_precompile_rules the
+    // scilla_call precompile rejects ZIL transfers to any destination (not just EOAs), so the whole
+    // txn fails, but the sender is still charged for the gas it used.
+    let hash = *contract
+        .callScillaOneArg(sender_contract, "SendTo".into(), recipient_contract)
+        .gas(84_000_000)
+        .send()
+        .await
+        .unwrap()
+        .tx_hash();
+    let receipt = network.run_until_receipt(&wallet, &hash, 100).await;
+    assert!(!receipt.status());
+
+    let tx_count_after = wallet
+        .get_transaction_count(wallet.default_signer_address())
+        .await
+        .unwrap();
+    let balance_after = wallet
+        .get_balance(wallet.default_signer_address())
+        .await
+        .unwrap()
+        .to::<u128>();
+    assert_eq!(tx_count_before + 1, tx_count_after);
     assert_eq!(
-        wallet.get_balance(recipient).await.unwrap().to::<u128>(),
-        1_000_000
+        balance_before - (receipt.gas_used as u128 * receipt.effective_gas_price),
+        balance_after
+    );
+
+    // No funds moved: the sender keeps its balance and the recipient contract gets nothing.
+    assert_eq!(
+        wallet
+            .get_balance(sender_contract)
+            .await
+            .unwrap()
+            .to::<u128>(),
+        1_000_000u128
+    );
+    assert_eq!(
+        wallet
+            .get_balance(recipient_contract)
+            .await
+            .unwrap()
+            .to::<u128>(),
+        0
     );
 }
 
@@ -1759,6 +1913,709 @@ async fn call_scilla_precompile_with_value(mut network: Network) {
         .unwrap()
         .to::<u128>();
     assert_eq!(evm_contract_zero_balance, evm_contract_value);
+}
+
+#[zilliqa_macros::test(restrict_concurrency)]
+async fn scilla_interop_cannot_send_value(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
+
+    let code = r#"
+        scilla_version 0
+
+        contract Test
+        ()
+
+        transition justAccept()
+            accept
+        end
+    "#;
+
+    let data = r#"[
+        {
+            "vname": "_scilla_version",
+            "type": "Uint32",
+            "value": "0"
+        }
+    ]"#;
+
+    let (contract_address, _) = send_transaction(
+        &mut network,
+        &wallet,
+        &secret_key,
+        1,
+        ToAddr::Address(H160::zero()),
+        0,
+        50_000,
+        Some(code),
+        Some(data),
+    )
+    .await;
+    let scilla_contract_address = contract_address.unwrap();
+
+    let evm_contract_value: u128 = 10_000_000;
+    let value_to_send = evm_contract_value / 2;
+
+    let (evm_contract_address, _) = deploy_contract(
+        "tests/it/contracts/ScillaInterop.sol",
+        "ScillaInterop",
+        evm_contract_value,
+        &wallet,
+        &mut network,
+    )
+    .await;
+
+    let contract = ScillaInterop::new(evm_contract_address, &wallet);
+
+    // disable_interop_native_zil_transfers_0: a value-carrying call to the scilla_call precompile
+    // fails immediately, so the EVM contract reverts and no funds move.
+    let hash = *contract
+        .callScillaValue(scilla_contract_address, "justAccept".into(), value_to_send)
+        .gas(84_000_000)
+        .send()
+        .await
+        .unwrap()
+        .tx_hash();
+    let receipt = network.run_until_receipt(&wallet, &hash, 100).await;
+    assert!(!receipt.status());
+
+    // The value never reached the scilla contract and the evm contract keeps its balance.
+    assert_eq!(
+        wallet
+            .get_balance(scilla_contract_address)
+            .await
+            .unwrap()
+            .to::<u128>(),
+        0
+    );
+    assert_eq!(
+        wallet
+            .get_balance(evm_contract_address)
+            .await
+            .unwrap()
+            .to::<u128>(),
+        evm_contract_value
+    );
+}
+
+#[zilliqa_macros::test(restrict_concurrency)]
+async fn scilla_precompile_failure_reverts_but_charges_gas(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
+
+    let code = r#"
+        scilla_version 0
+
+        contract Hello
+        ()
+
+        transition Foo()
+          e = {_eventname : "Foo"};
+          event e
+        end
+    "#;
+
+    let data = r#"[
+        {
+            "vname": "_scilla_version",
+            "type": "Uint32",
+            "value": "0"
+        }
+    ]"#;
+
+    let (contract_address, _) = send_transaction(
+        &mut network,
+        &wallet,
+        &secret_key,
+        1,
+        ToAddr::Address(H160::zero()),
+        0,
+        50_000,
+        Some(code),
+        Some(data),
+    )
+    .await;
+    let scilla_contract_address = contract_address.unwrap();
+
+    let (evm_contract_address, _) = deploy_contract(
+        "tests/it/contracts/ScillaInterop.sol",
+        "ScillaInterop",
+        0u128,
+        &wallet,
+        &mut network,
+    )
+    .await;
+    let contract = ScillaInterop::new(evm_contract_address, &wallet);
+
+    let sender_balance_before = wallet
+        .get_balance(wallet.default_signer_address())
+        .await
+        .unwrap()
+        .to::<u128>();
+    let nonce_before = wallet
+        .get_transaction_count(wallet.default_signer_address())
+        .await
+        .unwrap();
+
+    // tighten_precompile_rules: any failure of the scilla_call precompile (here, a non-existent
+    // transition) fails the whole txn, but the sender is still charged for the gas it used.
+    let hash = *contract
+        .callScillaNoArgs(scilla_contract_address, "NoSuchTransition".into())
+        .gas(84_000_000)
+        .send()
+        .await
+        .unwrap()
+        .tx_hash();
+    let receipt = network.run_until_receipt(&wallet, &hash, 100).await;
+    assert!(!receipt.status());
+
+    let sender_balance_after = wallet
+        .get_balance(wallet.default_signer_address())
+        .await
+        .unwrap()
+        .to::<u128>();
+    let nonce_after = wallet
+        .get_transaction_count(wallet.default_signer_address())
+        .await
+        .unwrap();
+
+    assert_eq!(nonce_before + 1, nonce_after);
+    let fee = receipt.gas_used as u128 * receipt.effective_gas_price;
+    assert!(fee > 0);
+    assert_eq!(sender_balance_before - fee, sender_balance_after);
+}
+
+#[zilliqa_macros::test(restrict_concurrency)]
+async fn exploit_scilla_stale_state_cannot_restore_drained_balance(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
+
+    let scilla_code = r#"
+        scilla_version 0
+
+        contract SendZil()
+
+        transition acceptZil()
+          accept
+        end
+
+        transition fundUser(user : ByStr20, amount : Uint128)
+          msg = { _tag : "" ; _recipient : user ; _amount : amount };
+          no_msg = Nil {Message};
+          msgs = Cons {Message} msg no_msg;
+          send msgs
+        end
+    "#;
+    let data = r#"[ { "vname": "_scilla_version", "type": "Uint32", "value": "0" } ]"#;
+    let (scilla_address, _) = send_transaction(
+        &mut network,
+        &wallet,
+        &secret_key,
+        1,
+        ToAddr::Address(H160::zero()),
+        0,
+        50_000,
+        Some(scilla_code),
+        Some(data),
+    )
+    .await;
+    let scilla_address = scilla_address.unwrap();
+
+    let principal: u128 = 1_000_000_000_000_000_000;
+    let (controller_address, _) = deploy_contract(
+        "tests/it/contracts/ScillaBalanceRestore.sol",
+        "ScillaBalanceRestore",
+        principal,
+        &wallet,
+        &mut network,
+    )
+    .await;
+    let controller = ScillaBalanceRestore::new(controller_address, &wallet);
+    let bank_address = controller.reusableBank().call().await.unwrap();
+
+    let profit_receiver = get_random_address(&mut network);
+
+    // The principal exists once, in the bank.
+    assert_eq!(
+        wallet.get_balance(bank_address).await.unwrap().to::<u128>(),
+        principal
+    );
+    assert_eq!(
+        wallet
+            .get_balance(profit_receiver)
+            .await
+            .unwrap()
+            .to::<u128>(),
+        0
+    );
+
+    let hash = *controller
+        .mint(scilla_address, profit_receiver)
+        .gas(84_000_000)
+        .send()
+        .await
+        .unwrap()
+        .tx_hash();
+    network.run_until_receipt(&wallet, &hash, 100).await;
+
+    // Security invariant: no ZIL was minted. Whether the exploit txn reverted or settled
+    // legitimately, the principal still exists exactly once across the bank and the profit wallet.
+    let bank_after = wallet.get_balance(bank_address).await.unwrap().to::<u128>();
+    let profit_after = wallet
+        .get_balance(profit_receiver)
+        .await
+        .unwrap()
+        .to::<u128>();
+    assert_eq!(
+        bank_after + profit_after,
+        principal,
+        "ZIL minted: bank={bank_after} profit={profit_after}"
+    );
+}
+
+#[zilliqa_macros::test(restrict_concurrency)]
+async fn exploit_value_to_scilla_precompile_cannot_mint(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
+
+    let scilla_code = r#"
+        scilla_version 0
+
+        library FailingCallLib
+
+        contract FailingCall()
+
+        transition Boom()
+          throw
+        end
+    "#;
+    let data = r#"[ { "vname": "_scilla_version", "type": "Uint32", "value": "0" } ]"#;
+    let (failing_scilla, _) = send_transaction(
+        &mut network,
+        &wallet,
+        &secret_key,
+        1,
+        ToAddr::Address(H160::zero()),
+        0,
+        50_000,
+        Some(scilla_code),
+        Some(data),
+    )
+    .await;
+    let failing_scilla = failing_scilla.unwrap();
+
+    let scilla_call_precompile = address!("0x000000000000000000000000000000005a494c53");
+    let payload = (failing_scilla, "Boom".to_string(), U256::ZERO).abi_encode_params();
+
+    let attacker = wallet.default_signer_address();
+    let value: u128 = 1_000_000_000_000_000_000;
+    let balance_before = wallet.get_balance(attacker).await.unwrap().to::<u128>();
+
+    assert_eq!(
+        wallet
+            .get_balance(scilla_call_precompile)
+            .await
+            .unwrap()
+            .to::<u128>(),
+        0
+    );
+
+    let hash = *wallet
+        .send_transaction(
+            TransactionRequest::default()
+                .to(scilla_call_precompile)
+                .value(U256::from(value))
+                .input(TransactionInput::both(Bytes::from(payload)))
+                // Set gas explicitly so the provider does not estimate (which would simulate the
+                // revert and refuse to broadcast); we want the txn mined and failing on-chain.
+                .with_gas_limit(2_000_000),
+        )
+        .await
+        .unwrap()
+        .tx_hash();
+    let receipt = network.run_until_receipt(&wallet, &hash, 100).await;
+
+    // The txn fails: value sent to the scilla_call precompile is rejected.
+    assert!(!receipt.status());
+
+    // Security invariant: no ZIL was minted. The attacker only loses gas; the value is not credited
+    // back to it or to the precompile.
+    let balance_after = wallet.get_balance(attacker).await.unwrap().to::<u128>();
+    let fee = receipt.gas_used as u128 * receipt.effective_gas_price;
+    assert_eq!(balance_after, balance_before - fee);
+    assert!(balance_after < balance_before);
+    assert_eq!(
+        wallet
+            .get_balance(scilla_call_precompile)
+            .await
+            .unwrap()
+            .to::<u128>(),
+        0
+    );
+    assert_eq!(
+        wallet
+            .get_balance(failing_scilla)
+            .await
+            .unwrap()
+            .to::<u128>(),
+        0
+    );
+}
+
+#[zilliqa_macros::test(restrict_concurrency)]
+async fn exploit_scilla_debit_skip_cannot_mint(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
+
+    let scilla_code = r#"
+        scilla_version 0
+
+        contract SendZil()
+
+        transition acceptZil()
+          accept
+        end
+
+        transition fundUser(user : ByStr20, amount : Uint128)
+          msg = { _tag : "" ; _recipient : user ; _amount : amount };
+          no_msg = Nil {Message};
+          msgs = Cons {Message} msg no_msg;
+          send msgs
+        end
+    "#;
+    let data = r#"[ { "vname": "_scilla_version", "type": "Uint32", "value": "0" } ]"#;
+    let (bank_address, _) = send_transaction(
+        &mut network,
+        &wallet,
+        &secret_key,
+        1,
+        ToAddr::Address(H160::zero()),
+        0,
+        50_000,
+        Some(scilla_code),
+        Some(data),
+    )
+    .await;
+    let bank_address = bank_address.unwrap();
+
+    // Fund the Scilla bank once. `amount` is in Scilla units (Qa); the EVM balance is 10^6 larger.
+    let scilla_amount: u128 = 1_000_000;
+    let principal = scilla_amount * 1_000_000;
+    let accept_call = r#"{ "_tag": "acceptZil", "params": [] }"#;
+    send_transaction(
+        &mut network,
+        &wallet,
+        &secret_key,
+        2,
+        ToAddr::Address(H160::from_slice(bank_address.as_slice())),
+        scilla_amount,
+        50_000,
+        None,
+        Some(accept_call),
+    )
+    .await;
+    assert_eq!(
+        wallet.get_balance(bank_address).await.unwrap().to::<u128>(),
+        principal
+    );
+
+    let (minter_address, _) = deploy_contract(
+        "tests/it/contracts/ScillaDebitSkipMinter.sol",
+        "ScillaDebitSkipMinter",
+        0u128,
+        &wallet,
+        &mut network,
+    )
+    .await;
+    let minter = ScillaDebitSkipMinter::new(minter_address, &wallet);
+
+    let profit_wallet = get_random_address(&mut network);
+
+    let hash = *minter
+        .mintBySkippingScillaDebit(bank_address, profit_wallet, scilla_amount)
+        .gas(84_000_000)
+        .send()
+        .await
+        .unwrap()
+        .tx_hash();
+    network.run_until_receipt(&wallet, &hash, 100).await;
+
+    // Security invariant: no ZIL was minted. The principal still exists exactly once across the bank
+    // and the profit wallet.
+    let bank_after = wallet.get_balance(bank_address).await.unwrap().to::<u128>();
+    let profit_after = wallet
+        .get_balance(profit_wallet)
+        .await
+        .unwrap()
+        .to::<u128>();
+    assert_eq!(
+        bank_after + profit_after,
+        principal,
+        "ZIL minted: bank={bank_after} profit={profit_after}"
+    );
+}
+
+#[zilliqa_macros::test(restrict_concurrency)]
+async fn scilla_call_from_static_context_is_rejected(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
+
+    let code = r#"
+        scilla_version 0
+
+        contract Hello
+        ()
+
+        transition Foo()
+          e = {_eventname : "Foo"};
+          event e
+        end
+    "#;
+    let data = r#"[
+        {
+            "vname": "_scilla_version",
+            "type": "Uint32",
+            "value": "0"
+        }
+    ]"#;
+    let (scilla_contract_address, _) = send_transaction(
+        &mut network,
+        &wallet,
+        &secret_key,
+        1,
+        ToAddr::Address(H160::zero()),
+        0,
+        50_000,
+        Some(code),
+        Some(data),
+    )
+    .await;
+    let scilla_contract_address = scilla_contract_address.unwrap();
+
+    let (evm_contract_address, _) = deploy_contract(
+        "tests/it/contracts/ScillaInterop.sol",
+        "ScillaInterop",
+        0u128,
+        &wallet,
+        &mut network,
+    )
+    .await;
+    let contract = ScillaInterop::new(evm_contract_address, &wallet);
+
+    let nonce_before = wallet
+        .get_transaction_count(wallet.default_signer_address())
+        .await
+        .unwrap();
+    let balance_before = wallet
+        .get_balance(wallet.default_signer_address())
+        .await
+        .unwrap()
+        .to::<u128>();
+
+    // tighten_precompile_rules: invoking the scilla_call precompile from a static context
+    // (STATICCALL) is rejected, so the whole txn fails, but the sender is still charged for gas.
+    let hash = *contract
+        .callScillaViaStaticCall(scilla_contract_address, "Foo".into())
+        .gas(84_000_000)
+        .send()
+        .await
+        .unwrap()
+        .tx_hash();
+    let receipt = network.run_until_receipt(&wallet, &hash, 100).await;
+    assert!(!receipt.status());
+
+    let nonce_after = wallet
+        .get_transaction_count(wallet.default_signer_address())
+        .await
+        .unwrap();
+    let balance_after = wallet
+        .get_balance(wallet.default_signer_address())
+        .await
+        .unwrap()
+        .to::<u128>();
+    assert_eq!(nonce_before + 1, nonce_after);
+    assert_eq!(
+        balance_before - (receipt.gas_used as u128 * receipt.effective_gas_price),
+        balance_after
+    );
+}
+
+#[zilliqa_macros::test(restrict_concurrency)]
+async fn direct_eoa_scilla_call_with_keep_origin_does_not_panic(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
+
+    let code = r#"
+        scilla_version 0
+
+        contract Hello
+        ()
+
+        transition Foo()
+          e = {_eventname : "Foo"};
+          event e
+        end
+    "#;
+    let data = r#"[
+        {
+            "vname": "_scilla_version",
+            "type": "Uint32",
+            "value": "0"
+        }
+    ]"#;
+    let (scilla_contract_address, _) = send_transaction(
+        &mut network,
+        &wallet,
+        &secret_key,
+        1,
+        ToAddr::Address(H160::zero()),
+        0,
+        50_000,
+        Some(code),
+        Some(data),
+    )
+    .await;
+    let scilla_contract_address = scilla_contract_address.unwrap();
+
+    let scilla_call_precompile = address!("0x000000000000000000000000000000005a494c53");
+
+    // keep_origin = 1 (CALL_SCILLA_WITH_THE_SAME_SENDER), targeting the no-arg `Foo` transition.
+    let payload = (scilla_contract_address, "Foo".to_string(), U256::from(1)).abi_encode_params();
+
+    // A direct EOA call has no parent call frame. This must be handled gracefully, not crash the
+    // node via an out-of-bounds caller-stack index. Explicit gas avoids estimation (which would also
+    // exercise the faulty path).
+    let hash = *wallet
+        .send_transaction(
+            TransactionRequest::default()
+                .to(scilla_call_precompile)
+                .input(TransactionInput::both(Bytes::from(payload)))
+                .with_gas_limit(2_000_000),
+        )
+        .await
+        .unwrap()
+        .tx_hash();
+    let _receipt = network.run_until_receipt(&wallet, &hash, 100).await;
+
+    // The node must still be alive and producing blocks afterwards.
+    let recipient = get_random_address(&mut network);
+    let hash = *wallet
+        .send_transaction(
+            TransactionRequest::default()
+                .to(recipient)
+                .value(U256::from(1u64)),
+        )
+        .await
+        .unwrap()
+        .tx_hash();
+    let receipt = network.run_until_receipt(&wallet, &hash, 100).await;
+    assert!(receipt.status());
+}
+
+#[zilliqa_macros::test(restrict_concurrency)]
+async fn scilla_call_with_omitted_param_is_rejected(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
+
+    let code = r#"
+        scilla_version 0
+
+        contract SetUint()
+
+        field uintField : Uint128 = Uint128 0
+
+        transition setUint(value : Uint128)
+          uintField := value
+        end
+    "#;
+    let data = r#"[
+        {
+            "vname": "_scilla_version",
+            "type": "Uint32",
+            "value": "0"
+        }
+    ]"#;
+    let (scilla_contract_address, _) = send_transaction(
+        &mut network,
+        &wallet,
+        &secret_key,
+        1,
+        ToAddr::Address(H160::zero()),
+        0,
+        50_000,
+        Some(code),
+        Some(data),
+    )
+    .await;
+    let scilla_contract_address = scilla_contract_address.unwrap();
+
+    let (evm_contract_address, _) = deploy_contract(
+        "tests/it/contracts/ScillaInterop.sol",
+        "ScillaInterop",
+        0u128,
+        &wallet,
+        &mut network,
+    )
+    .await;
+    let contract = ScillaInterop::new(evm_contract_address, &wallet);
+
+    let scilla_call_precompile = address!("0x000000000000000000000000000000005a494c53");
+
+    // Correctly-encoded call: (address, "setUint", keep_origin, uint128 value). Sets uintField=9999.
+    let payload = (
+        scilla_contract_address,
+        "setUint".to_string(),
+        U256::ZERO,
+        U256::from(9999u64),
+    )
+        .abi_encode_params();
+    let hash = *wallet
+        .send_transaction(
+            TransactionRequest::default()
+                .to(scilla_call_precompile)
+                .input(TransactionInput::both(Bytes::from(payload)))
+                .with_gas_limit(84_000_000),
+        )
+        .await
+        .unwrap()
+        .tx_hash();
+    let receipt = network.run_until_receipt(&wallet, &hash, 100).await;
+    assert!(receipt.status());
+    let value = contract
+        .readUint128(scilla_contract_address, "uintField".into())
+        .call()
+        .await
+        .unwrap();
+    assert_eq!(value, 9999);
+
+    // Malformed call: the Uint128 argument is omitted, so the calldata only encodes
+    // (address, "setUint", keep_origin). This must be rejected, not silently read the string tail
+    // length word (7) as the missing parameter.
+    let malformed =
+        (scilla_contract_address, "setUint".to_string(), U256::ZERO).abi_encode_params();
+    let hash = *wallet
+        .send_transaction(
+            TransactionRequest::default()
+                .to(scilla_call_precompile)
+                .input(TransactionInput::both(Bytes::from(malformed)))
+                .with_gas_limit(84_000_000),
+        )
+        .await
+        .unwrap()
+        .tx_hash();
+    let receipt = network.run_until_receipt(&wallet, &hash, 100).await;
+    assert!(!receipt.status(), "malformed scilla_call must fail");
+
+    // The field must be unchanged: the malformed call must not have executed the transition.
+    let value = contract
+        .readUint128(scilla_contract_address, "uintField".into())
+        .call()
+        .await
+        .unwrap();
+    assert_eq!(
+        value, 9999,
+        "malformed calldata executed the transition with a stale ABI word"
+    );
 }
 
 #[zilliqa_macros::test(restrict_concurrency)]
@@ -1952,6 +2809,16 @@ async fn interop_call_then_revert(mut network: Network) {
 
     let contract = ScillaInterop::new(evm_contract_address, &wallet);
 
+    let balance_before = wallet
+        .get_balance(wallet.default_signer_address())
+        .await
+        .unwrap()
+        .to::<u128>();
+    let nonce_before = wallet
+        .get_transaction_count(wallet.default_signer_address())
+        .await
+        .unwrap();
+
     // Construct a transaction which uses the scilla_call precompile.
     let tx_hash = *contract
         .callScillaRevert(
@@ -1968,7 +2835,25 @@ async fn interop_call_then_revert(mut network: Network) {
 
     let receipt = network.run_until_receipt(&wallet, &tx_hash, 100).await;
 
+    // The EVM reverts after invoking the scilla precompile
+    // (evm_exec_failure_causes_scilla_precompile_to_fail): the whole txn fails, but the sender is
+    // still charged for the gas it used.
     assert!(!receipt.status());
+    assert_eq!(
+        nonce_before + 1,
+        wallet
+            .get_transaction_count(wallet.default_signer_address())
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        balance_before - (receipt.gas_used as u128 * receipt.effective_gas_price),
+        wallet
+            .get_balance(wallet.default_signer_address())
+            .await
+            .unwrap()
+            .to::<u128>()
+    );
 
     let call = format!(
         r#"

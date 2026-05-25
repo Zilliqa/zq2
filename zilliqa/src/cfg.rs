@@ -728,6 +728,7 @@ impl Forks {
                 ForkName::DisableInteropNativeZilTransfers0 => {
                     fork.disable_interop_native_zil_transfers_0
                 }
+                ForkName::TightenPrecompileRules => fork.tighten_precompile_rules,
             } {
                 return Some(fork.at_height);
             }
@@ -780,6 +781,7 @@ pub struct Fork {
     pub dont_overwrite_evm_accounts_from_stale_scilla_state: bool,
     pub make_transfers_in_scilla_precompiles_with_journal_api: bool,
     pub disable_interop_native_zil_transfers_0: bool,
+    pub tighten_precompile_rules: bool,
 }
 
 pub enum ForkName {
@@ -810,6 +812,7 @@ pub enum ForkName {
     DontOverwriteAccountsFromStaleScillaState,
     MakeTransfersInScillaPrecompilesWithJournalApi,
     DisableInteropNativeZilTransfers0,
+    TightenPrecompileRules,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -941,6 +944,8 @@ pub struct ForkDelta {
     /// If true, a call to the `scilla_call` precompile that carries a non-zero native ZIL value fails
     /// immediately.
     pub disable_interop_native_zil_transfers_0: Option<bool>,
+    /// If true, the `scilla_call` precompile applies stricter rules
+    pub tighten_precompile_rules: Option<bool>,
 }
 
 impl Fork {
@@ -1065,6 +1070,9 @@ impl Fork {
             disable_interop_native_zil_transfers_0: delta
                 .disable_interop_native_zil_transfers_0
                 .unwrap_or(self.disable_interop_native_zil_transfers_0),
+            tighten_precompile_rules: delta
+                .tighten_precompile_rules
+                .unwrap_or(self.tighten_precompile_rules),
         }
     }
 }
@@ -1174,6 +1182,7 @@ pub fn genesis_fork_default() -> Fork {
         dont_overwrite_evm_accounts_from_stale_scilla_state: true,
         make_transfers_in_scilla_precompiles_with_journal_api: true,
         disable_interop_native_zil_transfers_0: true,
+        tighten_precompile_rules: true,
     }
 }
 
@@ -1356,6 +1365,7 @@ mod tests {
                 dont_overwrite_evm_accounts_from_stale_scilla_state: None,
                 make_transfers_in_scilla_precompiles_with_journal_api: None,
                 disable_interop_native_zil_transfers_0: None,
+                tighten_precompile_rules: None,
             }],
             ..Default::default()
         };
@@ -1420,6 +1430,7 @@ mod tests {
                     dont_overwrite_evm_accounts_from_stale_scilla_state: None,
                     make_transfers_in_scilla_precompiles_with_journal_api: None,
                     disable_interop_native_zil_transfers_0: None,
+                    tighten_precompile_rules: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1464,6 +1475,7 @@ mod tests {
                     dont_overwrite_evm_accounts_from_stale_scilla_state: None,
                     make_transfers_in_scilla_precompiles_with_journal_api: None,
                     disable_interop_native_zil_transfers_0: None,
+                    tighten_precompile_rules: None,
                 },
             ],
             ..Default::default()
@@ -1545,6 +1557,7 @@ mod tests {
                     dont_overwrite_evm_accounts_from_stale_scilla_state: None,
                     make_transfers_in_scilla_precompiles_with_journal_api: None,
                     disable_interop_native_zil_transfers_0: None,
+                    tighten_precompile_rules: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1589,6 +1602,7 @@ mod tests {
                     dont_overwrite_evm_accounts_from_stale_scilla_state: None,
                     make_transfers_in_scilla_precompiles_with_journal_api: None,
                     disable_interop_native_zil_transfers_0: None,
+                    tighten_precompile_rules: None,
                 },
             ],
             ..Default::default()
@@ -1658,6 +1672,7 @@ mod tests {
                 dont_overwrite_evm_accounts_from_stale_scilla_state: true,
                 make_transfers_in_scilla_precompiles_with_journal_api: true,
                 disable_interop_native_zil_transfers_0: true,
+                tighten_precompile_rules: true,
             },
             forks: vec![],
             ..Default::default()
@@ -1715,6 +1730,7 @@ mod tests {
                     dont_overwrite_evm_accounts_from_stale_scilla_state: None,
                     make_transfers_in_scilla_precompiles_with_journal_api: None,
                     disable_interop_native_zil_transfers_0: None,
+                    tighten_precompile_rules: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1759,6 +1775,7 @@ mod tests {
                     dont_overwrite_evm_accounts_from_stale_scilla_state: None,
                     make_transfers_in_scilla_precompiles_with_journal_api: None,
                     disable_interop_native_zil_transfers_0: None,
+                    tighten_precompile_rules: None,
                 },
             ],
             ..Default::default()

@@ -42,6 +42,7 @@ use crate::{
     crypto::{Hash, NodePublicKey},
     error::ensure_success,
     evm::{SPEC_ID_CANCUN, SPEC_ID_SHANGHAI, ZQ2Evm, ZQ2EvmContext, new_zq2_evm_ctx},
+    exec_failure,
     inspector::{self, ScillaInspector, TouchedAddressInspector},
     message::{Block, BlockHeader},
     precompiles::{PENALTY_ADDRESS, SCILLA_CALL_ADDRESS, ViewHistory},
@@ -514,22 +515,6 @@ impl State {
         }
     }
 
-    fn failed(
-        mut result_and_state: ResultAndState,
-    ) -> Result<(ResultAndState, HashMap<Address, PendingAccount>)> {
-        result_and_state.state.clear();
-        Ok((
-            ResultAndState {
-                result: ExecutionResult::Revert {
-                    gas_used: result_and_state.result.gas_used(),
-                    output: Bytes::default(),
-                },
-                state: result_and_state.state,
-            },
-            HashMap::new(),
-        ))
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub fn apply_transaction_evm<I: Inspector<ZQ2EvmContext> + ScillaInspector>(
         &self,
@@ -704,29 +689,31 @@ impl State {
         }
         let ctx_with_handler = evm.ctx();
 
-        // If the scilla precompile failed for whitelisted zq1 contract we mark the entire transaction as failed
-        if ctx_with_handler.chain.enforce_transaction_failure {
-            return Self::failed(result_and_state);
-        }
-
-        // If any of EVM (calls, creates, ...) failed and there was a call to whitelisted scilla address with interop precompile
-        // then report entire transaction as failed
-        let evm_exec_failure_causes_scilla_precompile_to_fail = self
-            .forks
-            .get(current_block.number)
-            .evm_exec_failure_causes_scilla_precompile_to_fail;
-        {
-            let ext_ctx = &ctx_with_handler.chain;
-            if evm_exec_failure_causes_scilla_precompile_to_fail
-                && ext_ctx.has_evm_failed
-                && ext_ctx.has_called_scilla_precompile
-                && extra_opts.exec_type == ExecType::Transact
-            {
-                return Self::failed(result_and_state);
-            }
-        }
+        let force_fail =
+            exec_failure::should_force_fail(&ctx_with_handler.chain, fork, extra_opts.exec_type);
 
         let finalized_state = ctx_with_handler.db_mut().finalize();
+
+        // Under the tightened rules, also fail when the EVM and Scilla deltas would both write the
+        // same address, since the combined result would be ambiguous.
+        let deltas_overlap = fork.tighten_precompile_rules
+            && extra_opts.exec_type == ExecType::Transact
+            && exec_failure::deltas_overlap(
+                &result_and_state.state,
+                &finalized_state,
+                fork.only_mutated_accounts_update_state,
+            );
+
+        if force_fail || deltas_overlap {
+            return exec_failure::failed(
+                self,
+                fork,
+                from_addr,
+                gas_price,
+                max_priority_fee_per_gas,
+                result_and_state,
+            );
+        }
 
         Ok((result_and_state, finalized_state))
     }
@@ -800,6 +787,7 @@ impl State {
                 &self.scilla_ext_libs_path,
                 &fork,
                 current_block.number,
+                false,
             )
         }?;
 
@@ -2183,6 +2171,7 @@ pub fn scilla_call(
     scilla_ext_libs_path: &ScillaExtLibsPath,
     fork: &Fork,
     current_block: u64,
+    from_precompile: bool,
 ) -> Result<(ScillaResult, PendingState)> {
     let mut gas = gas_limit;
 
@@ -2205,6 +2194,30 @@ pub fn scilla_call(
 
     while let Some((depth, sender, to_addr, amount, message)) = call_stack.pop() {
         let mut current_state = state.take().expect("missing state");
+
+        // Under the tightened rules, a `scilla_call` invoked from the interop precompile must not
+        // move any ZIL to any destination (Scilla contract or EOA). Reject any value-bearing message.
+        if from_precompile && fork.tighten_precompile_rules && amount != ZilAmount::ZERO {
+            return Ok((
+                ScillaResult {
+                    success: false,
+                    contract_address: None,
+                    logs: vec![],
+                    gas_used: (gas_limit - gas).into(),
+                    transitions: vec![],
+                    accepted: Some(false),
+                    errors: [(depth, vec![ScillaError::CallContractFailed])]
+                        .into_iter()
+                        .collect(),
+                    exceptions: vec![ScillaException {
+                        line: 0,
+                        message: "ZIL transfer from the scilla_call precompile is not allowed"
+                            .to_owned(),
+                    }],
+                },
+                current_state,
+            ));
+        }
 
         let contract = current_state.load_account(to_addr)?;
         let code_and_data = match &contract.account.code {

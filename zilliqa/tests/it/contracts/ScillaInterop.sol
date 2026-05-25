@@ -580,4 +580,31 @@ contract ScillaInterop {
 
         require(!ok, "This call must fail!");
     }
+
+    // Invokes the scilla_call precompile through a STATICCALL. The precompile mutates Scilla state,
+    // so this must not be allowed.
+    function callScillaViaStaticCall(
+        address scillaContract,
+        string memory transitionName
+    ) public {
+        bytes memory encodedArgs = abi.encode(
+            scillaContract,
+            transitionName,
+            uint256(1) // CALL_SCILLA_WITH_THE_SAME_SENDER
+        );
+        uint256 argsLength = encodedArgs.length;
+        uint256 precompile = 0x5a494c53;
+        bool ok;
+        assembly {
+            ok := staticcall(
+                gas(),
+                precompile,
+                add(encodedArgs, 0x20),
+                argsLength,
+                0,
+                0
+            )
+        }
+        require(ok, "static scilla call failed");
+    }
 }
