@@ -259,7 +259,7 @@ impl NodeLauncher {
                                     Err(e) => error!("Skipping transaction {e}"),
                                 }
                             }
-                            if let Err(e)= self.node.handle_broadcast_transactions(verified) {
+                            if let Err(e)= self.node.handle_broadcast_transactions(source, verified) {
                                 error!("Failed to handle broadcast transactions {e}");
                             }
                         }

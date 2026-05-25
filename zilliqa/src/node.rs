@@ -300,8 +300,12 @@ impl Node {
 
     pub fn handle_broadcast_transactions(
         &self,
+        from: PeerId,
         transactions: Vec<VerifiedTransaction>,
     ) -> Result<()> {
+        if from == self.peer_id {
+            return Ok(());
+        }
         let from_broadcast = true;
         self.consensus
             .write()
@@ -413,9 +417,8 @@ impl Node {
                 // decompress the block
                 let mut decoder = lz4::Decoder::new(std::io::Cursor::new(response))?;
                 let mut buf = Vec::new();
-                std::io::Read::read_to_end(&mut decoder, &mut buf).unwrap();
-                let response =
-                    cbor4ii::serde::from_slice::<BlockTransactionsReceipts>(&buf).unwrap();
+                std::io::Read::read_to_end(&mut decoder, &mut buf)?;
+                let response = cbor4ii::serde::from_slice::<BlockTransactionsReceipts>(&buf)?;
                 self.consensus
                     .write()
                     .sync

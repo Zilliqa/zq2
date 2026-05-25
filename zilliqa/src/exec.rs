@@ -653,7 +653,7 @@ impl State {
             kind: to_addr.into(),
             value: U256::from(amount),
             data: payload.clone().into(),
-            nonce: nonce.unwrap_or_default(),
+            nonce: nonce.unwrap_or(u64::MAX), // defaults to 'invalid' nonce
             chain_id: Some(self.chain_id.eth),
             access_list,
             gas_priority_fee,

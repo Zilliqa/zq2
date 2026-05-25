@@ -641,6 +641,11 @@ impl Sync {
         from: PeerId,
         request: RequestBlocksByHash,
     ) -> Result<ExternalMessage> {
+        if from == self.peer_id {
+            error!("PassiveRequest: Skipping self");
+            return Ok(ExternalMessage::PassiveSyncResponse(vec![]));
+        }
+
         debug!(hash = %request.hash, count = %request.count, %from,
             "PassiveRequest : received",
         );
@@ -737,6 +742,10 @@ impl Sync {
         from: PeerId,
         response: Option<Vec<BlockTransactionsReceipts>>,
     ) -> Result<()> {
+        if from == self.peer_id {
+            error!("PassiveResponse: Skipping self");
+            return Ok(());
+        }
         let SyncState::Phase4(_) = self.state else {
             warn!(%from, "PassiveResponse : dropped");
             return Ok(());
@@ -902,6 +911,11 @@ impl Sync {
         from: PeerId,
         request: Vec<Hash>,
     ) -> Result<ExternalMessage> {
+        if from == self.peer_id {
+            error!("MultiBlockRequest: Skipping self");
+            return Ok(ExternalMessage::MultiBlockResponse(vec![]));
+        }
+
         debug!(length = %request.len(), %from,
             "MultiBlockRequest : received",
         );
@@ -1010,7 +1024,9 @@ impl Sync {
         match self.state {
             // Start sync-from-probe
             SyncState::Phase0
-                if response.availability.is_none() && !response.proposals.is_empty() =>
+                if response.availability.is_none()
+                    && response.from_view == u64::MAX
+                    && !response.proposals.is_empty() =>
             {
                 let proposal = response.proposals.pop().unwrap();
                 if proposal.number() > self.started_at {
@@ -1083,6 +1099,10 @@ impl Sync {
         from: PeerId,
         response: Option<Vec<SyncBlockHeader>>,
     ) -> Result<()> {
+        if from == self.peer_id {
+            error!("ActiveResponse: Skipping self");
+            return Ok(());
+        }
         if !matches!(self.state, SyncState::Phase1(_)) {
             warn!(%from, "ActiveResponse : dropped");
             return Ok(());
@@ -1269,6 +1289,10 @@ impl Sync {
         from: PeerId,
         request: RequestBlocksByHeight,
     ) -> Result<ExternalMessage> {
+        if from == self.peer_id {
+            error!("ActiveRequest: Skipping self");
+            return Ok(ExternalMessage::SyncBlockHeaders(vec![]));
+        }
         let range = request.from_height..=request.to_height;
 
         if self.zq2_floor_height > request.to_height {

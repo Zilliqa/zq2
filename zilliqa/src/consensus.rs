@@ -1879,8 +1879,19 @@ impl Consensus {
     ) -> Result<Vec<TxAddResult>> {
         let mut inserted = Vec::with_capacity(verified_transactions.len());
         for txn in verified_transactions {
-            info!(?txn, "seen new txn");
-            inserted.push(self.new_transaction(txn, from_broadcast)?);
+            match txn.tx {
+                SignedTransaction::Legacy { .. }
+                | SignedTransaction::Eip2930 { .. }
+                | SignedTransaction::Eip1559 { .. }
+                | SignedTransaction::Zilliqa { .. } => {
+                    info!(?txn, "seen new txn");
+                    inserted.push(self.new_transaction(txn, from_broadcast)?)
+                }
+                // Drop foreign intershard messages
+                SignedTransaction::Intershard { .. } => {
+                    error!(?txn, "dropping foreign Intershard");
+                }
+            }
         }
         Ok(inserted)
     }
