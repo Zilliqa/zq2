@@ -9,6 +9,7 @@ eth_chain_id = 1337
 
 consensus.scilla_address = "http://localhost:3333"
 consensus.consensus_timeout = { secs = 15, nanos = 0 }
+# consensus.block_time = { secs = 0, nanos = 500_000_000 }
 consensus.genesis_deposits = [
     ["b27aebb3b54effd7af87c4a064a711554ee0f3f5abf56ca910b46422f2b21603bc383d42eb3b927c4c3b0b8381ca30a3", "12D3KooWESMZ2ttSxDwjfnNe23sHCqsJf6sNEKwgHkdgtCHDsbWU", "10000000000000000000000000", "7E5F4552091A69125d5DfCb7b8C2659029395Bdf", "99F7f7C00526426b8dCA99302e96d85A0e5fd400"],
 ]
@@ -35,9 +36,11 @@ consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"
 consensus.blocks_per_hour = 36
 consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
 # Gas parameters
-consensus.eth_block_gas_limit = 84000000
+consensus.eth_block_gas_limit = 40_000_000
 # spec-tests
-consensus.gas_price = "1"
+consensus.gas_price = "0"
+# consensus.gas_price = "1_000_000"
+
 
 
 # ==entrypoint addr= 0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108

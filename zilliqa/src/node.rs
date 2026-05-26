@@ -964,30 +964,26 @@ impl Node {
 
         let fork = evm_state.forks.get(block.number()).clone();
 
-        // // Timeout duration
-        // let timeout = timeout
-        //     .and_then(|s| duration_str::parse(s).ok())
-        //     .unwrap_or_default();
-
         let _timeout = timeout
             .map(|s| duration_str::parse_std(s).unwrap_or_default())
             .unwrap_or(Duration::from_mins(1)); // 1-min default
 
+        let call_gas_limit = call_params
+            .gas
+            .map(|g| EvmGas(g))
+            .unwrap_or(evm_state.block_gas_limit);
+
         match tracer {
             Some(GethDebugTracerType::JsTracer(js_code)) => {
-                let config = tracer_config.into_json();
-
-                let transaction_context = TransactionContext::default();
-                let mut inspector =
-                    JsInspector::with_transaction_context(js_code, config, transaction_context)
-                        .map_err(|e| anyhow!("Unable to create js inspector: {e}"))?;
+                let mut inspector = JsInspector::new(js_code, tracer_config.into_json())
+                    .map_err(|e| anyhow!("Unable to create js inspector: {e}"))?;
 
                 let (ResultAndState { result, state }, ..) = evm_state.apply_transaction_evm(
                     call_params.from.unwrap_or_default(),
                     call_params.to.and_then(|to| to.into_to()),
-                    0,
+                    0, // arbitrary price
                     None,
-                    evm_state.block_gas_limit,
+                    call_gas_limit,
                     u128::try_from(call_params.value.unwrap_or_default())?,
                     call_params.input.into_input().unwrap_or_default().to_vec(),
                     None,
@@ -995,7 +991,7 @@ impl Node {
                     None,
                     block.header,
                     &mut inspector,
-                    true,
+                    false,
                     BaseFeeAndNonceCheck::Ignore,
                     ExtraOpts {
                         disable_eip3607: true,
@@ -1007,6 +1003,8 @@ impl Node {
                 let result = ExecResultAndState::new(result, state);
 
                 let revm_txn = TxEnv::builder()
+                    .gas_limit(call_gas_limit.0)
+                    .gas_price(0)
                     .call(call_params.from.unwrap_or_default())
                     .build_fill();
 
@@ -1018,110 +1016,6 @@ impl Node {
                 Ok(GethTrace::JS(js_result))
             }
             _ => unimplemented!("{tracer:?}"),
-            // Some(GethDebugTracerType::BuiltInTracer(tracer)) => match tracer {
-            //     GethDebugBuiltInTracerType::Erc7562Tracer => todo!("Implement ERC7562 tracer"),
-            //     GethDebugBuiltInTracerType::CallTracer => {
-            //         let call_config = tracer_config.into_call_config()?;
-            //         let mut inspector = TracingInspector::new(
-            //             TracingInspectorConfig::from_geth_call_config(&call_config),
-            //         );
-
-            //         let result =
-            //             state.apply_transaction(txn, block.header, &mut inspector, true)?;
-
-            //         let TransactionApplyResult::Evm(result, ..) = result else {
-            //             return Ok(None);
-            //         };
-
-            //         let trace = inspector
-            //             .into_geth_builder()
-            //             .geth_call_traces(call_config, result.result.tx_gas_used());
-
-            //         Ok(Some(TraceResult::Success {
-            //             result: trace.into(),
-            //             tx_hash: Some(txn_hash.0.into()),
-            //         }))
-            //     }
-            //     GethDebugBuiltInTracerType::FlatCallTracer => {
-            //         Err(anyhow!("`flatCallTracer` is not implemented"))
-            //     }
-            //     GethDebugBuiltInTracerType::FourByteTracer => {
-            //         let mut inspector = FourByteInspector::default();
-            //         let result =
-            //             state.apply_transaction(txn, block.header, &mut inspector, true)?;
-
-            //         let TransactionApplyResult::Evm(_) = result else {
-            //             return Ok(None);
-            //         };
-
-            //         Ok(Some(TraceResult::Success {
-            //             result: FourByteFrame::from(&inspector).into(),
-            //             tx_hash: Some(txn_hash.0.into()),
-            //         }))
-            //     }
-            //     GethDebugBuiltInTracerType::MuxTracer => {
-            //         let mux_config = tracer_config.into_mux_config()?;
-
-            //         let mut inspector = MuxInspector::try_from_config(mux_config)?;
-            //         let result =
-            //             state.apply_transaction(txn, block.header, &mut inspector, true)?;
-
-            //         let TransactionApplyResult::Evm(result, ..) = result else {
-            //             return Ok(None);
-            //         };
-            //         let pending_state = PendingState::new(state.try_clone()?, fork);
-            //         let state_ref = &pending_state;
-            //         let tx_info = TransactionInfo {
-            //             hash: Some(txn_hash.into()),
-            //             index: Some(txn_index as u64),
-            //             block_hash: Some(block.hash().into()),
-            //             block_number: Some(block.number()),
-            //             block_timestamp: Some(
-            //                 block
-            //                     .header
-            //                     .timestamp
-            //                     .duration_since(crate::time::SystemTime::UNIX_EPOCH)
-            //                     .map(|d| d.as_secs())
-            //                     .unwrap_or_default(),
-            //             ),
-            //             base_fee: state.gas_price.try_into().ok(),
-            //         };
-            //         let trace = inspector.try_into_mux_frame(&result, &state_ref, tx_info)?;
-            //         Ok(Some(TraceResult::Success {
-            //             result: trace.into(),
-            //             tx_hash: Some(txn_hash.0.into()),
-            //         }))
-            //     }
-            //     GethDebugBuiltInTracerType::NoopTracer => Ok(Some(TraceResult::Success {
-            //         result: NoopFrame::default().into(),
-            //         tx_hash: Some(txn_hash.0.into()),
-            //     })),
-            //     GethDebugBuiltInTracerType::PreStateTracer => {
-            //         let prestate_config = tracer_config.into_pre_state_config()?;
-
-            //         let mut inspector = TracingInspector::new(
-            //             TracingInspectorConfig::from_geth_prestate_config(&prestate_config),
-            //         );
-            //         let result =
-            //             state.apply_transaction(txn, block.header, &mut inspector, true)?;
-
-            //         let TransactionApplyResult::Evm(result, ..) = result else {
-            //             return Ok(None);
-            //         };
-            //         let pending_state = PendingState::new(state.try_clone()?, fork);
-            //         let state_ref = &pending_state;
-            //         let trace = inspector.into_geth_builder().geth_prestate_traces(
-            //             &result,
-            //             &prestate_config,
-            //             state_ref,
-            //         )?;
-
-            //         Ok(Some(TraceResult::Success {
-            //             result: trace.into(),
-            //             tx_hash: Some(txn_hash.0.into()),
-            //         }))
-            //     }
-            // },
         }
     }
 

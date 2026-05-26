@@ -142,7 +142,7 @@ impl NodeLauncher {
         // A standalone RPC server is provided mainly to implement the API extensions needed to enable bundler support.
         // A decision may be made to enable the same extensions on the regular API in the future, and to directly incorporate it to the main JSON-RPC.
         let bundler_api = api::bundler::rpc_module(node.clone(), &crate::api::bundler_enabled());
-        let rpc_middleware = RpcServiceBuilder::new().layer(RpcLoggerLayer::new(10_000));
+        let rpc_middleware = RpcServiceBuilder::new().layer(RpcLoggerLayer::new(100_000));
         let bundler_rpc = jsonrpsee::server::ServerBuilder::new()
             .set_config(
                 ServerConfig::builder()
