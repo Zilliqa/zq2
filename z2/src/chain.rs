@@ -371,7 +371,7 @@ impl Chain {
                 json!({ "at_height": 27081150, "dont_overwrite_evm_accounts_from_stale_scilla_state": true}),
                 json!({ "at_height": 27152370, "disable_interop_native_zil_transfers_0": true}),
                 json!({ "at_height": 27152370, "make_transfers_in_scilla_precompiles_with_journal_api": true}),
-                json!({ "at_height": 27540885, "tighten_precompile_rules": true}),
+                json!({ "at_height": 27546174, "tighten_precompile_rules": true}),
             ]),
             _ => None,
         }
