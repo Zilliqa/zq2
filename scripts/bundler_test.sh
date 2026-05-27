@@ -13,7 +13,7 @@ RUST_LOG=zilliqa=warn,jsonrpsee=trace ./target/debug/zilliqa 65d7f4da9bedc8fb79c
 echo "Recovering disk space"
 cargo clean
 
-# Install NVM
+# install nvm and switch to desired version
 curl https://raw.githubusercontent.com/creationix/nvm/master/install.sh | bash
 source ~/.profile
 
@@ -27,47 +27,28 @@ nvm install 22.22
 echo "Using node version 22.22"
 nvm use 22.22
 node --version
+npm install pnpm
 
 # link solc directly to skip download
 mkdir -p $HOME/.solcx/
 ln -s $(which solc) $HOME/.solcx/solc-v0.8.28
 
-# Update bundler-spec-tests, hacking the remote origin url as SSH does not work in CI
-git clone --depth 1 https://github.com/eth-infinitism/bundler-spec-tests.git --branch version-0.8-addrs
-pushd bundler-spec-tests/
-git config --file=.gitmodules submodule.@rip7560.url https://github.com/eth-infinitism/rip7560_contracts.git
-pdm install && pdm run update-deps-remote
-popd
+# install tests and deps
+git clone --depth 1 https://github.com/alchemyplatform/bundler-spec-tests.git --branch releases/v0.8
+sed -i 's|git@github.com:|https://github.com/|' bundler-spec-tests/.gitmodules
+(cd bundler-spec-tests/ && pdm install && pdm run update-deps)
 
-# wait till ZQ2 runs
+# install entrypoint countract
 timeout 60 bash -c 'until curl -o /dev/null -sf http://localhost:4201/health; do sleep 1; done'
+(cd bundler-spec-tests/@account-abstraction && yarn install && yarn deploy --network proxy --reset)
 
-# Pre install contracts
-echo "Install Entrypoint v0.8"
-npm install hardhat@3.5.0
-pushd bundler-spec-tests/@account-abstraction/
-yarn deploy --network proxy
-popd
-
-# Install Bundler
-echo "Install Alto-Bundler"
-npm install @pimlico/alto
-npx alto --config bundler_tests/alto-config.json > /tmp/alto_log.txt 2>&1 &
-timeout 60 bash -c 'until curl -o /dev/null -sf http://localhost:3000/health; do sleep 1; done'
-
-# Run spec tests
-pushd bundler-spec-tests/
-pdm test \
-    --url http://localhost:3000 \
-    --entry-point 0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108 \
-    --ethereum-node http://localhost:4200 \
-    tests/single/rpc/
-popd
+# run the test
+timeout 60 bash -c 'until curl -o /dev/null -sf http://localhost:3545/health; do sleep 1; done'
+(cd bundler-spec-tests/ && pdm run pytest tests/single/rpc --tb=short -rA -W ignore::DeprecationWarning --url http://localhost:3545/rpc --entry-point 0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108 --ethereum-node http://localhost:8545/)
 
 # cleanup
 retVal=$?
 pkill zilliqa
-pkill alto
 if [ $retVal -ne 0 ]; then
     cat /tmp/zil_log_bundler.txt
     exit 1
