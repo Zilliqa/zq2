@@ -8,7 +8,7 @@ sudo apt-get install solc libsecp256k1-dev protobuf-compiler > /dev/null 2>&1
 # Start ZQ2 early
 pwd
 echo "Build and run ZQ2"
-cargo build -p zilliqa
+cargo build -p zilliqa --bin zilliqa
 RUST_LOG=zilliqa=warn,jsonrpsee=trace ./target/debug/zilliqa 65d7f4da9bedc8fb79cbf6722342960bbdfb9759bc0d9e3fb4989e831ccbc227 -c bundler_tests/config-bundler-spec-tests.toml > /tmp/zil_log_bundler.txt 2>&1 &
 echo "Recovering disk space"
 cargo clean
