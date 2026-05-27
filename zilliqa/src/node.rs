@@ -970,7 +970,7 @@ impl Node {
 
         let call_gas_limit = call_params
             .gas
-            .map(|g| EvmGas(g))
+            .map(EvmGas)
             .unwrap_or(evm_state.block_gas_limit);
 
         match tracer {

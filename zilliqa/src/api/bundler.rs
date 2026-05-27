@@ -3,7 +3,7 @@ use std::sync::Arc;
 use alloy::{
     eips::BlockId,
     rpc::types::{
-        TransactionRequest,
+        BlockOverrides, TransactionRequest,
         state::{AccountOverride, StateOverride},
     },
 };
