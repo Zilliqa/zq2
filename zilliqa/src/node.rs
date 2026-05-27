@@ -991,7 +991,7 @@ impl Node {
                     None,
                     block.header,
                     &mut inspector,
-                    false,
+                    true,
                     BaseFeeAndNonceCheck::Ignore,
                     ExtraOpts {
                         disable_eip3607: true,

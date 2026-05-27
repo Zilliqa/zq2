@@ -13,19 +13,38 @@ RUST_LOG=zilliqa=warn,jsonrpsee=trace ./target/debug/zilliqa 65d7f4da9bedc8fb79c
 echo "Recovering disk space"
 cargo clean
 
-# wait till ZQ2 runs
+# install nvm and switch to desired version
+curl https://raw.githubusercontent.com/creationix/nvm/master/install.sh | bash
+source ~/.profile
+
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
+[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
+
+echo "Installing nvm"
+nvm install 22.22
+
+echo "Using node version 22.22"
+nvm use 22.22
+node --version
+npm install pnpm
+
+# link solc directly to skip download
+mkdir -p $HOME/.solcx/
+ln -s $(which solc) $HOME/.solcx/solc-v0.8.28
+
+# install tests and deps
+git clone --depth 1 https://github.com/alchemyplatform/bundler-spec-tests.git --branch releases/v0.8
+sed -i 's|git@github.com:|https://github.com/|' bundler-spec-tests/.gitmodules
+(cd bundler-spec-tests/ && pdm install && pdm run update-deps)
+
+# install entrypoint countract
 timeout 60 bash -c 'until curl -o /dev/null -sf http://localhost:4201/health; do sleep 1; done'
+(cd bundler-spec-tests/@account-abstraction && yarn install && yarn deploy --network proxy --reset)
 
-# download rundler
-echo "Download Rundler v0.11.0"
-git clone --depth 1 https://github.com/alchemyplatform/rundler.git --branch v0.11.0
-
-# patch test scripts
-cd rundler/
-sed -i 's/--network localhost/--network proxy --reset/' test/spec-tests/local/launcher.sh
-sed -i 's|tests/single|tests/single/rpc|' test/spec-tests/local/run-spec-tests-v0_8.sh
-(cd test/spec-tests/v0_8/bundler-spec-tests && pdm install && pdm run update-deps)
-bash test/spec-tests/local/run-spec-tests-v0_8.sh
+# run the test
+timeout 60 bash -c 'until curl -o /dev/null -sf http://localhost:3545/health; do sleep 1; done'
+(cd bundler-spec-tests/ && pdm run pytest tests/single/rpc --tb=short -rA -W ignore::DeprecationWarning --url http://localhost:3545/rpc --entry-point 0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108 --ethereum-node http://localhost:8545/)
 
 # cleanup
 retVal=$?
