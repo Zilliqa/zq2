@@ -61,10 +61,6 @@ revm = { version = "38.0.0", features = [
     "optional_no_base_fee",
     "optional_balance_check"
 ] }
-revm-inspectors = { version = "0.39.0", features = ["js-tracer"] }
-revm-precompile = "34.0.0"
-revm-inspector = "19.0.0"
-revm-context = "16.0.1"
 alloy-rpc-types-trace = "2.0"
 alloy-consensus = "2.0"
 rusqlite = { version = "0.37.0", features = ["bundled", "trace"] }
@@ -119,6 +115,7 @@ lru = "0.18.0"
 tokio-util = { version = "0.7.18", default-features = false, features = ["time"] }
 duration-str = { version = "0.21.0", default-features = false, features = ["time"] }
 alloy-chains = { version = "0.2.34", default-features = false, features = ["serde"] }
+revm-inspectors = { version = "0.39.0", features = ["js-tracer"] }
 
 [dev-dependencies]
 alloy = { version = "2.0.4", default-features = false, features = ["consensus", "dyn-abi", "eips", "json-abi", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types", "pubsub", "json-rpc", "contract", "signer-local", "providers", "provider-debug-api"] }
