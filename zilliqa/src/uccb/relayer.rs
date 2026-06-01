@@ -122,6 +122,7 @@ impl Relayer {
         } = d.value();
 
         // skip if the userop already exists
+        tracing::trace!(uop_hash=%userop_hash, "getUserOp({chain:?}): checking");
         let res = bundler
             .raw_request::<_, serde_json::Value>(
                 "eth_getUserOperationByHash".into(),
@@ -136,6 +137,7 @@ impl Relayer {
 
         // submit the userop
         // TODO: make sure the bundler is idempotent i.e. when the same  userop hash is submitted concurrently.
+        tracing::trace!(uop_hash=%userop_hash, "sendUserOp({chain:?}): sending");
         let result = bundler
             .raw_request::<_, SendUserOperationResponse>(
                 "eth_sendUserOperation".into(),
@@ -277,6 +279,7 @@ impl Relayer {
         signature: BlsSignature,
         userop: Option<AlloyUserOperation>,
     ) -> Result<()> {
+        tracing::trace!(%from, "UserOp({userop_hash})");
         // 1. Validate inputs
         public_key.verify(userop_hash.as_bytes(), signature)?;
 
@@ -345,6 +348,8 @@ impl Relayer {
         stakers: Vec<NodePublicKey>,
         bop: BlsUserOp,
     ) -> Result<()> {
+        anyhow::ensure!(!stakers.is_empty(), "stakers cannot be empty");
+        tracing::trace!(?stakers, "UserOp({userop_hash})");
         let (signers, signatures): (Vec<NodePublicKey>, Vec<BlsSignature>) =
             bop.signatures.into_iter().unzip();
 
@@ -364,9 +369,14 @@ impl Relayer {
                 )
             })
             .collect_vec();
-        let multi_signature = blsful::MultiSignature::from_signatures(signatures)?
-            .as_raw_value()
-            .to_compressed();
+        let multi_signature = if signatures.len() == 1 {
+            signatures.first().unwrap().as_raw_value().to_compressed()
+        } else {
+            blsful::MultiSignature::from_signatures(signatures)?
+                .as_raw_value()
+                .to_compressed()
+        };
+        tracing::trace!(?multi_signature, "UserOp({userop_hash})");
 
         // 2. Count signers
         let mut cosigner = bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE];
@@ -382,6 +392,7 @@ impl Relayer {
         )
             .abi_encode_packed();
         let signature = self.secret_key.sign(message.as_slice());
+        tracing::trace!(?signature, "UserOp({userop_hash})");
 
         // 3. Construct final UserOp
         let bop = bop.userop.unwrap();
@@ -398,6 +409,7 @@ impl Relayer {
         );
 
         // 4. Push UserOp to the sending queue
+        tracing::trace!("UserOp({userop_hash})");
         if let Err(err) = self.relay_tx.send(final_uop) {
             tracing::error!(%err, "relay_tx closed");
         };
