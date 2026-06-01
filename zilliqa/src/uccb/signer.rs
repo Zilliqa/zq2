@@ -123,10 +123,10 @@ impl Signer {
         sign_tx: UnboundedSender<SignUserOp>,
     ) -> Result<()> {
         if watchers.is_empty() {
-            tracing::warn!("Watcher {chain} terminated");
+            tracing::warn!("Watcher {chain:?} terminated");
             return Ok(());
         }
-        tracing::info!(chains=%watchers.len(), "Watcher {chain}");
+        tracing::info!(chains=%watchers.len(), "Watcher {chain:?}");
 
         // Cache last known height
         let mut cache =
@@ -302,10 +302,10 @@ impl Signer {
         mut sign_rx: UnboundedReceiver<SignUserOp>,
     ) -> Result<()> {
         if providers.is_empty() {
-            tracing::warn!("Signer {chain} terminated");
+            tracing::warn!("Signer {chain:?} terminated");
             return Ok(());
         }
-        tracing::info!(chains=%providers.len(), "Signer {chain}");
+        tracing::info!(chains=%providers.len(), "Signer {chain:?}");
 
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
 

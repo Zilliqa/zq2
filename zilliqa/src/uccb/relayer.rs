@@ -213,10 +213,10 @@ impl Relayer {
     ) -> Result<()> {
         let chain = Chain::from_id(config.eth_chain_id);
         if providers.is_empty() {
-            tracing::warn!("Relayer {chain} terminated");
+            tracing::warn!("Relayer {chain:?} terminated");
             return Ok(());
         }
-        tracing::info!(chains=%providers.len(), "Relayer {chain}");
+        tracing::info!(chains=%providers.len(), "Relayer {chain:?}");
 
         // for exponential-backoff-retry
         let mut delayq: DelayQueue<RelayUserOp> = DelayQueue::new();

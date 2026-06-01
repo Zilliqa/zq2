@@ -314,7 +314,7 @@ impl Uccb {
             let chain = Chain::from_id(chain_id);
             let testnet = chain.named().map(|c| c.is_testnet()).unwrap_or_default();
 
-            tracing::info!("UCCB#{eth_chain_id} => {chain}");
+            tracing::info!("UCCB#{eth_chain_id} => {chain:?}");
             // insert it either way as Relayer/Signer has to handle http errors anyway.
             providers.insert(
                 chain_id,
