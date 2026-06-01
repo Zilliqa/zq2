@@ -325,6 +325,8 @@ pub struct NodeConfig {
     pub api_limits: ApiLimits,
     #[serde(default)]
     pub remote_chains: Vec<RemoteChain>,
+    #[serde(default)]
+    pub bundler_port: u16,
 }
 
 impl Default for NodeConfig {
@@ -347,6 +349,7 @@ impl Default for NodeConfig {
             credit_rates: HashMap::new(),
             api_limits: ApiLimits::default(),
             remote_chains: Default::default(),
+            bundler_port: 4200u16,
         }
     }
 }

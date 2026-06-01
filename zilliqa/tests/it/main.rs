@@ -467,6 +467,7 @@ impl Network {
             max_missed_view_age: max_missed_view_age_default(),
             api_limits: ApiLimits::default(),
             remote_chains: Default::default(),
+            bundler_port: 4200u16,
         };
 
         let (nodes, external_receivers, local_receivers, request_response_receivers): (
@@ -657,6 +658,7 @@ impl Network {
             max_missed_view_age: max_missed_view_age_default(),
             api_limits: ApiLimits::default(),
             remote_chains: Default::default(),
+            bundler_port: 4200u16,
         };
 
         let secret_key = options.secret_key_or_random(self.rng.clone());
