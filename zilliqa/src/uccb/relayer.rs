@@ -4,10 +4,7 @@ use alloy::{
     eips::BlockNumberOrTag,
     primitives::{Address, B256, U256, keccak256},
     providers::{Provider, utils::eip1559_default_estimator},
-    rpc::types::{
-        PackedUserOperation as AlloyUserOperation, SendUserOperationResponse,
-        UserOperationGasEstimation,
-    },
+    rpc::types::{PackedUserOperation as AlloyUserOperation, UserOperationGasEstimation},
     sol_types::SolValue,
 };
 use alloy_chains::Chain;
@@ -138,19 +135,16 @@ impl Relayer {
         // submit the userop
         // TODO: make sure the bundler is idempotent i.e. when the same  userop hash is submitted concurrently.
         tracing::trace!(uop_hash=%userop_hash, "sendUserOp({chain:?}): sending");
+        // Each bundler uses a different response format than alloy::SendUserOperationResponse.
+        // https://docs.pimlico.io/references/bundler/endpoints/eth_sendUserOperation#returns
         let result = bundler
-            .raw_request::<_, SendUserOperationResponse>(
-                "eth_sendUserOperation".into(),
-                (userop.clone(), entrypoint),
-            )
+            .raw_request::<_, String>("eth_sendUserOperation".into(), (userop.clone(), entrypoint))
             .await?;
-
-        let user_op_hash = result.user_op_hash.iter().as_slice();
-        let userop_hash = userop_hash.as_bytes();
-        if user_op_hash == userop_hash {
-            return Ok(());
-        }
-        unreachable!("UserOp mismatch"); // this should **never** happen
+        anyhow::ensure!(
+            result.contains(&userop_hash.to_string()),
+            "UserOp hash mismatch"
+        ); // This should never happen
+        Ok(())
     }
 
     /// Check for sufficient gas/fees
@@ -237,20 +231,20 @@ impl Relayer {
                     // 2. Submit the UserOp
                     if let Err(err) = Self::submit_userop(send_id, &mut relay_uop, providers.clone()).await
                     {
-                        tracing::warn!(%send_id, %err, userop=?relay_uop.userop, "Relayer({chain} => {dest}): transmit");
+                        tracing::warn!(%send_id, %err, userop=?relay_uop.userop, "Relayer({chain:?} => {dest:?}): transmit");
                     } else {
                         // Done
-                        tracing::debug!(%send_id, "Relayer({chain} => {dest}): submitted");
+                        tracing::debug!(%send_id, "Relayer({chain:?} => {dest:?}): submitted");
                         continue;
                     }
 
                     // X. Backoff-retry
                     let Some(backoff) = relay_uop.backoff() else {
                         // TODO: DEAD LETTER OFFICE
-                        tracing::error!(%send_id, "Relayer({chain} => {dest}): dropped");
+                        tracing::error!(%send_id, "Relayer({chain:?} => {dest:?}): dropped");
                         continue;
                     };
-                    tracing::warn!(%send_id, ?backoff, "Relayer({chain} => {dest}): retry");
+                    tracing::warn!(%send_id, ?backoff, "Relayer({chain:?} => {dest:?}): retry");
                     delayq.insert(relay_uop, backoff);
                 }
                 // retry processing

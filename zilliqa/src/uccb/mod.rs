@@ -290,8 +290,9 @@ impl Uccb {
             let bundler = build_wallet(&bundler_url)?;
             let jsonrpc = build_wallet(&watcher_url)?;
 
-            let (get_entrypoints, get_chain_id) = tokio::join!(
+            let (get_entrypoints, bundler_chain_id, jsonrpc_chain_id) = tokio::join!(
                 bundler.raw_request::<(), Vec<Address>>("eth_supportedEntryPoints".into(), ()),
+                bundler.get_chain_id(),
                 jsonrpc.get_chain_id()
             );
 
@@ -303,12 +304,15 @@ impl Uccb {
                 tracing::warn!("UCCB#{eth_chain_id}: != {entrypoints:?}");
             };
 
-            if let Err(err) = get_chain_id {
+            if let Err(err) = jsonrpc_chain_id {
                 tracing::warn!(%err, "UCCB#{eth_chain_id} {}", watcher_url);
-            } else if let Ok(id) = get_chain_id
-                && id != chain_id
+            } else if let Err(err) = bundler_chain_id {
+                tracing::warn!(%err, "UCCB#{eth_chain_id} {}", bundler_url);
+            } else if let Ok(json_id) = jsonrpc_chain_id
+                && let Ok(bundler_id) = bundler_chain_id
+                && (json_id != chain_id || chain_id != bundler_id)
             {
-                tracing::warn!("UCCB#{eth_chain_id} != {id}")
+                tracing::warn!("UCCB#{eth_chain_id} != {json_id}")
             };
 
             let chain = Chain::from_id(chain_id);
@@ -425,13 +429,13 @@ impl From<AlloyUserOperation> for PackedUserOperation {
         Self {
             sender: userop.sender,
             nonce: userop.nonce,
-            initCode: Bytes::from(
-                (
-                    *userop.factory.as_ref().unwrap(),
-                    userop.factory_data.as_ref().unwrap().clone(),
-                )
-                    .abi_encode_packed(),
-            ),
+            initCode: if let Some(factory) = userop.factory.as_ref()
+                && let Some(factory_data) = userop.factory_data.as_ref()
+            {
+                Bytes::from((*factory, factory_data.clone()).abi_encode_packed())
+            } else {
+                Bytes::new()
+            },
             callData: userop.call_data.clone(),
             accountGasLimits: B256::from_slice(
                 (verificationGasLimit, callGasLimit)
@@ -444,15 +448,21 @@ impl From<AlloyUserOperation> for PackedUserOperation {
                     .abi_encode_packed()
                     .as_slice(),
             ),
-            paymasterAndData: Bytes::from(
-                (
-                    *userop.paymaster.as_ref().unwrap(),
-                    paymasterVerificationGasLimit,
-                    paymasterPostOpGasLimit,
-                    userop.paymaster_data.as_ref().unwrap().clone(),
+            paymasterAndData: if let Some(paymaster) = userop.paymaster.as_ref()
+                && let Some(paymaster_data) = userop.paymaster_data.as_ref()
+            {
+                Bytes::from(
+                    (
+                        *paymaster,
+                        paymasterVerificationGasLimit,
+                        paymasterPostOpGasLimit,
+                        paymaster_data.clone(),
+                    )
+                        .abi_encode_packed(),
                 )
-                    .abi_encode_packed(),
-            ),
+            } else {
+                Bytes::new()
+            },
             signature: userop.signature,
         }
     }

@@ -259,17 +259,14 @@ impl Signer {
                 // Warning: may dead-lock, if watchers is locked above
                 if let Some(watcher) = watchers.get(&dst_chain.id()) {
                     let EndPoint {
-                        sender,
-                        gateway,
-                        paymaster,
-                        ..
+                        sender, paymaster, ..
                     } = watcher.value();
                     // 7. Construct partial UserOp; send for signing
                     let userop = Self::new_user_op(
-                        sendId,
+                        // sendId,
                         payload,
                         sender,
-                        gateway,
+                        // gateway,
                         paymaster,
                         value,
                         block_height,
@@ -539,7 +536,7 @@ impl Signer {
             pre_verification_gas,
             call_gas_limit,
         ] = fees.into_limbs(); // ordering is inverted
-        tracing::debug!(%send_id, %call_gas_limit, %pre_verification_gas, %verification_gas_limit, %paymaster_verification_gas_limit, "getFees({src_chain}): fees");
+        tracing::debug!(%send_id, %call_gas_limit, %pre_verification_gas, %verification_gas_limit, %paymaster_verification_gas_limit, "getFees({src_chain:?}): fees");
 
         userop.call_gas_limit = U256::from(call_gas_limit);
         userop.pre_verification_gas = U256::from(pre_verification_gas);
@@ -582,7 +579,7 @@ impl Signer {
             .unwrap();
         userop.signature = sig.as_raw_value().to_compressed().into();
         uop_hash.replace(Hash(hash.0));
-        tracing::trace!(%send_id, ?userop, "UserOp");
+        tracing::trace!(%send_id, ?userop, ?uop_hash, "UserOp");
         Ok(())
     }
 
@@ -664,10 +661,8 @@ impl Signer {
     /// Some dummy data is used to populate the UserOp initially. They *must* be replaced before submission.
     #[allow(clippy::too_many_arguments)]
     pub fn new_user_op(
-        send_id: B256,
         payload: Bytes,
         sender: &Address,
-        gateway: &Address,
         paymaster: &Address,
         value: U256,
         block_height: u64,
@@ -681,10 +676,10 @@ impl Signer {
         AlloyUserOperation {
             sender: *sender,
             nonce: U256::ZERO, // unpopulated nonce/sig
-            factory: Some(*gateway),
-            // Note: some bundlers may reject this
+            factory: None,
+            // Some bundlers reject any initdata for existing senders e.g.
             // https://docs.candide.dev/wallet/technical-reference/aa10-sender-already-constructed/
-            factory_data: Some(Bytes::copy_from_slice(send_id.as_slice())),
+            factory_data: None,
             call_data: payload,
             call_gas_limit: U256::ZERO,         // estimateUserOpGas
             verification_gas_limit: U256::ZERO, // estimateUserOpGas
@@ -701,10 +696,10 @@ impl Signer {
 
     pub fn default_user_op() -> AlloyUserOperation {
         Self::new_user_op(
-            B256::ZERO,
+            // B256::ZERO,
             Bytes::new(),
             &Address::ZERO,
-            &Address::ZERO,
+            // &Address::ZERO,
             &Address::ZERO,
             U256::ZERO,
             0,
