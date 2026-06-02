@@ -8,7 +8,7 @@ use alloy::{
         aliases::{B32, U192},
     },
     providers::Provider as _,
-    rpc::types::{Filter, Log, PackedUserOperation as AlloyUserOperation},
+    rpc::types::{Filter, PackedUserOperation as AlloyUserOperation},
     sol_types::{SolEvent, SolValue},
 };
 use alloy_chains::Chain;
@@ -142,160 +142,155 @@ impl Signer {
             poll_sched.insert(chain, period);
         }
 
-        // Internal log queue processing
-        let (log_tx, mut log_rx) = tokio::sync::mpsc::unbounded_channel::<Log>();
-
         // Subscribing to the live-stream results in 'latest' blocks that may get reorganized.
         // Manual polling is used to ensure that only finalized blocks are processed.
-        loop {
-            select!(
-                Some(due) = poll_sched.next() => {
-                    // reschedule the poll
-                    let chain = due.into_inner();
-                    let period = chain
-                        .average_blocktime_hint()
-                        .unwrap_or(Duration::from_secs(1));
-                    tracing::trace!(?period, ?chain, "Poll");
-                    let chain_id = chain.id();
-                    poll_sched.insert(chain, period);
+        while let Some(due) = poll_sched.next().await {
+            // reschedule the poll
+            let chain = due.into_inner();
+            let period = chain
+                .average_blocktime_hint()
+                .unwrap_or(Duration::from_secs(10));
+            tracing::trace!(?period, ?chain, "Poll");
+            let chain_id = chain.id();
+            poll_sched.insert(chain, period);
 
-                    //  poll the chain
-                    if let Some(watcher) = watchers.get(&chain_id) {
-                        let EndPoint {
-                            gateway,
-                            jsonrpc,
-                            chain,
-                            ..
-                        } = watcher.value();
+            //  poll the chain
+            let logs = if let Some(watcher) = watchers.get(&chain_id) {
+                let EndPoint {
+                    gateway,
+                    jsonrpc,
+                    chain,
+                    ..
+                } = watcher.value();
 
-                        // 1. Check for progress
-                        let (cache_height, final_height) = if let Ok(Some(final_block)) = jsonrpc
-                            .get_block_by_number(BlockNumberOrTag::Finalized)
-                            .await
-                        {
-                            let cache_height =
-                                cache.get_or_insert_mut(chain.id(), || final_block.header.number);
-                            if *cache_height >= final_block.header.number {
-                                continue; // skip if stale
-                            }
-                            (cache_height, final_block.header.number)
-                        } else {
-                            tracing::error!(?chain, "eth_getBlockByNumber(): transport");
-                            continue; // skip on errors
-                        };
-
-                        // 2. Retrieve the latest set of finalized logs
-                        let filter = Filter::new()
-                            .address(*gateway)
-                            .from_block(BlockNumberOrTag::Number(cache_height.saturating_add(1)))
-                            .to_block(BlockNumberOrTag::Number(final_height)) // ideally, this should be exactly one block length
-                            .event_signature(super::IERC7786GatewaySource::MessageSent::SIGNATURE_HASH);
-                        let Ok(logs) = jsonrpc.get_logs(&filter).await else {
-                            tracing::error!(?chain, "eth_getLogs(): transport");
-                            continue; // skip on errors
-                        };
-                        if !logs.is_empty() {
-                            tracing::info!(
-                                ?chain,
-                                count=%logs.len(),
-                                range=?(cache_height.saturating_add(1)..=final_height),
-                                "MessageSent(): events",
-                            );
-                            for log in logs.into_iter() {
-                                anyhow::ensure!(!log.removed, "finalized block reorg"); // must never happen, since it is finalized
-                                if let Err(err) = log_tx.send(log) {
-                                    tracing::error!(%err, "log_rx closed");
-                                    break;
-                                };
-                            }
-                        }
-                        *cache_height = final_height; // update final
+                // 1. Check for progress
+                let (cache_height, final_height) = if let Ok(Some(final_block)) = jsonrpc
+                    .get_block_by_number(BlockNumberOrTag::Finalized)
+                    .await
+                {
+                    let cache_height =
+                        cache.get_or_insert_mut(chain.id(), || final_block.header.number);
+                    if *cache_height >= final_block.header.number {
+                        continue; // skip if stale
                     }
-                },
-                Some(log) = log_rx.recv() => {
-                    let blk_hash = log.block_hash.expect("block_hash != none").into();
-                    let txn_hash = log.transaction_hash.expect("txn_hash != none").into();
-                    let block_height = log.block_number.expect("block_number != none");
+                    (cache_height, final_block.header.number)
+                } else {
+                    tracing::error!(?chain, "eth_getBlockByNumber(): transport");
+                    continue; // skip on errors
+                };
 
-                    // 4. Decode the MessageSent event.
-                    let Ok(MessageSent {
-                        sendId,
-                        recipient,
-                        payload,
-                        value,
-                        sender,
-                        // attributes,
-                        ..
-                    }) = super::IERC7786GatewaySource::MessageSent::decode_log_data(log.data())
-                    else {
-                        tracing::warn!(%txn_hash, ?chain, "MessageSent(): decode");
-                        continue; // skip on failure
-                    };
-
-                    // 5. Validate payload integrity
-                    if sendId != keccak256(payload.iter().as_slice()) {
-                        tracing::warn!(%sendId, ?chain, "MessageSent(): invalid");
-                        continue;
-                    }
-                    tracing::debug!(%sendId, ?chain, "MessageSent(): seen");
-
-                    // 6. Validate route
-                    let dst_chain =
-                        get_chain_id(std::str::from_utf8(&recipient)?)?;
-                    let src_chain = get_chain_id(std::str::from_utf8(&sender)?)?;
-                    anyhow::ensure!(
-                        src_chain.id() == chain.id(),
-                        "MessageSent({chain:?}): unexpected source"
-                    ); // MessageSent comes from source
-                    tracing::debug!(?src_chain, ?dst_chain, "MessageSent(): route");
-
-                    let src_test = src_chain.named().map(|c| c.is_testnet()).unwrap_or_default();
-                    let dst_test = dst_chain.named().map(|c| c.is_testnet()).unwrap_or_default();
-                    anyhow::ensure!(
-                        src_test == dst_test,
-                        "MessageSent({chain:?}): testnet != mainnet"
-                    ); // Mixing testnet/mainnet
-
-                    if !src_test {
-                        anyhow::ensure!(dst_chain != src_chain, "MessageSent({chain:?}): loop-back"); // ** DO NOT ALLOW LOOP-BACK **
-                    }
-
-                    // Warning: may dead-lock, if watchers is locked above
-                    if let Some(watcher) = watchers.get(&dst_chain.id()) {
-                        let EndPoint {
-                            sender,
-                            gateway,
-                            paymaster,
-                            ..
-                        } = watcher.value();
-                        // 7. Construct partial UserOp; send for signing
-                        let userop = Self::new_user_op(
-                            sendId,
-                            payload,
-                            sender,
-                            gateway,
-                            paymaster,
-                            value,
-                            block_height,
-                        );
-                        tracing::trace!(%sendId, ?userop, "UserOp");
-                        if let Err(err) = sign_tx.send(SignUserOp::new(
-                            userop,
-                            dst_chain,
-                            src_chain,
-                            txn_hash,
-                            blk_hash,
-                            block_height,
-                        )) {
-                            tracing::error!(%err, "sign_rx closed");
-                            break;
-                        };
-                    } else {
-                        tracing::warn!(%sendId, "MessageSent({chain:?}): missing {src_chain:?} => {dst_chain:?}");
-                        continue;
-                    };
+                // 2. Retrieve the latest set of finalized logs
+                let filter = Filter::new()
+                    .address(*gateway)
+                    .from_block(BlockNumberOrTag::Number(cache_height.saturating_add(1)))
+                    .to_block(BlockNumberOrTag::Number(final_height)) // ideally, this should be exactly one block length
+                    .event_signature(super::IERC7786GatewaySource::MessageSent::SIGNATURE_HASH);
+                let Ok(logs) = jsonrpc.get_logs(&filter).await else {
+                    tracing::error!(?chain, "eth_getLogs(): transport");
+                    continue; // skip on errors
+                };
+                if !logs.is_empty() {
+                    tracing::info!(
+                        ?chain,
+                        count=%logs.len(),
+                        range=?(cache_height.saturating_add(1)..=final_height),
+                        "MessageSent(): events",
+                    );
                 }
-            )
+                *cache_height = final_height; // update final
+                logs
+            } else {
+                continue;
+            };
+
+            for log in logs {
+                let blk_hash = log.block_hash.expect("block_hash != none").into();
+                let txn_hash = log.transaction_hash.expect("txn_hash != none").into();
+                let block_height = log.block_number.expect("block_number != none");
+
+                // 4. Decode the MessageSent event.
+                let Ok(MessageSent {
+                    sendId,
+                    recipient,
+                    payload,
+                    value,
+                    sender,
+                    // attributes,
+                    ..
+                }) = super::IERC7786GatewaySource::MessageSent::decode_log_data(log.data())
+                else {
+                    tracing::warn!(%txn_hash, ?chain, "MessageSent(): decode");
+                    continue; // skip on failure
+                };
+
+                // 5. Validate payload integrity
+                if sendId != keccak256(payload.iter().as_slice()) {
+                    tracing::warn!(%sendId, ?chain, "MessageSent(): invalid");
+                    continue;
+                }
+                tracing::debug!(%sendId, ?chain, "MessageSent(): seen");
+
+                // 6. Validate route
+                let dst_chain = get_chain_id(std::str::from_utf8(&recipient)?)?;
+                let src_chain = get_chain_id(std::str::from_utf8(&sender)?)?;
+                anyhow::ensure!(
+                    src_chain.id() == chain.id(),
+                    "MessageSent({chain:?}): unexpected source"
+                ); // MessageSent comes from source
+                tracing::debug!(?src_chain, ?dst_chain, "MessageSent(): route");
+
+                let src_test = src_chain
+                    .named()
+                    .map(|c| c.is_testnet())
+                    .unwrap_or_default();
+                let dst_test = dst_chain
+                    .named()
+                    .map(|c| c.is_testnet())
+                    .unwrap_or_default();
+                anyhow::ensure!(
+                    src_test == dst_test,
+                    "MessageSent({chain:?}): testnet != mainnet"
+                ); // Mixing testnet/mainnet
+
+                if !src_test {
+                    anyhow::ensure!(dst_chain != src_chain, "MessageSent({chain:?}): loop-back"); // ** DO NOT ALLOW LOOP-BACK **
+                }
+
+                // Warning: may dead-lock, if watchers is locked above
+                if let Some(watcher) = watchers.get(&dst_chain.id()) {
+                    let EndPoint {
+                        sender,
+                        gateway,
+                        paymaster,
+                        ..
+                    } = watcher.value();
+                    // 7. Construct partial UserOp; send for signing
+                    let userop = Self::new_user_op(
+                        sendId,
+                        payload,
+                        sender,
+                        gateway,
+                        paymaster,
+                        value,
+                        block_height,
+                    );
+                    tracing::trace!(%sendId, ?userop, "UserOp");
+                    if let Err(err) = sign_tx.send(SignUserOp::new(
+                        userop,
+                        dst_chain,
+                        src_chain,
+                        txn_hash,
+                        blk_hash,
+                        block_height,
+                    )) {
+                        tracing::error!(%err, "sign_rx closed");
+                        break;
+                    };
+                } else {
+                    tracing::warn!(%sendId, "MessageSent({chain:?}): missing {src_chain:?} => {dst_chain:?}");
+                    continue;
+                };
+            }
         }
         Ok(())
     }
