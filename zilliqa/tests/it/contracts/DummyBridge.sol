@@ -3,20 +3,63 @@ pragma solidity ^0.8.28;
 
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
-import {IEntryPointNonces} from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
+import {
+    IEntryPointNonces,
+    IPaymaster,
+    IEntryPoint,
+    PackedUserOperation,
+    IAccount
+} from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
 import {
     IERC7786GatewaySource,
     IERC7786Recipient
 } from "@openzeppelin/contracts/interfaces/draft-IERC7786.sol";
 import {CAIP10} from "@openzeppelin/contracts/utils/CAIP10.sol";
 
-contract DummyBridge is Pausable, IERC7786GatewaySource, IEntryPointNonces {
+contract DummyBridge is
+    Pausable,
+    IERC7786GatewaySource,
+    IEntryPointNonces,
+    IPaymaster,
+    IAccount
+{
     uint nonce;
     mapping(address => mapping(uint192 => uint256)) public nonceSequenceNumber;
 
     event Received(bytes32 indexed receiveId, address gateway);
+    IEntryPoint entryPoint;
 
-    constructor() {}
+    constructor(address _ep) payable {
+        entryPoint = IEntryPoint(_ep);
+    }
+
+    function validateUserOp(
+        PackedUserOperation calldata userOp,
+        bytes32,
+        uint256 missingWalletFunds
+    ) public override returns (uint256 validationData) {
+        validationData = 0;
+    }
+
+    function validatePaymasterUserOp(
+        PackedUserOperation calldata userOp,
+        bytes32 userOpHash,
+        uint256 maxCost
+    ) external returns (bytes memory context, uint256 validationData) {
+        context = "";
+        validationData = 0;
+    }
+
+    function postOp(
+        PostOpMode mode,
+        bytes calldata context,
+        uint256 actualGasCost,
+        uint
+    ) external {}
+
+    receive() external payable {
+        entryPoint.depositTo{value: msg.value}(address(this));
+    }
 
     function getNonce(
         address sender,
