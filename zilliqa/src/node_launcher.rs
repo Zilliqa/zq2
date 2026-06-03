@@ -151,7 +151,7 @@ impl NodeLauncher {
                     .build(),
             )
             .set_rpc_middleware(rpc_middleware)
-            .build((Ipv4Addr::LOCALHOST, config.bundler_port)) // non-public bind
+            .build((Ipv4Addr::UNSPECIFIED, config.bundler_port))
             .await;
         match bundler_rpc {
             Ok(server) => {
