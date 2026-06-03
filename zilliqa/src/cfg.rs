@@ -729,6 +729,9 @@ impl Forks {
                     fork.disable_interop_native_zil_transfers_0
                 }
                 ForkName::TightenPrecompileRules => fork.tighten_precompile_rules,
+                ForkName::AllowScillaCallPrecompileToBeCalledFromAddresses => !fork
+                    .allow_scilla_call_precompile_to_be_called_from_addresses
+                    .is_empty(),
             } {
                 return Some(fork.at_height);
             }
@@ -782,6 +785,7 @@ pub struct Fork {
     pub make_transfers_in_scilla_precompiles_with_journal_api: bool,
     pub disable_interop_native_zil_transfers_0: bool,
     pub tighten_precompile_rules: bool,
+    pub allow_scilla_call_precompile_to_be_called_from_addresses: Vec<Address>,
 }
 
 pub enum ForkName {
@@ -813,6 +817,7 @@ pub enum ForkName {
     MakeTransfersInScillaPrecompilesWithJournalApi,
     DisableInteropNativeZilTransfers0,
     TightenPrecompileRules,
+    AllowScillaCallPrecompileToBeCalledFromAddresses,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -946,6 +951,8 @@ pub struct ForkDelta {
     pub disable_interop_native_zil_transfers_0: Option<bool>,
     /// If true, the `scilla_call` precompile applies stricter rules
     pub tighten_precompile_rules: Option<bool>,
+    /// Restricts which caller addresses may invoke the scilla_call precompile
+    pub allow_scilla_call_precompile_to_be_called_from_addresses: Option<Vec<Address>>,
 }
 
 impl Fork {
@@ -1073,6 +1080,13 @@ impl Fork {
             tighten_precompile_rules: delta
                 .tighten_precompile_rules
                 .unwrap_or(self.tighten_precompile_rules),
+            allow_scilla_call_precompile_to_be_called_from_addresses: delta
+                .allow_scilla_call_precompile_to_be_called_from_addresses
+                .clone()
+                .unwrap_or_else(|| {
+                    self.allow_scilla_call_precompile_to_be_called_from_addresses
+                        .clone()
+                }),
         }
     }
 }
@@ -1183,6 +1197,7 @@ pub fn genesis_fork_default() -> Fork {
         make_transfers_in_scilla_precompiles_with_journal_api: true,
         disable_interop_native_zil_transfers_0: true,
         tighten_precompile_rules: true,
+        allow_scilla_call_precompile_to_be_called_from_addresses: vec![],
     }
 }
 
@@ -1366,6 +1381,7 @@ mod tests {
                 make_transfers_in_scilla_precompiles_with_journal_api: None,
                 disable_interop_native_zil_transfers_0: None,
                 tighten_precompile_rules: None,
+                allow_scilla_call_precompile_to_be_called_from_addresses: None,
             }],
             ..Default::default()
         };
@@ -1431,6 +1447,7 @@ mod tests {
                     make_transfers_in_scilla_precompiles_with_journal_api: None,
                     disable_interop_native_zil_transfers_0: None,
                     tighten_precompile_rules: None,
+                    allow_scilla_call_precompile_to_be_called_from_addresses: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1476,6 +1493,7 @@ mod tests {
                     make_transfers_in_scilla_precompiles_with_journal_api: None,
                     disable_interop_native_zil_transfers_0: None,
                     tighten_precompile_rules: None,
+                    allow_scilla_call_precompile_to_be_called_from_addresses: None,
                 },
             ],
             ..Default::default()
@@ -1558,6 +1576,7 @@ mod tests {
                     make_transfers_in_scilla_precompiles_with_journal_api: None,
                     disable_interop_native_zil_transfers_0: None,
                     tighten_precompile_rules: None,
+                    allow_scilla_call_precompile_to_be_called_from_addresses: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1603,6 +1622,7 @@ mod tests {
                     make_transfers_in_scilla_precompiles_with_journal_api: None,
                     disable_interop_native_zil_transfers_0: None,
                     tighten_precompile_rules: None,
+                    allow_scilla_call_precompile_to_be_called_from_addresses: None,
                 },
             ],
             ..Default::default()
@@ -1673,6 +1693,7 @@ mod tests {
                 make_transfers_in_scilla_precompiles_with_journal_api: true,
                 disable_interop_native_zil_transfers_0: true,
                 tighten_precompile_rules: true,
+                allow_scilla_call_precompile_to_be_called_from_addresses: vec![],
             },
             forks: vec![],
             ..Default::default()
@@ -1731,6 +1752,7 @@ mod tests {
                     make_transfers_in_scilla_precompiles_with_journal_api: None,
                     disable_interop_native_zil_transfers_0: None,
                     tighten_precompile_rules: None,
+                    allow_scilla_call_precompile_to_be_called_from_addresses: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1776,6 +1798,7 @@ mod tests {
                     make_transfers_in_scilla_precompiles_with_journal_api: None,
                     disable_interop_native_zil_transfers_0: None,
                     tighten_precompile_rules: None,
+                    allow_scilla_call_precompile_to_be_called_from_addresses: None,
                 },
             ],
             ..Default::default()

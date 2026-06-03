@@ -466,6 +466,22 @@ impl ContextPrecompile for ScillaCall {
             }));
         }
 
+        // Optional caller allowlist. When the list is non-empty, only the listed addresses may
+        // invoke the `scilla_call` precompile; any other caller fails the whole transaction. An
+        // empty list imposes no restriction.
+        let allowlist = &ctx
+            .chain
+            .fork
+            .allow_scilla_call_precompile_to_be_called_from_addresses;
+        if !allowlist.is_empty() && !allowlist.contains(&input.caller_address) {
+            ctx.chain.enforce_transaction_failure = true;
+            return Ok(Some(InterpreterResult {
+                result: InstructionResult::PrecompileError,
+                gas,
+                output: Bytes::new(),
+            }));
+        }
+
         let gas_exempt = ctx
             .chain
             .fork
