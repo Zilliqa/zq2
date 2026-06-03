@@ -123,10 +123,10 @@ impl Signer {
         sign_tx: UnboundedSender<SignUserOp>,
     ) -> Result<()> {
         if watchers.is_empty() {
-            tracing::warn!("Watcher {chain:?} terminated");
+            tracing::warn!("Watcher({chain:?}): terminated");
             return Ok(());
         }
-        tracing::info!(chains=%watchers.len(), "Watcher {chain:?}");
+        tracing::info!(chains=%watchers.len(), "Watcher({chain:?}): started");
 
         // Cache last known height
         let mut cache =
@@ -219,25 +219,24 @@ impl Signer {
                     ..
                 }) = super::IERC7786GatewaySource::MessageSent::decode_log_data(log.data())
                 else {
-                    tracing::warn!(%txn_hash, ?chain, "MessageSent(): decode");
+                    tracing::error!(%txn_hash, "MessageSent({chain:?}): decoder");
                     continue; // skip on failure
                 };
 
                 // 5. Validate payload integrity
                 if sendId != keccak256(payload.iter().as_slice()) {
-                    tracing::warn!(%sendId, ?chain, "MessageSent(): invalid");
+                    tracing::error!(send_id=%sendId, "MessageSent({chain:?}): invalid");
                     continue;
                 }
-                tracing::debug!(%sendId, ?chain, "MessageSent(): seen");
+                tracing::debug!(send_id=%sendId, "MessageSent({chain:?}): seen");
 
                 // 6. Validate route
                 let dst_chain = get_chain_id(std::str::from_utf8(&recipient)?)?;
                 let src_chain = get_chain_id(std::str::from_utf8(&sender)?)?;
                 anyhow::ensure!(
                     src_chain.id() == chain.id(),
-                    "MessageSent({chain:?}): unexpected source"
+                    "MessageSent({chain:?}): invalid source"
                 ); // MessageSent comes from source
-                tracing::debug!(?src_chain, ?dst_chain, "MessageSent(): route");
 
                 let src_test = src_chain
                     .named()
@@ -251,10 +250,10 @@ impl Signer {
                     src_test == dst_test,
                     "MessageSent({chain:?}): testnet != mainnet"
                 ); // Mixing testnet/mainnet
-
                 if !src_test {
                     anyhow::ensure!(dst_chain != src_chain, "MessageSent({chain:?}): loop-back"); // ** DO NOT ALLOW LOOP-BACK **
                 }
+                tracing::info!(send_id=%sendId, "MessageSent({src_chain:?}): => {dst_chain:?}");
 
                 // Warning: may dead-lock, if watchers is locked above
                 if let Some(watcher) = watchers.get(&dst_chain.id()) {
@@ -271,7 +270,7 @@ impl Signer {
                         value,
                         block_height,
                     );
-                    tracing::trace!(%sendId, ?userop, "UserOp");
+                    tracing::trace!(send_id=%sendId, ?userop, "UserOp");
                     if let Err(err) = sign_tx.send(SignUserOp::new(
                         userop,
                         dst_chain,
@@ -284,7 +283,7 @@ impl Signer {
                         break;
                     };
                 } else {
-                    tracing::warn!(%sendId, "MessageSent({chain:?}): missing {src_chain:?} => {dst_chain:?}");
+                    tracing::warn!(send_id=%sendId, "MessageSent({chain:?}): missing route");
                     continue;
                 };
             }
@@ -308,10 +307,10 @@ impl Signer {
         mut sign_rx: UnboundedReceiver<SignUserOp>,
     ) -> Result<()> {
         if providers.is_empty() {
-            tracing::warn!("Signer {chain:?} terminated");
+            tracing::warn!("Signer({chain:?}): terminated");
             return Ok(());
         }
-        tracing::info!(chains=%providers.len(), "Signer {chain:?}");
+        tracing::info!(chains=%providers.len(), "Signer({chain:?}): started");
 
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
 
@@ -321,7 +320,7 @@ impl Signer {
         // exponential backoff queue
         let mut delayq: DelayQueue<SignUserOp> = DelayQueue::new();
         // time-slot sending queue
-        let mut sendq: DelayQueue<(PeerId, UccbUserOp)> = DelayQueue::new();
+        let mut sendq: DelayQueue<(PeerId, UccbUserOp, B256)> = DelayQueue::new();
 
         loop {
             select! {
@@ -330,19 +329,19 @@ impl Signer {
                     // 1. Populate the nonce
                     if let Err(err) = Self::populate_nonce(send_id, &mut sign_uop, providers.clone()).await
                     {
-                        tracing::warn!(%send_id, %err, userop=?sign_uop.userop, "Signer {chain}: nonce");
+                        tracing::warn!(%send_id, %err, userop=?sign_uop.userop, "Signer({chain:?}): nonce");
                     } else
                     // 2. Populate the gas/fees
                     if let Err(err) =
                         Self::populate_gasfees(send_id, &mut sign_uop, providers.clone(), &mut cache).await
                     {
-                        tracing::warn!(%send_id, %err, userop=?sign_uop.userop, "Signer {chain}: gas");
+                        tracing::warn!(%send_id, %err, userop=?sign_uop.userop, "Signer({chain:?}): gas");
                     } else
                     // 3. Compute the signature/hash
                     if let Err(err) =
                         Self::populate_signature(send_id, &mut sign_uop, providers.clone(), secret_key)
                     {
-                        tracing::warn!(%send_id, %err, userop=?sign_uop.userop, "Signer {chain}: sign");
+                        tracing::warn!(%send_id, %err, userop=?sign_uop.userop, "Signer({chain:?}): sign");
                     } else
                     // 4. Queue the signed UserOp for transmission
                     if let Err(err) = Self::queue_userop(
@@ -354,25 +353,27 @@ impl Signer {
                         peer_id,
                         secret_key,
                     ) {
-                        tracing::warn!(%send_id, %err, userop=?sign_uop.userop, "Signer {chain}: txmt");
+                        tracing::warn!(%send_id, %err, userop=?sign_uop.userop, "Signer({chain:?}): txmt");
                     } else {
                         // Done
-                        tracing::debug!(%send_id, "Signer {chain}: relayed");
+                        tracing::info!(%send_id, "Signer({chain:?}): signed");
                         continue;
                     }
 
                     // X. Backoff-retry
                     let Some(backoff) = sign_uop.backoff() else {
                         // DEAD LETTER OFFICE
-                        tracing::error!(%send_id, "Signer {chain}: dropped");
+                        tracing::error!(%send_id, "Signer({chain:?}): dropped");
                         continue;
                     };
-                    tracing::warn!(%send_id, ?backoff, "Signer {chain}: retry");
+                    tracing::warn!(%send_id, ?backoff, "Signer({chain:?}): backoff");
                     delayq.insert(sign_uop, backoff);
                 }
                 // retry
                 Some(due) = delayq.next() => {
                     let sign_uop = due.into_inner();
+                    let send_id = keccak256(sign_uop.userop.call_data.iter().as_slice());
+                    tracing::debug!(%send_id, "Signer({chain:?}): retry");
                     if let Err(err) = sign_tx.send(sign_uop) {
                         tracing::error!(%err, "sign_rx closed");
                         break Ok(());
@@ -380,8 +381,8 @@ impl Signer {
                 }
                 // delay send
                 Some(due) = sendq.next() => {
-                    let (peer, uccb_uop) = due.into_inner();
-                    tracing::debug!(uop=%uccb_uop.userop_hash, "relayed");
+                    let (peer, uccb_uop, send_id) = due.into_inner();
+                    tracing::debug!(%send_id, "Signer({chain:?}): relayed");
                     if let Err(err) = message_sender.send_external_message(peer, ExternalMessage::UccbUserOp(uccb_uop)) {
                         tracing::error!(%err, "message_sender closed");
                         break Ok(());
@@ -398,7 +399,7 @@ impl Signer {
     fn queue_userop(
         send_id: B256,
         sign_uop: &mut SignUserOp,
-        sendq: &mut DelayQueue<(PeerId, UccbUserOp)>,
+        sendq: &mut DelayQueue<(PeerId, UccbUserOp, B256)>,
         state: Arc<State>,
         db: Arc<Db>,
         peer_id: PeerId,
@@ -414,7 +415,7 @@ impl Signer {
         } = sign_uop;
 
         let relay_set = Self::get_relay_set(blk_hash, txn_hash, state.clone(), db.clone())?;
-        tracing::debug!(%send_id, ?uop_hash, "relaySet({:?})", relay_set);
+        tracing::trace!(%send_id, ?uop_hash, "relaySet({:?})", relay_set);
 
         let signature = BlsSignature::from_bytes(userop.signature.iter().as_slice())?;
         for (i, peer) in relay_set.into_iter().enumerate() {
@@ -438,7 +439,7 @@ impl Signer {
                 .unwrap_or(Duration::from_secs(5))
                 * i as u32;
 
-            sendq.insert((peer, uccb_uop), delay_slot);
+            sendq.insert((peer, uccb_uop, send_id), delay_slot);
         }
         Ok(())
     }
