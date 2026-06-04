@@ -1,4 +1,4 @@
-use std::{num::NonZeroUsize, sync::Arc, time::Duration};
+use std::{num::NonZeroUsize, ops::Mul, sync::Arc, time::Duration};
 
 // use super::AlloyUserOperation;
 use alloy::{
@@ -424,7 +424,7 @@ impl Signer {
         tracing::trace!(%send_id, ?uop_hash, "relaySet({:?})", relay_set);
 
         let signature = BlsSignature::from_bytes(userop.signature.iter().as_slice())?;
-        for (i, peer) in relay_set.into_iter().enumerate() {
+        for (i, peer) in (0u32..).zip(relay_set.into_iter()) {
             let uccb_uop = UccbUserOp {
                 chain: *dst_chain,
                 userop_hash: uop_hash.context("uop_hash exists")?,
@@ -438,12 +438,11 @@ impl Signer {
                 },
                 signature,
             };
-            // we use delay-slots to ensure that the first peer always has the priority to submit the userop.
-            // the two backup peers should only be able to submit it after a significant delay.
+            // we use delay-slots to ensure that the first peer always has the first priority to submit the userop.
+            // the two backup peers should only be able to submit it after a delay. the userop is lost if all fail.
             let delay_slot = dst_chain
                 .average_blocktime_hint()
-                .unwrap_or(Duration::from_secs(5))
-                * i as u32;
+                .map_or_else(|| Duration::from_secs(15).mul(i), |d| d.mul(i)); // slots at 0s, 15s, 45s.
 
             sendq.insert((peer, uccb_uop, send_id), delay_slot);
         }

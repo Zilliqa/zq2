@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use alloy::{
     eips::BlockId,
@@ -88,13 +88,10 @@ pub fn debug_trace_call(params: Params, node: &Arc<Node>) -> Result<GethTrace> {
     apply_state_overrides(&mut evm_state, &node.clone(), state_overrides)?;
 
     // run the trace with timeout
-    let timeout = options
-        .tracing_options
-        .timeout
-        .as_ref()
-        .map_or(tokio::time::Duration::from_secs(10), |s| {
-            duration_str::parse_std(s).unwrap_or_default()
-        });
+    let timeout = options.tracing_options.timeout.as_ref().map_or_else(
+        || Duration::from_secs(10),
+        |s| duration_str::parse_std(s).unwrap_or_default(),
+    );
 
     let handle = tokio::runtime::Handle::current();
 
