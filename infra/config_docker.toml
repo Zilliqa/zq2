@@ -25,15 +25,17 @@ api_servers = [
 # Connects to locally run network
 remote_chains = [
     {
-        watcher_url = "http://198.51.100.103:4200",
+        watcher_url = "http://127.0.0.1:4200",
         bundler_url = "http://198.51.100.8:3000",
         chain_id = 33468,
-        entrypoint = "0x0000000071727de22e5e9d8baf0edac6f37da032",
-        gateway = "0x0000000071727de22e5e9d8baf0edac6f37da032",
-        sender = "0x0000000071727de22e5e9d8baf0edac6f37da032",
-        paymaster = "0x0000000071727de22e5e9d8baf0edac6f37da032",
+        entrypoint = "0x4337084d9e255ff0702461cf8895ce9e3b5ff108",
+        paymaster = "0x8464135c8F25Da09e49BC8782676a84730C318bC",
+        gateway = "0x8464135c8F25Da09e49BC8782676a84730C318bC",
+        sender = "0x8464135c8F25Da09e49BC8782676a84730C318bC",
+        allow_loopback = true,
     }
 ]
+bundler_port = 4200
 
 # These (public key, peerId, stake, rewardAddress, controlAddress) tuples correspond to the private keys of all four nodes in `docker-compose.yaml`.
 consensus.genesis_deposits = [
@@ -105,15 +107,11 @@ consensus.genesis_accounts = [
         "99F7f7C00526426b8dCA99302e96d85A0e5fd400",
         "5000000000000000000000",
     ],
-    # Rundler spec-tests
-    [
-        "f39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-        "5000000000000000000000",
-    ],
-    [
-        "90F8bf6A479f320ead074411a4B0e7944Ea8c9C1",
-        "5000000000000000000000",
-    ],
+    # hardhat addresses
+    ["f39Fd6e51aad88F6F4ce6aB8827279cffFb92266", "10000000000000000000000"], # 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+    ["70997970c51812dc3a010c7d01b50e0d17dc79c8", "10000000000000000000000"], # 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
+    # bundler-spec-test
+    ["90F8bf6A479f320ead074411a4B0e7944Ea8c9C1", "10000000000000000000000"], # 0x4f3edf983ac636a65a842ce7c78d9aa706d3b113bce9c46f30d7d21715b23b1d
 ]
 
 # speed up local/docker epochs

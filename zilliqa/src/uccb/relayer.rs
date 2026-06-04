@@ -4,10 +4,7 @@ use alloy::{
     eips::BlockNumberOrTag,
     primitives::{Address, B256, U256, keccak256},
     providers::{Provider, utils::eip1559_default_estimator},
-    rpc::types::{
-        PackedUserOperation as AlloyUserOperation, SendUserOperationResponse,
-        UserOperationGasEstimation,
-    },
+    rpc::types::{PackedUserOperation as AlloyUserOperation, UserOperationGasEstimation},
     sol_types::SolValue,
 };
 use alloy_chains::Chain;
@@ -27,6 +24,7 @@ use tokio_stream::StreamExt as _;
 use tokio_util::time::DelayQueue;
 
 use crate::{
+    api::to_hex::ToHex,
     cfg::NodeConfig,
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey},
     db::Db,
@@ -104,7 +102,6 @@ impl Relayer {
     ///
     /// Handles the submission to the Bundler, skips if the UserOp has been submitted.
     async fn submit_userop(
-        send_id: B256,
         relay_uop: &mut RelayUserOp,
         providers: Arc<super::Providers>,
     ) -> Result<()> {
@@ -112,6 +109,7 @@ impl Relayer {
             userop,
             userop_hash,
             chain,
+            send_id,
             ..
         } = relay_uop;
         let d = providers.get(&chain.id()).context("{chain} missing")?;
@@ -122,6 +120,7 @@ impl Relayer {
         } = d.value();
 
         // skip if the userop already exists
+        tracing::trace!(%send_id, "getUserOp({chain:?}): check");
         let res = bundler
             .raw_request::<_, serde_json::Value>(
                 "eth_getUserOperationByHash".into(),
@@ -130,25 +129,24 @@ impl Relayer {
             .await?;
         // responds with NULL if userop hash does not exist; else userop details.
         if !res.is_null() {
-            tracing::warn!(%send_id, "sendUserOp({chain}): skip");
+            tracing::warn!(%send_id, "sendUserOp({chain:?}): skipped");
             return Ok(());
         }
 
         // submit the userop
         // TODO: make sure the bundler is idempotent i.e. when the same  userop hash is submitted concurrently.
+        tracing::trace!(%send_id, "sendUserOp({chain:?}): sending");
+        // Each bundler uses a different response format than alloy::SendUserOperationResponse.
+        // So, we just treat it as a String and check for the presence of the userop-hash.
+        // https://docs.pimlico.io/references/bundler/endpoints/eth_sendUserOperation#returns
         let result = bundler
-            .raw_request::<_, SendUserOperationResponse>(
-                "eth_sendUserOperation".into(),
-                (userop.clone(), entrypoint),
-            )
+            .raw_request::<_, String>("eth_sendUserOperation".into(), (userop.clone(), entrypoint))
             .await?;
-
-        let user_op_hash = result.user_op_hash.iter().as_slice();
-        let userop_hash = userop_hash.as_bytes();
-        if user_op_hash == userop_hash {
-            return Ok(());
-        }
-        unreachable!("UserOp mismatch"); // this should **never** happen
+        anyhow::ensure!(
+            result.contains(&userop_hash.to_string()),
+            "UserOp {userop_hash} mismatch"
+        ); // This should never happen
+        Ok(())
     }
 
     /// Check for sufficient gas/fees
@@ -213,10 +211,10 @@ impl Relayer {
     ) -> Result<()> {
         let chain = Chain::from_id(config.eth_chain_id);
         if providers.is_empty() {
-            tracing::warn!("Relayer {chain} terminated");
+            tracing::warn!("Relayer({chain:?}): terminated");
             return Ok(());
         }
-        tracing::info!(chains=%providers.len(), "Relayer {chain}");
+        tracing::info!(chains=%providers.len(), "Relayer({chain:?}): started");
 
         // for exponential-backoff-retry
         let mut delayq: DelayQueue<RelayUserOp> = DelayQueue::new();
@@ -226,34 +224,41 @@ impl Relayer {
                 // queue processing
                 Some(mut relay_uop) = relay_rx.recv() => {
                     let dest = relay_uop.chain;
-                    let send_id = keccak256(relay_uop.userop.call_data.iter().as_slice());
+                    let send_id = relay_uop.send_id;
+                    // 0: Sanity check
+                    if keccak256(relay_uop.userop.call_data.iter().as_slice()) != send_id.0 {
+                        tracing::error!(%send_id, "Relay({chain:?} => {dest:?}): mismatch");
+                        continue;
+                    } else
                     // TODO: 1. Check for sufficient gas
                     // if let Err(err) = Self::check_gasfees(send_id, &mut relay_uop, providers.clone()).await
                     // {
                     //     tracing::warn!(%send_id, %err, userop=?relay_uop.userop, "Relayer#{chain_id}: gas");
                     // } else
                     // 2. Submit the UserOp
-                    if let Err(err) = Self::submit_userop(send_id, &mut relay_uop, providers.clone()).await
+                    if let Err(err) = Self::submit_userop(&mut relay_uop, providers.clone()).await
                     {
-                        tracing::warn!(%send_id, %err, userop=?relay_uop.userop, "Relayer({chain} => {dest}): transmit");
+                        tracing::warn!(%send_id, %err, userop=?relay_uop.userop, "Relay({chain:?} => {dest:?}): transmit");
                     } else {
                         // Done
-                        tracing::debug!(%send_id, "Relayer({chain} => {dest}): submitted");
+                        tracing::info!(%send_id, "Relay({chain:?} => {dest:?}): done");
                         continue;
                     }
 
                     // X. Backoff-retry
                     let Some(backoff) = relay_uop.backoff() else {
                         // TODO: DEAD LETTER OFFICE
-                        tracing::error!(%send_id, "Relayer({chain} => {dest}): dropped");
+                        tracing::error!(%send_id, "Relay({chain:?} => {dest:?}): dropped");
                         continue;
                     };
-                    tracing::warn!(%send_id, ?backoff, "Relayer({chain} => {dest}): retry");
+                    tracing::warn!(%send_id, ?backoff, "Relay({chain:?} => {dest:?}): backoff");
                     delayq.insert(relay_uop, backoff);
                 }
                 // retry processing
                 Some(due) = delayq.next() => {
                     let relay_uop = due.into_inner();
+                    let RelayUserOp { chain: dest, send_id, .. } = &relay_uop;
+                    tracing::debug!(%send_id, "Relay({chain:?} => {dest:?}): retry");
                     if let Err(err) = relay_tx.send(relay_uop) {
                         tracing::error!(%err, "relay_tx closed");
                         break Ok(());
@@ -277,6 +282,7 @@ impl Relayer {
         signature: BlsSignature,
         userop: Option<AlloyUserOperation>,
     ) -> Result<()> {
+        tracing::trace!(%from, hash=%userop_hash, "UserOp");
         // 1. Validate inputs
         public_key.verify(userop_hash.as_bytes(), signature)?;
 
@@ -284,13 +290,13 @@ impl Relayer {
         let block = self
             .db
             .get_transactionless_block(block_hash.into())?
-            .context("block must exist")?;
+            .context("must exist")?;
         let state_hash = block.state_root_hash().into();
         let state = self.state.at_root(state_hash);
 
         // check if peer_id matches
-        let peer_id = state.get_peer_id(public_key)?.context("fake peer-id")?;
-        anyhow::ensure!(peer_id == from, "peer-id mismatch"); // must not happen
+        let peer_id = state.get_peer_id(public_key)?.context("faux peer-id")?;
+        anyhow::ensure!(peer_id == from, "peer-id {from} mismatch"); // must not happen
 
         // 2. Get the cache entry
         let mut cache = self.bls_uop.lock();
@@ -345,6 +351,15 @@ impl Relayer {
         stakers: Vec<NodePublicKey>,
         bop: BlsUserOp,
     ) -> Result<()> {
+        anyhow::ensure!(!stakers.is_empty(), "stakers cannot be empty");
+        let send_id = bop
+            .userop
+            .as_ref()
+            .map_or(alloy::primitives::KECCAK256_EMPTY, |uop| {
+                keccak256(uop.call_data.iter().as_slice())
+            });
+
+        tracing::info!(%send_id, "Relay({:?} => {chain:?}): promote", self.chain);
         let (signers, signatures): (Vec<NodePublicKey>, Vec<BlsSignature>) =
             bop.signatures.into_iter().unzip();
 
@@ -364,9 +379,14 @@ impl Relayer {
                 )
             })
             .collect_vec();
-        let multi_signature = blsful::MultiSignature::from_signatures(signatures)?
-            .as_raw_value()
-            .to_compressed();
+        let multi_signature = if signatures.len() == 1 {
+            signatures.first().unwrap().as_raw_value().to_compressed()
+        } else {
+            blsful::MultiSignature::from_signatures(signatures)?
+                .as_raw_value()
+                .to_compressed()
+        };
+        tracing::trace!(%send_id, "Multi-sig({})", multi_signature.to_hex_no_prefix());
 
         // 2. Count signers
         let mut cosigner = bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE];
@@ -382,11 +402,10 @@ impl Relayer {
         )
             .abi_encode_packed();
         let signature = self.secret_key.sign(message.as_slice());
+        tracing::trace!(%send_id, "Signature({signature})");
 
         // 3. Construct final UserOp
         let bop = bop.userop.unwrap();
-        let send_id = keccak256(bop.call_data.iter().as_slice()).into();
-        tracing::debug!(%send_id, "Relayer({} => {chain}): relayed", self.chain);
         let final_uop = RelayUserOp::new(
             AlloyUserOperation {
                 signature: (signature.to_bytes(), message).abi_encode_packed().into(), // replace the signature with multi-sig
@@ -394,10 +413,11 @@ impl Relayer {
             },
             chain,
             userop_hash,
-            send_id,
+            Hash(send_id.0),
         );
 
         // 4. Push UserOp to the sending queue
+        tracing::trace!(%send_id, "Relay({:?} => {chain:?}): queue", self.chain);
         if let Err(err) = self.relay_tx.send(final_uop) {
             tracing::error!(%err, "relay_tx closed");
         };

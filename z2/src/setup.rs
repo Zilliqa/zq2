@@ -560,6 +560,7 @@ impl Setup {
                 max_missed_view_age: max_missed_view_age_default(),
                 api_limits: ApiLimits::default(),
                 remote_chains: Default::default(),
+                bundler_port: 4200u16,
             };
             println!("🧩  Node {node_index} has RPC port {port}");
 

@@ -129,6 +129,18 @@ jobs:
     #       - 3545:3000
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - name: Install Rust
+        run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Install default toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Install foundry
+        uses: foundry-rs/foundry-toolchain@v1
+      - name: Install PDM
+        uses: pdm-project/setup-pdm@v4
+      - uses: Swatinem/rust-cache@v2
       - name: Start rundler
         run: |
           docker run -d \
@@ -142,23 +154,11 @@ jobs:
             -e PRIORITY_FEE_MODE_KIND=base_fee_percent \
             -e PRIORITY_FEE_MODE_VALUE=0 \
             -e ENABLED_ENTRY_POINTS="v0.8" \
-            -e SIGNER_PRIVATE_KEYS=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
+            -e SIGNER_PRIVATE_KEYS="0x0000000000000000000000000000000000000000000000000000000000000002,0x0000000000000000000000000000000000000000000000000000000000000003,0x0000000000000000000000000000000000000000000000000000000000000004" \
             -e MAX_VERIFICATION_GAS=10000000 \
             -e PROVIDER_CLIENT_TIMEOUT_SECONDS=30 \
             -e TRACER_TIMEOUT=30s \
             alchemyplatform/rundler:v0.11.0 node
-      - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-      - name: Install Rust
-        run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      - name: Install default toolchain
-        run: rustup show active-toolchain || rustup toolchain install
-      - name: Install foundry
-        uses: foundry-rs/foundry-toolchain@v1
-      - name: Install PDM
-        uses: pdm-project/setup-pdm@v4
-      - uses: Swatinem/rust-cache@v2
       - name: Rundler bundler-spec-test framework
         env:
           CXX: clang++

@@ -151,7 +151,7 @@ impl NodeLauncher {
                     .build(),
             )
             .set_rpc_middleware(rpc_middleware)
-            .build((Ipv4Addr::UNSPECIFIED, 8545)) // hard-coded port number
+            .build((Ipv4Addr::UNSPECIFIED, config.bundler_port))
             .await;
         match bundler_rpc {
             Ok(server) => {

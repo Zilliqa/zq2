@@ -44,13 +44,12 @@ timeout 60 bash -c 'until curl -o /dev/null -sf http://localhost:4201/health; do
 
 # run the test
 timeout 60 bash -c 'until curl -o /dev/null -sf http://localhost:3545/health; do sleep 1; done'
-(cd bundler-spec-tests/ && pdm run pytest tests/single/rpc --tb=short -rA -W ignore::DeprecationWarning --url http://localhost:3545/rpc --entry-point 0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108 --ethereum-node http://localhost:8545/)
+(cd bundler-spec-tests/ && pdm run pytest tests/single/rpc -vv --tb=short -rA -W ignore::DeprecationWarning --url http://localhost:3545/rpc --entry-point 0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108 --ethereum-node http://localhost:8545/)
 
 # cleanup
 retVal=$?
 pkill zilliqa
 if [ $retVal -ne 0 ]; then
-    cat /tmp/zil_log_bundler.txt
     exit 1
 fi
 

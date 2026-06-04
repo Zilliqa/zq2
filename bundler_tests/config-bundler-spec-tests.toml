@@ -2,11 +2,11 @@ p2p_port = 0
 network = "Localnet"
 
 [[nodes]]
+bundler_port = 8545
 api_servers = [
     { port = 4201, enabled_apis = [ "admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa" ] }
 ]
 eth_chain_id = 1337
-
 consensus.scilla_address = "http://localhost:3333"
 consensus.consensus_timeout = { secs = 15, nanos = 0 }
 # consensus.block_time = { secs = 5, nanos = 0 }
@@ -40,7 +40,18 @@ consensus.eth_block_gas_limit = 84_000_000
 # spec-tests
 consensus.gas_price = "0"
 # consensus.gas_price = "1_000_000"
-
+remote_chains = [
+    {
+        chain_id = 1337,
+        bundler_url = "http://127.0.0.1:3545",
+        watcher_url = "http://127.0.0.1:8545",
+        entrypoint = "0x4337084d9e255ff0702461cf8895ce9e3b5ff108",
+        paymaster = "0x8464135c8F25Da09e49BC8782676a84730C318bC",
+        gateway = "0x8464135c8F25Da09e49BC8782676a84730C318bC",
+        sender = "0x8464135c8F25Da09e49BC8782676a84730C318bC",
+        allow_loopback = true,
+    }
+]
 
 
 # ==entrypoint addr= 0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108
