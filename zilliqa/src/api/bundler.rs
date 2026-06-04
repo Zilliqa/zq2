@@ -87,7 +87,28 @@ pub fn debug_trace_call(params: Params, node: &Arc<Node>) -> Result<GethTrace> {
 
     apply_state_overrides(&mut evm_state, &node.clone(), state_overrides)?;
 
-    let result = node.debug_trace_call(&mut evm_state, &block, call_params, options)?;
+    // run the trace with timeout
+    let timeout = options
+        .tracing_options
+        .timeout
+        .as_ref()
+        .map_or(tokio::time::Duration::from_secs(10), |s| {
+            duration_str::parse_std(s).unwrap_or_default()
+        });
+
+    let handle = tokio::runtime::Handle::current();
+
+    let result = handle.block_on(async {
+        let task = tokio::task::spawn_blocking({
+            let node = node.clone();
+            move || node.debug_trace_call(&mut evm_state, &block, call_params, options)
+        });
+
+        tokio::time::timeout(timeout, task)
+            .await
+            .map_err(|_| anyhow::anyhow!("timed out"))?
+            .map_err(|e| anyhow::anyhow!("panicked: {e}"))?
+    })?;
 
     Ok(result)
 }

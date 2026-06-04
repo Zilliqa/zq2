@@ -958,15 +958,10 @@ impl Node {
         let GethDebugTracingOptions {
             tracer,
             tracer_config,
-            timeout,
             ..
         } = call_opts.tracing_options;
 
         let fork = evm_state.forks.get(block.number()).clone();
-
-        let _timeout = timeout
-            .map(|s| duration_str::parse_std(s).unwrap_or_default())
-            .unwrap_or(Duration::from_mins(1)); // 1-min default
 
         let call_gas_limit = call_params
             .gas
