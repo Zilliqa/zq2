@@ -32,6 +32,7 @@ remote_chains = [
         paymaster = "0x8464135c8F25Da09e49BC8782676a84730C318bC",
         gateway = "0x8464135c8F25Da09e49BC8782676a84730C318bC",
         sender = "0x8464135c8F25Da09e49BC8782676a84730C318bC",
+        allow_loopback = true,
     }
 ]
 bundler_port = 4200

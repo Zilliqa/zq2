@@ -231,7 +231,7 @@ pub struct EndPoint {
     pub paymaster: Address,
     pub bundler: Wallet,
     pub jsonrpc: Wallet,
-    pub testnet: bool,
+    pub allow_loopback: bool,
 }
 type Providers = DashMap<ChainId, EndPoint>;
 
@@ -285,6 +285,7 @@ impl Uccb {
             gateway,
             sender,
             paymaster,
+            allow_loopback,
         } in config.remote_chains.clone().into_iter()
         {
             let bundler = build_wallet(&bundler_url)?;
@@ -316,7 +317,6 @@ impl Uccb {
             };
 
             let chain = Chain::from_id(chain_id);
-            let testnet = chain.named().map(|c| c.is_testnet()).unwrap_or_default();
 
             tracing::info!("UCCB#{eth_chain_id} => {chain:?}");
             // insert it either way as Relayer/Signer has to handle http errors anyway.
@@ -330,7 +330,7 @@ impl Uccb {
                     bundler,
                     jsonrpc,
                     chain,
-                    testnet,
+                    allow_loopback,
                 },
             );
         }

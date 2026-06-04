@@ -250,16 +250,22 @@ impl Signer {
                     src_test == dst_test,
                     "MessageSent({chain:?}): testnet != mainnet"
                 ); // Mixing testnet/mainnet
-                if !src_test {
-                    anyhow::ensure!(dst_chain != src_chain, "MessageSent({chain:?}): loop-back"); // ** DO NOT ALLOW LOOP-BACK **
-                }
                 tracing::info!(send_id=%sendId, "MessageSent({src_chain:?}): => {dst_chain:?}");
 
                 // Warning: may dead-lock, if watchers is locked above
                 if let Some(watcher) = watchers.get(&dst_chain.id()) {
                     let EndPoint {
-                        sender, paymaster, ..
+                        allow_loopback,
+                        sender,
+                        paymaster,
+                        ..
                     } = watcher.value();
+
+                    anyhow::ensure!(
+                        dst_chain != src_chain || *allow_loopback,
+                        "MessageSent({chain:?}): loop-back"
+                    ); // ** DO NOT ALLOW LOOP-BACK **
+
                     // 7. Construct partial UserOp; send for signing
                     let userop = Self::new_user_op(
                         // sendId,

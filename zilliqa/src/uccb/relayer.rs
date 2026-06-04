@@ -129,7 +129,7 @@ impl Relayer {
             .await?;
         // responds with NULL if userop hash does not exist; else userop details.
         if !res.is_null() {
-            tracing::warn!(%send_id, "sendUserOp({chain:?}): skip");
+            tracing::warn!(%send_id, "sendUserOp({chain:?}): skipped");
             return Ok(());
         }
 
@@ -137,6 +137,7 @@ impl Relayer {
         // TODO: make sure the bundler is idempotent i.e. when the same  userop hash is submitted concurrently.
         tracing::trace!(%send_id, "sendUserOp({chain:?}): sending");
         // Each bundler uses a different response format than alloy::SendUserOperationResponse.
+        // So, we just treat it as a String and check for the presence of the userop-hash.
         // https://docs.pimlico.io/references/bundler/endpoints/eth_sendUserOperation#returns
         let result = bundler
             .raw_request::<_, String>("eth_sendUserOperation".into(), (userop.clone(), entrypoint))
@@ -240,7 +241,7 @@ impl Relayer {
                         tracing::warn!(%send_id, %err, userop=?relay_uop.userop, "Relay({chain:?} => {dest:?}): transmit");
                     } else {
                         // Done
-                        tracing::info!(%send_id, "Relay({chain:?} => {dest:?}): bundled");
+                        tracing::info!(%send_id, "Relay({chain:?} => {dest:?}): done");
                         continue;
                     }
 

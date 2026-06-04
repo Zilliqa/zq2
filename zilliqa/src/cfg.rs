@@ -270,6 +270,8 @@ pub struct RemoteChain {
     pub gateway: Address,
     pub sender: Address,
     pub paymaster: Address,
+    #[serde(default)]
+    pub allow_loopback: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
