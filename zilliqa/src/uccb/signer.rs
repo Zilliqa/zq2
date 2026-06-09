@@ -36,7 +36,7 @@ use crate::{
         EndPoint,
         IERC7786GatewaySource::MessageSent,
         SignUserOp,
-        utils::{get_chain_id, get_user_op_hash},
+        utils::{get_eip155_address, get_eip155_chain, get_user_op_hash},
     },
 };
 
@@ -231,12 +231,18 @@ impl Signer {
                 tracing::debug!(send_id=%sendId, "MessageSent({chain:?}): seen");
 
                 // 6. Validate route
-                let dst_chain = get_chain_id(std::str::from_utf8(&recipient)?)?;
-                let src_chain = get_chain_id(std::str::from_utf8(&sender)?)?;
+                let dst_chain = get_eip155_chain(std::str::from_utf8(&recipient)?)?;
+                let src_chain = get_eip155_chain(std::str::from_utf8(&sender)?)?;
                 anyhow::ensure!(
                     src_chain.id() == chain.id(),
                     "MessageSent({chain:?}): invalid source"
                 ); // MessageSent comes from source
+
+                let sender = get_eip155_address(std::str::from_utf8(&sender)?)?;
+                anyhow::ensure!(
+                    sender == log.address(),
+                    "MessageSent({chain:?}): invalid sender"
+                ); // Gateway contract is sender
 
                 let src_test = src_chain
                     .named()

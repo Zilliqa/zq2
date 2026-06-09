@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use alloy::{
     dyn_abi::Eip712Domain,
     primitives::{Address, B256, U256, keccak256},
@@ -9,11 +11,24 @@ use anyhow::Result;
 use super::PackedUserOperation;
 
 /// Retrieve the chain from a given CAIP-10 account
-pub fn get_chain_id(account_id: &str) -> Result<Chain> {
-    if let [namespace, chain_id, _address] = account_id.split(':').collect::<Vec<_>>().as_slice()
-        && *namespace == "eip155"
+pub fn get_eip155_chain(account_id: &str) -> Result<Chain> {
+    if let Ok(caip_id) = tap_caip::parse(account_id)
+        && let tap_caip::CaipId::AccountId(account_id) = caip_id
+        && account_id.chain_id().namespace() == "eip155"
     {
-        return Ok(Chain::from_id(chain_id.parse::<u64>()?));
+        return Ok(Chain::from_id(
+            account_id.chain_id().reference().parse::<u64>()?,
+        ));
+    }
+    Err(anyhow::anyhow!("Invalid AccountId"))
+}
+
+pub fn get_eip155_address(account_id: &str) -> Result<Address> {
+    if let Ok(caip_id) = tap_caip::parse(account_id)
+        && let tap_caip::CaipId::AccountId(account_id) = caip_id
+        && account_id.chain_id().namespace() == "eip155"
+    {
+        return Ok(Address::from_str(account_id.address())?);
     }
     Err(anyhow::anyhow!("Invalid AccountId"))
 }
