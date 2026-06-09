@@ -8,13 +8,14 @@ import {
     IPaymaster,
     IEntryPoint,
     PackedUserOperation,
-    IAccount
+    IAccount,
+    IAccountExecute
 } from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
 import {
     IERC7786GatewaySource,
     IERC7786Recipient
 } from "@openzeppelin/contracts/interfaces/draft-IERC7786.sol";
-import {CAIP10} from "@openzeppelin/contracts/utils/CAIP10.sol";
+import {CAIP2, CAIP10} from "@openzeppelin/contracts/utils/CAIP10.sol";
 
 contract DummyBridge is
     Pausable,
@@ -33,11 +34,35 @@ contract DummyBridge is
         entryPoint = IEntryPoint(_ep);
     }
 
+    function executeUserOp(
+        PackedUserOperation calldata userOp,
+        bytes32 userOpHash
+    ) external {
+        // 1. Validate the userOp
+
+        // 2. Extract the call arguments
+        bytes32 sendId = keccak256(userOp.callData);
+        address gateway = address(uint160(userOp.nonce >> 96));
+        address relayer = address(uint160(userOp.paymasterAndData));
+
+        // Call the gateway
+        bytes4 result = IERC7786Recipient(gateway).receiveMessage(
+            sendId,
+            relayer,
+            userOp.callData
+        );
+        require(
+            result == IERC7786Recipient.receiveMessage.selector,
+            "Gateway.receiveMessage() failed"
+        );
+    }
+
     function validateUserOp(
         PackedUserOperation calldata userOp,
         bytes32,
         uint256 missingWalletFunds
     ) public override returns (uint256 validationData) {
+        // TODO: Check relayer signature
         validationData = 0;
     }
 
@@ -46,6 +71,7 @@ contract DummyBridge is
         bytes32 userOpHash,
         uint256 maxCost
     ) external returns (bytes memory context, uint256 validationData) {
+        // TODO: Check bls12-381 multi-signature
         context = "";
         validationData = 0;
     }
@@ -55,7 +81,9 @@ contract DummyBridge is
         bytes calldata context,
         uint256 actualGasCost,
         uint
-    ) external {}
+    ) external {
+        // TODO: Record relayer/signers for rewards
+    }
 
     receive() external payable {
         entryPoint.depositTo{value: msg.value}(address(this));
@@ -89,24 +117,54 @@ contract DummyBridge is
         return false;
     }
 
+    /// Gateway's IERC7786Recipient::receiveMessage()
+    ///
+    /// The gateway will deconstruct the quad-tuple payload and send the original payload to its destination.
     function receiveMessage(
         bytes32 receiveId,
-        bytes calldata sender, // CAIP10
+        bytes calldata relayer10, // CAIP10 - relayer address
         bytes calldata payload
     ) external payable returns (bytes4) {
-        (string memory chain, string memory addr) = CAIP10.parse(
-            string(sender)
-        );
-        address gateway = Strings.parseAddress(addr);
+        // 1. Validate caller
+        // TODO: require(msg.sender == XXX)
 
-        emit Received(receiveId, gateway);
+        // 2. Record relayer
+        address relayer = Strings.parseAddress(relayer10);
+        emit Received(receiveId, relayer);
+
+        // 3. Decode callData into its constituent parts
+        (
+            bytes memory sender,
+            bytes memory recipient,
+            bytes memory payload,
+            uint256 nonce
+        ) = abi.decode(userOp.callData, (bytes, bytes, bytes, uint256));
+
+        // 4. Nonce replay check
+
+        // 5. Send to destination
+        (string memory dst_chain, string memory dst_addr) = CAIP10.parse(
+            string(recipient)
+        );
+        require(dst_chain == CAIP2.local(), "Foreign destination");
+        address destination = Strings.parseAddress(dst_addr);
+
+        bytes4 result = IERC7786Recipient(destination).receiveMessage(
+            receiveId,
+            src_addr,
+            payload
+        );
+        require(
+            result == IERC7786Recipient.receiveMessage.selector,
+            "Target failed"
+        );
         return IERC7786Recipient.receiveMessage.selector;
     }
 
     function sendMessage(
-        bytes calldata recipient, // CAIP10
+        bytes calldata recipient, // CAIP10/EIP155 full address
         bytes calldata payload,
-        bytes[] calldata attributes
+        bytes[] calldata attributes // Stick pricing in here?
     ) public payable virtual whenNotPaused returns (bytes32 sendId) {
         bytes memory sender = bytes(CAIP10.local(msg.sender));
 
@@ -127,11 +185,11 @@ contract DummyBridge is
             (uint256(max_priority_fee_per_gas) << 128) |
                 uint256(max_fee_per_gas);
 
-        bytes memory gw_sender = bytes(CAIP10.local(address(this)));
+        bytes memory gateway = bytes(CAIP10.local(address(this)));
 
         emit MessageSent(
             sendId,
-            gw_sender,
+            gateway,
             recipient,
             wrappedPayload,
             value,
