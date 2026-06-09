@@ -9,7 +9,7 @@ use alloy::{
     },
     providers::Provider as _,
     rpc::types::{Filter, PackedUserOperation as AlloyUserOperation},
-    sol_types::{SolEvent, SolValue},
+    sol_types::{SolCall, SolEvent, SolValue},
 };
 use alloy_chains::Chain;
 use anyhow::{Context, Result};
@@ -224,7 +224,9 @@ impl Signer {
                 };
 
                 // 5. Validate payload integrity
-                if sendId != keccak256(payload.iter().as_slice()) {
+                if sendId != keccak256(payload.iter().as_slice())
+                    && payload.starts_with(&super::IAccountExecute::executeUserOpCall::SELECTOR)
+                {
                     tracing::error!(send_id=%sendId, "MessageSent({chain:?}): invalid");
                     continue;
                 }

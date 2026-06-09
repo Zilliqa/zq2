@@ -1,7 +1,6 @@
-use std::str::FromStr;
-
 use alloy::{
     dyn_abi::Eip712Domain,
+    hex::FromHex,
     primitives::{Address, B256, U256, keccak256},
     sol_types::SolValue,
 };
@@ -20,7 +19,7 @@ pub fn get_eip155_chain(account_id: &str) -> Result<Chain> {
             account_id.chain_id().reference().parse::<u64>()?,
         ));
     }
-    Err(anyhow::anyhow!("Invalid AccountId"))
+    Err(anyhow::anyhow!("Invalid eip155 chain {account_id}"))
 }
 
 pub fn get_eip155_address(account_id: &str) -> Result<Address> {
@@ -28,9 +27,9 @@ pub fn get_eip155_address(account_id: &str) -> Result<Address> {
         && let tap_caip::CaipId::AccountId(account_id) = caip_id
         && account_id.chain_id().namespace() == "eip155"
     {
-        return Ok(Address::from_str(account_id.address())?);
+        return Ok(Address::from_hex(account_id.address())?);
     }
-    Err(anyhow::anyhow!("Invalid AccountId"))
+    Err(anyhow::anyhow!("Invalid eip155 account {account_id}"))
 }
 
 /// keccak256("PackedUserOperation(address sender,uint256 nonce,bytes initCode,bytes callData,

@@ -30,29 +30,42 @@ contract DummyBridge is
     event Received(bytes32 indexed receiveId, address gateway);
     IEntryPoint entryPoint;
 
+    bytes32 private immutable LOCAL_CHAIN_K256;
+    address private EP_ADDRESS;
+
     constructor(address _ep) payable {
         entryPoint = IEntryPoint(_ep);
+        LOCAL_CHAIN_K256 = keccak256(bytes(CAIP2.local()));
+        EP_ADDRESS = _ep;
+    }
+
+    /// @dev Restrict calls to the EntryPoint or the owner themselves
+    modifier onlyEntryPointOrOwner() {
+        require(
+            msg.sender == EP_ADDRESS, // || msg.sender == owner,
+            "SimpleAccount: not entryPoint or owner"
+        );
+        _;
     }
 
     function executeUserOp(
         PackedUserOperation calldata userOp,
-        bytes32 userOpHash
-    ) external {
+        bytes32 _userOpHash
+    ) external onlyEntryPointOrOwner {
         // 1. Validate the userOp
 
         // 2. Extract the call arguments
         bytes32 sendId = keccak256(userOp.callData);
-        address gateway = address(uint160(userOp.nonce >> 96));
-        address relayer = address(uint160(userOp.paymasterAndData));
+        address gateway = address(uint160(userOp.nonce >> 96)); // byte20 prefix with gateway address
+        address relayer = address(bytes20(userOp.signature[:20])); // byte20 prefix with signer wallet
 
         // Call the gateway
-        bytes4 result = IERC7786Recipient(gateway).receiveMessage(
-            sendId,
-            relayer,
-            userOp.callData
-        );
         require(
-            result == IERC7786Recipient.receiveMessage.selector,
+            IERC7786Recipient(gateway).receiveMessage(
+                sendId,
+                abi.encodePacked(relayer),
+                userOp.callData
+            ) == IERC7786Recipient.receiveMessage.selector,
             "Gateway.receiveMessage() failed"
         );
     }
@@ -62,6 +75,14 @@ contract DummyBridge is
         bytes32,
         uint256 missingWalletFunds
     ) public override returns (uint256 validationData) {
+        require(msg.sender == EP_ADDRESS, "Invalid entrypoint");
+
+        if (missingWalletFunds > 0) {
+            (bool success, ) = payable(EP_ADDRESS).call{
+                value: missingWalletFunds
+            }("");
+            require(success, "Prefund failed");
+        }
         // TODO: Check relayer signature
         validationData = 0;
     }
@@ -71,8 +92,10 @@ contract DummyBridge is
         bytes32 userOpHash,
         uint256 maxCost
     ) external returns (bytes memory context, uint256 validationData) {
+        address relayer = address(bytes20(userOp.paymasterAndData[:20]));
+
         // TODO: Check bls12-381 multi-signature
-        context = "";
+        context = ""; // abi.encode(relayer); // trigger post-op
         validationData = 0;
     }
 
@@ -81,7 +104,7 @@ contract DummyBridge is
         bytes calldata context,
         uint256 actualGasCost,
         uint
-    ) external {
+    ) external onlyEntryPointOrOwner {
         // TODO: Record relayer/signers for rewards
     }
 
@@ -122,42 +145,45 @@ contract DummyBridge is
     /// The gateway will deconstruct the quad-tuple payload and send the original payload to its destination.
     function receiveMessage(
         bytes32 receiveId,
-        bytes calldata relayer10, // CAIP10 - relayer address
-        bytes calldata payload
+        bytes calldata _relayer, // CAIP10 - relayer address
+        bytes calldata _payload
     ) external payable returns (bytes4) {
         // 1. Validate caller
         // TODO: require(msg.sender == XXX)
 
         // 2. Record relayer
-        address relayer = Strings.parseAddress(relayer10);
+        address relayer = address(bytes20(_relayer));
         emit Received(receiveId, relayer);
 
-        // 3. Decode callData into its constituent parts
+        // 3. Deconstruct the quad-tuple payload
         (
             bytes memory sender,
             bytes memory recipient,
             bytes memory payload,
-            uint256 nonce
-        ) = abi.decode(userOp.callData, (bytes, bytes, bytes, uint256));
-
+            uint256 _nonce
+        ) = abi.decode(_payload[4:], (bytes, bytes, bytes, uint256));
         // 4. Nonce replay check
 
         // 5. Send to destination
         (string memory dst_chain, string memory dst_addr) = CAIP10.parse(
             string(recipient)
         );
-        require(dst_chain == CAIP2.local(), "Foreign destination");
-        address destination = Strings.parseAddress(dst_addr);
-
-        bytes4 result = IERC7786Recipient(destination).receiveMessage(
-            receiveId,
-            src_addr,
-            payload
-        );
         require(
-            result == IERC7786Recipient.receiveMessage.selector,
-            "Target failed"
+            keccak256(bytes(dst_chain)) == LOCAL_CHAIN_K256,
+            "Foreign destination"
         );
+        // (string memory src_chain, string memory src_addr) = CAIP10.parse(
+        //     string(sender)
+        // );
+
+        // require(
+        //     IERC7786Recipient(Strings.parseAddress(dst_addr)).receiveMessage(
+        //         receiveId,
+        //         bytes(src_addr),
+        //         payload
+        //     ) == IERC7786Recipient.receiveMessage.selector,
+        //     "Target failed"
+        // );
         return IERC7786Recipient.receiveMessage.selector;
     }
 
@@ -169,11 +195,12 @@ contract DummyBridge is
         bytes memory sender = bytes(CAIP10.local(msg.sender));
 
         // wrapping the payload
-        bytes memory wrappedPayload = abi.encode(
-            ++nonce,
+        bytes memory wrappedPayload = abi.encodeWithSelector(
+            IAccountExecute.executeUserOp.selector, // needed to trigger executeUserOp() later
             sender,
             recipient,
-            payload
+            payload,
+            ++nonce
         );
 
         uint128 max_fee_per_gas = 0x100000;

@@ -396,9 +396,9 @@ impl Relayer {
             }
         }
         let message = (
+            self.address,               // Address(20)
             multi_signature.as_slice(), // Signature(48)
             cosigner.as_raw_slice(),    // Signers(32)
-            self.address,               // Address(20)
         )
             .abi_encode_packed();
         let signature = self.secret_key.sign(message.as_slice());
@@ -408,7 +408,7 @@ impl Relayer {
         let bop = bop.userop.unwrap();
         let final_uop = RelayUserOp::new(
             AlloyUserOperation {
-                signature: (signature.to_bytes(), message).abi_encode_packed().into(), // replace the signature with multi-sig
+                signature: (message, signature.to_bytes()).abi_encode_packed().into(), // replace the signature with multi-sig
                 ..bop
             },
             chain,
