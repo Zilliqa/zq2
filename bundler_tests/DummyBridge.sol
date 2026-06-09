@@ -16,17 +16,17 @@ import {
     IERC7786Recipient
 } from "@openzeppelin/contracts/interfaces/draft-IERC7786.sol";
 import {CAIP2, CAIP10} from "@openzeppelin/contracts/utils/CAIP10.sol";
+import {NoncesKeyed} from "@openzeppelin/contracts/utils/NoncesKeyed.sol";
 
 contract DummyBridge is
     Pausable,
     IERC7786GatewaySource,
+    IERC7786Recipient,
     IEntryPointNonces,
     IPaymaster,
-    IAccount
+    IAccount,
+    NoncesKeyed
 {
-    uint nonce;
-    mapping(address => mapping(uint192 => uint256)) public nonceSequenceNumber;
-
     event Received(bytes32 indexed receiveId, address gateway);
     IEntryPoint entryPoint;
 
@@ -48,6 +48,8 @@ contract DummyBridge is
         _;
     }
 
+    /// IAccountExecute::executeUserOp()
+    /// Called in the execution phase of UserOp handling.
     function executeUserOp(
         PackedUserOperation calldata userOp,
         bytes32 _userOpHash
@@ -70,23 +72,22 @@ contract DummyBridge is
         );
     }
 
+    /// IAccount::validateUserOp()
+    /// Validates the signature.
     function validateUserOp(
         PackedUserOperation calldata userOp,
-        bytes32,
+        bytes32 userOpHash,
         uint256 missingWalletFunds
     ) public override returns (uint256 validationData) {
         require(msg.sender == EP_ADDRESS, "Invalid entrypoint");
+        require(missingWalletFunds == 0, "Missing paymaster");
 
-        if (missingWalletFunds > 0) {
-            (bool success, ) = payable(EP_ADDRESS).call{
-                value: missingWalletFunds
-            }("");
-            require(success, "Prefund failed");
-        }
         // TODO: Check relayer signature
         validationData = 0;
     }
 
+    /// IPaymaster::validatePaymasterUserOp()
+    /// Validates the multi-signature.
     function validatePaymasterUserOp(
         PackedUserOperation calldata userOp,
         bytes32 userOpHash,
@@ -99,6 +100,8 @@ contract DummyBridge is
         validationData = 0;
     }
 
+    /// IPaymaster::postOp()
+    /// Records the relayer and co-signers.
     function postOp(
         PostOpMode mode,
         bytes calldata context,
@@ -116,7 +119,7 @@ contract DummyBridge is
         address sender,
         uint192 key
     ) external view returns (uint256) {
-        return nonceSequenceNumber[sender][key] | (uint256(key) << 64);
+        return nonces(sender, key);
     }
 
     function getFees(
@@ -140,9 +143,8 @@ contract DummyBridge is
         return false;
     }
 
-    /// Gateway's IERC7786Recipient::receiveMessage()
-    ///
-    /// The gateway will deconstruct the quad-tuple payload and send the original payload to its destination.
+    /// IERC7786Recipient::receiveMessage()
+    /// Deconstruct the quad-tuple payload and send the original payload to its destination.
     function receiveMessage(
         bytes32 receiveId,
         bytes calldata _relayer, // CAIP10 - relayer address
@@ -172,9 +174,9 @@ contract DummyBridge is
             keccak256(bytes(dst_chain)) == LOCAL_CHAIN_K256,
             "Foreign destination"
         );
-        // (string memory src_chain, string memory src_addr) = CAIP10.parse(
-        //     string(sender)
-        // );
+        (string memory src_chain, string memory src_addr) = CAIP10.parse(
+            string(sender)
+        );
 
         // require(
         //     IERC7786Recipient(Strings.parseAddress(dst_addr)).receiveMessage(
@@ -187,12 +189,15 @@ contract DummyBridge is
         return IERC7786Recipient.receiveMessage.selector;
     }
 
+    /// IERC7786GatewaySource::sendMessage()
+    /// Constructs the cross-chain quad-tuple payload to be relayed.
     function sendMessage(
         bytes calldata recipient, // CAIP10/EIP155 full address
         bytes calldata payload,
         bytes[] calldata attributes // Stick pricing in here?
     ) public payable virtual whenNotPaused returns (bytes32 sendId) {
         bytes memory sender = bytes(CAIP10.local(msg.sender));
+        uint256 nonce = _useNonce(address(this), uint192(0));
 
         // wrapping the payload
         bytes memory wrappedPayload = abi.encodeWithSelector(
@@ -200,7 +205,7 @@ contract DummyBridge is
             sender,
             recipient,
             payload,
-            ++nonce
+            nonce
         );
 
         uint128 max_fee_per_gas = 0x100000;
