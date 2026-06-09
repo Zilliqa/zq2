@@ -1,11 +1,11 @@
-use std::{num::NonZeroUsize, sync::Arc};
+use std::{num::NonZeroUsize, sync::Arc, time::Duration};
 
 use alloy::{
     eips::BlockNumberOrTag,
-    primitives::{Address, B256, U256, keccak256},
+    primitives::{Address, B256, ChainId, U256, keccak256},
     providers::{Provider, utils::eip1559_default_estimator},
-    rpc::types::{PackedUserOperation as AlloyUserOperation, UserOperationGasEstimation},
-    sol_types::SolValue,
+    rpc::types::{Filter, PackedUserOperation as AlloyUserOperation, UserOperationGasEstimation},
+    sol_types::{SolEvent, SolValue},
 };
 use alloy_chains::Chain;
 use anyhow::{Context, Result};
@@ -30,7 +30,7 @@ use crate::{
     db::Db,
     message::MAX_COMMITTEE_SIZE,
     state::State,
-    uccb::{BlsUserOp, EndPoint, RelayUserOp},
+    uccb::{BlsUserOp, EndPoint, IERC4337Extra::Received, RelayUserOp},
 };
 
 #[derive(Debug)]
@@ -76,11 +76,22 @@ impl Relayer {
 
         {
             let relay_tx = relay_tx.clone();
+            let config = config.clone();
+            let providers = providers.clone();
             workers.spawn(async move {
                 if let Err(err) =
                     Self::start_relayer(config, secret_key, relay_tx, relay_rx, providers).await
                 {
                     tracing::error!(%err, "Relayer exception");
+                }
+            });
+        }
+
+        // TODO: Monitor for UserOperationEvent()
+        {
+            workers.spawn(async move {
+                if let Err(err) = Self::start_monitor(config, providers).await {
+                    tracing::error!(%err, "Monitor exception");
                 }
             });
         }
@@ -96,6 +107,98 @@ impl Relayer {
             bls_uop,
             chain,
         })
+    }
+
+    async fn start_monitor(config: NodeConfig, watchers: Arc<super::Providers>) -> Result<()> {
+        let chain = Chain::from_id(config.eth_chain_id);
+        if watchers.is_empty() {
+            tracing::warn!("Monitor({chain:?}): terminated");
+            return Ok(());
+        }
+        tracing::info!(chains=%watchers.len(), "Monitor({chain:?}): started");
+
+        // Cache last known height
+        let mut heights =
+            lru::LruCache::<ChainId, u64>::new(NonZeroUsize::new(watchers.len()).unwrap());
+
+        // Schedule the polls according to average block-times.
+        let mut poll_sched: DelayQueue<Chain> = DelayQueue::new();
+        for remote in config.remote_chains.iter() {
+            let chain = Chain::from_id(remote.chain_id);
+            let period = chain
+                .average_blocktime_hint()
+                .unwrap_or(Duration::from_secs(1));
+            poll_sched.insert(chain, period);
+        }
+
+        // Subscribing to the live-stream results in 'latest' blocks that may get reorganized.
+        // Manual polling is used to ensure that only finalized blocks are processed.
+        while let Some(due) = poll_sched.next().await {
+            // reschedule the poll
+            let chain = due.into_inner();
+            let period = chain
+                .average_blocktime_hint()
+                .unwrap_or(Duration::from_secs(10));
+            tracing::trace!(?period, ?chain, "Poll");
+            let chain_id = chain.id();
+            poll_sched.insert(chain, period);
+
+            let logs = if let Some(watcher) = watchers.get(&chain_id) {
+                let EndPoint {
+                    gateway,
+                    jsonrpc,
+                    chain,
+                    ..
+                } = watcher.value();
+
+                // 1. Check for progress
+                let (cache_height, final_height) = if let Ok(Some(final_block)) = jsonrpc
+                    .get_block_by_number(BlockNumberOrTag::Finalized)
+                    .await
+                {
+                    let cache_height =
+                        heights.get_or_insert_mut(chain.id(), || final_block.header.number);
+                    if *cache_height >= final_block.header.number {
+                        continue; // skip if stale
+                    }
+                    (cache_height, final_block.header.number)
+                } else {
+                    tracing::error!(?chain, "eth_getBlockByNumber(): transport");
+                    continue; // skip on errors
+                };
+
+                // 2. Retrieve the latest set of finalized logs
+                let filter = Filter::new()
+                    .address(*gateway)
+                    .from_block(BlockNumberOrTag::Number(cache_height.saturating_add(1)))
+                    .to_block(BlockNumberOrTag::Number(final_height)) // ideally, this should be exactly one block length
+                    .event_signature(super::IERC4337Extra::Received::SIGNATURE_HASH);
+                let Ok(logs) = jsonrpc.get_logs(&filter).await else {
+                    tracing::error!(?chain, "eth_getLogs(): transport");
+                    continue; // skip on errors
+                };
+                if !logs.is_empty() {
+                    tracing::info!(
+                        count=%logs.len(),
+                        range=?(cache_height.saturating_add(1)..=final_height),
+                        "MessageReceived({chain:?}): events",
+                    );
+                }
+                *cache_height = final_height; // update final
+                logs
+            } else {
+                continue;
+            };
+
+            for log in logs.into_iter() {
+                if let Ok(Received { receiveId, .. }) =
+                    super::IERC4337Extra::Received::decode_log_data(log.data())
+                {
+                    tracing::info!(send_id=%receiveId, "Monitor({chain:?}): delivered");
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Submit the UserOp

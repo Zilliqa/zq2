@@ -191,10 +191,9 @@ impl Signer {
                 };
                 if !logs.is_empty() {
                     tracing::info!(
-                        ?chain,
                         count=%logs.len(),
                         range=?(cache_height.saturating_add(1)..=final_height),
-                        "MessageSent(): events",
+                        "MessageSent({chain:?}): events",
                     );
                 }
                 *cache_height = final_height; // update final
