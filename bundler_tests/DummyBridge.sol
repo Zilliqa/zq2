@@ -3,18 +3,8 @@ pragma solidity ^0.8.28;
 
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
-import {
-    IEntryPointNonces,
-    IPaymaster,
-    IEntryPoint,
-    PackedUserOperation,
-    IAccount,
-    IAccountExecute
-} from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
-import {
-    IERC7786GatewaySource,
-    IERC7786Recipient
-} from "@openzeppelin/contracts/interfaces/draft-IERC7786.sol";
+import {IEntryPointNonces, IPaymaster, IEntryPoint, PackedUserOperation, IAccount, IAccountExecute} from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
+import {IERC7786GatewaySource, IERC7786Recipient} from "@openzeppelin/contracts/interfaces/draft-IERC7786.sol";
 import {CAIP2, CAIP10} from "@openzeppelin/contracts/utils/CAIP10.sol";
 import {NoncesKeyed} from "@openzeppelin/contracts/utils/NoncesKeyed.sol";
 
@@ -27,7 +17,7 @@ contract DummyBridge is
     IAccount,
     NoncesKeyed
 {
-    event Received(bytes32 indexed receiveId, address gateway);
+    event MessageReceived(bytes32 indexed receiveId, address gateway);
     IEntryPoint entryPoint;
 
     bytes32 private immutable LOCAL_CHAIN_K256;
@@ -155,7 +145,7 @@ contract DummyBridge is
 
         // 2. Record relayer
         address relayer = address(bytes20(_relayer));
-        emit Received(receiveId, relayer);
+        emit MessageReceived(receiveId, relayer);
 
         // 3. Deconstruct the quad-tuple payload
         (
@@ -213,9 +203,8 @@ contract DummyBridge is
 
         sendId = keccak256(wrappedPayload);
 
-        uint256 value =
-            (uint256(max_priority_fee_per_gas) << 128) |
-                uint256(max_fee_per_gas);
+        uint256 value = (uint256(max_priority_fee_per_gas) << 128) |
+            uint256(max_fee_per_gas);
 
         bytes memory gateway = bytes(CAIP10.local(address(this)));
 

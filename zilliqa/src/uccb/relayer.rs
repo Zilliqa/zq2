@@ -1,4 +1,4 @@
-use std::{num::NonZeroUsize, sync::Arc, time::Duration};
+use std::{num::NonZeroUsize, sync::Arc};
 
 use alloy::{
     eips::BlockNumberOrTag,
@@ -30,7 +30,7 @@ use crate::{
     db::Db,
     message::MAX_COMMITTEE_SIZE,
     state::State,
-    uccb::{BlsUserOp, EndPoint, IERC4337Extra::Received, RelayUserOp},
+    uccb::{BlsUserOp, EndPoint, IERC4337Extra::MessageReceived, RelayUserOp},
 };
 
 #[derive(Debug)]
@@ -112,10 +112,10 @@ impl Relayer {
     async fn start_monitor(config: NodeConfig, watchers: Arc<super::Providers>) -> Result<()> {
         let chain = Chain::from_id(config.eth_chain_id);
         if watchers.is_empty() {
-            tracing::warn!("Monitor({chain:?}): terminated");
+            tracing::warn!("Receiver({chain:?}): terminated");
             return Ok(());
         }
-        tracing::info!(chains=%watchers.len(), "Monitor({chain:?}): started");
+        tracing::info!(chains=%watchers.len(), "Receiver({chain:?}): started");
 
         // Cache last known height
         let mut heights =
@@ -127,7 +127,7 @@ impl Relayer {
             let chain = Chain::from_id(remote.chain_id);
             let period = chain
                 .average_blocktime_hint()
-                .unwrap_or(Duration::from_secs(1));
+                .unwrap_or(config.consensus.consensus_timeout);
             poll_sched.insert(chain, period);
         }
 
@@ -138,7 +138,7 @@ impl Relayer {
             let chain = due.into_inner();
             let period = chain
                 .average_blocktime_hint()
-                .unwrap_or(Duration::from_secs(10));
+                .unwrap_or(config.consensus.consensus_timeout);
             tracing::trace!(?period, ?chain, "Poll");
             let chain_id = chain.id();
             poll_sched.insert(chain, period);
@@ -172,7 +172,7 @@ impl Relayer {
                     .address(*gateway)
                     .from_block(BlockNumberOrTag::Number(cache_height.saturating_add(1)))
                     .to_block(BlockNumberOrTag::Number(final_height)) // ideally, this should be exactly one block length
-                    .event_signature(super::IERC4337Extra::Received::SIGNATURE_HASH);
+                    .event_signature(super::IERC4337Extra::MessageReceived::SIGNATURE_HASH);
                 let Ok(logs) = jsonrpc.get_logs(&filter).await else {
                     tracing::error!(?chain, "eth_getLogs(): transport");
                     continue; // skip on errors
@@ -191,10 +191,10 @@ impl Relayer {
             };
 
             for log in logs.into_iter() {
-                if let Ok(Received { receiveId, .. }) =
-                    super::IERC4337Extra::Received::decode_log_data(log.data())
+                if let Ok(MessageReceived { receiveId, .. }) =
+                    super::IERC4337Extra::MessageReceived::decode_log_data(log.data())
                 {
-                    tracing::info!(send_id=%receiveId, "Monitor({chain:?}): delivered");
+                    tracing::info!(send_id=%receiveId, "Receiver({chain:?}): received");
                 }
             }
         }
@@ -215,7 +215,7 @@ impl Relayer {
             send_id,
             ..
         } = relay_uop;
-        let d = providers.get(&chain.id()).context("{chain} missing")?;
+        let d = providers.get(&chain.id()).context("{chain:?} missing")?;
         let EndPoint {
             entrypoint,
             bundler,
@@ -246,7 +246,9 @@ impl Relayer {
             .raw_request::<_, String>("eth_sendUserOperation".into(), (userop.clone(), entrypoint))
             .await?;
         anyhow::ensure!(
-            result.contains(&userop_hash.to_string()),
+            result
+                .to_uppercase()
+                .contains(&userop_hash.to_string().to_uppercase()),
             "UserOp {userop_hash} mismatch"
         ); // This should never happen
         Ok(())
@@ -327,10 +329,10 @@ impl Relayer {
                 // queue processing
                 Some(mut relay_uop) = relay_rx.recv() => {
                     let dest = relay_uop.chain;
-                    let send_id = relay_uop.send_id;
+                    let send_id = keccak256(relay_uop.userop.call_data.iter().as_slice());
                     // 0: Sanity check
-                    if keccak256(relay_uop.userop.call_data.iter().as_slice()) != send_id.0 {
-                        tracing::error!(%send_id, "Relay({chain:?} => {dest:?}): mismatch");
+                    if relay_uop.send_id.0 != send_id {
+                        tracing::error!(%send_id, "Relayer({chain:?} => {dest:?}): mismatch");
                         continue;
                     } else
                     // TODO: 1. Check for sufficient gas
@@ -341,27 +343,27 @@ impl Relayer {
                     // 2. Submit the UserOp
                     if let Err(err) = Self::submit_userop(&mut relay_uop, providers.clone()).await
                     {
-                        tracing::warn!(%send_id, %err, userop=?relay_uop.userop, "Relay({chain:?} => {dest:?}): transmit");
+                        tracing::warn!(%send_id, %err, userop=?relay_uop.userop, "Relayer({chain:?} => {dest:?}): transmit");
                     } else {
                         // Done
-                        tracing::info!(%send_id, "Relay({chain:?} => {dest:?}): done");
+                        tracing::info!(%send_id, "Relayer({chain:?} => {dest:?}): bundled");
                         continue;
                     }
 
                     // X. Backoff-retry
                     let Some(backoff) = relay_uop.backoff() else {
-                        // TODO: DEAD LETTER OFFICE
-                        tracing::error!(%send_id, "Relay({chain:?} => {dest:?}): dropped");
+                        // FIXME: DEAD LETTER OFFICE
+                        tracing::error!(%send_id, "Relayer({chain:?} => {dest:?}): dropped");
                         continue;
                     };
-                    tracing::warn!(%send_id, ?backoff, "Relay({chain:?} => {dest:?}): backoff");
+                    tracing::warn!(%send_id, ?backoff, "Relayer({chain:?} => {dest:?}): backoff");
                     delayq.insert(relay_uop, backoff);
                 }
                 // retry processing
                 Some(due) = delayq.next() => {
                     let relay_uop = due.into_inner();
                     let RelayUserOp { chain: dest, send_id, .. } = &relay_uop;
-                    tracing::debug!(%send_id, "Relay({chain:?} => {dest:?}): retry");
+                    tracing::debug!(%send_id, "Relayer({chain:?} => {dest:?}): retry");
                     if let Err(err) = relay_tx.send(relay_uop) {
                         tracing::error!(%err, "relay_tx closed");
                         break Ok(());
@@ -462,7 +464,7 @@ impl Relayer {
                 keccak256(uop.call_data.iter().as_slice())
             });
 
-        tracing::info!(%send_id, "Relay({:?} => {chain:?}): promote", self.chain);
+        tracing::info!(%send_id, "Relayer({:?} => {chain:?}): promote", self.chain);
         let (signers, signatures): (Vec<NodePublicKey>, Vec<BlsSignature>) =
             bop.signatures.into_iter().unzip();
 
@@ -520,7 +522,7 @@ impl Relayer {
         );
 
         // 4. Push UserOp to the sending queue
-        tracing::trace!(%send_id, "Relay({:?} => {chain:?}): queue", self.chain);
+        tracing::trace!(%send_id, "Relayer({:?}): queue", self.chain);
         if let Err(err) = self.relay_tx.send(final_uop) {
             tracing::error!(%err, "relay_tx closed");
         };

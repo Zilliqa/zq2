@@ -123,13 +123,13 @@ impl Signer {
         sign_tx: UnboundedSender<SignUserOp>,
     ) -> Result<()> {
         if watchers.is_empty() {
-            tracing::warn!("Watcher({chain:?}): terminated");
+            tracing::warn!("Sender({chain:?}): terminated");
             return Ok(());
         }
-        tracing::info!(chains=%watchers.len(), "Watcher({chain:?}): started");
+        tracing::info!(chains=%watchers.len(), "Sender({chain:?}): started");
 
         // Cache last known height
-        let mut cache =
+        let mut heights =
             lru::LruCache::<ChainId, u64>::new(NonZeroUsize::new(watchers.len()).unwrap());
 
         // Schedule the polls according to average block-times.
@@ -138,7 +138,7 @@ impl Signer {
             let chain = Chain::from_id(remote.chain_id);
             let period = chain
                 .average_blocktime_hint()
-                .unwrap_or(Duration::from_secs(1));
+                .unwrap_or(config.consensus.consensus_timeout);
             poll_sched.insert(chain, period);
         }
 
@@ -149,7 +149,7 @@ impl Signer {
             let chain = due.into_inner();
             let period = chain
                 .average_blocktime_hint()
-                .unwrap_or(Duration::from_secs(10));
+                .unwrap_or(config.consensus.consensus_timeout);
             tracing::trace!(?period, ?chain, "Poll");
             let chain_id = chain.id();
             poll_sched.insert(chain, period);
@@ -169,7 +169,7 @@ impl Signer {
                     .await
                 {
                     let cache_height =
-                        cache.get_or_insert_mut(chain.id(), || final_block.header.number);
+                        heights.get_or_insert_mut(chain.id(), || final_block.header.number);
                     if *cache_height >= final_block.header.number {
                         continue; // skip if stale
                     }
@@ -218,46 +218,55 @@ impl Signer {
                     ..
                 }) = super::IERC7786GatewaySource::MessageSent::decode_log_data(log.data())
                 else {
-                    tracing::error!(%txn_hash, "MessageSent({chain:?}): decoder");
+                    tracing::warn!(%txn_hash, "MessageSent({chain:?}): invalid structure");
                     continue; // skip on failure
                 };
+                tracing::debug!(send_id=%sendId, "MessageSent({chain:?}): seen");
 
                 // 5. Validate payload integrity
                 if sendId != keccak256(payload.iter().as_slice())
                     && payload.starts_with(&super::IAccountExecute::executeUserOpCall::SELECTOR)
                 {
-                    tracing::error!(send_id=%sendId, "MessageSent({chain:?}): invalid");
+                    tracing::warn!(send_id=%sendId, "MessageSent({chain:?}): invalid payload");
                     continue;
                 }
-                tracing::debug!(send_id=%sendId, "MessageSent({chain:?}): seen");
 
                 // 6. Validate route
-                let dst_chain = get_eip155_chain(std::str::from_utf8(&recipient)?)?;
-                let src_chain = get_eip155_chain(std::str::from_utf8(&sender)?)?;
+                let Ok(dst_chain) = get_eip155_chain(std::str::from_utf8(&recipient)?) else {
+                    tracing::warn!(send_id=%sendId, "MessageSent({chain:?}): invalid destination");
+                    continue;
+                };
+                let Ok(src_chain) = get_eip155_chain(std::str::from_utf8(&sender)?) else {
+                    tracing::warn!(send_id=%sendId, "MessageSent({chain:?}): invalid source");
+                    continue;
+                };
                 anyhow::ensure!(
                     src_chain.id() == chain.id(),
                     "MessageSent({chain:?}): invalid source"
                 ); // MessageSent comes from source
 
-                let sender = get_eip155_address(std::str::from_utf8(&sender)?)?;
+                let Ok(sender) = get_eip155_address(std::str::from_utf8(&sender)?) else {
+                    tracing::warn!(send_id=%sendId, "MessageSent({chain:?}): invalid sender");
+                    continue;
+                };
                 anyhow::ensure!(
                     sender == log.address(),
                     "MessageSent({chain:?}): invalid sender"
                 ); // Gateway contract is sender
 
-                let src_test = src_chain
+                let is_src_test = src_chain
                     .named()
                     .map(|c| c.is_testnet())
                     .unwrap_or_default();
-                let dst_test = dst_chain
+                let is_dst_test = dst_chain
                     .named()
                     .map(|c| c.is_testnet())
                     .unwrap_or_default();
                 anyhow::ensure!(
-                    src_test == dst_test,
+                    is_src_test == is_dst_test,
                     "MessageSent({chain:?}): testnet != mainnet"
                 ); // Mixing testnet/mainnet
-                tracing::info!(send_id=%sendId, "MessageSent({src_chain:?}): => {dst_chain:?}");
+                tracing::info!(send_id=%sendId, "MessageSent({src_chain:?}): invalid route");
 
                 // Warning: may dead-lock, if watchers is locked above
                 if let Some(watcher) = watchers.get(&dst_chain.id()) {
@@ -267,22 +276,13 @@ impl Signer {
                         paymaster,
                         ..
                     } = watcher.value();
-
-                    anyhow::ensure!(
-                        dst_chain != src_chain || *allow_loopback,
-                        "MessageSent({chain:?}): loop-back"
-                    ); // ** DO NOT ALLOW LOOP-BACK **
+                    if !(dst_chain != src_chain || *allow_loopback) {
+                        tracing::warn!("MessageSent({chain:?}): loop-back");
+                        continue;
+                    }
 
                     // 7. Construct partial UserOp; send for signing
-                    let userop = Self::new_user_op(
-                        // sendId,
-                        payload,
-                        sender,
-                        // gateway,
-                        paymaster,
-                        value,
-                        block_height,
-                    );
+                    let userop = Self::new_user_op(payload, sender, paymaster, value, block_height);
                     tracing::trace!(send_id=%sendId, ?userop, "UserOp");
                     if let Err(err) = sign_tx.send(SignUserOp::new(
                         userop,
@@ -375,7 +375,7 @@ impl Signer {
 
                     // X. Backoff-retry
                     let Some(backoff) = sign_uop.backoff() else {
-                        // DEAD LETTER OFFICE
+                        // FIXME: DEAD LETTER OFFICE
                         tracing::error!(%send_id, "Signer({chain:?}): dropped");
                         continue;
                     };
@@ -449,7 +449,7 @@ impl Signer {
             // the two backup peers should only be able to submit it after a delay. the userop is lost if all fail.
             let delay_slot = dst_chain
                 .average_blocktime_hint()
-                .map_or_else(|| Duration::from_secs(15).mul(i), |d| d.mul(i)); // slots at 0s, 15s, 45s.
+                .map_or_else(|| Duration::from_secs(60).mul(i), |d| d.mul(i));
 
             sendq.insert((peer, uccb_uop, send_id), delay_slot);
         }
