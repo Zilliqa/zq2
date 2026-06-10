@@ -177,13 +177,11 @@ impl Relayer {
                     tracing::error!(?chain, "eth_getLogs(): transport");
                     continue; // skip on errors
                 };
-                if !logs.is_empty() {
-                    tracing::info!(
-                        count=%logs.len(),
-                        range=?(cache_height.saturating_add(1)..=final_height),
-                        "MessageReceived({chain:?}): events",
-                    );
-                }
+                tracing::trace!(
+                    count=%logs.len(),
+                    range=?(cache_height.saturating_add(1)..=final_height),
+                    "MessageReceived({chain:?}): events",
+                );
                 *cache_height = final_height; // update final
                 logs
             } else {

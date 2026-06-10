@@ -3,8 +3,18 @@ pragma solidity ^0.8.28;
 
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
-import {IEntryPointNonces, IPaymaster, IEntryPoint, PackedUserOperation, IAccount, IAccountExecute} from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
-import {IERC7786GatewaySource, IERC7786Recipient} from "@openzeppelin/contracts/interfaces/draft-IERC7786.sol";
+import {
+    IEntryPointNonces,
+    IPaymaster,
+    IEntryPoint,
+    PackedUserOperation,
+    IAccount,
+    IAccountExecute
+} from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
+import {
+    IERC7786GatewaySource,
+    IERC7786Recipient
+} from "@openzeppelin/contracts/interfaces/draft-IERC7786.sol";
 import {CAIP2, CAIP10} from "@openzeppelin/contracts/utils/CAIP10.sol";
 import {NoncesKeyed} from "@openzeppelin/contracts/utils/NoncesKeyed.sol";
 
@@ -23,10 +33,22 @@ contract DummyBridge is
     bytes32 private immutable LOCAL_CHAIN_K256;
     address private EP_ADDRESS;
 
+    mapping(string => uint128[6]) private destinationFees;
+
     constructor(address _ep) payable {
         entryPoint = IEntryPoint(_ep);
         LOCAL_CHAIN_K256 = keccak256(bytes(CAIP2.local()));
         EP_ADDRESS = _ep;
+
+        // pre-populate
+        destinationFees[CAIP2.local()] = [
+            uint128(0x100001),
+            uint128(0x100002),
+            uint128(0x100003),
+            uint128(0x100004),
+            uint128(0x100005),
+            uint128(0x100006)
+        ];
     }
 
     /// @dev Restrict calls to the EntryPoint or the owner themselves
@@ -65,10 +87,10 @@ contract DummyBridge is
     /// IAccount::validateUserOp()
     /// Validates the signature.
     function validateUserOp(
-        PackedUserOperation calldata userOp,
-        bytes32 userOpHash,
+        PackedUserOperation calldata,
+        bytes32,
         uint256 missingWalletFunds
-    ) public override returns (uint256 validationData) {
+    ) public view override returns (uint256 validationData) {
         require(msg.sender == EP_ADDRESS, "Invalid entrypoint");
         require(missingWalletFunds == 0, "Missing paymaster");
 
@@ -79,11 +101,12 @@ contract DummyBridge is
     /// IPaymaster::validatePaymasterUserOp()
     /// Validates the multi-signature.
     function validatePaymasterUserOp(
-        PackedUserOperation calldata userOp,
-        bytes32 userOpHash,
+        PackedUserOperation calldata,
+        bytes32,
         uint256 maxCost
-    ) external returns (bytes memory context, uint256 validationData) {
-        address relayer = address(bytes20(userOp.paymasterAndData[:20]));
+    ) external pure returns (bytes memory context, uint256 validationData) {
+        require(maxCost > 0, "maxCost == 0");
+        // address relayer = address(bytes20(userOp.paymasterAndData[:20]));
 
         // TODO: Check bls12-381 multi-signature
         context = ""; // abi.encode(relayer); // trigger post-op
@@ -113,18 +136,9 @@ contract DummyBridge is
     }
 
     function getFees(
-        uint64 chain_id
-    ) public view virtual returns (uint256 fees) {
-        uint64 call_gas_limit = 0x200000;
-        uint64 pre_verification_gas = 0x100000;
-        uint64 verification_gas_limit = 0x300000;
-        uint64 paymaster_verification_gas_limit = 0x400000;
-
-        fees =
-            (uint256(call_gas_limit) << 192) |
-            (uint256(pre_verification_gas) << 128) |
-            (uint256(verification_gas_limit) << 64) |
-            uint256(paymaster_verification_gas_limit);
+        string calldata chain_id
+    ) public view virtual returns (uint128[6] memory) {
+        return destinationFees[chain_id];
     }
 
     function supportsAttribute(
@@ -184,12 +198,22 @@ contract DummyBridge is
     function sendMessage(
         bytes calldata recipient, // CAIP10/EIP155 full address
         bytes calldata payload,
-        bytes[] calldata attributes // Stick pricing in here?
+        bytes[] calldata // Stick pricing in here?
     ) public payable virtual whenNotPaused returns (bytes32 sendId) {
+        require(msg.value == 0, "received value");
+
+        // retrieve destination fee structure
+        bytes[] memory attributes = new bytes[](1);
+        bytes memory feeAttribute = abi.encodeWithSignature(
+            "feeParams(uint128[6])",
+            destinationFees[CAIP2.local()]
+        );
+        attributes[0] = feeAttribute;
+
+        // wrapping the payload
         bytes memory sender = bytes(CAIP10.local(msg.sender));
         uint256 nonce = _useNonce(address(this), uint192(0));
 
-        // wrapping the payload
         bytes memory wrappedPayload = abi.encodeWithSelector(
             IAccountExecute.executeUserOp.selector, // needed to trigger executeUserOp() later
             sender,
@@ -198,13 +222,8 @@ contract DummyBridge is
             nonce
         );
 
-        uint128 max_fee_per_gas = 0x100000;
-        uint128 max_priority_fee_per_gas = 1;
-
+        // compute sendId
         sendId = keccak256(wrappedPayload);
-
-        uint256 value = (uint256(max_priority_fee_per_gas) << 128) |
-            uint256(max_fee_per_gas);
 
         bytes memory gateway = bytes(CAIP10.local(address(this)));
 
@@ -213,7 +232,7 @@ contract DummyBridge is
             gateway,
             recipient,
             wrappedPayload,
-            value,
+            0,
             attributes
         );
     }

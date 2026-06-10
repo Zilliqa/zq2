@@ -189,13 +189,11 @@ impl Signer {
                     tracing::error!(?chain, "eth_getLogs(): transport");
                     continue; // skip on errors
                 };
-                if !logs.is_empty() {
-                    tracing::info!(
-                        count=%logs.len(),
-                        range=?(cache_height.saturating_add(1)..=final_height),
-                        "MessageSent({chain:?}): events",
-                    );
-                }
+                tracing::trace!(
+                    count=%logs.len(),
+                    range=?(cache_height.saturating_add(1)..=final_height),
+                    "MessageSent({chain:?}): events",
+                );
                 *cache_height = final_height; // update final
                 logs
             } else {
@@ -266,7 +264,7 @@ impl Signer {
                     is_src_test == is_dst_test,
                     "MessageSent({chain:?}): testnet != mainnet"
                 ); // Mixing testnet/mainnet
-                tracing::info!(send_id=%sendId, "MessageSent({src_chain:?}): invalid route");
+                tracing::info!(send_id=%sendId, "Sender({src_chain:?}): routing");
 
                 // Warning: may dead-lock, if watchers is locked above
                 if let Some(watcher) = watchers.get(&dst_chain.id()) {
@@ -328,7 +326,8 @@ impl Signer {
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
 
         // fee cache
-        let mut cache = LruCache::<Hash, U256>::new(NonZeroUsize::new(providers.len()).unwrap());
+        let mut cache =
+            LruCache::<Hash, [u128; 6]>::new(NonZeroUsize::new(providers.len()).unwrap());
 
         // exponential backoff queue
         let mut delayq: DelayQueue<SignUserOp> = DelayQueue::new();
@@ -507,7 +506,7 @@ impl Signer {
         send_id: B256,
         sign_uop: &mut SignUserOp,
         providers: Arc<super::Providers>,
-        cache: &mut LruCache<Hash, U256>,
+        cache: &mut LruCache<Hash, [u128; 6]>,
     ) -> Result<()> {
         if sign_uop.userop.paymaster_verification_gas_limit.is_some() {
             return Ok(());
@@ -533,8 +532,9 @@ impl Signer {
             // .get_or_insert() does not work in async
             *fees
         } else {
+            let caip2 = tap_caip::ChainId::new("eip155", &dst_chain.id().to_string())?;
             let fees = super::IERC4337Extra::new(*gateway, jsonrpc)
-                .getFees(dst_chain.id())
+                .getFees(caip2.to_string())
                 .block(BlockId::number(*blk_height))
                 .call()
                 .await?;
@@ -543,17 +543,23 @@ impl Signer {
         };
 
         // ERC4337 fees
+        tracing::debug!(%send_id, ?fees, "getFees({src_chain:?}): fees");
         let [
+            max_fee_per_gas,
+            max_priority_fee_per_gas,
             paymaster_verification_gas_limit,
             verification_gas_limit,
             pre_verification_gas,
             call_gas_limit,
-        ] = fees.into_limbs(); // ordering is inverted
-        tracing::debug!(%send_id, %call_gas_limit, %pre_verification_gas, %verification_gas_limit, %paymaster_verification_gas_limit, "getFees({src_chain:?}): fees");
+        ] = fees;
+
+        userop.max_fee_per_gas = U256::from(max_fee_per_gas);
+        userop.max_priority_fee_per_gas = U256::from(max_priority_fee_per_gas);
 
         userop.call_gas_limit = U256::from(call_gas_limit);
         userop.pre_verification_gas = U256::from(pre_verification_gas);
         userop.verification_gas_limit = U256::from(verification_gas_limit);
+
         userop.paymaster_verification_gas_limit =
             Some(U256::from(paymaster_verification_gas_limit));
         userop.paymaster_post_op_gas_limit = Some(U256::from(paymaster_verification_gas_limit));
@@ -677,15 +683,15 @@ impl Signer {
         payload: Bytes,
         sender: &Address,
         paymaster: &Address,
-        value: U256,
+        _value: U256,
         block_height: u64,
     ) -> AlloyUserOperation {
         // we can encode some custom things in here
         let paymaster_data = (block_height).abi_encode_packed();
         // FIXME: decode the values
-        let [a, b, c, d] = value.into_limbs();
-        let max_fee_per_gas = (b as u128) << 64 | a as u128;
-        let max_priority_fee_per_gas = (d as u128) << 64 | c as u128;
+        // let [a, b, c, d] = value.into_limbs();
+        // let max_fee_per_gas = (b as u128) << 64 | a as u128;
+        // let max_priority_fee_per_gas = (d as u128) << 64 | c as u128;
         AlloyUserOperation {
             sender: *sender,
             nonce: U256::ZERO, // unpopulated nonce/sig
@@ -697,8 +703,8 @@ impl Signer {
             call_gas_limit: U256::ZERO,         // estimateUserOpGas
             verification_gas_limit: U256::ZERO, // estimateUserOpGas
             pre_verification_gas: U256::ZERO,   // estimateUserOpGas
-            max_fee_per_gas: U256::from(max_fee_per_gas),
-            max_priority_fee_per_gas: U256::from(max_priority_fee_per_gas),
+            max_fee_per_gas: U256::MAX,
+            max_priority_fee_per_gas: U256::MAX,
             paymaster: Some(*paymaster),
             paymaster_verification_gas_limit: None, // estimateUserOpGas
             paymaster_post_op_gas_limit: None,      // estimateUserOpGas
