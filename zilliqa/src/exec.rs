@@ -696,7 +696,10 @@ impl State {
 
         // Under the tightened rules, also fail when the EVM and Scilla deltas would both write the
         // same address, since the combined result would be ambiguous.
-        let deltas_overlap = fork.tighten_precompile_rules
+        let deltas_overlap = fork
+            .allow_scilla_call_precompile_to_be_called_from_addresses
+            .is_empty()
+            && fork.tighten_precompile_rules
             && extra_opts.exec_type == ExecType::Transact
             && exec_failure::deltas_overlap(
                 &result_and_state.state,
