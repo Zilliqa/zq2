@@ -310,11 +310,11 @@ impl Chain {
                 }),
                 json!({ "at_height": 28281600, "randao_support": true}),
                 json!({ "at_height": 29230131, "evm_to_scilla_strings_encoded_properly": true}),
-                json!({ "at_height": 999999999, "dont_overwrite_evm_accounts_from_stale_scilla_state": true}),
-                json!({ "at_height": 999999999, "disable_interop_native_zil_transfers_0": true}),
-                json!({ "at_height": 999999999, "make_transfers_in_scilla_precompiles_with_journal_api": true}),
-                json!({ "at_height": 999999999, "tighten_precompile_rules": true}),
-                json!({ "at_height": 999999999, "allow_scilla_call_precompile_to_be_called_from_addresses": []}),
+                json!({ "at_height": 34369689, "dont_overwrite_evm_accounts_from_stale_scilla_state": true}),
+                json!({ "at_height": 34369689, "disable_interop_native_zil_transfers_0": true}),
+                json!({ "at_height": 34369689, "make_transfers_in_scilla_precompiles_with_journal_api": true}),
+                json!({ "at_height": 34369689, "tighten_precompile_rules": true}),
+                json!({ "at_height": 34369689, "allow_scilla_call_precompile_to_be_called_from_addresses": ["0x453b11386FBd54bC532892c0217BBc316fc7b918"]}),
             ]),
             Chain::Zq2Mainnet => Some(vec![
                 json!({ "at_height": 4770088, "executable_blocks": true }),
@@ -376,7 +376,7 @@ impl Chain {
                 json!({ "at_height": 27152370, "make_transfers_in_scilla_precompiles_with_journal_api": true}),
                 json!({ "at_height": 27546174, "tighten_precompile_rules": true}),
                 json!({
-                    "at_height": 999999999,
+                    "at_height": 29108584,
                     "allow_scilla_call_precompile_to_be_called_from_addresses": [
                         "0x03A79429acc808e4261a68b0117aCD43Cb0FdBfa",
                         "0x9e4E0F7A06E50DA13c78cF8C83E907f792DE54fd",
