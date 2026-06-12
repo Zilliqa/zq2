@@ -8,6 +8,7 @@ use anyhow::{Result, anyhow};
 use arc_swap::ArcSwap;
 use http::{Method, header};
 use jsonrpsee::{
+    core::middleware::layer::RpcLoggerLayer,
     server::{ServerConfig, middleware::http::ProxyGetRequestLayer},
     ws_client::RpcServiceBuilder,
 };
@@ -39,10 +40,12 @@ use crate::{
     node::{self, OutgoingMessageFailure},
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
     sync::SyncPeers,
+    uccb::Uccb,
 };
 
 pub struct NodeLauncher {
     pub node: Arc<Node>,
+    pub uccb: Arc<Uccb>,
     pub config: NodeConfig,
     pub broadcasts: UnboundedReceiverStream<(PeerId, ExternalMessage, ResponseChannel)>,
     pub requests: UnboundedReceiverStream<(PeerId, String, ExternalMessage, ResponseChannel)>,
@@ -121,25 +124,52 @@ impl NodeLauncher {
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
         let sync_peers = Arc::new(SyncPeers::new(peer_id));
 
-        let node = Node::new(
+        let (node, db) = Node::new(
             config.clone(),
             secret_key,
-            outbound_message_sender,
-            local_outbound_message_sender,
-            request_responses_sender,
+            outbound_message_sender.clone(),
+            local_outbound_message_sender.clone(),
+            request_responses_sender.clone(),
             reset_timeout_sender.clone(),
             peer_num,
             sync_peers.clone(),
             swarm_peers.clone(),
         )?;
-
         let node = Arc::new(node);
+
+        // Start Bundler RPC server
+        //
+        // A standalone RPC server is provided mainly to implement the API extensions needed to enable bundler support.
+        // A decision may be made to enable the same extensions on the regular API in the future, and to directly incorporate it to the main JSON-RPC.
+        let bundler_api = api::bundler::rpc_module(node.clone(), &crate::api::bundler_enabled());
+        let rpc_middleware = RpcServiceBuilder::new().layer(RpcLoggerLayer::new(100_000));
+        let bundler_rpc = jsonrpsee::server::ServerBuilder::new()
+            .set_config(
+                ServerConfig::builder()
+                    .max_connections(JSON_RPC_HANDLERS_COUNT)
+                    .set_id_provider(EthIdProvider)
+                    .build(),
+            )
+            .set_rpc_middleware(rpc_middleware)
+            .build((Ipv4Addr::UNSPECIFIED, config.bundler_port))
+            .await;
+        match bundler_rpc {
+            Ok(server) => {
+                let port = server.local_addr()?.port();
+                info!("BUNDLER-RPC server listening on port {}", port);
+                let handle = server.start(bundler_api);
+                tokio::spawn(handle.stopped());
+            }
+            Err(e) => {
+                error!("Failed to start BUNDLER-RPC server: {}", e);
+            }
+        }
+
         let credit_store = Arc::new(RpcCreditStore::new());
         let credit_rate = RpcCreditRate::new(config.credit_rates.clone());
-
         for api_server in &config.api_servers {
             // Collect all enabled modules
-            let rpc_module = api::rpc_module(Arc::clone(&node), &api_server.enabled_apis);
+            let json_api = api::rpc_module(Arc::clone(&node), &api_server.enabled_apis);
 
             // HTTP middleware
             let cors = CorsLayer::new()
@@ -166,7 +196,7 @@ impl NodeLauncher {
                 );
 
             // Construct the JSON-RPC API server.
-            let server = jsonrpsee::server::ServerBuilder::new()
+            let json_rpc = jsonrpsee::server::ServerBuilder::new()
                 .set_config(
                     ServerConfig::builder()
                         .max_connections(JSON_RPC_HANDLERS_COUNT)
@@ -180,11 +210,11 @@ impl NodeLauncher {
                 .await;
 
             // Start the JSON-RPC server.
-            match server {
+            match json_rpc {
                 Ok(server) => {
                     let port = server.local_addr()?.port();
                     info!("JSON-RPC server listening on port {}", port);
-                    let handle = server.start(rpc_module);
+                    let handle = server.start(json_api);
                     tokio::spawn(handle.stopped());
                 }
                 Err(e) => {
@@ -193,8 +223,22 @@ impl NodeLauncher {
             }
         }
 
+        // Start UCCB **after** RPC is started, to be able to connect to localhost
+        let uccb = Arc::new(
+            Uccb::new(
+                config.clone(),
+                secret_key,
+                db.clone(),
+                outbound_message_sender.clone(),
+                local_outbound_message_sender.clone(),
+                request_responses_sender.clone(),
+            )
+            .await?,
+        );
+
         let launcher = NodeLauncher {
             node,
+            uccb,
             broadcasts: broadcasts_receiver,
             requests: requests_receiver,
             request_failures: request_failures_receiver,
@@ -282,9 +326,17 @@ impl NodeLauncher {
                     ];
 
                     let start = SystemTime::now();
-                    if let Err(e) = self.node.handle_request(source, &id, message, response_channel) {
-                        attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));
-                        error!("Failed to process request message: {e}");
+                    match message {
+                        ExternalMessage::UccbUserOp(_) => {
+                            if let Err(e) = self.uccb.handle_request(source, &id, message, response_channel) {
+                                attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));
+                                error!("Failed to process request message: {e}");
+                            }
+                        }
+                        _ => if let Err(e) = self.node.handle_request(source, &id, message, response_channel) {
+                            attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));
+                            error!("Failed to process request message: {e}");
+                        }
                     }
                     messaging_process_duration.record(
                         start.elapsed().map_or(0.0, |d| d.as_secs_f64()),

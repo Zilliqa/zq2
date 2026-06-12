@@ -246,6 +246,7 @@ impl P2pNode {
             info!("LaunchShard message received for a shard we're already running. Ignoring...");
             return Ok(());
         }
+
         let (mut node, input_channels, peers) = NodeLauncher::new(
             self.secret_key,
             config,
@@ -269,6 +270,7 @@ impl P2pNode {
             .behaviour_mut()
             .gossipsub
             .subscribe(&Self::validator_topic(shard_id))?;
+
         Ok(())
     }
 
@@ -416,7 +418,8 @@ impl P2pNode {
                                                 | ExternalMessage::BlockRequest(_)
                                                 | ExternalMessage::PassiveSyncRequest(_) => self
                                                     .send_to(&_topic.hash(), |c| c.broadcasts.send((_source, _external_message, ResponseChannel::Remote(_channel))))?,
-                                                ExternalMessage::Vote(_)
+                                                ExternalMessage::UccbUserOp(_)
+                                                | ExternalMessage::Vote(_)
                                                 | ExternalMessage::NewView(_) => self.send_to(&_topic.hash(), |c| c.requests.send((_source, _id, _external_message, ResponseChannel::Remote(_channel))))?,
                                                 _ => error!(source = %_source, %to, external_message = %_external_message, request_id = %_request_id, "unhandled libp2p request"),
                                             }
@@ -467,9 +470,9 @@ impl P2pNode {
                         InternalMessage::LaunchLink(_) | InternalMessage::IntershardCall(_) => {
                             self.send_to(&Self::shard_id_to_topic(destination, None).hash(), |c| c.local_messages.send((source, message)))?;
                         }
-                        InternalMessage::ExportBlockCheckpoint(block, transactions, parent, trie_storage, view_history, path, grandparent) => {
+                        InternalMessage::ExportBlockCheckpoint(export) => {
                             self.task_threads.spawn(async move {
-                                db::checkpoint_block_with_state(&block, &transactions, &parent, trie_storage, source, view_history, &grandparent, path)
+                                db::checkpoint_block_with_state(*export, source)
                             });
                         }
                         InternalMessage::SubscribeToGossipSubTopic(topic) => {

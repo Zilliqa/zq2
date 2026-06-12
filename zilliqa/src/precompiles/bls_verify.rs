@@ -1,9 +1,8 @@
-use alloy::primitives::Address;
 use blsful::Bls12381G2Impl;
 use ethabi::{ParamType, Token, decode, encode, short_signature};
 use revm::{
-    interpreter::{Gas, InputsImpl, InstructionResult, InterpreterResult},
-    precompile::PrecompileError,
+    interpreter::{CallInputs, Gas, InstructionResult, InterpreterResult},
+    precompile::PrecompileHalt,
 };
 
 use crate::{evm::ZQ2EvmContext, precompiles::ContextPrecompile};
@@ -25,8 +24,8 @@ impl BlsVerify {
     ) -> Result<Option<InterpreterResult>, String> {
         let mut gas_tracker = Gas::new(gas_limit);
 
-        if !gas_tracker.record_cost(Self::BLS_VERIFY_GAS_PRICE) {
-            return Err(PrecompileError::OutOfGas.to_string());
+        if !gas_tracker.record_regular_cost(Self::BLS_VERIFY_GAS_PRICE) {
+            return Err(PrecompileHalt::OutOfGas.to_string());
         }
 
         let Ok(decoded) = decode(
@@ -72,12 +71,9 @@ impl ContextPrecompile for BlsVerify {
     fn call(
         &self,
         ctx: &mut ZQ2EvmContext,
-        _target: Address,
-        input: &InputsImpl,
-        _is_static: bool,
-        gas_limit: u64,
+        inputs: &CallInputs,
     ) -> Result<Option<InterpreterResult>, String> {
-        if input.input.len() < 4 {
+        if inputs.input.len() < 4 {
             return Err("Provided input must be at least 4-byte long".into());
         }
 
@@ -89,7 +85,7 @@ impl ContextPrecompile for BlsVerify {
             Self::bls_verify,
         )];
 
-        let raw_input = input.input.bytes(ctx);
+        let raw_input = inputs.input.bytes(ctx);
         let Some(handler) = dispatch_table
             .iter()
             .find(|&predicate| predicate.0 == raw_input[..4])
@@ -97,6 +93,6 @@ impl ContextPrecompile for BlsVerify {
             return Err("Unable to find handler with given selector".into());
         };
 
-        handler.1(&raw_input[4..], gas_limit, ctx)
+        handler.1(&raw_input[4..], inputs.gas_limit, ctx)
     }
 }

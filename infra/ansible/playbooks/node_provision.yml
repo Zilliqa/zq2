@@ -32,7 +32,7 @@
 - name: Zilliqa node installation
   ansible.builtin.import_playbook: install_zilliqa.yml
   vars:
-    target_group: all:!role_apps:!role_bootstrap
+    target_group: all:!role_apps:!role_bootstrap:!role_testnode
 
 - name: Healthcheck service configuration
   ansible.builtin.import_playbook: configure_healthcheck.yml

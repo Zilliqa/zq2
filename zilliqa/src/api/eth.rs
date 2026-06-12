@@ -3,7 +3,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use alloy::{
-    consensus::{TxEip1559, TxEip2930, TxLegacy, transaction::RlpEcdsaDecodableTx},
+    consensus::{TxEip1559, TxEip2930, TxEip7702, TxLegacy, transaction::RlpEcdsaDecodableTx},
     eips::{BlockId, BlockNumberOrTag, RpcBlockHash},
     hex,
     primitives::{Address, B256, U64, U256},
@@ -16,7 +16,8 @@ use anyhow::{Result, anyhow};
 use http::Extensions;
 use jsonrpsee::{
     PendingSubscriptionSink, RpcModule,
-    core::SubscriptionError,
+    core::{SubscriptionError, traits::ToRpcParams},
+    rpc_params,
     types::{
         Params,
         error::{ErrorObject, ErrorObjectOwned},
@@ -46,7 +47,6 @@ use crate::{
     crypto::Hash,
     data_access,
     db::Db,
-    error::ensure_success,
     exec::{ExecType::Estimate, ExtraOpts, zil_contract_address},
     message::Block,
     node::Node,
@@ -189,7 +189,7 @@ pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc
 }
 
 // See https://eips.ethereum.org/EIPS/eip-1898
-fn build_errored_response_for_missing_block(
+pub fn build_errored_response_for_missing_block(
     request: BlockId,
     result: Option<Block>,
 ) -> Result<Block> {
@@ -228,7 +228,7 @@ fn build_errored_response_for_missing_block(
     }
 }
 
-fn expect_end_of_params(seq: &mut ParamsSequence, min: u32, max: u32) -> Result<()> {
+pub fn expect_end_of_params(seq: &mut ParamsSequence, min: u32, max: u32) -> Result<()> {
     // Styled after the geth error message.
     let msg = if min != max {
         format!("too many arguments, want at most {max}")
@@ -268,30 +268,10 @@ fn call(params: Params, node: &Arc<Node>) -> Result<String> {
     let block_id: BlockId = params.optional_next()?.unwrap_or_default();
     expect_end_of_params(&mut params, 1, 2)?;
 
-    let (state, block) = {
-        let block = node.get_block(block_id)?;
-        let block = build_errored_response_for_missing_block(block_id, block)?;
-        let state = node.get_state(&block)?;
-        (state, block)
-    };
-    if state.is_empty() {
-        return Err(anyhow!("State required to execute request does not exist"));
-    }
-
-    trace!("call_contract: block={:?}", block);
-
-    let result = state.call_contract(
-        call_params.from.unwrap_or_default(),
-        call_params.to.and_then(|to| to.into_to()),
-        call_params.input.into_input().unwrap_or_default().to_vec(),
-        u128::try_from(call_params.value.unwrap_or_default())?,
-        block.header,
-    )?;
-
-    match ensure_success(result) {
-        Ok(output) => Ok(output.to_hex()),
-        Err(err) => Err(ErrorObjectOwned::from(err).into()),
-    }
+    let array_params = rpc_params!(call_params, block_id);
+    let param_value = array_params.to_rpc_params()?;
+    let params = Params::new(param_value.as_deref().map(|s| s.get()));
+    super::bundler::eth_call(params, node)
 }
 
 fn chain_id(params: Params, node: &Arc<Node>) -> Result<String> {
@@ -326,6 +306,7 @@ fn estimate_gas(params: Params, node: &Arc<Node>) -> Result<String> {
         call_params.max_priority_fee_per_gas,
         u128::try_from(call_params.value.unwrap_or_default())?,
         call_params.access_list,
+        call_params.authorization_list,
         ExtraOpts {
             tx_type: call_params.transaction_type.unwrap_or_default().into(),
             disable_eip3607: true,
@@ -354,7 +335,7 @@ fn get_balance(params: Params, node: &Arc<Node>) -> Result<String> {
     Ok(state.get_account(address)?.balance.to_hex())
 }
 
-pub fn brt_to_eth_receipts(
+fn _brt_to_eth_receipts(
     btr: crate::db::BlockAndReceiptsAndTransactions,
 ) -> Vec<TransactionReceipt> {
     let block = btr.block;
@@ -959,6 +940,7 @@ fn parse_transaction(bytes: &[u8]) -> Result<SignedTransaction> {
         0xc0..=0xfe => parse_legacy_transaction(bytes),
         0x01 => parse_eip2930_transaction(&bytes[1..]),
         0x02 => parse_eip1559_transaction(&bytes[1..]),
+        0x04 => parse_eip7702_transaction(&bytes[1..]),
         _ => Err(anyhow!(
             "invalid transaction with starting byte {}",
             bytes[0]
@@ -979,6 +961,11 @@ fn parse_eip2930_transaction(mut buf: &[u8]) -> Result<SignedTransaction> {
 fn parse_eip1559_transaction(mut buf: &[u8]) -> Result<SignedTransaction> {
     let (tx, sig) = TxEip1559::rlp_decode_with_signature(&mut buf)?;
     Ok(SignedTransaction::Eip1559 { tx, sig })
+}
+
+fn parse_eip7702_transaction(mut buf: &[u8]) -> Result<SignedTransaction> {
+    let (tx, sig) = TxEip7702::rlp_decode_with_signature(&mut buf)?;
+    Ok(SignedTransaction::Eip7702 { tx, sig })
 }
 
 fn get_uncle_count(_: Params, _: &Arc<Node>) -> Result<String> {
@@ -1044,7 +1031,7 @@ async fn subscribe(
             let filter = match params {
                 pubsub::Params::None => None,
                 pubsub::Params::Logs(f) => Some(*f),
-                pubsub::Params::Bool(_) => {
+                _ => {
                     return Err("invalid params for logs".into());
                 }
             };
@@ -1123,7 +1110,7 @@ async fn subscribe(
             let full = match params {
                 pubsub::Params::None => false,
                 pubsub::Params::Bool(b) => b,
-                pubsub::Params::Logs(_) => {
+                _ => {
                     return Err("invalid params for newPendingTransactions".into());
                 }
             };
@@ -1293,10 +1280,13 @@ fn get_account(params: Params, node: &Arc<Node>) -> Result<GetAccountResult> {
 /// eth_getFilterChanges
 /// Polling method for a filter, which returns an array of events that have occurred since the last poll.
 fn get_filter_changes(params: Params, node: &Arc<Node>) -> Result<serde_json::Value> {
-    let filter_id: u128 = params.one()?;
+    let filter_id: String = params.one()?;
+    let filter_id = u128::from_str_radix(filter_id.strip_prefix("0x").unwrap_or(&filter_id), 16)?;
 
     let filters = { node.filters.clone() };
-    let mut filter = filters.get(filter_id).ok_or(anyhow!("filter not found"))?;
+    let Some(mut filter) = filters.get(filter_id) else {
+        return Ok(json!([]));
+    };
 
     match &mut filter.kind {
         FilterKind::Block(block_filter) => {
@@ -1348,7 +1338,8 @@ fn get_filter_changes(params: Params, node: &Arc<Node>) -> Result<serde_json::Va
 /// eth_getFilterLogs
 /// Returns an array of all logs matching filter with given id.
 fn get_filter_logs(params: Params, node: &Arc<Node>) -> Result<serde_json::Value> {
-    let filter_id: u128 = params.one()?;
+    let filter_id: String = params.one()?;
+    let filter_id = u128::from_str_radix(filter_id.strip_prefix("0x").unwrap_or(&filter_id), 16)?;
 
     if let Some(filter) = node.filters.get(filter_id) {
         match &filter.kind {
@@ -1360,7 +1351,7 @@ fn get_filter_logs(params: Params, node: &Arc<Node>) -> Result<serde_json::Value
             }
         }
     } else {
-        Err(anyhow!("filter not found"))
+        Ok(json!([]))
     }
 }
 
@@ -1385,38 +1376,38 @@ fn max_priority_fee_per_gas(params: Params, node: &Arc<Node>) -> Result<String> 
 
 /// eth_newBlockFilter
 /// Creates a filter in the node, to notify when a new block arrives. To check if the state has changed, call eth_getFilterChanges
-fn new_block_filter(params: Params, node: &Arc<Node>) -> Result<u128> {
+fn new_block_filter(params: Params, node: &Arc<Node>) -> Result<String> {
     expect_end_of_params(&mut params.sequence(), 0, 0)?;
 
     let filter = BlockFilter {
         block_receiver: node.subscribe_to_new_blocks(),
     };
     let id = node.filters.add(FilterKind::Block(filter));
-    Ok(id)
+    Ok(id.to_hex())
 }
 
 /// eth_newFilter
 /// Creates a filter object, based on filter options, to notify when the state changes (logs). To check if the state has changed, call eth_getFilterChanges.
-fn new_filter(params: Params, node: &Arc<Node>) -> Result<u128> {
+fn new_filter(params: Params, node: &Arc<Node>) -> Result<String> {
     let criteria: alloy::rpc::types::Filter = params.one()?;
 
     let id = node.filters.add(FilterKind::Log(LogFilter {
         criteria: Box::new(criteria),
         last_block_number: None,
     }));
-    Ok(id)
+    Ok(id.to_hex())
 }
 
 /// eth_newPendingTransactionFilter
 /// Creates a filter in the node to notify when new pending transactions arrive. To check if the state has changed, call eth_getFilterChanges.
-fn new_pending_transaction_filter(params: Params, node: &Arc<Node>) -> Result<u128> {
+fn new_pending_transaction_filter(params: Params, node: &Arc<Node>) -> Result<String> {
     expect_end_of_params(&mut params.sequence(), 0, 0)?;
 
     let filter = PendingTxFilter {
         pending_txn_receiver: node.subscribe_to_new_transactions(),
     };
     let id = node.filters.add(FilterKind::PendingTx(filter));
-    Ok(id)
+    Ok(id.to_hex())
 }
 
 /// eth_signTransaction
@@ -1443,6 +1434,8 @@ fn submit_work(_params: Params, _node: &Arc<Node>) -> Result<()> {
 /// eth_uninstallFilter
 /// It uninstalls a filter with the given filter id.
 fn uninstall_filter(params: Params, node: &Arc<Node>) -> Result<bool> {
-    let filter_id: u128 = params.one()?;
+    let filter_id: String = params.one()?;
+    let filter_id = u128::from_str_radix(filter_id.strip_prefix("0x").unwrap_or(&filter_id), 16)?;
+
     Ok(node.filters.remove(filter_id))
 }

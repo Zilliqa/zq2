@@ -1,6 +1,6 @@
 ---
 - name: Install and configure Node Exporter and Process Exporter
-  hosts: all
+  hosts: all:!role_testnode
   become: true
   tags:
     - install

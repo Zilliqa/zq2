@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use alloy::{
-    consensus::TxEip1559,
+    consensus::{TxEip1559, TxEip7702},
+    eips::eip7702::SignedAuthorization,
     primitives::{Address, B256, U256},
 };
 use serde::{Deserialize, Serialize};
@@ -239,6 +240,8 @@ pub struct Transaction {
     pub chain_id: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub access_list: Option<Vec<(Address, Vec<B256>)>>,
+    #[serde(default, skip_serializing_if = "Option::is_none", skip_deserializing)]
+    pub authorization_list: Option<Vec<SignedAuthorization>>,
     #[serde(rename = "type", serialize_with = "hex")]
     pub transaction_type: u64,
 }
@@ -251,7 +254,7 @@ impl Transaction {
         let r = tx.tx.sig_r();
         let s = tx.tx.sig_s();
         let transaction = tx.tx.into_transaction();
-        let (gas_price, max_fee_per_gas, max_priority_fee_per_gas) = match transaction {
+        let (gas_price, max_fee_per_gas, max_priority_fee_per_gas) = match &transaction {
             transaction::Transaction::Legacy(_)
             | transaction::Transaction::Eip2930(_)
             | transaction::Transaction::Zilliqa(_)
@@ -266,9 +269,19 @@ impl Transaction {
                 // The `gasPrice` for EIP-1559 transactions should be set to the effective gas price of this transaction,
                 // which depends on the block's base fee. We don't yet have a base fee so we just set it to the max fee
                 // per gas.
+                *max_fee_per_gas,
+                Some(*max_fee_per_gas),
+                Some(*max_priority_fee_per_gas),
+            ),
+            // Same as EIP-1559
+            transaction::Transaction::Eip7702(TxEip7702 {
                 max_fee_per_gas,
-                Some(max_fee_per_gas),
-                Some(max_priority_fee_per_gas),
+                max_priority_fee_per_gas,
+                ..
+            }) => (
+                *max_fee_per_gas,
+                Some(*max_fee_per_gas),
+                Some(*max_priority_fee_per_gas),
             ),
         };
         let access_list = transaction.access_list().map(|list| {
@@ -276,6 +289,12 @@ impl Transaction {
                 .map(|item| (item.address, item.storage_keys.clone()))
                 .collect()
         });
+        let authorization_list = match &transaction {
+            transaction::Transaction::Eip7702(TxEip7702 {
+                authorization_list, ..
+            }) => Some(authorization_list.clone()),
+            _ => None,
+        };
 
         Transaction {
             block_hash: block.as_ref().map(|b| b.hash().0.into()),
@@ -297,6 +316,7 @@ impl Transaction {
             s,
             chain_id: transaction.chain_id(),
             access_list,
+            authorization_list,
             transaction_type: transaction.transaction_type(),
         }
     }

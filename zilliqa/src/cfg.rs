@@ -1,6 +1,10 @@
 use std::{collections::HashMap, ops::Deref, str::FromStr, time::Duration};
 
-use alloy::{hex, primitives::Address, rlp::Encodable};
+use alloy::{
+    hex,
+    primitives::{Address, ChainId},
+    rlp::Encodable,
+};
 use anyhow::{Result, anyhow};
 use libp2p::{Multiaddr, PeerId};
 use rand::{Rng, distributions::Alphanumeric};
@@ -258,6 +262,19 @@ impl Default for SyncConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteChain {
+    pub chain_id: ChainId,
+    pub bundler_url: String,
+    pub watcher_url: String,
+    pub entrypoint: Address,
+    pub gateway: Address,
+    pub sender: Address,
+    pub paymaster: Address,
+    #[serde(default)]
+    pub allow_loopback: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NodeConfig {
     /// RPC API endpoints to expose.
@@ -308,6 +325,10 @@ pub struct NodeConfig {
     pub credit_rates: HashMap<String, u64>,
     #[serde(default)]
     pub api_limits: ApiLimits,
+    #[serde(default)]
+    pub remote_chains: Vec<RemoteChain>,
+    #[serde(default)]
+    pub bundler_port: u16,
 }
 
 impl Default for NodeConfig {
@@ -329,6 +350,8 @@ impl Default for NodeConfig {
             max_missed_view_age: max_missed_view_age_default(),
             credit_rates: HashMap::new(),
             api_limits: ApiLimits::default(),
+            remote_chains: Default::default(),
+            bundler_port: 4200u16,
         }
     }
 }
@@ -448,7 +471,7 @@ pub fn failed_request_sleep_duration_default() -> Duration {
 }
 
 pub fn max_missed_view_age_default() -> u64 {
-    MISSED_VIEW_WINDOW
+    MISSED_VIEW_WINDOW * (blocks_per_epoch_default() + 1)
 }
 
 /// Wrapper for [u128] that (de)serializes with a string. `serde_toml` does not support `u128`s.
@@ -732,6 +755,7 @@ impl Forks {
                 ForkName::AllowScillaCallPrecompileToBeCalledFromAddresses => !fork
                     .allow_scilla_call_precompile_to_be_called_from_addresses
                     .is_empty(),
+                ForkName::DistributeRewardsEveryEpoch => fork.distribute_rewards_every_epoch,
             } {
                 return Some(fork.at_height);
             }
@@ -786,6 +810,8 @@ pub struct Fork {
     pub disable_interop_native_zil_transfers_0: bool,
     pub tighten_precompile_rules: bool,
     pub allow_scilla_call_precompile_to_be_called_from_addresses: Vec<Address>,
+    pub distribute_rewards_every_epoch: bool,
+    pub pectra_active: bool,
 }
 
 pub enum ForkName {
@@ -818,6 +844,7 @@ pub enum ForkName {
     DisableInteropNativeZilTransfers0,
     TightenPrecompileRules,
     AllowScillaCallPrecompileToBeCalledFromAddresses,
+    DistributeRewardsEveryEpoch,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -953,6 +980,10 @@ pub struct ForkDelta {
     pub tighten_precompile_rules: Option<bool>,
     /// Restricts which caller addresses may invoke the scilla_call precompile
     pub allow_scilla_call_precompile_to_be_called_from_addresses: Option<Vec<Address>>,
+    /// if true, rewards are distributed every epoch instead of every block
+    pub distribute_rewards_every_epoch: Option<bool>,
+    /// if true, pectra is activated in evm
+    pub pectra_active: Option<bool>,
 }
 
 impl Fork {
@@ -1087,6 +1118,10 @@ impl Fork {
                     self.allow_scilla_call_precompile_to_be_called_from_addresses
                         .clone()
                 }),
+            distribute_rewards_every_epoch: delta
+                .distribute_rewards_every_epoch
+                .unwrap_or(self.distribute_rewards_every_epoch),
+            pectra_active: delta.pectra_active.unwrap_or(self.pectra_active),
         }
     }
 }
@@ -1198,6 +1233,8 @@ pub fn genesis_fork_default() -> Fork {
         disable_interop_native_zil_transfers_0: true,
         tighten_precompile_rules: true,
         allow_scilla_call_precompile_to_be_called_from_addresses: vec![],
+        distribute_rewards_every_epoch: true,
+        pectra_active: true,
     }
 }
 
@@ -1382,6 +1419,8 @@ mod tests {
                 disable_interop_native_zil_transfers_0: None,
                 tighten_precompile_rules: None,
                 allow_scilla_call_precompile_to_be_called_from_addresses: None,
+                distribute_rewards_every_epoch: None,
+                pectra_active: None,
             }],
             ..Default::default()
         };
@@ -1448,6 +1487,8 @@ mod tests {
                     disable_interop_native_zil_transfers_0: None,
                     tighten_precompile_rules: None,
                     allow_scilla_call_precompile_to_be_called_from_addresses: None,
+                    distribute_rewards_every_epoch: None,
+                    pectra_active: Some(false),
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1494,6 +1535,8 @@ mod tests {
                     disable_interop_native_zil_transfers_0: None,
                     tighten_precompile_rules: None,
                     allow_scilla_call_precompile_to_be_called_from_addresses: None,
+                    distribute_rewards_every_epoch: None,
+                    pectra_active: None,
                 },
             ],
             ..Default::default()
@@ -1577,6 +1620,8 @@ mod tests {
                     disable_interop_native_zil_transfers_0: None,
                     tighten_precompile_rules: None,
                     allow_scilla_call_precompile_to_be_called_from_addresses: None,
+                    distribute_rewards_every_epoch: None,
+                    pectra_active: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1623,6 +1668,8 @@ mod tests {
                     disable_interop_native_zil_transfers_0: None,
                     tighten_precompile_rules: None,
                     allow_scilla_call_precompile_to_be_called_from_addresses: None,
+                    distribute_rewards_every_epoch: None,
+                    pectra_active: None,
                 },
             ],
             ..Default::default()
@@ -1694,6 +1741,8 @@ mod tests {
                 disable_interop_native_zil_transfers_0: true,
                 tighten_precompile_rules: true,
                 allow_scilla_call_precompile_to_be_called_from_addresses: vec![],
+                distribute_rewards_every_epoch: true,
+                pectra_active: true,
             },
             forks: vec![],
             ..Default::default()
@@ -1753,6 +1802,8 @@ mod tests {
                     disable_interop_native_zil_transfers_0: None,
                     tighten_precompile_rules: None,
                     allow_scilla_call_precompile_to_be_called_from_addresses: None,
+                    distribute_rewards_every_epoch: None,
+                    pectra_active: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1799,6 +1850,8 @@ mod tests {
                     disable_interop_native_zil_transfers_0: None,
                     tighten_precompile_rules: None,
                     allow_scilla_call_precompile_to_be_called_from_addresses: None,
+                    distribute_rewards_every_epoch: None,
+                    pectra_active: None,
                 },
             ],
             ..Default::default()

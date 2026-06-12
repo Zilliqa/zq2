@@ -8,8 +8,10 @@ use std::{
 
 use alloy::{
     consensus::{
-        SignableTransaction, TxEip1559, TxEip2930, TxLegacy, transaction::RlpEcdsaEncodableTx,
+        SignableTransaction, TxEip1559, TxEip2930, TxEip7702, TxLegacy,
+        transaction::RlpEcdsaEncodableTx,
     },
+    eips::eip7702::SignedAuthorization,
     primitives::{Address, B256, Signature, TxKind, U256, keccak256},
     rlp::{EMPTY_STRING_CODE, Encodable, Header},
     sol_types::SolValue,
@@ -167,6 +169,11 @@ pub enum SignedTransaction {
         tx: TxEip1559,
         sig: Signature,
     },
+    Eip7702 {
+        #[serde(with = "ser_rlp")]
+        tx: TxEip7702,
+        sig: Signature,
+    },
     Zilliqa {
         tx: TxZilliqa,
         key: schnorr::PublicKey,
@@ -245,6 +252,7 @@ impl SignedTransaction {
             SignedTransaction::Legacy { tx, .. } => tx.into(),
             SignedTransaction::Eip2930 { tx, .. } => tx.into(),
             SignedTransaction::Eip1559 { tx, .. } => tx.into(),
+            SignedTransaction::Eip7702 { tx, .. } => tx.into(),
             SignedTransaction::Zilliqa { tx, .. } => tx.into(),
             SignedTransaction::Intershard { tx, .. } => tx.into(),
         }
@@ -255,6 +263,7 @@ impl SignedTransaction {
             SignedTransaction::Legacy { sig, .. } => sig.r(),
             SignedTransaction::Eip2930 { sig, .. } => sig.r(),
             SignedTransaction::Eip1559 { sig, .. } => sig.r(),
+            SignedTransaction::Eip7702 { sig, .. } => sig.r(),
             SignedTransaction::Zilliqa { sig, .. } => {
                 U256::from_be_bytes(sig.r().to_bytes().into())
             }
@@ -267,6 +276,7 @@ impl SignedTransaction {
             SignedTransaction::Legacy { sig, .. } => sig.s(),
             SignedTransaction::Eip2930 { sig, .. } => sig.s(),
             SignedTransaction::Eip1559 { sig, .. } => sig.s(),
+            SignedTransaction::Eip7702 { sig, .. } => sig.s(),
             SignedTransaction::Zilliqa { sig, .. } => {
                 U256::from_be_bytes(sig.s().to_bytes().into())
             }
@@ -279,6 +289,7 @@ impl SignedTransaction {
             SignedTransaction::Legacy { sig, .. } => sig.v() as u64,
             SignedTransaction::Eip2930 { sig, .. } => sig.v() as u64,
             SignedTransaction::Eip1559 { sig, .. } => sig.v() as u64,
+            SignedTransaction::Eip7702 { sig, .. } => sig.v() as u64,
             SignedTransaction::Zilliqa { .. } => 0,
             SignedTransaction::Intershard { .. } => 0,
         }
@@ -289,6 +300,7 @@ impl SignedTransaction {
             SignedTransaction::Legacy { tx, .. } => tx.chain_id,
             SignedTransaction::Eip2930 { tx, .. } => Some(tx.chain_id),
             SignedTransaction::Eip1559 { tx, .. } => Some(tx.chain_id),
+            SignedTransaction::Eip7702 { tx, .. } => Some(tx.chain_id),
             SignedTransaction::Zilliqa { tx, .. } => Some(tx.chain_id as u64),
             SignedTransaction::Intershard { tx, .. } => Some(tx.chain_id),
         }
@@ -299,6 +311,7 @@ impl SignedTransaction {
             SignedTransaction::Legacy { tx, .. } => Some(tx.nonce),
             SignedTransaction::Eip2930 { tx, .. } => Some(tx.nonce),
             SignedTransaction::Eip1559 { tx, .. } => Some(tx.nonce),
+            SignedTransaction::Eip7702 { tx, .. } => Some(tx.nonce),
             // Zilliqa nonces are 1-indexed rather than zero indexed.
             SignedTransaction::Zilliqa { tx, .. } => Some(tx.nonce - 1),
             SignedTransaction::Intershard { .. } => None,
@@ -311,6 +324,7 @@ impl SignedTransaction {
             SignedTransaction::Eip2930 { tx, .. } => tx.gas_price,
             // We ignore the priority fee and just use the maximum fee.
             SignedTransaction::Eip1559 { tx, .. } => tx.max_fee_per_gas,
+            SignedTransaction::Eip7702 { tx, .. } => tx.max_fee_per_gas,
             SignedTransaction::Zilliqa { tx, .. } => tx
                 .gas_price
                 .get()
@@ -329,6 +343,14 @@ impl SignedTransaction {
                     tx.max_priority_fee_per_gas + base_fee
                 } else {
                     // otherwise return the max fee per gas
+                    tx.max_fee_per_gas
+                }
+            }
+            SignedTransaction::Eip7702 { tx, .. } => {
+                let tip = tx.max_fee_per_gas.saturating_sub(base_fee);
+                if tip > tx.max_priority_fee_per_gas {
+                    tx.max_priority_fee_per_gas + base_fee
+                } else {
                     tx.max_fee_per_gas
                 }
             }
@@ -354,6 +376,7 @@ impl SignedTransaction {
             SignedTransaction::Eip2930 { tx, .. } => convert(tx.gas_price),
             // We ignore the priority fee and just use the maximum fee.
             SignedTransaction::Eip1559 { tx, .. } => convert(tx.max_fee_per_gas),
+            SignedTransaction::Eip7702 { tx, .. } => convert(tx.max_fee_per_gas),
             SignedTransaction::Zilliqa { tx, .. } => tx.gas_price,
             SignedTransaction::Intershard { tx, .. } => convert(tx.gas_price),
         }
@@ -364,6 +387,7 @@ impl SignedTransaction {
             SignedTransaction::Legacy { tx, .. } => EvmGas(tx.gas_limit),
             SignedTransaction::Eip2930 { tx, .. } => EvmGas(tx.gas_limit),
             SignedTransaction::Eip1559 { tx, .. } => EvmGas(tx.gas_limit),
+            SignedTransaction::Eip7702 { tx, .. } => EvmGas(tx.gas_limit),
             SignedTransaction::Zilliqa { tx, .. } => tx.gas_limit.into(),
             SignedTransaction::Intershard { tx, .. } => tx.gas_limit,
         }
@@ -374,6 +398,7 @@ impl SignedTransaction {
             SignedTransaction::Legacy { tx, .. } => EvmGas(tx.gas_limit).into(),
             SignedTransaction::Eip2930 { tx, .. } => EvmGas(tx.gas_limit).into(),
             SignedTransaction::Eip1559 { tx, .. } => EvmGas(tx.gas_limit).into(),
+            SignedTransaction::Eip7702 { tx, .. } => EvmGas(tx.gas_limit).into(),
             SignedTransaction::Zilliqa { tx, .. } => tx.gas_limit,
             SignedTransaction::Intershard { tx, .. } => tx.gas_limit.into(),
         }
@@ -384,8 +409,17 @@ impl SignedTransaction {
             SignedTransaction::Legacy { tx, .. } => ZilAmount::from_amount(tx.value.to()),
             SignedTransaction::Eip2930 { tx, .. } => ZilAmount::from_amount(tx.value.to()),
             SignedTransaction::Eip1559 { tx, .. } => ZilAmount::from_amount(tx.value.to()),
+            SignedTransaction::Eip7702 { tx, .. } => ZilAmount::from_amount(tx.value.to()),
             SignedTransaction::Zilliqa { tx, .. } => tx.amount,
             SignedTransaction::Intershard { .. } => ZilAmount::from_raw(0),
+        }
+    }
+
+    // The list of EIP-7702 authorizations carried by this transaction, if any.
+    pub fn authorization_list(&self) -> Option<Vec<SignedAuthorization>> {
+        match self {
+            SignedTransaction::Eip7702 { tx, .. } => Some(tx.authorization_list.clone()),
+            _ => None,
         }
     }
 
@@ -400,6 +434,9 @@ impl SignedTransaction {
                 Ok(tx.gas_limit as u128 * tx.gas_price + u128::try_from(tx.value)?)
             }
             SignedTransaction::Eip1559 { tx, .. } => {
+                Ok(tx.gas_limit as u128 * tx.max_fee_per_gas + u128::try_from(tx.value)?)
+            }
+            SignedTransaction::Eip7702 { tx, .. } => {
                 Ok(tx.gas_limit as u128 * tx.max_fee_per_gas + u128::try_from(tx.value)?)
             }
             SignedTransaction::Zilliqa { tx, .. } => {
@@ -453,6 +490,12 @@ impl SignedTransaction {
                 let (tx, _, hash) = signed.into_parts();
                 (SignedTransaction::Eip1559 { tx, sig }, signer, hash.into())
             }
+            SignedTransaction::Eip7702 { tx, sig } => {
+                let signed = tx.into_signed(sig);
+                let signer = signed.recover_signer()?;
+                let (tx, _, hash) = signed.into_parts();
+                (SignedTransaction::Eip7702 { tx, sig }, signer, hash.into())
+            }
             SignedTransaction::Zilliqa { tx, key, sig } => {
                 let txn_data = encode_zilliqa_transaction(&tx, key);
 
@@ -495,6 +538,7 @@ impl SignedTransaction {
             SignedTransaction::Legacy { tx, sig } => tx.tx_hash(sig).into(),
             SignedTransaction::Eip2930 { tx, sig } => tx.tx_hash(sig).into(),
             SignedTransaction::Eip1559 { tx, sig } => tx.tx_hash(sig).into(),
+            SignedTransaction::Eip7702 { tx, sig } => tx.tx_hash(sig).into(),
             SignedTransaction::Zilliqa { tx, key, .. } => {
                 let txn_data = encode_zilliqa_transaction(tx, *key);
                 crypto::Hash(Sha256::digest(txn_data).into())
@@ -564,6 +608,9 @@ impl SignedTransaction {
             SignedTransaction::Legacy { tx, .. } => (tx.input.len(), tx.to),
             SignedTransaction::Eip2930 { tx, .. } => (tx.input.len(), tx.to),
             SignedTransaction::Eip1559 { tx, .. } => (tx.input.len(), tx.to),
+            // EIP-7702 has a fixed `Address` recipient (never a contract creation),
+            // so only the regular input-size cap applies.
+            SignedTransaction::Eip7702 { tx, .. } => (tx.input.len(), TxKind::Call(tx.to)),
             _ => return Ok(ValidationOutcome::Success),
         };
 
@@ -716,6 +763,7 @@ pub enum Transaction {
     Legacy(TxLegacy),
     Eip2930(TxEip2930),
     Eip1559(TxEip1559),
+    Eip7702(TxEip7702),
     Zilliqa(TxZilliqa),
     Intershard(TxIntershard),
 }
@@ -726,6 +774,7 @@ impl Transaction {
             Transaction::Legacy(TxLegacy { chain_id, .. }) => *chain_id,
             Transaction::Eip2930(TxEip2930 { chain_id, .. }) => Some(*chain_id),
             Transaction::Eip1559(TxEip1559 { chain_id, .. }) => Some(*chain_id),
+            Transaction::Eip7702(TxEip7702 { chain_id, .. }) => Some(*chain_id),
             Transaction::Zilliqa(TxZilliqa { chain_id, .. }) => Some(*chain_id as u64 + 0x8000),
             Transaction::Intershard(TxIntershard { chain_id, .. }) => Some(*chain_id),
         }
@@ -736,6 +785,7 @@ impl Transaction {
             Transaction::Legacy(TxLegacy { nonce, .. }) => Some(*nonce),
             Transaction::Eip2930(TxEip2930 { nonce, .. }) => Some(*nonce),
             Transaction::Eip1559(TxEip1559 { nonce, .. }) => Some(*nonce),
+            Transaction::Eip7702(TxEip7702 { nonce, .. }) => Some(*nonce),
             // Zilliqa nonces are 1-indexed rather than zero indexed.
             Transaction::Zilliqa(TxZilliqa { nonce, .. }) => Some(*nonce - 1),
             Transaction::Intershard(TxIntershard { .. }) => None,
@@ -749,6 +799,9 @@ impl Transaction {
             Transaction::Eip1559(TxEip1559 {
                 max_fee_per_gas, ..
             }) => *max_fee_per_gas,
+            Transaction::Eip7702(TxEip7702 {
+                max_fee_per_gas, ..
+            }) => *max_fee_per_gas,
             Transaction::Zilliqa(t) => t.gas_price.get()? / (EVM_GAS_PER_SCILLA_GAS as u128),
             Transaction::Intershard(TxIntershard { gas_price, .. }) => *gas_price,
         })
@@ -757,6 +810,10 @@ impl Transaction {
     pub fn max_priority_fee_per_gas(&self) -> Option<u128> {
         match self {
             Transaction::Eip1559(TxEip1559 {
+                max_priority_fee_per_gas,
+                ..
+            }) => Some(*max_priority_fee_per_gas),
+            Transaction::Eip7702(TxEip7702 {
                 max_priority_fee_per_gas,
                 ..
             }) => Some(*max_priority_fee_per_gas),
@@ -769,6 +826,7 @@ impl Transaction {
             Transaction::Legacy(TxLegacy { gas_limit, .. }) => EvmGas(*gas_limit),
             Transaction::Eip2930(TxEip2930 { gas_limit, .. }) => EvmGas(*gas_limit),
             Transaction::Eip1559(TxEip1559 { gas_limit, .. }) => EvmGas(*gas_limit),
+            Transaction::Eip7702(TxEip7702 { gas_limit, .. }) => EvmGas(*gas_limit),
             Transaction::Zilliqa(TxZilliqa { gas_limit, .. }) => (*gas_limit).into(),
             Transaction::Intershard(TxIntershard { gas_limit, .. }) => *gas_limit,
         }
@@ -779,6 +837,8 @@ impl Transaction {
             Transaction::Legacy(TxLegacy { to, .. }) => to.to().copied(),
             Transaction::Eip2930(TxEip2930 { to, .. }) => to.to().copied(),
             Transaction::Eip1559(TxEip1559 { to, .. }) => to.to().copied(),
+            // EIP-7702 transactions always have a recipient address.
+            Transaction::Eip7702(TxEip7702 { to, .. }) => Some(*to),
             // Note: we map the zero address to 'None' here so it is consistent with eth txs (contract creation).
             Transaction::Zilliqa(TxZilliqa { to_addr, .. }) => {
                 if !to_addr.is_zero() {
@@ -796,6 +856,7 @@ impl Transaction {
             Transaction::Legacy(TxLegacy { value, .. }) => value.to(),
             Transaction::Eip2930(TxEip2930 { value, .. }) => value.to(),
             Transaction::Eip1559(TxEip1559 { value, .. }) => value.to(),
+            Transaction::Eip7702(TxEip7702 { value, .. }) => value.to(),
             Transaction::Zilliqa(t) => t.amount.get()?,
             Transaction::Intershard(_) => 0,
         })
@@ -806,6 +867,7 @@ impl Transaction {
             Transaction::Legacy(TxLegacy { input, .. }) => input.as_ref(),
             Transaction::Eip2930(TxEip2930 { input, .. }) => input.as_ref(),
             Transaction::Eip1559(TxEip1559 { input, .. }) => input.as_ref(),
+            Transaction::Eip7702(TxEip7702 { input, .. }) => input.as_ref(),
             // Zilliqa transactions can have both code and data set, but code takes precedence if it is non-empty.
             Transaction::Zilliqa(TxZilliqa { code, data, .. }) => {
                 if !code.is_empty() {
@@ -823,8 +885,19 @@ impl Transaction {
             Transaction::Legacy(_) => None,
             Transaction::Eip2930(TxEip2930 { access_list, .. }) => Some(access_list.clone()),
             Transaction::Eip1559(TxEip1559 { access_list, .. }) => Some(access_list.clone()),
+            Transaction::Eip7702(TxEip7702 { access_list, .. }) => Some(access_list.clone()),
             Transaction::Zilliqa(_) => None,
             Transaction::Intershard(_) => None,
+        }
+    }
+
+    /// The list of EIP-7702 authorizations carried by this transaction, if any.
+    pub fn authorization_list(&self) -> Option<Vec<SignedAuthorization>> {
+        match self {
+            Transaction::Eip7702(TxEip7702 {
+                authorization_list, ..
+            }) => Some(authorization_list.clone()),
+            _ => None,
         }
     }
 
@@ -833,6 +906,7 @@ impl Transaction {
             Transaction::Legacy(_) => 0,
             Transaction::Eip2930(_) => 1,
             Transaction::Eip1559(_) => 2,
+            Transaction::Eip7702(_) => 4,
             // "ZIL" encoded in ASCII
             Transaction::Zilliqa(_) => 90_73_76,
             // "ZIL" + 1
@@ -845,6 +919,7 @@ impl Transaction {
             Transaction::Legacy(_) => TransactionType::Legacy,
             Transaction::Eip2930(_) => TransactionType::Eip2930,
             Transaction::Eip1559(_) => TransactionType::Eip1559,
+            Transaction::Eip7702(_) => TransactionType::Eip7702,
             Transaction::Zilliqa(_) => TransactionType::Custom,
             Transaction::Intershard(_) => TransactionType::Custom,
         }
@@ -894,6 +969,12 @@ impl From<TxEip2930> for Transaction {
 impl From<TxEip1559> for Transaction {
     fn from(tx: TxEip1559) -> Self {
         Transaction::Eip1559(tx)
+    }
+}
+
+impl From<TxEip7702> for Transaction {
+    fn from(tx: TxEip7702) -> Self {
+        Transaction::Eip7702(tx)
     }
 }
 

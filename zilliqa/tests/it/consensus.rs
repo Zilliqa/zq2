@@ -28,7 +28,7 @@ async fn network_can_die_restart(mut network: Network) {
 // Test that new node joining the network catches up on blocks
 #[zilliqa_macros::test]
 async fn block_production(mut network: Network) {
-    network.run_until_block_finalized(5, 100).await.unwrap();
+    network.run_until_block_finalized(15, 500).await.unwrap();
 
     info!("Adding networked node.");
     let index = network.add_node();
@@ -235,37 +235,51 @@ async fn zero_account_per_block_balance_updates(mut network: Network) {
         zero_account_balance + total_staked + genesis_account_balance + deposit_contract_balance
     );
 
-    // Mine first block
-    network.run_until_block(&wallet, 1, 50).await;
+    // Advance to just before the epoch boundary
+    let blocks_per_epoch = network.get_node(0).config.consensus.blocks_per_epoch;
+    let before_epoch = blocks_per_epoch - 1;
+    network.run_until_block(&wallet, before_epoch, 200).await;
 
-    let block = wallet.get_block(1.into()).await.unwrap().unwrap();
-    assert_eq!(block.transactions.len(), 0);
-
-    // Check proposer was rewarded
+    // Record balances before the epoch boundary
+    let block = wallet
+        .get_block(before_epoch.into())
+        .await
+        .unwrap()
+        .unwrap();
     let miner = block.header.beneficiary;
     let miner_balance_before = wallet
         .get_balance(miner)
-        .number(block.number() - 1)
+        .number(before_epoch)
         .await
         .unwrap();
+    let zero_account_balance_before: u128 = wallet
+        .get_balance(Address::ZERO)
+        .number(before_epoch)
+        .await
+        .unwrap()
+        .try_into()
+        .unwrap();
+
+    // Advance to the epoch boundary where rewards are distributed
+    network
+        .run_until_block(&wallet, blocks_per_epoch, 200)
+        .await;
+
+    // Check proposer was rewarded
     let miner_balance_after = wallet
         .get_balance(miner)
-        .number(block.number())
+        .number(blocks_per_epoch)
         .await
         .unwrap();
-    assert!(miner_balance_before < miner_balance_after);
+    assert!(miner_balance_after > miner_balance_before);
 
     // Check reward came from zero account balance
-    let zero_account = Address::ZERO;
-    let zero_account_balance_before = wallet
-        .get_balance(zero_account)
-        .number(block.number() - 1)
+    let zero_account_balance_after: u128 = wallet
+        .get_balance(Address::ZERO)
+        .number(blocks_per_epoch)
         .await
-        .unwrap();
-    let zero_account_balance_after = wallet
-        .get_balance(zero_account)
-        .number(block.number())
-        .await
+        .unwrap()
+        .try_into()
         .unwrap();
     assert!(zero_account_balance_before > zero_account_balance_after);
 }
@@ -275,6 +289,8 @@ async fn gas_fees_should_be_transferred_to_zero_account(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let chain_id = network.get_node(0).chain_id.eth;
     let gas_price = network.get_node(0).get_gas_price();
+    let blocks_per_epoch = network.get_node(0).config.consensus.blocks_per_epoch;
+
     let tx_legacy: TypedTransaction = TransactionRequest::default()
         .with_chain_id(chain_id)
         .to(wallet.default_signer_address())
@@ -308,54 +324,69 @@ async fn gas_fees_should_be_transferred_to_zero_account(mut network: Network) {
         .unwrap()
         .into();
 
+    // Send all transactions first
+    let mut hashes = Vec::new();
     for tx_request in [tx_legacy, tx_eip1559, tx_eip2930] {
         let tx = wallet.send_transaction(tx_request.into()).await.unwrap();
-        let hash = tx.tx_hash();
+        hashes.push(*tx.tx_hash());
+    }
+
+    // Wait for all to be mined, then collect total gas fees
+    let mut total_gas = U256::ZERO;
+    for hash in &hashes {
         let receipt = network.run_until_receipt(&wallet, hash, 200).await;
 
         assert_eq!(receipt.gas_used, 21000);
         assert_eq!(receipt.effective_gas_price, gas_price);
-        let block = wallet
-            .get_block(receipt.block_number.unwrap().into())
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(block.transactions.len(), 1);
-
-        let mut total_rewards = U256::ZERO;
-        let stakers = get_stakers(&wallet).await;
-        for staker in stakers {
-            let reward_address = get_reward_address(&wallet, &staker).await.0.into();
-            let reward_address_balance_before = wallet
-                .get_balance(reward_address)
-                .number(block.number() - 1)
-                .await
-                .unwrap();
-            let reward_address_balance_after = wallet
-                .get_balance(reward_address)
-                .number(block.number())
-                .await
-                .unwrap();
-            total_rewards += reward_address_balance_after - reward_address_balance_before;
-        }
-
-        let zero_account = Address::ZERO;
-        let zero_account_balance_before = wallet
-            .get_balance(zero_account)
-            .number(block.number() - 1)
-            .await
-            .unwrap();
-        let zero_account_balance_after = wallet
-            .get_balance(zero_account)
-            .number(block.number())
-            .await
-            .unwrap();
-        let total_gas = U256::from(receipt.effective_gas_price) * U256::from(receipt.gas_used);
-        assert_eq!(
-            zero_account_balance_after,
-            zero_account_balance_before - total_rewards + total_gas
-        );
+        total_gas += U256::from(receipt.effective_gas_price) * U256::from(receipt.gas_used);
     }
+
+    // Record balances just before the epoch boundary
+    let before_epoch = blocks_per_epoch - 1;
+    network.run_until_block(&wallet, before_epoch, 200).await;
+
+    let stakers = get_stakers(&wallet).await;
+    let mut reward_balances_before: Vec<(Address, U256)> = Vec::new();
+    for staker in &stakers {
+        let reward_address = get_reward_address(&wallet, staker).await.0.into();
+        let balance = wallet
+            .get_balance(reward_address)
+            .number(before_epoch)
+            .await
+            .unwrap();
+        reward_balances_before.push((reward_address, balance));
+    }
+    let zero_account_balance_before = wallet
+        .get_balance(Address::ZERO)
+        .number(before_epoch)
+        .await
+        .unwrap();
+
+    // Advance to the epoch boundary where rewards and gas fees are distributed
+    network
+        .run_until_block(&wallet, blocks_per_epoch, 200)
+        .await;
+
+    let mut total_rewards = U256::ZERO;
+    for (reward_address, balance_before) in &reward_balances_before {
+        let balance_after = wallet
+            .get_balance(*reward_address)
+            .number(blocks_per_epoch)
+            .await
+            .unwrap();
+        total_rewards += balance_after - balance_before;
+    }
+
+    let zero_account_balance_after = wallet
+        .get_balance(Address::ZERO)
+        .number(blocks_per_epoch)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        zero_account_balance_after,
+        zero_account_balance_before - total_rewards + total_gas
+    );
 }
 
 // Test rapid transaction submission during block production

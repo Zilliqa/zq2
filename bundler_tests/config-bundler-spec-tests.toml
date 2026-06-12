@@ -1,0 +1,66 @@
+p2p_port = 0
+network = "Localnet"
+
+[[nodes]]
+bundler_port = 8545
+api_servers = [
+    { port = 4201, enabled_apis = [ "admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa" ] }
+]
+eth_chain_id = 1337
+consensus.scilla_address = "http://localhost:3333"
+consensus.consensus_timeout = { secs = 15, nanos = 0 }
+# consensus.block_time = { secs = 5, nanos = 0 }
+consensus.genesis_deposits = [
+    ["b27aebb3b54effd7af87c4a064a711554ee0f3f5abf56ca910b46422f2b21603bc383d42eb3b927c4c3b0b8381ca30a3", "12D3KooWESMZ2ttSxDwjfnNe23sHCqsJf6sNEKwgHkdgtCHDsbWU", "10000000000000000000000000", "7E5F4552091A69125d5DfCb7b8C2659029395Bdf", "99F7f7C00526426b8dCA99302e96d85A0e5fd400"],
+]
+consensus.genesis_accounts = [
+    # Accounts with private key 0x2, 0x3, 0x4.
+    # Don't use account with priv key = 0x1 since it's also used for voting rewards
+    ["2B5AD5c4795c026514f8317c7a215E218DcCD6cF", "5000000000000000000000"],
+    ["6813Eb9362372EEF6200f3b1dbC3f819671cBA69", "5000000000000000000000"],
+    ["1efF47bc3a10a45D4B230B5d10E37751FE6AA718", "5000000000000000000000"],
+    # geth account
+    # ["71562b71999873db5b286df957af199ec94617f7", "5000000000000000000000"],
+    # hardhat addresses
+    ["f39Fd6e51aad88F6F4ce6aB8827279cffFb92266", "10000000000000000000000"], # 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+    ["70997970c51812dc3a010c7d01b50e0d17dc79c8", "10000000000000000000000"], # 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
+    # bundler-spec-test
+    ["90F8bf6A479f320ead074411a4B0e7944Ea8c9C1", "10000000000000000000000"], # 0x4f3edf983ac636a65a842ce7c78d9aa706d3b113bce9c46f30d7d21715b23b1d
+    # Arachnid account
+    # ["3fAB184622Dc19b6109349B94811493BF2a45362", "10000000000000000000000"],
+    # executor
+]
+
+# Reward parameters
+consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"
+consensus.blocks_per_hour = 36
+consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
+# Gas parameters
+consensus.eth_block_gas_limit = 84_000_000
+# spec-tests
+consensus.gas_price = "0"
+# consensus.gas_price = "1_000_000"
+remote_chains = [
+    {
+        chain_id = 1337,
+        bundler_url = "http://127.0.0.1:3545",
+        watcher_url = "http://127.0.0.1:8545",
+        entrypoint = "0x4337084d9e255ff0702461cf8895ce9e3b5ff108",
+        paymaster = "0x8464135c8F25Da09e49BC8782676a84730C318bC",
+        gateway = "0x8464135c8F25Da09e49BC8782676a84730C318bC",
+        sender = "0x8464135c8F25Da09e49BC8782676a84730C318bC",
+        allow_loopback = true,
+    }
+]
+
+
+# ==entrypoint addr= 0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108
+# reusing "SimpleAccountFactory" at 0x13E9ed32155810FDbd067D4522C492D6f68E5944
+# reusing "TestCounter" at 0x7FfFfe05FeeA7902AffBe5D991800Dd9F3d0460F
+# reusing "Simple7702Account" at 0x4Cd241E8d1510e30b2076397afc7508Ae59C66c9
+
+# entrypointSimulationContractV7: "0x703575F1c54Bd480e1431b3bFfDBf55722CF6025"
+# entrypointSimulationContractV8: "0xBC8Befa8737D4D46D78b397D0a587d15AA4c16C1"
+# entrypointSimulationContractV9: "0xB5B76553126c6075bef9b6313aE567aB2c5d7DFc"
+# pimlicoSimulationContract: "0x8D72441022399e256Dcbea0eA183EbD031d37B7C"
+# 0xe74a3c7427cda785e0000d42a705b1f3fd371e09

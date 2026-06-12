@@ -193,13 +193,14 @@ impl SignerClient {
         println!("Withdraw: pulling available unstaked funds from deposit contract");
 
         let client = self.get_signer().await?;
-        // Withdraw the validator's funds.
-        let data = contracts::deposit_v4::WITHDRAW
+        let data = contracts::deposit_v8::WITHDRAW_COUNT
             .encode_input(&[
                 Token::Bytes(bls_public_key.as_bytes()),
                 Token::Uint((count as u128).into()),
             ])
-            .unwrap();
+            .with_context(|| {
+                format!("failed to ABI-encode withdraw(bytes,uint256) with count={count}")
+            })?;
         let tx = TransactionRequest::default()
             .to(contract_addr::DEPOSIT_PROXY)
             .input(TransactionInput::both(data.into()));
@@ -208,10 +209,11 @@ impl SignerClient {
 
         // get the mined tx
         let receipt = pending_tx.get_receipt().await?;
+        let tx_hash = receipt.transaction_hash;
         let tx = client
-            .get_transaction_by_hash(receipt.transaction_hash)
+            .get_transaction_by_hash(tx_hash)
             .await?
-            .unwrap();
+            .with_context(|| format!("transaction {tx_hash} not found after receipt"))?;
 
         println!("Sent tx: {}\n", serde_json::to_string(&tx)?);
         println!("Tx receipt: {}", serde_json::to_string(&receipt)?);

@@ -64,6 +64,7 @@ fn process_empty(c: &mut Criterion) {
             r#"
                 consensus.rewards_per_hour = "1"
                 consensus.blocks_per_hour = 1
+                consensus.blocks_per_epoch = 1
                 consensus.minimum_stake = "1"
                 consensus.eth_block_gas_limit = 1000000000
                 consensus.gas_price = "1"

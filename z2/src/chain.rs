@@ -206,6 +206,8 @@ impl Chain {
                 "disable_interop_native_zil_transfers_0": false,
                 "tighten_precompile_rules": false,
                 "allow_scilla_call_precompile_to_be_called_from_addresses": [],
+                "distribute_rewards_every_epoch": false,
+                "pectra_active": false,
             })),
             Chain::Zq2Mainnet => Some(json!({
                 "at_height": 0,
@@ -252,6 +254,8 @@ impl Chain {
                 "disable_interop_native_zil_transfers_0": false,
                 "tighten_precompile_rules": false,
                 "allow_scilla_call_precompile_to_be_called_from_addresses": [],
+                "distribute_rewards_every_epoch": false,
+                "pectra_active": false,
             })),
             _ => None,
         }
@@ -315,6 +319,8 @@ impl Chain {
                 json!({ "at_height": 34369689, "make_transfers_in_scilla_precompiles_with_journal_api": true}),
                 json!({ "at_height": 34369689, "tighten_precompile_rules": true}),
                 json!({ "at_height": 34369689, "allow_scilla_call_precompile_to_be_called_from_addresses": ["0x453b11386FBd54bC532892c0217BBc316fc7b918"]}),
+                json!({ "at_height": 999999999, "distribute_rewards_every_epoch": true}),
+                json!({ "at_height": 999999999, "pectra_active": true}),
             ]),
             Chain::Zq2Mainnet => Some(vec![
                 json!({ "at_height": 4770088, "executable_blocks": true }),
@@ -480,6 +486,8 @@ impl Chain {
                         "0xbfDe2156aF75a29d36614bC1F8005DD816Bd9200",
                     ],
                 }),
+                json!({ "at_height": 999999999, "distribute_rewards_every_epoch": true}),
+                json!({ "at_height": 999999999, "pectra_active": true}),
             ]),
             _ => None,
         }

@@ -7,16 +7,15 @@ use std::{
 use alloy::{
     eips::{BlockId, BlockNumberOrTag, RpcBlockHash},
     primitives::Address,
-    rpc::types::{
-        TransactionInfo,
-        trace::{
-            geth::{
-                FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
-                GethDebugTracingOptions, GethTrace, NoopFrame, TraceResult,
-            },
-            parity::{TraceResults, TraceType},
-        },
+    rpc::types::TransactionRequest,
+};
+use alloy_consensus::transaction::TransactionInfo;
+use alloy_rpc_types_trace::{
+    geth::{
+        FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
+        GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, NoopFrame, TraceResult,
     },
+    parity::{TraceResults, TraceType},
 };
 use anyhow::{Result, anyhow};
 use arc_swap::ArcSwap;
@@ -24,8 +23,14 @@ use itertools::Itertools;
 use libp2p::{PeerId, request_response::OutboundFailure};
 use parking_lot::RwLock;
 use rand::RngCore;
-use revm::context_interface::{result::ExecutionResult, transaction::AccessList};
-use revm_context::TxEnv;
+use revm::context_interface::{
+    result::ExecutionResult,
+    transaction::{AccessList, SignedAuthorization},
+};
+use revm_context::{
+    TransactionType, TxEnv,
+    result::{ExecResultAndState, ResultAndState},
+};
 use revm_inspector::Inspector;
 use revm_inspectors::tracing::{
     FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig, TransactionContext,
@@ -41,7 +46,7 @@ use crate::{
     crypto::{Hash, SecretKey},
     db::{BlockFilter, Db},
     evm::ZQ2EvmContext,
-    exec::{ExtraOpts, PendingState, TransactionApplyResult},
+    exec::{BaseFeeAndNonceCheck, ExecType, ExtraOpts, PendingState, TransactionApplyResult},
     inspector::{self, ScillaInspector},
     message::{
         Block, BlockHeader, BlockTransactionsReceipts, ExternalMessage, InjectedProposal,
@@ -198,7 +203,7 @@ impl Node {
         peer_num: Arc<AtomicUsize>,
         sync_peers: Arc<SyncPeers>,
         swarm_peers: Arc<ArcSwap<Vec<PeerId>>>,
-    ) -> Result<Node> {
+    ) -> Result<(Node, Arc<Db>)> {
         config.validate()?;
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
         let message_sender = MessageSender {
@@ -217,6 +222,7 @@ impl Node {
             executable_blocks_height,
             config.db.clone(),
         )?);
+
         let node = Node {
             config: config.clone(),
             peer_id,
@@ -230,14 +236,14 @@ impl Node {
                 config,
                 message_sender,
                 reset_timeout,
-                db,
+                db.clone(),
                 sync_peers,
             )?)),
             peer_num,
             filters: Arc::new(Filters::new()),
             swarm_peers,
         };
-        Ok(node)
+        Ok((node, db))
     }
 
     pub fn handle_broadcast(
@@ -311,10 +317,6 @@ impl Node {
             .write()
             .handle_new_transactions(transactions, from_broadcast)?;
         Ok(())
-    }
-
-    pub fn try_to_apply_transactions(&mut self) -> Result<()> {
-        self.consensus.write().try_early_proposal_after_txn_batch()
     }
 
     pub fn handle_request(
@@ -796,7 +798,7 @@ impl Node {
 
             let builder = inspector.into_geth_builder();
             let trace = builder.geth_traces(
-                result.result.gas_used(),
+                result.result.tx_gas_used(),
                 result.result.into_output().unwrap_or_default(),
                 config,
             );
@@ -826,7 +828,7 @@ impl Node {
 
                     let trace = inspector
                         .into_geth_builder()
-                        .geth_call_traces(call_config, result.result.gas_used());
+                        .geth_call_traces(call_config, result.result.tx_gas_used());
 
                     Ok(Some(TraceResult::Success {
                         result: trace.into(),
@@ -867,6 +869,14 @@ impl Node {
                         index: Some(txn_index as u64),
                         block_hash: Some(block.hash().into()),
                         block_number: Some(block.number()),
+                        block_timestamp: Some(
+                            block
+                                .header
+                                .timestamp
+                                .duration_since(crate::time::SystemTime::UNIX_EPOCH)
+                                .map(|d| d.as_secs())
+                                .unwrap_or_default(),
+                        ),
                         base_fee: state.gas_price.try_into().ok(),
                     };
                     let trace = inspector.try_into_mux_frame(&result, &state_ref, tx_info)?;
@@ -938,6 +948,72 @@ impl Node {
                     tx_hash: Some(txn_hash.0.into()),
                 }))
             }
+        }
+    }
+
+    pub fn debug_trace_call(
+        &self,
+        evm_state: &mut State,
+        block: &Block,
+        call_params: TransactionRequest,
+        call_opts: GethDebugTracingCallOptions,
+    ) -> Result<GethTrace> {
+        let GethDebugTracingOptions {
+            tracer,
+            tracer_config,
+            ..
+        } = call_opts.tracing_options;
+
+        let fork = evm_state.forks.get(block.number()).clone();
+
+        let call_gas_limit = call_params
+            .gas
+            .map(EvmGas)
+            .unwrap_or(evm_state.block_gas_limit);
+
+        match tracer {
+            Some(GethDebugTracerType::JsTracer(js_code)) => {
+                let mut inspector = JsInspector::new(js_code, tracer_config.into_json())
+                    .map_err(|e| anyhow!("Unable to create js inspector: {e}"))?;
+
+                let (ResultAndState { result, state }, ..) = evm_state.apply_transaction_evm(
+                    call_params.from.unwrap_or_default(),
+                    call_params.to.and_then(|to| to.into_to()),
+                    0, // arbitrary price
+                    None,
+                    call_gas_limit,
+                    u128::try_from(call_params.value.unwrap_or_default())?,
+                    call_params.input.into_input().unwrap_or_default().to_vec(),
+                    None,
+                    None,
+                    None,
+                    block.header,
+                    &mut inspector,
+                    true,
+                    BaseFeeAndNonceCheck::Ignore,
+                    ExtraOpts {
+                        disable_eip3607: true,
+                        exec_type: ExecType::Call,
+                        tx_type: TransactionType::Legacy,
+                    },
+                )?;
+
+                let result = ExecResultAndState::new(result, state);
+
+                let revm_txn = TxEnv::builder()
+                    .gas_limit(call_gas_limit.0)
+                    .gas_price(0)
+                    .call(call_params.from.unwrap_or_default())
+                    .build_fill();
+
+                let pending_state = PendingState::new(evm_state.try_clone()?, fork);
+                let js_result = inspector
+                    .json_result(result, &revm_txn, &block, &pending_state)
+                    .map_err(|e| anyhow!("Unable to create json result: {e}"))?;
+
+                Ok(GethTrace::JS(js_result))
+            }
+            _ => unimplemented!("{tracer:?}"),
         }
     }
 
@@ -1013,6 +1089,7 @@ impl Node {
         max_priority_fee_per_gas: Option<u128>,
         value: u128,
         access_list: Option<AccessList>,
+        authorization_list: Option<Vec<SignedAuthorization>>,
         extra_opts: ExtraOpts,
     ) -> Result<u64> {
         let block = self
@@ -1033,6 +1110,7 @@ impl Node {
             max_priority_fee_per_gas,
             value,
             access_list,
+            authorization_list,
             extra_opts,
         )
     }

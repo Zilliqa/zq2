@@ -323,10 +323,14 @@ async fn rewards_are_sent_to_reward_address_of_proposer(mut network: Network) {
 
     let stakers = get_stakers(&wallet).await;
     assert_eq!(stakers.len(), 4);
+    let blocks_per_epoch = network.get_node(0).config.consensus.blocks_per_epoch;
 
-    network.run_until_block_finalized(2, 80).await.unwrap();
+    network
+        .run_until_block_finalized(blocks_per_epoch, 200)
+        .await
+        .unwrap();
 
-    check_miner_got_reward(&wallet, 1).await;
+    check_miner_got_reward(&wallet, blocks_per_epoch).await;
 }
 
 // #[zilliqa_macros::test(blocks_per_epoch = 2, deposit_v3_upgrade_block_height = 24)]

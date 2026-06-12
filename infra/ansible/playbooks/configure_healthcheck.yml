@@ -1,6 +1,6 @@
 ---
 - name: Install and configure healthcheck service
-  hosts: all:!role_apps
+  hosts: all:!role_apps:!role_testnode
   become: true
   tags:
     - install

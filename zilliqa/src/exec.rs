@@ -24,10 +24,12 @@ use revm::{
         result::{ExecutionResult, HaltReason, Output, ResultAndState},
     },
     context_interface::{
-        DBErrorMarker, TransactionType, block::BlobExcessGasAndPrice, transaction::AccessList,
+        DBErrorMarker, TransactionType,
+        either::Either,
+        transaction::{AccessList, SignedAuthorization},
     },
     handler::EvmTr,
-    primitives::{B256, KECCAK_EMPTY, eip4844::MIN_BLOB_GASPRICE, hardfork::SpecId},
+    primitives::{B256, KECCAK_EMPTY, hardfork::SpecId},
     state::{AccountInfo, Bytecode, EvmState},
 };
 use revm_context::{ContextTr, TxEnv};
@@ -41,11 +43,12 @@ use crate::{
     constants, contracts,
     crypto::{Hash, NodePublicKey},
     error::ensure_success,
-    evm::{SPEC_ID_CANCUN, SPEC_ID_SHANGHAI, ZQ2Evm, ZQ2EvmContext, new_zq2_evm_ctx},
+    evm::{ZQ2Evm, ZQ2EvmContext, new_zq2_evm_ctx},
     exec_failure,
     inspector::{self, ScillaInspector, TouchedAddressInspector},
     message::{Block, BlockHeader},
     precompiles::{PENALTY_ADDRESS, SCILLA_CALL_ADDRESS, ViewHistory},
+    protocol,
     scilla::{self, ParamValue, Scilla, split_storage_key, storage_key},
     state::{Account, Code, ContractInit, ExternalLibrary, State, contract_addr},
     time::SystemTime,
@@ -118,7 +121,7 @@ impl TransactionApplyResult {
     pub fn gas_used(&self) -> EvmGas {
         match self {
             TransactionApplyResult::Evm(ResultAndState { result, .. }, ..) => {
-                EvmGas(result.gas_used())
+                EvmGas(result.tx_gas_used())
             }
             TransactionApplyResult::Scilla((ScillaResult { gas_used, .. }, _)) => *gas_used,
         }
@@ -410,6 +413,7 @@ impl State {
             balance: U256::from(account.balance),
             nonce: account.nonce,
             code_hash: code.hash_slow(),
+            account_id: None,
             code: Some(code),
         };
 
@@ -479,6 +483,7 @@ impl State {
             creation_bytecode,
             None,
             None,
+            None,
             current_block,
             inspector::noop(),
             false,
@@ -527,6 +532,7 @@ impl State {
         payload: Vec<u8>,
         nonce: Option<u64>,
         access_list: Option<AccessList>,
+        authorization_list: Option<Vec<SignedAuthorization>>,
         current_block: BlockHeader,
         inspector: I,
         enable_inspector: bool,
@@ -539,27 +545,15 @@ impl State {
         // state-sync is going on, use the checkpoint's history instead of the node's history
         let (view_history, finalized_view) = if current_block.view
             < self.view_history.read().min_view
-            && self.ckpt_view_history.is_some()
-            && self.ckpt_finalized_view.is_some()
+            && let Some(ckpt_view_history) = &self.ckpt_view_history
+            && let Some(ckpt_finalized_view) = self.ckpt_finalized_view
         {
-            (
-                self.ckpt_view_history.clone().unwrap(),
-                self.ckpt_finalized_view.unwrap(),
-            )
+            (ckpt_view_history.clone(), ckpt_finalized_view)
         } else {
             (self.view_history.clone(), self.finalized_view)
         };
 
-        let (spec_id, blob_excess_gas_and_price) = {
-            if fork.cancun_active {
-                (
-                    SPEC_ID_CANCUN,
-                    Some(BlobExcessGasAndPrice::new(0, MIN_BLOB_GASPRICE)),
-                )
-            } else {
-                (SPEC_ID_SHANGHAI, None)
-            }
-        };
+        let (spec_id, blob_excess_gas_and_price) = protocol::select_spec_and_blob_params(fork);
 
         let external_context = ExternalContext {
             touched_address_inspector: TouchedAddressInspector::default(),
@@ -641,6 +635,7 @@ impl State {
                 prevrandao: Some(randao_mix_hash.0.into()),
                 blob_excess_gas_and_price,
                 beneficiary: Default::default(),
+                slot_num: 0,
             });
 
         let mut evm = ZQ2Evm::new(evm_ctx, inspector);
@@ -659,7 +654,11 @@ impl State {
             gas_priority_fee,
             blob_hashes: vec![],
             max_fee_per_blob_gas: 0,
-            authorization_list: Vec::default(),
+            authorization_list: authorization_list
+                .unwrap_or_default()
+                .into_iter()
+                .map(Either::Left)
+                .collect(),
         };
 
         let result_and_state = {
@@ -888,6 +887,7 @@ impl State {
                 txn.payload().to_vec(),
                 txn.nonce(),
                 txn.access_list(),
+                txn.authorization_list(),
                 current_block,
                 inspector,
                 enable_inspector,
@@ -1025,11 +1025,7 @@ impl State {
     }
 
     /// Applies a state delta from an EVM execution to the state.
-    pub fn apply_delta_evm(
-        &mut self,
-        state: &revm::primitives::HashMap<Address, revm::state::Account>,
-        current_block_number: u64,
-    ) -> Result<()> {
+    pub fn apply_delta_evm(&mut self, state: &EvmState, current_block_number: u64) -> Result<()> {
         let only_mutated_accounts_update_state = self
             .forks
             .get(current_block_number)
@@ -1294,6 +1290,7 @@ impl State {
         max_priority_fee_per_gas: Option<u128>,
         value: u128,
         access_list: Option<AccessList>,
+        authorization_list: Option<Vec<SignedAuthorization>>,
         extra_opts: ExtraOpts,
     ) -> Result<u64> {
         let gas_price = gas_price.unwrap_or(self.gas_price);
@@ -1319,6 +1316,7 @@ impl State {
                 data.clone(),
                 None,
                 access_list.clone(),
+                authorization_list.clone(),
                 current_block,
                 inspector::noop(),
                 false,
@@ -1346,6 +1344,7 @@ impl State {
             max_priority_fee_per_gas,
             value,
             access_list.clone(),
+            authorization_list.clone(),
             extra_opts,
         )?;
 
@@ -1370,6 +1369,7 @@ impl State {
                 data.clone(),
                 None,
                 access_list.clone(),
+                authorization_list.clone(),
                 current_block,
                 inspector::noop(),
                 false,
@@ -1401,6 +1401,7 @@ impl State {
         max_priority_fee_per_gas: Option<u128>,
         value: u128,
         access_list: Option<AccessList>,
+        authorization_list: Option<Vec<SignedAuthorization>>,
         extra_opts: ExtraOpts,
     ) -> Result<u64> {
         let (ResultAndState { result, .. }, ..) = self.apply_transaction_evm(
@@ -1413,6 +1414,7 @@ impl State {
             data.clone(),
             None,
             access_list,
+            authorization_list,
             current_block,
             inspector::noop(),
             false,
@@ -1420,7 +1422,7 @@ impl State {
             extra_opts,
         )?;
 
-        let gas_used = result.gas_used();
+        let gas_used = result.tx_gas_used();
         // Return an error if the transaction did not succeed
         ensure_success(result).map_err(ErrorObjectOwned::from)?;
         Ok(gas_used)
@@ -1443,6 +1445,7 @@ impl State {
             self.block_gas_limit,
             amount,
             data,
+            None,
             None,
             None,
             current_block,
@@ -1477,6 +1480,7 @@ impl State {
             self.block_gas_limit,
             amount,
             data,
+            None,
             None,
             None,
             current_block,

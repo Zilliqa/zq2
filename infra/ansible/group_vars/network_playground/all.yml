@@ -1,0 +1,26 @@
+---
+# Group vars for playground testnodes (DEVOPS-315).
+#
+# These hosts carry the label `zq2-network=playground` because they are not
+# members of any specific zq2 network; they are generic dev VMs that can be
+# pointed at any chain at runtime. The `network_playground` Ansible group is
+# produced automatically by inventory.gcp.yml's keyed_groups on the label.
+#
+# We deliberately do NOT set chain_name, eth_chain_id, zq2_image, stats_*,
+# checkpoint_url, enable_kms, enable_faucet, or any per-network image tags:
+# the playbooks that consume them (install_zilliqa, install_stats_agent,
+# install_monitoring, install_ops_agent, install_spout, install_otterscan,
+# install_stats_dashboard, install_checkpoint_service,
+# install_ethereum_metrics_exporter) are already scoped to exclude
+# role_testnode in node_provision.yml, so those vars never get dereferenced
+# for these hosts.
+#
+# What we DO need is the SSH/SCP arg template that the gcp-ssh-wrapper and
+# gcp-scp-wrapper rely on to forward --zone to gcloud. Without it the wrapper
+# falls back to the operator's local default zone, which will not match where
+# the testnode actually lives. `{{ zone }}` comes from the gcp_compute
+# inventory plugin and expands to the instance's full zone URL, which gcloud
+# accepts as a --zone argument.
+
+ansible_ssh_args: --tunnel-through-iap --zone={{ zone }} --no-user-output-enabled
+ansible_scp_extra_args: --tunnel-through-iap --zone={{ zone }} --quiet

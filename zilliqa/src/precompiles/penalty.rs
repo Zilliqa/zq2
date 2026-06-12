@@ -3,10 +3,10 @@ use std::{
     fmt::{self, Display, Formatter},
 };
 
-use alloy::primitives::{Address, Bytes};
+use alloy::primitives::Bytes;
 use ethabi::{ParamType, Token, decode, encode, short_signature};
-use revm::interpreter::{Gas, InputsImpl, InstructionResult, InterpreterResult};
-use revm_precompile::{PrecompileError, PrecompileOutput};
+use revm::interpreter::{CallInputs, Gas, InstructionResult, InterpreterResult};
+use revm_precompile::{PrecompileHalt, PrecompileOutput};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error};
 
@@ -141,14 +141,11 @@ impl ContextPrecompile for Penalty {
     fn call(
         &self,
         ctx: &mut ZQ2EvmContext,
-        _dest: Address,
-        input: &InputsImpl,
-        _is_static: bool,
-        gas_limit: u64,
+        inputs: &CallInputs,
     ) -> anyhow::Result<Option<InterpreterResult>, String> {
-        let gas = Gas::new(gas_limit);
+        let gas = Gas::new(inputs.gas_limit);
 
-        let outcome = call_penalty(input, gas.limit(), ctx);
+        let outcome = call_penalty(inputs, gas.limit(), ctx);
 
         let mut result = InterpreterResult {
             result: InstructionResult::Return,
@@ -158,7 +155,7 @@ impl ContextPrecompile for Penalty {
 
         match outcome {
             Ok(output) => {
-                if result.gas.record_cost(output.gas_used) {
+                if result.gas.record_regular_cost(output.gas_used) {
                     result.result = InstructionResult::Return;
                     result.output = output.bytes;
                 } else {
@@ -180,57 +177,57 @@ impl ContextPrecompile for Penalty {
 }
 
 fn call_penalty(
-    input: &InputsImpl,
+    input: &CallInputs,
     gas_limit: u64,
     ctx: &mut ZQ2EvmContext,
 ) -> Result<PrecompileOutput, PrecompileErrors> {
     //TODO(#3080): check the gas limit and adjust how much gas the precompile should use
     //info!(gas_limit, "~~~> precompile called with");
     //if gas_limit < 10_000u64 {
-    //    return Err(PrecompileErrors::Error(PrecompileError::OutOfGas));
+    //    return Err(PrecompileErrors::Error(PrecompileHalt::OutOfGas));
     //}
     const REQUIRED_GAS: u64 = 10_000;
 
     if gas_limit < REQUIRED_GAS {
-        return Err(PrecompileErrors::Error(PrecompileError::Other(
-            "Precompile out of gas".into(),
+        return Err(PrecompileErrors::Error(PrecompileHalt::other(
+            "Precompile out of gas",
         )));
     }
     if input.input.len() < 4 {
-        return Err(PrecompileErrors::Error(PrecompileError::Other(
-            "Provided input must be at least 4-byte long".into(),
+        return Err(PrecompileErrors::Error(PrecompileHalt::other(
+            "Provided input must be at least 4-byte long",
         )));
     }
     let sig = short_signature("jailed", &[ParamType::Bytes, ParamType::Uint(256)]);
     let raw_input = input.input.bytes(ctx);
     if raw_input[..4] != sig {
-        return Err(PrecompileErrors::Error(PrecompileError::Other(
-            "Unable to find handler with given selector".into(),
+        return Err(PrecompileErrors::Error(PrecompileHalt::other(
+            "Unable to find handler with given selector",
         )));
     }
     let Ok(decoded) = decode(&[ParamType::Bytes, ParamType::Uint(256)], &raw_input[4..]) else {
-        return Err(PrecompileErrors::Error(PrecompileError::Other(
-            "ABI input decoding error!".into(),
+        return Err(PrecompileErrors::Error(PrecompileHalt::other(
+            "ABI input decoding error!",
         )));
     };
     let leader = decoded
         .first()
-        .ok_or(PrecompileErrors::Error(PrecompileError::Other(
+        .ok_or(PrecompileErrors::Error(PrecompileHalt::other(
             "Can't decode leader".to_string(),
         )))?
         .to_owned()
         .into_bytes()
-        .ok_or(PrecompileErrors::Error(PrecompileError::Other(
+        .ok_or(PrecompileErrors::Error(PrecompileHalt::other(
             "Can't decode leader".to_string(),
         )))?;
     let view = decoded
         .last()
-        .ok_or(PrecompileErrors::Error(PrecompileError::Other(
+        .ok_or(PrecompileErrors::Error(PrecompileHalt::other(
             "Can't decode view".to_string(),
         )))?
         .to_owned()
         .into_uint()
-        .ok_or(PrecompileErrors::Error(PrecompileError::Other(
+        .ok_or(PrecompileErrors::Error(PrecompileHalt::other(
             "Can't decode view".to_string(),
         )))?;
     // if the current block is beyond the jailing fork activation height when calling the precompile
@@ -238,7 +235,7 @@ fn call_penalty(
     if !ctx.chain.fork.validator_jailing {
         let output = encode(&[Token::Bool(false)]);
 
-        return Ok(PrecompileOutput::new(REQUIRED_GAS, output.into()));
+        return Ok(PrecompileOutput::new(REQUIRED_GAS, output.into(), 0));
     }
     if view.as_u64() > LAG_BEHIND_CURRENT_VIEW
         && view.as_u64() - LAG_BEHIND_CURRENT_VIEW >= ctx.chain.finalized_view
@@ -248,8 +245,8 @@ fn call_penalty(
             finalized = ctx.chain.finalized_view,
             "~~~~~~~~~~> required missed view history not finalized"
         );
-        return Err(PrecompileErrors::Error(PrecompileError::Other(
-            "Required missed view history not finalized".into(),
+        return Err(PrecompileErrors::Error(PrecompileHalt::other(
+            "Required missed view history not finalized",
         )));
     }
     let min_view = ctx.chain.view_history.read().min_view;
@@ -265,8 +262,8 @@ fn call_penalty(
             finalized = ctx.chain.finalized_view,
             "~~~~~~~~~~> missed view history not available"
         );
-        return Err(PrecompileErrors::Error(PrecompileError::Other(
-            "Missed view history not available".into(),
+        return Err(PrecompileErrors::Error(PrecompileHalt::other(
+            "Missed view history not available",
         )));
     }
     let deque = &ctx.chain.view_history.read().missed_views;
@@ -310,5 +307,5 @@ fn call_penalty(
     let jailed = missed >= MISSED_VIEW_THRESHOLD;
     let output = encode(&[Token::Bool(jailed)]);
 
-    Ok(PrecompileOutput::new(REQUIRED_GAS, output.into()))
+    Ok(PrecompileOutput::new(REQUIRED_GAS, output.into(), 0))
 }

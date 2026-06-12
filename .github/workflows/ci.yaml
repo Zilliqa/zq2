@@ -108,3 +108,59 @@ jobs:
           CXX: clang++
           CC: clang
         run: export PATH="/scilla/0/bin:$PATH" && ./scripts/js_test.sh
+  bundler_test:
+    # services:
+    #   rundler:
+    #     image: alchemyplatform/rundler:v0.11.0
+    #     command: node
+    #     env:
+    #       NETWORK: dev
+    #       NODE_HTTP: http://host.docker.internal:8545
+    #       RUST_LOG: info
+    #       RPC_API: eth,debug
+    #       MIN_UNSTAKE_DELAY: 2
+    #       PRIORITY_FEE_MODE_KIND: base_fee_percent
+    #       PRIORITY_FEE_MODE_VALUE: 0
+    #       SIGNER_PRIVATE_KEYS: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+    #       MAX_VERIFICATION_GAS: 10000000
+    #       TRACER_TIMEOUT: "15s"
+    #       PROVIDER_CLIENT_TIMEOUT_SECONDS: 30
+    #     ports:
+    #       - 3545:3000
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - name: Install Rust
+        run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Install default toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Install foundry
+        uses: foundry-rs/foundry-toolchain@v1
+      - name: Install PDM
+        uses: pdm-project/setup-pdm@v4
+      - uses: Swatinem/rust-cache@v2
+      - name: Start rundler
+        run: |
+          docker run -d \
+            --network host \
+            -e NETWORK=dev \
+            -e NODE_HTTP=http://127.0.0.1:8545 \
+            -e RUST_LOG=info \
+            -e RPC_API=eth,debug \
+            -e RPC_PORT=3545 \
+            -e MIN_UNSTAKE_DELAY=2 \
+            -e PRIORITY_FEE_MODE_KIND=base_fee_percent \
+            -e PRIORITY_FEE_MODE_VALUE=0 \
+            -e ENABLED_ENTRY_POINTS="v0.8" \
+            -e SIGNER_PRIVATE_KEYS="0x0000000000000000000000000000000000000000000000000000000000000002,0x0000000000000000000000000000000000000000000000000000000000000003,0x0000000000000000000000000000000000000000000000000000000000000004" \
+            -e MAX_VERIFICATION_GAS=10000000 \
+            -e PROVIDER_CLIENT_TIMEOUT_SECONDS=30 \
+            -e TRACER_TIMEOUT=30s \
+            alchemyplatform/rundler:v0.11.0 node
+      - name: Rundler bundler-spec-test framework
+        env:
+          CXX: clang++
+          CC: clang
+        run: ./scripts/bundler_test.sh

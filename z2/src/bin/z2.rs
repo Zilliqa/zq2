@@ -4,7 +4,7 @@ use std::{
     str::FromStr,
 };
 
-use alloy::{hex, primitives::B256};
+use alloy::hex;
 use anyhow::{Context, Result, anyhow};
 use clap::{Args, Parser, Subcommand, builder::ArgAction};
 use clap_verbosity_flag::{InfoLevel, Verbosity};
@@ -16,7 +16,7 @@ use z2lib::{
     node_spec::{Composition, NodeSpec},
     plumbing, utils, validators,
 };
-use zilliqa::crypto::{BlsSignature, NodePublicKey, SecretKey};
+use zilliqa::crypto::{BlsSignature, NodePublicKey};
 
 #[derive(Parser, Debug)]
 #[clap(about)]
@@ -38,9 +38,6 @@ enum Commands {
     #[clap(subcommand)]
     /// Group of subcommands to deploy and configure a Zilliqa 2 network
     Deployer(DeployerCommands),
-    #[clap(subcommand)]
-    /// Convert Zilliqa 1 to Zilliqa 2 persistnce
-    Converter(ConverterCommands),
     /// Generate documentation
     DocGen(DocStruct),
     /// Print the list of sibling repositories for z2 start
@@ -274,53 +271,6 @@ pub struct DeployerGenerateActionsArgs {
     /// Generate and replace the existing key
     #[clap(long)]
     force: bool,
-}
-
-#[derive(Subcommand, Debug)]
-enum ConverterCommands {
-    /// Convert Zilliqa 1 to Zilliqa 2 persistence format.
-    Convert(ConvertConfigStruct),
-    /// Print the transaction in a given block
-    PrintTransactionsInBlock(ConverterPrintTransactionConfigStruct),
-    /// Print transaction by Hash
-    PrintTransactionConverter(ConverterPrintTransactionConfigStruct),
-}
-
-#[derive(Clone, Debug)]
-struct SecretKeys(Vec<SecretKey>);
-
-impl FromStr for SecretKeys {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut v = Vec::new();
-        for part in s.split(',') {
-            let key = SecretKey::from_hex(part.trim())
-                .map_err(|e| format!("invalid key ‘{part}’: {e}"))?;
-            v.push(key);
-        }
-        Ok(SecretKeys(v))
-    }
-}
-
-#[derive(Args, Debug)]
-struct ConvertConfigStruct {
-    zq1_persistence_directory: String,
-    zq2_data_dir: String,
-    zq2_config_file: String,
-    secret_keys: SecretKeys,
-}
-#[derive(Args, Debug)]
-struct ConverterPrintTransactionConfigStruct {
-    zq1_persistence_directory: String,
-    block_number: u64,
-    txn_hash: Option<B256>,
-}
-
-#[derive(Args, Debug)]
-struct PerfStruct {
-    config_dir: String,
-
-    perf_file: String,
 }
 
 #[derive(Args, Debug)]
@@ -1036,26 +986,6 @@ async fn main() -> Result<()> {
                 .await
                 .map_err(|err| anyhow::anyhow!("Failed to run deployer monitor command: {err}",))?;
                 Ok(())
-            }
-        },
-        Commands::Converter(converter_command) => match &converter_command {
-            ConverterCommands::Convert(arg) => {
-                plumbing::run_persistence_converter(
-                    &arg.zq1_persistence_directory,
-                    &arg.zq2_data_dir,
-                    &arg.zq2_config_file,
-                    arg.secret_keys.0.clone(),
-                )
-                .await?;
-                Ok(())
-            }
-            ConverterCommands::PrintTransactionsInBlock(arg) => {
-                plumbing::run_print_txs_in_block(&arg.zq1_persistence_directory, arg.block_number)
-                    .await?;
-                Ok(())
-            }
-            ConverterCommands::PrintTransactionConverter(_arg) => {
-                unimplemented!();
             }
         },
         Commands::DocGen(arg) => {

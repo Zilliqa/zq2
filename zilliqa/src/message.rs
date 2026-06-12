@@ -2,10 +2,13 @@ use std::{
     collections::HashSet,
     fmt::{self, Display, Formatter},
     ops::Range,
-    path::Path,
 };
 
-use alloy::primitives::{Address, B256, U256};
+use alloy::{
+    primitives::{Address, B256, U256},
+    rpc::types::PackedUserOperation as AlloyUserOperation,
+};
+use alloy_chains::Chain;
 use anyhow::{Result, anyhow};
 use bitvec::{bitarr, order::Msb0};
 use itertools::Either;
@@ -16,7 +19,6 @@ use sha3::{Digest, Keccak256};
 
 use crate::{
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey},
-    precompiles::ViewHistory,
     time::SystemTime,
     transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
     trie_storage::TrieStorage,
@@ -236,6 +238,16 @@ pub struct RequestBlocksByHeight {
     pub to_height: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UccbUserOp {
+    pub chain: Chain,
+    pub userop_hash: Hash,
+    pub block_hash: Hash,
+    pub public_key: NodePublicKey,
+    pub userop: Option<AlloyUserOperation>,
+    pub signature: BlsSignature,
+}
+
 /// Used to convey proposal processing internally, to avoid blocking threads for too long.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InjectedProposal {
@@ -284,6 +296,8 @@ pub enum ExternalMessage {
     PassiveSyncResponseLZ(Vec<u8>), // compressed block
     /// 0.9.4
     BatchedTransactions(Vec<SignedTransaction>),
+    /// 0.22.0
+    UccbUserOp(UccbUserOp),
 }
 
 impl ExternalMessage {
@@ -365,6 +379,9 @@ impl Display for ExternalMessage {
             ExternalMessage::ProcessProposal | ExternalMessage::MetaDataResponse => {
                 unimplemented!("deprecated")
             }
+            ExternalMessage::UccbUserOp(op) => {
+                write!(f, "UserOp {:?}", op.userop_hash)
+            }
         }
     }
 }
@@ -379,18 +396,8 @@ pub enum InternalMessage {
     LaunchLink(u64),
     /// Routes intershard call information between two locally running, bridged, shard processes
     IntershardCall(IntershardCall),
-    /// Trigger a checkpoint export of the given block, including the state at its root hash as read
-    /// from the given trie
-    /// (checkpoint block, transactions, parent block, reference to our trie DB, output path)
-    ExportBlockCheckpoint(
-        Box<Block>,
-        Vec<SignedTransaction>,
-        Box<Block>,
-        TrieStorage,
-        ViewHistory,
-        Box<Path>,
-        Box<Block>,
-    ),
+    /// Trigger a checkpoint export.
+    ExportBlockCheckpoint(Box<crate::checkpoint::CheckpointExport>),
     /// Notify p2p cordinator to subscribe to a particular gossipsub topic
     SubscribeToGossipSubTopic(GossipSubTopic),
     /// Notify p2p cordinator to unsubscribe from a particular gossipsub topic
@@ -414,8 +421,14 @@ impl Display for InternalMessage {
             InternalMessage::LaunchShard(id) => write!(f, "LaunchShard({id})"),
             InternalMessage::LaunchLink(dest) => write!(f, "LaunchLink({dest})"),
             InternalMessage::IntershardCall(_) => write!(f, "IntershardCall"),
-            InternalMessage::ExportBlockCheckpoint(block, ..) => {
-                write!(f, "ExportCheckpoint({})", block.number())
+            InternalMessage::ExportBlockCheckpoint(export) => {
+                let block_num = export
+                    .data
+                    .blocks
+                    .last()
+                    .map(|(b, _)| b.number())
+                    .unwrap_or(0);
+                write!(f, "ExportCheckpoint({block_num})")
             }
             InternalMessage::SubscribeToGossipSubTopic(topic) => {
                 write!(f, "SubscribeToGossipSubTopic({topic:?})")

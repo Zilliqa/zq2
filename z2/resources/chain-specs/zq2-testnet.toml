@@ -26,6 +26,13 @@ consensus.genesis_deposits = [
     "0x214695413d1ea6a4a4453cd24ffd151fbc95496a"
   ],
   [
+    "ae776c587e6869d41331529c6dd0f59c31d1ef4c47f8b5ecb1acc54fa7452d9b2ba6f56bdad08a606d25761c8522b367",
+    "12D3KooWJyH1r2UfcFPiHbEFBYB3xWufR1va8cRK3veMwfUunfRD",
+    "20_000_000_000_000_000_000_000_000",
+    "0x0000000000000000000000000000000000000000",
+    "0x214695413d1ea6a4a4453cd24ffd151fbc95496a"
+  ],
+  [
     "95de7dae002295bba9c4cffd1b0df70a7ccd0cc68e6b10da06b1b91f8a7e9b305e19431fc42b7413c65a8ab6959e41c6",
     "12D3KooWM5L182sQtJuARf5Xfg517xVqZRaPM9583BsmLcv5Ma2o",
     "20_000_000_000_000_000_000_000_000",
@@ -33,8 +40,22 @@ consensus.genesis_deposits = [
     "0x214695413d1ea6a4a4453cd24ffd151fbc95496a"
   ],
   [
+    "ae96338209ec4f1ad446a131e687bde02506207b750465cbc43d1ea4f5b32daa51ff060e8451c903d6de7f1c89951b1d",
+    "12D3KooWQpAM4F19CwJAAhHFgeD7feyQLHDTxzKu2hsVH4BQceSQ",
+    "20_000_000_000_000_000_000_000_000",
+    "0x0000000000000000000000000000000000000000",
+    "0x214695413d1ea6a4a4453cd24ffd151fbc95496a"
+  ],
+  [
     "a3a2419fba7962021d730f4e1eb087b5bf0d66140ef7d4ba758348b13fb2ffa9a75afbdbef988c65ce625544360dea42",
     "12D3KooWAWoMVZAXJDkuhyzyBJHGHn2gYFyTbbdZGhHs4BuEN5Fe",
+    "20_000_000_000_000_000_000_000_000",
+    "0x0000000000000000000000000000000000000000",
+    "0x214695413d1ea6a4a4453cd24ffd151fbc95496a"
+  ],
+  [
+    "8093ea6fa4720ca0975559a5f9d3a2694c6ab8e63a8c54e986d11a28f9e958f006420e30a8d6f04d6b2df63fe6e0563d",
+    "12D3KooWNqZxaW4ZirvWUNj9KSRgTp55RsZHSFumDeRdCLZAjNNA",
     "20_000_000_000_000_000_000_000_000",
     "0x0000000000000000000000000000000000000000",
     "0x214695413d1ea6a4a4453cd24ffd151fbc95496a"
@@ -52,7 +73,7 @@ consensus.contract_upgrades = { deposit_v5 = { height = 0, reinitialise_params =
 consensus.new_view_broadcast_interval = { secs = 30, nanos = 0 }
 
 api_servers = [{ default_quota = { balance = 500, period = 1 }, port = 4201, enabled_apis = [{ namespace = "eth", apis = ["blockNumber"] }] }, { port = 4202, enabled_apis = ["admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] }]
-consensus.genesis_fork = { at_height = 0, executable_blocks = false, call_mode_1_sets_caller_to_parent_caller = true, failed_scilla_call_from_gas_exempt_caller_causes_revert = true, scilla_messages_can_call_evm_contracts = true, scilla_contract_creation_increments_account_balance = true, scilla_json_preserve_order = true, scilla_call_respects_evm_state_changes = true, only_mutated_accounts_update_state = true, scilla_call_gas_exempt_addrs = [], scilla_block_number_returns_current_block = true, scilla_maps_are_encoded_correctly = true, transfer_gas_fee_to_zero_account = true, apply_state_changes_only_if_transaction_succeeds = true, apply_scilla_delta_when_evm_succeeded = true, scilla_deduct_funds_from_actual_sender = true, fund_accounts_from_zero_account = [], scilla_delta_maps_are_applied_correctly = false, scilla_server_unlimited_response_size = false, scilla_failed_txn_correct_balance_deduction = false, scilla_transition_proper_order = false, evm_to_scilla_value_transfer_zero = false, restore_xsgd_contract = false, evm_exec_failure_causes_scilla_precompile_to_fail = false, revert_restore_xsgd_contract = false, scilla_fix_contract_code_removal_on_evm_tx = false, restore_ignite_wallet_contracts = false, prevent_zil_transfer_from_evm_to_scilla_contract = false, scilla_failed_txn_correct_gas_fee_charged = false, check_minimum_gas_price = false, inject_access_list = false, use_max_gas_priority_fee = false, failed_zil_transfers_to_eoa_proper_fee_deduction = false, validator_jailing = false, scilla_empty_maps_are_encoded_correctly = false, cancun_active = false, scilla_call_gas_exempt_addrs_v2 = [], randao_support = false, evm_to_scilla_strings_encoded_properly = false, dont_overwrite_evm_accounts_from_stale_scilla_state = false, make_transfers_in_scilla_precompiles_with_journal_api = false, disable_interop_native_zil_transfers_0 = false, tighten_precompile_rules = false, allow_scilla_call_precompile_to_be_called_from_addresses = [] }
+consensus.genesis_fork = { at_height = 0, executable_blocks = false, call_mode_1_sets_caller_to_parent_caller = true, failed_scilla_call_from_gas_exempt_caller_causes_revert = true, scilla_messages_can_call_evm_contracts = true, scilla_contract_creation_increments_account_balance = true, scilla_json_preserve_order = true, scilla_call_respects_evm_state_changes = true, only_mutated_accounts_update_state = true, scilla_call_gas_exempt_addrs = [], scilla_block_number_returns_current_block = true, scilla_maps_are_encoded_correctly = true, transfer_gas_fee_to_zero_account = true, apply_state_changes_only_if_transaction_succeeds = true, apply_scilla_delta_when_evm_succeeded = true, scilla_deduct_funds_from_actual_sender = true, fund_accounts_from_zero_account = [], scilla_delta_maps_are_applied_correctly = false, scilla_server_unlimited_response_size = false, scilla_failed_txn_correct_balance_deduction = false, scilla_transition_proper_order = false, evm_to_scilla_value_transfer_zero = false, restore_xsgd_contract = false, evm_exec_failure_causes_scilla_precompile_to_fail = false, revert_restore_xsgd_contract = false, scilla_fix_contract_code_removal_on_evm_tx = false, restore_ignite_wallet_contracts = false, prevent_zil_transfer_from_evm_to_scilla_contract = false, scilla_failed_txn_correct_gas_fee_charged = false, check_minimum_gas_price = false, inject_access_list = false, use_max_gas_priority_fee = false, failed_zil_transfers_to_eoa_proper_fee_deduction = false, validator_jailing = false, scilla_empty_maps_are_encoded_correctly = false, cancun_active = false, scilla_call_gas_exempt_addrs_v2 = [], randao_support = false, evm_to_scilla_strings_encoded_properly = false, dont_overwrite_evm_accounts_from_stale_scilla_state = false, make_transfers_in_scilla_precompiles_with_journal_api = false, disable_interop_native_zil_transfers_0 = false, tighten_precompile_rules = false, allow_scilla_call_precompile_to_be_called_from_addresses = [], distribute_rewards_every_epoch = false, pectra_active = false  }
 consensus.forks = [
     { at_height = 8099088, executable_blocks = true },
     { at_height = 8371376, scilla_delta_maps_are_applied_correctly = true },
@@ -78,4 +99,6 @@ consensus.forks = [
     { at_height = 34369689, make_transfers_in_scilla_precompiles_with_journal_api = true },
     { at_height = 34369689, tighten_precompile_rules = true },
     { at_height = 34369689, allow_scilla_call_precompile_to_be_called_from_addresses = ["0x453b11386FBd54bC532892c0217BBc316fc7b918"] },
+    { at_height = 999999999, distribute_rewards_every_epoch = true },
+    { at_height = 999999999, pectra_active = true },
 ]

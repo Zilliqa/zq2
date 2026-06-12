@@ -21,7 +21,9 @@ pub mod node_launcher;
 pub mod p2p_node;
 mod pool;
 pub mod precompiles;
+pub mod protocol;
 pub mod range_map;
+pub mod rewards;
 pub mod schnorr;
 pub mod scilla;
 mod scilla_proto;
@@ -33,6 +35,7 @@ pub mod test_util;
 pub mod time;
 pub mod transaction;
 pub mod trie_storage;
+pub mod uccb;
 pub mod zq1_proto;
 
 pub fn available_threads() -> usize {

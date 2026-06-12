@@ -26,6 +26,7 @@ jobs:
       uses: actions/checkout@v6
       with:
         fetch-depth: 0
+        submodules: recursive
     - name: "Configure GCP Credentials"
       id: google-auth
       uses: "google-github-actions/auth@v3"
@@ -48,7 +49,7 @@ jobs:
       run: DOCKER_BUILDKIT=1 docker build --build-arg="is_release=true" -t zilliqa/zq2:${{ github.ref_name }} -t ${{ env.GCP_REGISTRY }}/zq2:${{ github.ref_name }} -f Dockerfile .
       shell: bash
     - name: Run Trivy vulnerability scanner
-      uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
       with:
         image-ref: zilliqa/zq2:${{ github.ref_name }}
         format: 'table'
@@ -58,7 +59,7 @@ jobs:
         severity: 'CRITICAL,HIGH'
         version: v0.69.2
     - name: Run Trivy vulnerability scanner (SARIF)
-      uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
       with:
         image-ref: zilliqa/zq2:${{ github.ref_name }}
         format: 'sarif'
@@ -100,9 +101,10 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          submodules: recursive
       - name: Get tag version - private image
         id: set-tag
-        uses: Zilliqa/gh-actions-workflows/actions/generate-tag@v3
+        uses: Zilliqa/gh-actions-workflows/actions/generate-tag@v4
         with:
           tag: ${{ env.GCP_REGISTRY }}/zq2
           length: 8
@@ -128,7 +130,7 @@ jobs:
         run: DOCKER_BUILDKIT=1 docker build --build-arg="is_release=true" -t ${{ steps.set-tag.outputs.tags }} -f Dockerfile .
         shell: bash
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           image-ref: ${{ steps.set-tag.outputs.tags }}
           format: 'table'
@@ -138,7 +140,7 @@ jobs:
           severity: 'CRITICAL,HIGH'
           version: v0.69.2
       - name: Run Trivy vulnerability scanner (SARIF)
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           image-ref: ${{ steps.set-tag.outputs.tags }}
           format: 'sarif'

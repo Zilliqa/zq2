@@ -108,7 +108,21 @@ impl TransactionsAccount {
     // these move transactions from pending to queued and vice versa
     // they should leave everything consistent
     fn queue_to_pending_nonced(&mut self) {
-        let (_k, transaction) = self.nonced_transactions_queued.pop_first().unwrap();
+        // Promote the queued entry at exactly `next_queueable_nonce`, not
+        // the smallest queued key: a self-healed account may carry stale
+        // entries below `nonce_account` in the queued ring (preserved for
+        // fork recovery), and those must be skipped.
+        let next_queueable_nonce = match self
+            .get_last_pending_nonced()
+            .map(|tx| tx.tx.nonce().unwrap() + 1)
+        {
+            Some(nonce) => nonce,
+            None => self.nonce_account,
+        };
+        let transaction = self
+            .nonced_transactions_queued
+            .remove(&next_queueable_nonce)
+            .unwrap();
         if let Some(highest_pending_nonce) = self
             .nonced_transactions_pending
             .last_key_value()
@@ -153,10 +167,14 @@ impl TransactionsAccount {
             Some(nonce) => nonce,
             None => self.nonce_account,
         };
-        self.nonced_transactions_queued
-            .first_key_value()
-            .filter(|(_k, v)| v.tx.nonce().unwrap() == next_queueable_nonce)
-            .map(|(_k, v)| v)
+        // Look up the exact next-queueable slot rather than the smallest
+        // queued key. In normal operation `lowest_queued_nonce >=
+        // next_queueable_nonce`, so the two are equivalent. After a
+        // self-heal in `update_nonce` (Greater + Greater branch) the
+        // queue may contain stale entries below `nonce_account` that
+        // are preserved for fork recovery; a smallest-key check would
+        // see those first and falsely report no eligible tx.
+        self.nonced_transactions_queued.get(&next_queueable_nonce)
     }
     fn get_last_pending_nonced(&self) -> Option<&VerifiedTransaction> {
         self.nonced_transactions_pending
@@ -370,14 +388,11 @@ impl TransactionsAccount {
             Ordering::Greater => {
                 if let Some(lowest_existing_nonce) = lowest_existing_nonce {
                     match new_nonce.cmp(&lowest_existing_nonce) {
-                        std::cmp::Ordering::Less => self.nonce_account = new_nonce,
-                        std::cmp::Ordering::Equal => {
+                        Ordering::Less => self.nonce_account = new_nonce,
+                        Ordering::Equal | Ordering::Greater => {
                             self.nonce_account = new_nonce;
                             self.full_recalculate();
                         }
-                        std::cmp::Ordering::Greater => panic!(
-                            "Nonce cannot be increased above lowest transaction nonce in pool"
-                        ),
                     }
                 }
             }
@@ -2949,5 +2964,240 @@ mod tests {
             assert!(pool.core.oldest_insertion_time.is_none());
         });
         Ok(())
+    }
+
+    #[test]
+    fn self_heal_when_state_advances_past_pool_tx_without_mark_executed() {
+        let mut state = get_in_memory_state().unwrap();
+        let from = "0x0000000000000000000000000000000000001234"
+            .parse()
+            .unwrap();
+        let acc = create_acc(&mut state, from, 100, 0).unwrap();
+
+        let mut pool = TransactionPool::default();
+        pool.update_with_state(&state);
+
+        let stale_txn = transaction(from, 0, 1);
+        let stale_hash = stale_txn.hash;
+        pool.insert_transaction(stale_txn, &acc, false);
+        assert_eq!(pool.transaction_count(), 1);
+
+        // State nonce advances to 1 without going through mark_executed.
+        state
+            .mutate_account(from, |acc| {
+                acc.nonce += 1;
+                Ok(())
+            })
+            .unwrap();
+
+        // No panic; the stale tx is preserved but not eligible.
+        pool.update_with_state(&state);
+        assert_eq!(pool.transaction_count(), 1);
+        assert!(pool.get_transaction(&stale_hash).is_some());
+        assert!(pool.best_transaction().is_none());
+        assert_eq!(pool.pending_transaction_count(), 0);
+    }
+
+    #[test]
+    fn self_heal_when_mark_executed_called_for_unknown_nonce() {
+        let mut state = get_in_memory_state().unwrap();
+        let from = "0x0000000000000000000000000000000000001234"
+            .parse()
+            .unwrap();
+        let acc = create_acc(&mut state, from, 100, 0).unwrap();
+
+        let mut pool = TransactionPool::default();
+        pool.update_with_state(&state);
+
+        let stale_txn = transaction(from, 0, 1);
+        let stale_hash = stale_txn.hash;
+        pool.insert_transaction(stale_txn, &acc, false);
+
+        // mark_executed targets a different (non-existent) nonce; the
+        // pool warns and the slot at nonce 0 is left behind.
+        pool.mark_executed(&transaction(from, 5, 1));
+        assert_eq!(pool.transaction_count(), 1);
+
+        state
+            .mutate_account(from, |acc| {
+                acc.nonce += 1;
+                Ok(())
+            })
+            .unwrap();
+        pool.update_with_state(&state);
+
+        assert_eq!(pool.transaction_count(), 1);
+        assert!(pool.get_transaction(&stale_hash).is_some());
+        assert!(pool.best_transaction().is_none());
+    }
+
+    #[test]
+    fn self_heal_with_stale_account_snapshot() {
+        let mut state = get_in_memory_state().unwrap();
+        let from = "0x0000000000000000000000000000000000001234"
+            .parse()
+            .unwrap();
+
+        let stale_acc = create_acc(&mut state, from, 100, 0).unwrap();
+
+        state
+            .mutate_account(from, |acc| {
+                acc.nonce = 5;
+                Ok(())
+            })
+            .unwrap();
+
+        let mut pool = TransactionPool::default();
+        let stale_txn = transaction(from, 0, 1);
+        let stale_hash = stale_txn.hash;
+        let result = pool.insert_transaction(stale_txn, &stale_acc, false);
+        assert!(matches!(result, TxAddResult::AddedToMempool));
+
+        pool.update_with_state(&state);
+
+        assert_eq!(pool.transaction_count(), 1);
+        assert!(pool.get_transaction(&stale_hash).is_some());
+        assert!(pool.best_transaction().is_none());
+    }
+
+    #[test]
+    fn self_heal_with_stale_snapshot_via_insert_transaction_forced() {
+        let mut state = get_in_memory_state().unwrap();
+        let from = "0x0000000000000000000000000000000000001234"
+            .parse()
+            .unwrap();
+
+        let stale_acc = create_acc(&mut state, from, 100, 0).unwrap();
+
+        state
+            .mutate_account(from, |acc| {
+                acc.nonce = 3;
+                Ok(())
+            })
+            .unwrap();
+
+        let mut pool = TransactionPool::default();
+        let stale_txn = transaction(from, 0, 1);
+        let stale_hash = stale_txn.hash;
+        pool.insert_transaction_forced(stale_txn, &stale_acc, false);
+
+        pool.update_with_state(&state);
+
+        assert_eq!(pool.transaction_count(), 1);
+        assert!(pool.get_transaction(&stale_hash).is_some());
+        assert!(pool.best_transaction().is_none());
+    }
+
+    #[test]
+    fn self_heal_when_update_with_account_advances_past_pool_tx() {
+        let mut state = get_in_memory_state().unwrap();
+        let from = "0x0000000000000000000000000000000000001234"
+            .parse()
+            .unwrap();
+        let acc = create_acc(&mut state, from, 100, 0).unwrap();
+
+        let mut pool = TransactionPool::default();
+        pool.update_with_state(&state);
+        let stale_txn = transaction(from, 0, 1);
+        let stale_hash = stale_txn.hash;
+        pool.insert_transaction(stale_txn, &acc, false);
+
+        let advanced = crate::state::Account {
+            nonce: 2,
+            balance: 100,
+            code: acc.code.clone(),
+            storage_root: acc.storage_root,
+        };
+        pool.update_with_account(&from, &advanced);
+
+        assert_eq!(pool.transaction_count(), 1);
+        assert!(pool.get_transaction(&stale_hash).is_some());
+        assert!(pool.best_transaction().is_none());
+        assert_eq!(pool.pending_transaction_count(), 0);
+    }
+
+    #[test]
+    fn self_heal_preserves_pool_and_promotes_eligible() {
+        let mut state = get_in_memory_state().unwrap();
+        let from = "0x0000000000000000000000000000000000001234"
+            .parse()
+            .unwrap();
+        let acc = create_acc(&mut state, from, 100, 0).unwrap();
+
+        let mut pool = TransactionPool::default();
+        pool.update_with_state(&state);
+
+        let stale_txn = transaction(from, 0, 1);
+        let bridge_txn = transaction(from, 2, 1);
+        let next_txn = transaction(from, 3, 1);
+        let stale_hash = stale_txn.hash;
+        let bridge_hash = bridge_txn.hash;
+        let next_hash = next_txn.hash;
+        pool.insert_transaction(stale_txn, &acc, false);
+        pool.insert_transaction(bridge_txn, &acc, false);
+        pool.insert_transaction(next_txn, &acc, false);
+        assert_eq!(pool.transaction_count(), 3);
+
+        // State has executed nonces 0 and 1 elsewhere; pool only knew
+        // about nonce 0.
+        state
+            .mutate_account(from, |acc| {
+                acc.nonce = 2;
+                Ok(())
+            })
+            .unwrap();
+        pool.update_with_state(&state);
+
+        assert_eq!(pool.transaction_count(), 3);
+        assert!(pool.get_transaction(&stale_hash).is_some());
+        assert!(pool.get_transaction(&bridge_hash).is_some());
+        assert!(pool.get_transaction(&next_hash).is_some());
+        assert_eq!(pool.account_total_transaction_count(&from), 3);
+
+        // The next nonce in line (state.nonce = 2) is servable; the
+        // stale nonce 0 entry must NOT be the head.
+        let next = pool.best_transaction().unwrap();
+        assert_eq!(next.tx.nonce().unwrap(), 2);
+    }
+
+    #[test]
+    fn self_heal_recovers_on_fork_rollback() {
+        let mut state = get_in_memory_state().unwrap();
+        let from = "0x0000000000000000000000000000000000001234"
+            .parse()
+            .unwrap();
+        let acc = create_acc(&mut state, from, 100, 0).unwrap();
+
+        let mut pool = TransactionPool::default();
+        pool.update_with_state(&state);
+
+        let stale_txn = transaction(from, 0, 1);
+        let stale_hash = stale_txn.hash;
+        pool.insert_transaction(stale_txn, &acc, false);
+
+        // Advance state past the tx, triggering the heal (preserve).
+        state
+            .mutate_account(from, |acc| {
+                acc.nonce = 5;
+                Ok(())
+            })
+            .unwrap();
+        pool.update_with_state(&state);
+        assert!(pool.best_transaction().is_none());
+        assert!(pool.get_transaction(&stale_hash).is_some());
+
+        // Fork rollback: state nonce drops back to 0.
+        state
+            .mutate_account(from, |acc| {
+                acc.nonce = 0;
+                Ok(())
+            })
+            .unwrap();
+        pool.update_with_state(&state);
+
+        // The preserved tx is now eligible again.
+        let head = pool.best_transaction().unwrap();
+        assert_eq!(head.tx.nonce().unwrap(), 0);
+        assert_eq!(head.hash, stale_hash);
     }
 }

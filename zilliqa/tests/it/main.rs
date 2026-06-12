@@ -33,6 +33,7 @@ use jsonrpsee::types::Request;
 use serde_json::value::{RawValue, Value};
 use tower::Service;
 use zilliqa::{
+    api::bundler,
     cfg::{ApiLimits, DbConfig, max_missed_view_age_default, new_view_broadcast_interval_default},
     contracts,
     crypto::NodePublicKey,
@@ -44,12 +45,15 @@ mod consensus;
 mod debug;
 mod eth;
 mod ots;
+mod pectra;
 mod penalty;
 mod persistence;
+mod rewards;
 mod staking;
 mod sync;
 mod trace;
 mod txpool;
+mod uccb;
 mod unreliable;
 mod web3;
 mod zil;
@@ -59,16 +63,14 @@ use std::{
     env,
     fmt::Debug,
     ops::DerefMut,
-    path::Path,
+    path::PathBuf,
+    str::FromStr as _,
     sync::{Arc, Mutex, atomic::AtomicUsize},
     time::Duration,
 };
 
 use anyhow::{Result, anyhow};
-use foundry_compilers::{
-    artifacts::{EvmVersion, SolcInput, Source},
-    solc::{Solc, SolcLanguage},
-};
+use foundry_compilers::{Project, ProjectPathsConfig, artifacts::Remapping};
 use fs_extra::dir::*;
 use futures::{Future, FutureExt, StreamExt, stream::BoxStream};
 use itertools::Itertools;
@@ -160,6 +162,7 @@ fn node(
     secret_key: SecretKey,
     onchain_key: SigningKey,
     index: usize,
+    bundler_rpc: bool,
     datadir: Option<TempDir>,
 ) -> Result<(
     TestNode,
@@ -204,7 +207,7 @@ fn node(
     let sync_peers = Arc::new(SyncPeers::new(peer_id));
     let swarm_peers = Arc::new(ArcSwap::from_pointee(Vec::new()));
 
-    let node = Node::new(
+    let (node, _) = Node::new(
         NodeConfig {
             data_dir: datadir
                 .as_ref()
@@ -221,7 +224,12 @@ fn node(
         swarm_peers,
     )?;
     let node = Arc::new(node);
-    let rpc_module = api::rpc_module(node.clone(), &api::all_enabled());
+
+    let rpc_module = if !bundler_rpc {
+        api::rpc_module(node.clone(), &api::all_enabled())
+    } else {
+        bundler::rpc_module(node.clone(), &api::bundler_enabled())
+    };
 
     Ok((
         TestNode {
@@ -283,6 +291,7 @@ struct Network {
     scilla_stdlib_dir: String,
     do_checkpoints: bool,
     blocks_per_epoch: u64,
+    bundler_rpc: bool,
     deposit_v3_upgrade_block_height: Option<u64>,
     scilla_server_socket_directory: String,
 }
@@ -300,6 +309,7 @@ impl Network {
         scilla_stdlib_dir: String,
         do_checkpoints: bool,
         blocks_per_epoch: u64,
+        bundler_rpc: bool,
         deposit_v3_upgrade_block_height: Option<u64>,
         scilla_server_socket_directory: String,
     ) -> Network {
@@ -314,6 +324,7 @@ impl Network {
             scilla_stdlib_dir,
             do_checkpoints,
             blocks_per_epoch,
+            bundler_rpc,
             deposit_v3_upgrade_block_height,
             scilla_server_socket_directory,
         )
@@ -331,6 +342,7 @@ impl Network {
         scilla_stdlib_dir: String,
         do_checkpoints: bool,
         blocks_per_epoch: u64,
+        bundler_rpc: bool,
         deposit_v3_upgrade_block_height: Option<u64>,
         scilla_server_socket_directory: String,
     ) -> Network {
@@ -423,7 +435,7 @@ impl Network {
                 gas_price: 4_761_904_800_000u128.into(),
                 main_shard_id: None,
                 blocks_per_epoch,
-                epochs_per_checkpoint: 1,
+                epochs_per_checkpoint: 2,
                 total_native_token_supply: total_native_token_supply_default(),
                 contract_upgrades,
                 forks: vec![],
@@ -454,6 +466,8 @@ impl Network {
             enable_ots_indices: true,
             max_missed_view_age: max_missed_view_age_default(),
             api_limits: ApiLimits::default(),
+            remote_chains: Default::default(),
+            bundler_port: 4200u16,
         };
 
         let (nodes, external_receivers, local_receivers, request_response_receivers): (
@@ -470,6 +484,7 @@ impl Network {
                     key.0,
                     key.1,
                     i,
+                    bundler_rpc,
                     Some(tempfile::tempdir().unwrap()),
                 )
                 .unwrap()
@@ -516,6 +531,7 @@ impl Network {
             scilla_address,
             do_checkpoints,
             blocks_per_epoch,
+            bundler_rpc,
             scilla_stdlib_dir,
             deposit_v3_upgrade_block_height,
             scilla_server_socket_directory,
@@ -541,47 +557,48 @@ impl Network {
     }
 
     pub fn add_node_with_options(&mut self, options: NewNodeOptions) -> usize {
-        let contract_upgrades = if self.deposit_v3_upgrade_block_height.is_some() {
-            ContractUpgrades::new(
-                Some(ContractUpgradeConfig::from_height(
-                    self.deposit_v3_upgrade_block_height.unwrap(),
-                )),
-                None,
-                Some(ContractUpgradeConfig {
-                    height: self.deposit_v3_upgrade_block_height.unwrap(),
-                    reinitialise_params: Some(ReinitialiseParams::default()),
-                }),
-                Some(ContractUpgradeConfig::from_height(
-                    self.deposit_v3_upgrade_block_height.unwrap(),
-                )),
-                Some(ContractUpgradeConfig {
-                    height: self.deposit_v3_upgrade_block_height.unwrap(),
-                    reinitialise_params: Some(ReinitialiseParams::default()),
-                }),
-                Some(ContractUpgradeConfig {
-                    height: self.deposit_v3_upgrade_block_height.unwrap(),
-                    reinitialise_params: Some(ReinitialiseParams::default()),
-                }),
-            )
-        } else {
-            ContractUpgrades::new(
-                None,
-                None,
-                Some(ContractUpgradeConfig {
-                    height: 0,
-                    reinitialise_params: Some(ReinitialiseParams::default()),
-                }),
-                Some(ContractUpgradeConfig::from_height(0)),
-                Some(ContractUpgradeConfig {
-                    height: 0,
-                    reinitialise_params: Some(ReinitialiseParams::default()),
-                }),
-                Some(ContractUpgradeConfig {
-                    height: 0,
-                    reinitialise_params: Some(ReinitialiseParams::default()),
-                }),
-            )
-        };
+        let contract_upgrades =
+            if let Some(deposit_v3_upgrade_block_height) = self.deposit_v3_upgrade_block_height {
+                ContractUpgrades::new(
+                    Some(ContractUpgradeConfig::from_height(
+                        deposit_v3_upgrade_block_height,
+                    )),
+                    None,
+                    Some(ContractUpgradeConfig {
+                        height: deposit_v3_upgrade_block_height,
+                        reinitialise_params: Some(ReinitialiseParams::default()),
+                    }),
+                    Some(ContractUpgradeConfig::from_height(
+                        deposit_v3_upgrade_block_height,
+                    )),
+                    Some(ContractUpgradeConfig {
+                        height: deposit_v3_upgrade_block_height,
+                        reinitialise_params: Some(ReinitialiseParams::default()),
+                    }),
+                    Some(ContractUpgradeConfig {
+                        height: deposit_v3_upgrade_block_height,
+                        reinitialise_params: Some(ReinitialiseParams::default()),
+                    }),
+                )
+            } else {
+                ContractUpgrades::new(
+                    None,
+                    None,
+                    Some(ContractUpgradeConfig {
+                        height: 0,
+                        reinitialise_params: Some(ReinitialiseParams::default()),
+                    }),
+                    Some(ContractUpgradeConfig::from_height(0)),
+                    Some(ContractUpgradeConfig {
+                        height: 0,
+                        reinitialise_params: Some(ReinitialiseParams::default()),
+                    }),
+                    Some(ContractUpgradeConfig {
+                        height: 0,
+                        reinitialise_params: Some(ReinitialiseParams::default()),
+                    }),
+                )
+            };
         let config = NodeConfig {
             eth_chain_id: self.shard_id,
             api_servers: vec![ApiServer {
@@ -610,7 +627,7 @@ impl Network {
                 main_shard_id: None,
                 scilla_address: self.scilla_address.clone(),
                 blocks_per_epoch: self.blocks_per_epoch,
-                epochs_per_checkpoint: 1,
+                epochs_per_checkpoint: 2,
                 scilla_stdlib_dir: self.scilla_stdlib_dir.clone(),
                 scilla_ext_libs_path: scilla_ext_libs_path_default(),
                 total_native_token_supply: total_native_token_supply_default(),
@@ -640,12 +657,21 @@ impl Network {
             enable_ots_indices: true,
             max_missed_view_age: max_missed_view_age_default(),
             api_limits: ApiLimits::default(),
+            remote_chains: Default::default(),
+            bundler_port: 4200u16,
         };
 
         let secret_key = options.secret_key_or_random(self.rng.clone());
         let onchain_key = options.onchain_key_or_random(self.rng.clone());
-        let (node, receiver, local_receiver, request_responses) =
-            node(config, secret_key, onchain_key, self.nodes.len(), None).unwrap();
+        let (node, receiver, local_receiver, request_responses) = node(
+            config,
+            secret_key,
+            onchain_key,
+            self.nodes.len(),
+            false,
+            None,
+        )
+        .unwrap();
 
         let mut peers = self.nodes.iter().map(|n| n.peer_id).collect_vec();
         peers.shuffle(self.rng.lock().unwrap().deref_mut());
@@ -745,7 +771,7 @@ impl Network {
                     c
                 };
 
-                node(config, key.0, key.1, i, Some(new_data_dir)).unwrap()
+                node(config, key.0, key.1, i, false, Some(new_data_dir)).unwrap()
             })
             .multiunzip();
 
@@ -1069,6 +1095,7 @@ impl Network {
                                     self.scilla_stdlib_dir.clone(),
                                     self.do_checkpoints,
                                     self.blocks_per_epoch,
+                                    self.bundler_rpc,
                                     self.deposit_v3_upgrade_block_height,
                                     self.scilla_server_socket_directory.clone(),
                                 ),
@@ -1112,32 +1139,17 @@ impl Network {
                             trace!(?message);
                         }
                     }
-                    InternalMessage::ExportBlockCheckpoint(
-                        block,
-                        transactions,
-                        parent,
-                        trie_storage,
-                        view_history,
-                        output,
-                        grandparent,
-                    ) => {
+                    InternalMessage::ExportBlockCheckpoint(export) => {
                         assert!(
                             self.do_checkpoints,
                             "Node requested a checkpoint checkpoint export to {}, despite checkpoints beind disabled in the config",
-                            output.to_string_lossy()
+                            export.output_dir.to_string_lossy()
                         );
-                        trace!("Exporting checkpoint to path {}", output.to_string_lossy());
-                        db::checkpoint_block_with_state(
-                            block,
-                            transactions,
-                            parent,
-                            trie_storage.clone(),
-                            *source_shard,
-                            view_history.clone(),
-                            grandparent,
-                            output,
-                        )
-                        .unwrap();
+                        trace!(
+                            "Exporting checkpoint to path {}",
+                            export.output_dir.to_string_lossy()
+                        );
+                        db::checkpoint_block_with_state(*export.clone(), *source_shard).unwrap();
                     }
                     InternalMessage::SubscribeToGossipSubTopic(topic) => {
                         debug!("subscribing to topic {:?}", topic);
@@ -1227,7 +1239,7 @@ impl Network {
                                 // Send to nodes only in the same shard (having same chain_id)
                                 if inner.config.eth_chain_id == sender_chain_id {
                                     // Re-route Proposals from Broadcast to Requests
-                                    match external_message {
+                                    match &external_message {
                                         ExternalMessage::Proposal(_) => inner
                                             .handle_request(
                                                 source,
@@ -1535,6 +1547,10 @@ impl Network {
         let key = SigningKey::random(self.rng.lock().unwrap().deref_mut());
         self.wallet_from_key(key).await
     }
+
+    pub fn random_signing_key(&self) -> SigningKey {
+        SigningKey::random(self.rng.lock().unwrap().deref_mut())
+    }
 }
 
 fn format_message(
@@ -1562,58 +1578,67 @@ fn format_message(
     }
 }
 
-fn compile_contract(path: &str, contract: &str) -> (Contract, Bytes) {
-    // create temporary .sol file to avoid solc compilation error
-    let full_path = format!("{}/{}", env!("CARGO_MANIFEST_DIR"), path);
-    let source_path = Path::new(&full_path);
-    let target_file = tempfile::Builder::new()
-        .suffix(".sol")
-        .tempfile()
-        .expect("tempfile target");
-    let target_pathbuf = target_file.into_temp_path().to_path_buf();
-    let target_path = &target_pathbuf.as_path();
+fn compile_contract(path: &str, contract: &str) -> (Contract, Bytes, Bytes) {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
-    std::fs::copy(source_path, target_path).expect("copy .sol");
+    let vendor_dir = manifest_dir.join("../vendor/").canonicalize().unwrap();
+    let remappings = [
+        "@openzeppelin/contracts/={}/openzeppelin-contracts/contracts/",
+        "@openzeppelin/lib/={}/openzeppelin-contracts/lib/",
+        "@openzeppelin/contracts-upgradeable/={}/openzeppelin-contracts-upgradeable/contracts/",
+    ]
+    .map(|s| {
+        let expanded = s.replace("{}", vendor_dir.to_str().unwrap());
+        Remapping::from_str(&expanded).unwrap()
+    });
 
-    // configure solc compiler
-    let solc_input = SolcInput::new(
-        SolcLanguage::Solidity,
-        Source::read_all_files(vec![target_pathbuf.clone()]).expect("missing target"),
-        Default::default(),
-    )
-    .evm_version(EvmVersion::Shanghai); // ensure compatible with EVM version in exec.rs
+    let temp = tempfile::tempdir().unwrap();
+    let artifacts = temp.path().join("out");
+    let cache = temp.path().join("cache");
+    let paths = ProjectPathsConfig::builder()
+        .root(&manifest_dir)
+        .allowed_path(&vendor_dir)
+        .remappings(remappings)
+        .artifacts(&artifacts)
+        .cache(&cache)
+        .build()
+        .unwrap();
 
-    // compile .sol file
-    let solc = Solc::find_or_install(&semver::Version::new(0, 8, 28)).expect("solc missing");
-    let output = solc.compile_exact(&solc_input).expect("solc compile_exact");
+    let project = Project::builder()
+        .paths(paths)
+        .build(Default::default())
+        .unwrap();
 
-    if output.has_error() {
-        panic!("failed to compile contract with error  {:?}", output.errors);
+    let file_path = manifest_dir.join(path);
+    let output = project.compile_file(file_path).unwrap();
+
+    if output.has_compiler_errors() {
+        println!("{output:?}");
     }
 
-    // extract output
-    let contract = output
-        .get(target_path, contract)
-        .expect("output_contracts error");
-
-    let abi = contract.abi.expect("jsonabi error");
-    let bytecode = contract.bytecode().expect("bytecode error");
-
-    // Convert from the `alloy` representation of an ABI to the `ethers` representation, via JSON
-    let abi = serde_json::from_slice(
-        serde_json::to_vec(abi)
-            .expect("serialisation abi")
-            .as_slice(),
+    let contract = output.find_first(contract).unwrap();
+    (
+        contract.abi.as_ref().unwrap().clone(),
+        contract
+            .bytecode
+            .as_ref()
+            .unwrap()
+            .clone()
+            .into_bytes()
+            .unwrap(),
+        contract
+            .deployed_bytecode
+            .as_ref()
+            .unwrap()
+            .clone()
+            .into_bytes()
+            .unwrap(),
     )
-    .expect("deserialisation abi");
-    let bytecode = serde_json::from_slice(
-        serde_json::to_vec(bytecode)
-            .expect("serialisation bytecode")
-            .as_slice(),
-    )
-    .expect("deserialisation bytecode");
+}
 
-    (abi, bytecode)
+fn deployed_contract(path: &str, contract: &str) -> Bytes {
+    let (_, _, bytecode) = compile_contract(path, contract);
+    bytecode
 }
 
 async fn deploy_contract(
@@ -1623,7 +1648,7 @@ async fn deploy_contract(
     wallet: &Wallet,
     network: &mut Network,
 ) -> (Address, TransactionReceipt) {
-    let (abi, bytecode) = compile_contract(path, contract);
+    let (abi, bytecode, _) = compile_contract(path, contract);
     let tx_hash = *wallet
         .send_transaction(
             TransactionRequest::default()
