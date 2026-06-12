@@ -22,7 +22,10 @@ contract ScillaBalanceRestore {
         reusableBank = new ReusableBank{value: msg.value}();
     }
 
-    function mint(address scillaContract, address payable profitReceiver) external {
+    function mint(
+        address scillaContract,
+        address payable profitReceiver
+    ) external {
         // A zero-value Scilla `fundUser` message that names the EVM bank, recording it in the Scilla
         // delta, before the bank is drained in the same transaction.
         bytes memory args = abi.encode(

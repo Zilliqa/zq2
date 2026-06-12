@@ -15,11 +15,20 @@ pragma solidity ^0.8.20;
 contract A {
     event AContext(address self, address caller);
 
-    function run(address b, address scillaTarget, string calldata transition) external {
+    function run(
+        address b,
+        address scillaTarget,
+        string calldata transition
+    ) external {
         emit AContext(address(this), msg.sender);
 
-        (bool ok, bytes memory ret) =
-            b.delegatecall(abi.encodeWithSignature("invoke(address,string)", scillaTarget, transition));
+        (bool ok, bytes memory ret) = b.delegatecall(
+            abi.encodeWithSignature(
+                "invoke(address,string)",
+                scillaTarget,
+                transition
+            )
+        );
         if (!ok) {
             // Bubble up B's revert reason verbatim.
             assembly {
