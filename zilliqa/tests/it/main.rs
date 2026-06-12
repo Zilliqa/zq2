@@ -1254,7 +1254,9 @@ impl Network {
                                                 let tx = tx.clone().verify().unwrap();
                                                 verified.push(tx);
                                             }
-                                            inner.handle_broadcast_transactions(verified).unwrap();
+                                            inner
+                                                .handle_broadcast_transactions(source, verified)
+                                                .unwrap();
                                         }
                                         _ => inner
                                             .handle_broadcast(

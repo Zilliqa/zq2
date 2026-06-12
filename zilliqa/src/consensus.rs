@@ -1812,8 +1812,20 @@ impl Consensus {
     ) -> Result<Vec<TxAddResult>> {
         let mut inserted = Vec::with_capacity(verified_transactions.len());
         for txn in verified_transactions {
-            info!(?txn, "seen new txn");
-            inserted.push(self.new_transaction(txn, from_broadcast)?);
+            match txn.tx {
+                SignedTransaction::Legacy { .. }
+                | SignedTransaction::Eip2930 { .. }
+                | SignedTransaction::Eip1559 { .. }
+                | SignedTransaction::Eip7702 { .. }
+                | SignedTransaction::Zilliqa { .. } => {
+                    info!(?txn, "seen new txn");
+                    inserted.push(self.new_transaction(txn, from_broadcast)?)
+                }
+                // Drop foreign intershard messages
+                SignedTransaction::Intershard { .. } => {
+                    error!(?txn, "dropping foreign Intershard");
+                }
+            }
         }
         Ok(inserted)
     }
@@ -1843,7 +1855,7 @@ impl Consensus {
         view: u64,
     ) -> Option<NodePublicKey> {
         if let Ok(Some(parent)) = self.get_block(&parent_hash) {
-            let leader = self.leader_at_block(&parent, mix_hash, view).unwrap();
+            let leader = self.leader_at_block(&parent, mix_hash, view)?;
             Some(leader.public_key)
         } else {
             if view > 1 {
@@ -1854,7 +1866,7 @@ impl Consensus {
                 return None;
             }
             let head_block = self.head_block();
-            let leader = self.leader_at_block(&head_block, None, view).unwrap();
+            let leader = self.leader_at_block(&head_block, None, view)?;
             Some(leader.public_key)
         }
     }
@@ -1909,6 +1921,14 @@ impl Consensus {
         };
 
         new_view.verify(*public_key)?;
+
+        if self
+            .verify_qc_signature(&new_view.qc, committee.clone())
+            .is_err()
+        {
+            // verify_qc_signature already logs the offending QC.
+            return Ok(None);
+        }
 
         // Update our high QC and view, even if we are not the leader of this view.
         self.update_high_qc_and_view(false, new_view.qc)?;
@@ -3118,21 +3138,39 @@ impl Consensus {
         // Need to make sure both pointers are at the same height
         while head_height > proposed_block_height {
             trace!("Stepping back head block pointer");
-            head = self.get_block(&head.parent_hash())?.unwrap();
+            let parent_hash = head.parent_hash();
+            head = self.get_block(&parent_hash)?.ok_or_else(|| {
+                anyhow!("missing ancestor of head while aligning fork height: {parent_hash}")
+            })?;
             head_height = head.number();
         }
 
         while proposed_block_height > head_height {
             trace!("Stepping back proposed block pointer");
-            proposed_block = self.get_block(&proposed_block.parent_hash())?.unwrap();
+            let parent_hash = proposed_block.parent_hash();
+            proposed_block = self.get_block(&parent_hash)?.ok_or_else(|| {
+                anyhow!(
+                    "missing ancestor of proposed block while aligning fork height: {parent_hash}"
+                )
+            })?;
             proposed_block_height = proposed_block.number();
         }
 
         // We now have both hash pointers at the same height, we can walk back until they are equal.
         while head.hash() != proposed_block.hash() {
             trace!("Stepping back both pointers");
-            head = self.get_block(&head.parent_hash())?.unwrap();
-            proposed_block = self.get_block(&proposed_block.parent_hash())?.unwrap();
+            let head_parent = head.parent_hash();
+            head = self.get_block(&head_parent)?.ok_or_else(|| {
+                anyhow!(
+                    "missing ancestor while finding common fork ancestor (head side): {head_parent}"
+                )
+            })?;
+            let proposed_parent = proposed_block.parent_hash();
+            proposed_block = self.get_block(&proposed_parent)?.ok_or_else(|| {
+                anyhow!(
+                    "missing ancestor while finding common fork ancestor (proposed side): {proposed_parent}"
+                )
+            })?;
         }
         trace!(
             "common ancestor found: block number: {}, view: {}, hash: {}",
@@ -3152,7 +3190,7 @@ impl Consensus {
             })?;
 
             if head_block.header.view == 0 {
-                panic!("genesis block is not supposed to be reverted");
+                return Err(anyhow!("genesis block is not supposed to be reverted"));
             }
 
             trace!(
@@ -3177,7 +3215,11 @@ impl Consensus {
             // block transactions need to be removed from self.transactions and re-injected
             let mut pool = self.transaction_pool.write();
             for tx_hash in &head_block.transactions {
-                let orig_tx = self.db.get_transaction(tx_hash)?.unwrap();
+                let orig_tx = self.db.get_transaction(tx_hash)?.ok_or_else(|| {
+                    anyhow!(
+                        "missing transaction {tx_hash} when reverting block during fork handling"
+                    )
+                })?;
 
                 // Insert this unwound transaction back into the transaction pool.
                 let account = self.state.get_account(orig_tx.signer)?;
@@ -3212,7 +3254,9 @@ impl Consensus {
                 .ok_or_else(|| anyhow!("missing block when advancing head block pointer"))?;
 
             if block_pointer.header.number < desired_block_height {
-                panic!("block height mismatch when advancing head block pointer");
+                return Err(anyhow!(
+                    "block height mismatch when advancing head block pointer"
+                ));
             }
 
             // Update pointer to be the next block in the proposed block's chain which the node's chain has not yet executed
@@ -3237,8 +3281,18 @@ impl Consensus {
             let transactions = block_pointer.transactions.clone();
             let transactions = transactions
                 .iter()
-                .map(|tx_hash| self.db.get_transaction(tx_hash).unwrap().unwrap().tx)
-                .collect();
+                .map(|tx_hash| {
+                    Ok(self
+                        .db
+                        .get_transaction(tx_hash)?
+                        .ok_or_else(|| {
+                            anyhow!(
+                                "missing transaction {tx_hash} when applying block during fork handling"
+                            )
+                        })?
+                        .tx)
+                })
+                .collect::<Result<Vec<_>>>()?;
             let parent = self
                 .get_block(&block_pointer.parent_hash())?
                 .ok_or_else(|| anyhow!("missing parent"))?;
@@ -3323,13 +3377,17 @@ impl Consensus {
                         Some(sig_txn) => {
                             let Ok(verified) = sig_txn.clone().verify() else {
                                 warn!("Unable to verify included transaction in given block!");
-                                return Ok(());
+                                return Err(anyhow!(
+                                    "unable to verify included transaction in given block"
+                                ));
                             };
                             if verified.hash != *tx_hash {
                                 warn!(
                                     "Computed txn hash doesn't match the hash provided in the given block!"
                                 );
-                                return Ok(());
+                                return Err(anyhow!(
+                                    "computed txn hash doesn't match the hash provided in the given block"
+                                ));
                             }
 
                             // bypass this check during sync - since the txn has already been executed
@@ -3338,7 +3396,9 @@ impl Consensus {
                                     warn!(
                                         "Sender doesn't exist in recovered transaction from given block!"
                                     );
-                                    return Ok(());
+                                    return Err(anyhow!(
+                                        "sender doesn't exist in recovered transaction from given block"
+                                    ));
                                 };
 
                                 let Ok(ValidationOutcome::Success) = sig_txn.validate(
@@ -3351,7 +3411,9 @@ impl Consensus {
                                     warn!(
                                         "Transaction recovered from given block failed to validate!"
                                     );
-                                    return Ok(());
+                                    return Err(anyhow!(
+                                        "transaction recovered from given block failed to validate"
+                                    ));
                                 };
                             }
                             verified
@@ -3363,7 +3425,12 @@ impl Consensus {
                                 block.view(),
                                 tx_hash
                             );
-                            return Ok(());
+                            return Err(anyhow!(
+                                "proposal {} at view {} referenced a transaction {} that was neither included in the broadcast nor found locally",
+                                block.hash(),
+                                block.view(),
+                                tx_hash
+                            ));
                         }
                     },
                 };
@@ -3405,7 +3472,9 @@ impl Consensus {
 
             if cumulative_gas_used > block.gas_limit() {
                 warn!("Cumulative gas used by executing transactions exceeded block limit!");
-                return Ok(());
+                return Err(anyhow!(
+                    "cumulative gas used by executing transactions exceeded block limit"
+                ));
             }
 
             let gas_fee = gas_used.0 as u128 * txn.tx.gas_price_per_evm_gas();
@@ -3449,7 +3518,10 @@ impl Consensus {
                 "Cumulative gas used by executing all transactions: {cumulative_gas_used} is different than the one provided in the block: {}",
                 block.gas_used()
             );
-            return Ok(());
+            return Err(anyhow!(
+                "cumulative gas used mismatch, expected: {}, actual: {cumulative_gas_used}",
+                block.gas_used()
+            ));
         }
 
         let receipts_root_hash: Hash = receipts_trie.root_hash()?.into();
@@ -3461,7 +3533,11 @@ impl Consensus {
                 receipts_root_hash,
                 transaction_hashes
             );
-            return Ok(());
+            return Err(anyhow!(
+                "receipts root hash mismatch, expected: {}, actual: {}",
+                block.header.receipts_root_hash,
+                receipts_root_hash
+            ));
         }
 
         let transactions_root_hash: Hash = transactions_trie.root_hash()?.into();
@@ -3473,7 +3549,11 @@ impl Consensus {
                 transactions_root_hash,
                 transaction_hashes
             );
-            return Ok(());
+            return Err(anyhow!(
+                "transactions root hash mismatch, expected: {}, actual: {}",
+                block.header.transactions_root_hash,
+                transactions_root_hash
+            ));
         }
 
         let mut state = self.state.clone();

@@ -742,6 +742,19 @@ impl Forks {
                 ForkName::ScillaCallGasExemptAddrsV2 => {
                     fork.scilla_call_gas_exempt_addrs_v2.length() != 0
                 }
+                ForkName::DontOverwriteAccountsFromStaleScillaState => {
+                    fork.dont_overwrite_evm_accounts_from_stale_scilla_state
+                }
+                ForkName::MakeTransfersInScillaPrecompilesWithJournalApi => {
+                    fork.make_transfers_in_scilla_precompiles_with_journal_api
+                }
+                ForkName::DisableInteropNativeZilTransfers0 => {
+                    fork.disable_interop_native_zil_transfers_0
+                }
+                ForkName::TightenPrecompileRules => fork.tighten_precompile_rules,
+                ForkName::AllowScillaCallPrecompileToBeCalledFromAddresses => !fork
+                    .allow_scilla_call_precompile_to_be_called_from_addresses
+                    .is_empty(),
                 ForkName::DistributeRewardsEveryEpoch => fork.distribute_rewards_every_epoch,
             } {
                 return Some(fork.at_height);
@@ -792,6 +805,11 @@ pub struct Fork {
     pub scilla_call_gas_exempt_addrs_v2: Vec<Address>,
     pub randao_support: bool,
     pub evm_to_scilla_strings_encoded_properly: bool,
+    pub dont_overwrite_evm_accounts_from_stale_scilla_state: bool,
+    pub make_transfers_in_scilla_precompiles_with_journal_api: bool,
+    pub disable_interop_native_zil_transfers_0: bool,
+    pub tighten_precompile_rules: bool,
+    pub allow_scilla_call_precompile_to_be_called_from_addresses: Vec<Address>,
     pub distribute_rewards_every_epoch: bool,
     pub pectra_active: bool,
 }
@@ -821,6 +839,11 @@ pub enum ForkName {
     UseMaxGasPriorityFee,
     ValidatorJailing,
     ScillaCallGasExemptAddrsV2,
+    DontOverwriteAccountsFromStaleScillaState,
+    MakeTransfersInScillaPrecompilesWithJournalApi,
+    DisableInteropNativeZilTransfers0,
+    TightenPrecompileRules,
+    AllowScillaCallPrecompileToBeCalledFromAddresses,
     DistributeRewardsEveryEpoch,
 }
 
@@ -945,6 +968,18 @@ pub struct ForkDelta {
     pub randao_support: Option<bool>,
     /// if true, strings passed from EVM to Scilla via interop are properly JSON-encoded
     pub evm_to_scilla_strings_encoded_properly: Option<bool>,
+    /// If true, addresses modified also by EVM are skipped while applying the Scilla state delta
+    pub dont_overwrite_evm_accounts_from_stale_scilla_state: Option<bool>,
+    /// If true, the `scilla_call` precompile performs its value refund through revm's journaled
+    /// transfer API
+    pub make_transfers_in_scilla_precompiles_with_journal_api: Option<bool>,
+    /// If true, a call to the `scilla_call` precompile that carries a non-zero native ZIL value fails
+    /// immediately.
+    pub disable_interop_native_zil_transfers_0: Option<bool>,
+    /// If true, the `scilla_call` precompile applies stricter rules
+    pub tighten_precompile_rules: Option<bool>,
+    /// Restricts which caller addresses may invoke the scilla_call precompile
+    pub allow_scilla_call_precompile_to_be_called_from_addresses: Option<Vec<Address>>,
     /// if true, rewards are distributed every epoch instead of every block
     pub distribute_rewards_every_epoch: Option<bool>,
     /// if true, pectra is activated in evm
@@ -1064,6 +1099,25 @@ impl Fork {
             evm_to_scilla_strings_encoded_properly: delta
                 .evm_to_scilla_strings_encoded_properly
                 .unwrap_or(self.evm_to_scilla_strings_encoded_properly),
+            dont_overwrite_evm_accounts_from_stale_scilla_state: delta
+                .dont_overwrite_evm_accounts_from_stale_scilla_state
+                .unwrap_or(self.dont_overwrite_evm_accounts_from_stale_scilla_state),
+            make_transfers_in_scilla_precompiles_with_journal_api: delta
+                .make_transfers_in_scilla_precompiles_with_journal_api
+                .unwrap_or(self.make_transfers_in_scilla_precompiles_with_journal_api),
+            disable_interop_native_zil_transfers_0: delta
+                .disable_interop_native_zil_transfers_0
+                .unwrap_or(self.disable_interop_native_zil_transfers_0),
+            tighten_precompile_rules: delta
+                .tighten_precompile_rules
+                .unwrap_or(self.tighten_precompile_rules),
+            allow_scilla_call_precompile_to_be_called_from_addresses: delta
+                .allow_scilla_call_precompile_to_be_called_from_addresses
+                .clone()
+                .unwrap_or_else(|| {
+                    self.allow_scilla_call_precompile_to_be_called_from_addresses
+                        .clone()
+                }),
             distribute_rewards_every_epoch: delta
                 .distribute_rewards_every_epoch
                 .unwrap_or(self.distribute_rewards_every_epoch),
@@ -1174,6 +1228,11 @@ pub fn genesis_fork_default() -> Fork {
         scilla_call_gas_exempt_addrs_v2: vec![],
         randao_support: true,
         evm_to_scilla_strings_encoded_properly: true,
+        dont_overwrite_evm_accounts_from_stale_scilla_state: true,
+        make_transfers_in_scilla_precompiles_with_journal_api: true,
+        disable_interop_native_zil_transfers_0: true,
+        tighten_precompile_rules: true,
+        allow_scilla_call_precompile_to_be_called_from_addresses: vec![],
         distribute_rewards_every_epoch: true,
         pectra_active: true,
     }
@@ -1355,6 +1414,11 @@ mod tests {
                 scilla_call_gas_exempt_addrs_v2: vec![],
                 randao_support: None,
                 evm_to_scilla_strings_encoded_properly: None,
+                dont_overwrite_evm_accounts_from_stale_scilla_state: None,
+                make_transfers_in_scilla_precompiles_with_journal_api: None,
+                disable_interop_native_zil_transfers_0: None,
+                tighten_precompile_rules: None,
+                allow_scilla_call_precompile_to_be_called_from_addresses: None,
                 distribute_rewards_every_epoch: None,
                 pectra_active: None,
             }],
@@ -1418,6 +1482,11 @@ mod tests {
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: Some(false),
                     evm_to_scilla_strings_encoded_properly: None,
+                    dont_overwrite_evm_accounts_from_stale_scilla_state: None,
+                    make_transfers_in_scilla_precompiles_with_journal_api: None,
+                    disable_interop_native_zil_transfers_0: None,
+                    tighten_precompile_rules: None,
+                    allow_scilla_call_precompile_to_be_called_from_addresses: None,
                     distribute_rewards_every_epoch: None,
                     pectra_active: Some(false),
                 },
@@ -1461,6 +1530,11 @@ mod tests {
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: None,
                     evm_to_scilla_strings_encoded_properly: None,
+                    dont_overwrite_evm_accounts_from_stale_scilla_state: None,
+                    make_transfers_in_scilla_precompiles_with_journal_api: None,
+                    disable_interop_native_zil_transfers_0: None,
+                    tighten_precompile_rules: None,
+                    allow_scilla_call_precompile_to_be_called_from_addresses: None,
                     distribute_rewards_every_epoch: None,
                     pectra_active: None,
                 },
@@ -1541,6 +1615,11 @@ mod tests {
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: None,
                     evm_to_scilla_strings_encoded_properly: None,
+                    dont_overwrite_evm_accounts_from_stale_scilla_state: None,
+                    make_transfers_in_scilla_precompiles_with_journal_api: None,
+                    disable_interop_native_zil_transfers_0: None,
+                    tighten_precompile_rules: None,
+                    allow_scilla_call_precompile_to_be_called_from_addresses: None,
                     distribute_rewards_every_epoch: None,
                     pectra_active: None,
                 },
@@ -1584,6 +1663,11 @@ mod tests {
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: None,
                     evm_to_scilla_strings_encoded_properly: None,
+                    dont_overwrite_evm_accounts_from_stale_scilla_state: None,
+                    make_transfers_in_scilla_precompiles_with_journal_api: None,
+                    disable_interop_native_zil_transfers_0: None,
+                    tighten_precompile_rules: None,
+                    allow_scilla_call_precompile_to_be_called_from_addresses: None,
                     distribute_rewards_every_epoch: None,
                     pectra_active: None,
                 },
@@ -1652,6 +1736,11 @@ mod tests {
                 scilla_call_gas_exempt_addrs_v2: vec![],
                 randao_support: true,
                 evm_to_scilla_strings_encoded_properly: true,
+                dont_overwrite_evm_accounts_from_stale_scilla_state: true,
+                make_transfers_in_scilla_precompiles_with_journal_api: true,
+                disable_interop_native_zil_transfers_0: true,
+                tighten_precompile_rules: true,
+                allow_scilla_call_precompile_to_be_called_from_addresses: vec![],
                 distribute_rewards_every_epoch: true,
                 pectra_active: true,
             },
@@ -1708,6 +1797,11 @@ mod tests {
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: None,
                     evm_to_scilla_strings_encoded_properly: None,
+                    dont_overwrite_evm_accounts_from_stale_scilla_state: None,
+                    make_transfers_in_scilla_precompiles_with_journal_api: None,
+                    disable_interop_native_zil_transfers_0: None,
+                    tighten_precompile_rules: None,
+                    allow_scilla_call_precompile_to_be_called_from_addresses: None,
                     distribute_rewards_every_epoch: None,
                     pectra_active: None,
                 },
@@ -1751,6 +1845,11 @@ mod tests {
                     scilla_call_gas_exempt_addrs_v2: vec![],
                     randao_support: None,
                     evm_to_scilla_strings_encoded_properly: None,
+                    dont_overwrite_evm_accounts_from_stale_scilla_state: None,
+                    make_transfers_in_scilla_precompiles_with_journal_api: None,
+                    disable_interop_native_zil_transfers_0: None,
+                    tighten_precompile_rules: None,
+                    allow_scilla_call_precompile_to_be_called_from_addresses: None,
                     distribute_rewards_every_epoch: None,
                     pectra_active: None,
                 },

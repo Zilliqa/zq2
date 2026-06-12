@@ -44,6 +44,7 @@ use crate::{
     crypto::{Hash, NodePublicKey},
     error::ensure_success,
     evm::{ZQ2Evm, ZQ2EvmContext, new_zq2_evm_ctx},
+    exec_failure,
     inspector::{self, ScillaInspector, TouchedAddressInspector},
     message::{Block, BlockHeader},
     precompiles::{PENALTY_ADDRESS, SCILLA_CALL_ADDRESS, ViewHistory},
@@ -472,6 +473,7 @@ impl State {
         amount: u128,
     ) -> Result<Address> {
         let current_block = BlockHeader::genesis(Hash::ZERO);
+        let deployer_nonce = self.get_account(Address::ZERO)?.nonce;
         let (ResultAndState { result, mut state }, ..) = self.apply_transaction_evm(
             Address::ZERO,
             None,
@@ -480,7 +482,7 @@ impl State {
             self.block_gas_limit,
             amount,
             creation_bytecode,
-            None,
+            Some(deployer_nonce),
             None,
             None,
             current_block,
@@ -517,23 +519,6 @@ impl State {
             ExecutionResult::Revert { .. } => Err(anyhow!("deployment reverted")),
             ExecutionResult::Halt { reason, .. } => Err(anyhow!("deployment halted: {reason:?}")),
         }
-    }
-
-    fn failed(
-        mut result_and_state: ResultAndState,
-    ) -> Result<(ResultAndState, HashMap<Address, PendingAccount>)> {
-        result_and_state.state.clear();
-        Ok((
-            ResultAndState {
-                result: ExecutionResult::Revert {
-                    gas: *result_and_state.result.gas(),
-                    logs: Vec::new(),
-                    output: Bytes::default(),
-                },
-                state: result_and_state.state,
-            },
-            HashMap::new(),
-        ))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -664,7 +649,7 @@ impl State {
             kind: to_addr.into(),
             value: U256::from(amount),
             data: payload.clone().into(),
-            nonce: nonce.unwrap_or_default(),
+            nonce: nonce.unwrap_or(u64::MAX), // defaults to 'invalid' nonce
             chain_id: Some(self.chain_id.eth),
             access_list,
             gas_priority_fee,
@@ -704,29 +689,34 @@ impl State {
         }
         let ctx_with_handler = evm.ctx();
 
-        // If the scilla precompile failed for whitelisted zq1 contract we mark the entire transaction as failed
-        if ctx_with_handler.chain.enforce_transaction_failure {
-            return Self::failed(result_and_state);
-        }
-
-        // If any of EVM (calls, creates, ...) failed and there was a call to whitelisted scilla address with interop precompile
-        // then report entire transaction as failed
-        let evm_exec_failure_causes_scilla_precompile_to_fail = self
-            .forks
-            .get(current_block.number)
-            .evm_exec_failure_causes_scilla_precompile_to_fail;
-        {
-            let ext_ctx = &ctx_with_handler.chain;
-            if evm_exec_failure_causes_scilla_precompile_to_fail
-                && ext_ctx.has_evm_failed
-                && ext_ctx.has_called_scilla_precompile
-                && extra_opts.exec_type == ExecType::Transact
-            {
-                return Self::failed(result_and_state);
-            }
-        }
+        let force_fail =
+            exec_failure::should_force_fail(&ctx_with_handler.chain, fork, extra_opts.exec_type);
 
         let finalized_state = ctx_with_handler.db_mut().finalize();
+
+        // Under the tightened rules, also fail when the EVM and Scilla deltas would both write the
+        // same address, since the combined result would be ambiguous.
+        let deltas_overlap = fork
+            .allow_scilla_call_precompile_to_be_called_from_addresses
+            .is_empty()
+            && fork.tighten_precompile_rules
+            && extra_opts.exec_type == ExecType::Transact
+            && exec_failure::deltas_overlap(
+                &result_and_state.state,
+                &finalized_state,
+                fork.only_mutated_accounts_update_state,
+            );
+
+        if force_fail || deltas_overlap {
+            return exec_failure::failed(
+                self,
+                fork,
+                from_addr,
+                gas_price,
+                max_priority_fee_per_gas,
+                result_and_state,
+            );
+        }
 
         Ok((result_and_state, finalized_state))
     }
@@ -800,6 +790,7 @@ impl State {
                 &self.scilla_ext_libs_path,
                 &fork,
                 current_block.number,
+                false,
             )
         }?;
 
@@ -866,7 +857,7 @@ impl State {
                 .apply_state_changes_only_if_transaction_succeeds;
 
             if !update_state_only_if_transaction_succeeds || result.success {
-                self.apply_delta_scilla(&state, current_block.number)?;
+                self.apply_delta_scilla(&state, None, current_block.number)?;
             } else {
                 // If the transaction rejected, we must update the nonce and balance of the sender account.
                 let from_account = state
@@ -921,10 +912,10 @@ impl State {
 
             if apply_scilla_delta_when_evm_succeeded {
                 if let ExecutionResult::Success { .. } = result {
-                    self.apply_delta_scilla(&scilla_state, current_block.number)?;
+                    self.apply_delta_scilla(&scilla_state, Some(&state), current_block.number)?;
                 }
             } else {
-                self.apply_delta_scilla(&scilla_state, current_block.number)?;
+                self.apply_delta_scilla(&scilla_state, Some(&state), current_block.number)?;
             }
 
             Ok(TransactionApplyResult::Evm(ResultAndState {
@@ -938,13 +929,23 @@ impl State {
     fn apply_delta_scilla(
         &mut self,
         state: &HashMap<Address, PendingAccount>,
+        evm_state: Option<&EvmState>,
         current_block_number: u64,
     ) -> Result<()> {
         let fork = self.forks.get(current_block_number);
         let only_mutated_accounts_update_state = fork.only_mutated_accounts_update_state;
         let scilla_delta_maps_are_applied_correctly = fork.scilla_delta_maps_are_applied_correctly;
+        let dont_overwrite_evm_accounts_from_stale_scilla_state =
+            fork.dont_overwrite_evm_accounts_from_stale_scilla_state;
         for (&address, account) in state {
             if only_mutated_accounts_update_state && !account.touched {
+                continue;
+            }
+            // Modified addresses by EVM are skipped
+            if dont_overwrite_evm_accounts_from_stale_scilla_state
+                && let Some(evm) = evm_state
+                && evm.contains_key(&address)
+            {
                 continue;
             }
 
@@ -1294,6 +1295,7 @@ impl State {
         extra_opts: ExtraOpts,
     ) -> Result<u64> {
         let gas_price = gas_price.unwrap_or(self.gas_price);
+        let caller_nonce = self.get_account(from_addr)?.nonce;
 
         let is_simple_transfer = if data.is_empty()
             && let Some(dest_addr) = to_addr
@@ -1314,7 +1316,7 @@ impl State {
                 gas,
                 value,
                 data.clone(),
-                None,
+                Some(caller_nonce),
                 access_list.clone(),
                 authorization_list.clone(),
                 current_block,
@@ -1367,7 +1369,7 @@ impl State {
                 EvmGas(mid),
                 value,
                 data.clone(),
-                None,
+                Some(caller_nonce),
                 access_list.clone(),
                 authorization_list.clone(),
                 current_block,
@@ -1404,6 +1406,7 @@ impl State {
         authorization_list: Option<Vec<SignedAuthorization>>,
         extra_opts: ExtraOpts,
     ) -> Result<u64> {
+        let caller_nonce = self.get_account(from_addr)?.nonce;
         let (ResultAndState { result, .. }, ..) = self.apply_transaction_evm(
             from_addr,
             to_addr,
@@ -1412,7 +1415,7 @@ impl State {
             gas,
             value,
             data.clone(),
-            None,
+            Some(caller_nonce),
             access_list,
             authorization_list,
             current_block,
@@ -1437,6 +1440,7 @@ impl State {
         amount: u128,
         current_block: BlockHeader,
     ) -> Result<ExecutionResult> {
+        let caller_nonce = self.get_account(from_addr)?.nonce;
         let (ResultAndState { result, .. }, ..) = self.apply_transaction_evm(
             from_addr,
             to_addr,
@@ -1445,7 +1449,7 @@ impl State {
             self.block_gas_limit,
             amount,
             data,
-            None,
+            Some(caller_nonce),
             None,
             None,
             current_block,
@@ -1472,6 +1476,7 @@ impl State {
         amount: u128,
         current_block: BlockHeader,
     ) -> Result<ExecutionResult> {
+        let caller_nonce = self.get_account(from_addr)?.nonce;
         let (ResultAndState { result, state }, ..) = self.apply_transaction_evm(
             from_addr,
             to_addr,
@@ -1480,7 +1485,7 @@ impl State {
             self.block_gas_limit,
             amount,
             data,
-            None,
+            Some(caller_nonce),
             None,
             None,
             current_block,
@@ -2178,6 +2183,7 @@ pub fn scilla_call(
     scilla_ext_libs_path: &ScillaExtLibsPath,
     fork: &Fork,
     current_block: u64,
+    from_precompile: bool,
 ) -> Result<(ScillaResult, PendingState)> {
     let mut gas = gas_limit;
 
@@ -2200,6 +2206,30 @@ pub fn scilla_call(
 
     while let Some((depth, sender, to_addr, amount, message)) = call_stack.pop() {
         let mut current_state = state.take().expect("missing state");
+
+        // Under the tightened rules, a `scilla_call` invoked from the interop precompile must not
+        // move any ZIL to any destination (Scilla contract or EOA). Reject any value-bearing message.
+        if from_precompile && fork.tighten_precompile_rules && amount != ZilAmount::ZERO {
+            return Ok((
+                ScillaResult {
+                    success: false,
+                    contract_address: None,
+                    logs: vec![],
+                    gas_used: (gas_limit - gas).into(),
+                    transitions: vec![],
+                    accepted: Some(false),
+                    errors: [(depth, vec![ScillaError::CallContractFailed])]
+                        .into_iter()
+                        .collect(),
+                    exceptions: vec![ScillaException {
+                        line: 0,
+                        message: "ZIL transfer from the scilla_call precompile is not allowed"
+                            .to_owned(),
+                    }],
+                },
+                current_state,
+            ));
+        }
 
         let contract = current_state.load_account(to_addr)?;
         let code_and_data = match &contract.account.code {

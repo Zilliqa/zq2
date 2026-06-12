@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 mod address;
 pub mod chain;
 pub mod collector;

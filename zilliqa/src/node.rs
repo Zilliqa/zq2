@@ -306,8 +306,12 @@ impl Node {
 
     pub fn handle_broadcast_transactions(
         &self,
+        from: PeerId,
         transactions: Vec<VerifiedTransaction>,
     ) -> Result<()> {
+        if from == self.peer_id {
+            return Ok(());
+        }
         let from_broadcast = true;
         self.consensus
             .write()
@@ -415,9 +419,8 @@ impl Node {
                 // decompress the block
                 let mut decoder = lz4::Decoder::new(std::io::Cursor::new(response))?;
                 let mut buf = Vec::new();
-                std::io::Read::read_to_end(&mut decoder, &mut buf).unwrap();
-                let response =
-                    cbor4ii::serde::from_slice::<BlockTransactionsReceipts>(&buf).unwrap();
+                std::io::Read::read_to_end(&mut decoder, &mut buf)?;
+                let response = cbor4ii::serde::from_slice::<BlockTransactionsReceipts>(&buf)?;
                 self.consensus
                     .write()
                     .sync
@@ -973,15 +976,17 @@ impl Node {
                 let mut inspector = JsInspector::new(js_code, tracer_config.into_json())
                     .map_err(|e| anyhow!("Unable to create js inspector: {e}"))?;
 
+                let caller = call_params.from.unwrap_or_default();
+                let caller_nonce = evm_state.get_account(caller)?.nonce;
                 let (ResultAndState { result, state }, ..) = evm_state.apply_transaction_evm(
-                    call_params.from.unwrap_or_default(),
+                    caller,
                     call_params.to.and_then(|to| to.into_to()),
                     0, // arbitrary price
                     None,
                     call_gas_limit,
                     u128::try_from(call_params.value.unwrap_or_default())?,
                     call_params.input.into_input().unwrap_or_default().to_vec(),
-                    None,
+                    Some(caller_nonce),
                     None,
                     None,
                     block.header,

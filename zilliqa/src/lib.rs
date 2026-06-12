@@ -13,6 +13,7 @@ pub mod db;
 mod error;
 mod evm;
 pub mod exec;
+mod exec_failure;
 pub mod inspector;
 pub mod message;
 pub mod node;

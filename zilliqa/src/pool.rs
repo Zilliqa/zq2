@@ -1195,6 +1195,14 @@ impl TransactionPool {
             .transactions_to_broadcast
             .drain(0..batch_count)
             .map(|tx| tx.tx)
+            .filter(|tx| match tx {
+                SignedTransaction::Legacy { .. }
+                | SignedTransaction::Eip2930 { .. }
+                | SignedTransaction::Eip1559 { .. }
+                | SignedTransaction::Eip7702 { .. }
+                | SignedTransaction::Zilliqa { .. } => true,
+                SignedTransaction::Intershard { .. } => false,
+            })
             .collect();
         Ok(selected)
     }

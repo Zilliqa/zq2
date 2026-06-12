@@ -443,6 +443,37 @@ impl ContextPrecompile for ScillaCall {
         inputs: &CallInputs,
     ) -> Result<Option<InterpreterResult>, String> {
         let gas = Gas::new(inputs.gas_limit);
+
+        // Record access of scilla precompile
+        ctx.chain.has_called_scilla_precompile = true;
+
+        // The `scilla_call` precompile mutates Scilla state, so it must not be invoked from a static
+        // context (STATICCALL). Under the tightened rules, reject it and fail the whole transaction.
+        if inputs.is_static && ctx.chain.fork.tighten_precompile_rules {
+            ctx.chain.enforce_transaction_failure = true;
+            return Ok(Some(InterpreterResult {
+                result: InstructionResult::PrecompileError,
+                gas,
+                output: Bytes::new(),
+            }));
+        }
+
+        // Optional caller allowlist. When the list is non-empty, only the listed addresses may
+        // invoke the `scilla_call` precompile; any other caller fails the whole transaction. An
+        // empty list imposes no restriction.
+        let allowlist = &ctx
+            .chain
+            .fork
+            .allow_scilla_call_precompile_to_be_called_from_addresses;
+        if !allowlist.is_empty() && !allowlist.contains(&inputs.caller) {
+            ctx.chain.enforce_transaction_failure = true;
+            return Ok(Some(InterpreterResult {
+                result: InstructionResult::PrecompileError,
+                gas,
+                output: Bytes::new(),
+            }));
+        }
+
         let gas_exempt = ctx
             .chain
             .fork
@@ -453,9 +484,6 @@ impl ContextPrecompile for ScillaCall {
                 .fork
                 .scilla_call_gas_exempt_addrs_v2
                 .contains(&inputs.caller);
-
-        // Record access of scilla precompile
-        ctx.chain.has_called_scilla_precompile = true;
 
         // The behaviour is different for contracts having 21k gas and/or deployed with zq1
         // 1. If gas == 21k and gas_exempt -> allow it to run with gas_left()
@@ -506,6 +534,14 @@ impl ContextPrecompile for ScillaCall {
             }
         }
 
+        // Under the tightened rules, any failure of the `scilla_call` precompile rolls back the
+        // entire transaction, regardless of whether the caller is gas-exempt.
+        if ctx.chain.fork.tighten_precompile_rules
+            && !matches!(result.result, InstructionResult::Return)
+        {
+            ctx.chain.enforce_transaction_failure = true;
+        }
+
         Ok(Some(result))
     }
 }
@@ -516,6 +552,10 @@ fn scilla_call_precompile(
     ctx: &mut ZQ2EvmContext,
     gas_exempt: bool,
 ) -> std::result::Result<PrecompileOutput, PrecompileErrors> {
+    if ctx.chain.fork.disable_interop_native_zil_transfers_0 && !input.value.get().is_zero() {
+        return err("native ZIL transfers to the scilla_call precompile are disabled");
+    }
+
     let Ok(input_len) = u64::try_from(input.input.len()) else {
         return err("input too long");
     };
@@ -566,6 +606,18 @@ fn scilla_call_precompile(
         ));
     };
 
+    // Reject calldata that does not contain a head word for every transition parameter. The ABI head
+    // is `(address, string, keep_origin)` plus one word per parameter, and the dynamic `string` tail
+    // must begin at or after the end of that head. Otherwise a missing trailing parameter would be
+    // read from the string tail (e.g. its length word) instead of failing.
+    if ctx.chain.fork.tighten_precompile_rules {
+        let min_head = (3 + transition.params.len()) * 32;
+        let transition_offset = U256::from_be_slice(&bytes_input[32..64]);
+        if transition_offset < U256::from(min_head as u64) {
+            return err("scilla_call calldata omits transition parameters");
+        }
+    }
+
     let params: Vec<_> = transition
         .params
         .into_iter()
@@ -600,11 +652,14 @@ fn scilla_call_precompile(
 
     let depth = ctx.journal().depth;
     let sender = if keep_origin {
-        if ctx.chain.fork.call_mode_1_sets_caller_to_parent_caller {
+        if ctx.chain.fork.call_mode_1_sets_caller_to_parent_caller && depth >= 2 {
             // Use the caller of the parent call-stack.
             ctx.chain.callers[depth - 2]
         } else {
-            // Use the original transaction signer.
+            // Use the original transaction signer. This also covers a direct/shallow call with no
+            // parent call-stack frame (`depth < 2`), which would otherwise underflow
+            // `callers[depth - 2]` and panic the node. Not fork-gated: the panicking path never
+            // produced a valid state transition, so there is no historical behaviour to preserve.
             ctx.tx.caller
         }
     } else {
@@ -635,14 +690,33 @@ fn scilla_call_precompile(
         .get()
         .map_err(|e| PrecompileErrors::Fatal { msg: e.to_string() })?;
     if effective_value_get > 0 {
-        let evm_state = ctx.journal_mut().evm_state_mut();
-        let precompile_acc = evm_state.get_mut(&input.target_address).unwrap();
-        precompile_acc.info.balance = precompile_acc
-            .info
-            .balance
-            .saturating_sub(U256::from(effective_value_get));
-        let sender_acc = evm_state.get_mut(&sender).unwrap();
-        sender_acc.info.balance += U256::from(effective_value_get);
+        if ctx
+            .chain
+            .fork
+            .make_transfers_in_scilla_precompiles_with_journal_api
+        {
+            match ctx.journal_mut().transfer(
+                input.target_address,
+                sender,
+                U256::from(effective_value_get),
+            ) {
+                Ok(None) => {}
+                Ok(Some(e)) => return err(format!("scilla precompile refund failed: {e:?}")),
+                Err(e) => {
+                    tracing::error!(?e, "state access failed");
+                    return fatal("state access failed");
+                }
+            }
+        } else {
+            let evm_state = ctx.journal_mut().evm_state_mut();
+            let precompile_acc = evm_state.get_mut(&input.target_address).unwrap();
+            precompile_acc.info.balance = precompile_acc
+                .info
+                .balance
+                .saturating_sub(U256::from(effective_value_get));
+            let sender_acc = evm_state.get_mut(&sender).unwrap();
+            sender_acc.info.balance += U256::from(effective_value_get);
+        }
     }
 
     let empty_state =
@@ -675,6 +749,9 @@ fn scilla_call_precompile(
         &scilla_ext_libs_path_default(),
         &ctx.chain.fork,
         ctx.block.number.to(),
+        // This call originates from the `scilla_call` precompile; the tightened-rules behaviour is
+        // gated on `fork.tighten_precompile_rules` inside `scilla_call`.
+        true,
     ) else {
         return fatal("scilla call failed");
     };
@@ -690,6 +767,7 @@ fn scilla_call_precompile(
             return err("scilla call failed");
         }
     }
+    let mut evm_account_updates = Vec::new();
     state.new_state.retain(|address, account| {
         if !account.touched {
             return true;
@@ -697,18 +775,60 @@ fn scilla_call_precompile(
         if !account.from_evm {
             return true;
         }
-
-        // Apply changes made to EVM accounts back to the EVM `JournaledState`.
-        let before = ctx.journal_mut().state.get_mut(address).unwrap();
-
         // The only thing that Scilla is able to update is the balance.
-        if before.info.balance.to::<u128>() != account.account.balance {
-            before.info.balance = account.account.balance.try_into().unwrap();
-            before.mark_touch();
-        }
-
+        evm_account_updates.push((*address, account.account.balance));
         false
     });
+
+    for (address, target_balance) in evm_account_updates {
+        if ctx
+            .chain
+            .fork
+            .make_transfers_in_scilla_precompiles_with_journal_api
+        {
+            // Apply through the journal so the change is reverted with the surrounding EVM frame. A
+            // raw write is not journaled and would survive a revert, minting the credit on a failed
+            // transaction. Decreases are routed to the precompile address (filtered from the committed
+            // delta) so they stay journaled with no external effect.
+            let current = ctx
+                .journal_mut()
+                .state
+                .get(&address)
+                .map(|a| a.info.balance)
+                .unwrap_or_default();
+            let target = U256::from(target_balance);
+            if target > current {
+                ctx.journal_mut()
+                    .balance_incr(address, target - current)
+                    .map_err(|e| {
+                        tracing::error!(?e, "state access failed");
+                        PrecompileErrors::Fatal {
+                            msg: "state access failed".to_string(),
+                        }
+                    })?;
+            } else if current > target
+                && let Some(transfer_err) = ctx
+                    .journal_mut()
+                    .transfer(address, input.target_address, current - target)
+                    .map_err(|e| {
+                        tracing::error!(?e, "state access failed");
+                        PrecompileErrors::Fatal {
+                            msg: "state access failed".to_string(),
+                        }
+                    })?
+            {
+                return err(format!(
+                    "scilla precompile balance reconciliation failed: {transfer_err:?}"
+                ));
+            }
+        } else {
+            let before = ctx.journal_mut().state.get_mut(&address).unwrap();
+            if before.info.balance.to::<u128>() != target_balance {
+                before.info.balance = target_balance.try_into().unwrap();
+                before.mark_touch();
+            }
+        }
+    }
     ctx.journaled_state.database = state;
 
     for log in result.logs {
