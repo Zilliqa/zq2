@@ -59,9 +59,11 @@ sol! {
 sol! {
     #[sol(rpc)]
     interface IERC4337Extra {
+        function feeParams(uint128[6]);
+        event MessageReceived(bytes32 indexed receiveId, address relayer);
         function getFees(
-            uint64 chain_id
-        ) external view returns (uint256);
+            string chain_id
+        ) external view returns (uint128[6]);
     }
 }
 

@@ -9,7 +9,7 @@ use alloy::{
     },
     providers::Provider as _,
     rpc::types::{Filter, PackedUserOperation as AlloyUserOperation},
-    sol_types::{SolEvent, SolValue},
+    sol_types::{SolCall, SolEvent, SolValue},
 };
 use alloy_chains::Chain;
 use anyhow::{Context, Result};
@@ -36,7 +36,7 @@ use crate::{
         EndPoint,
         IERC7786GatewaySource::MessageSent,
         SignUserOp,
-        utils::{get_chain_id, get_user_op_hash},
+        utils::{get_eip155_address, get_eip155_chain, get_user_op_hash},
     },
 };
 
@@ -123,13 +123,13 @@ impl Signer {
         sign_tx: UnboundedSender<SignUserOp>,
     ) -> Result<()> {
         if watchers.is_empty() {
-            tracing::warn!("Watcher({chain:?}): terminated");
+            tracing::warn!("Sender({chain:?}): terminated");
             return Ok(());
         }
-        tracing::info!(chains=%watchers.len(), "Watcher({chain:?}): started");
+        tracing::info!(chains=%watchers.len(), "Sender({chain:?}): started");
 
         // Cache last known height
-        let mut cache =
+        let mut heights =
             lru::LruCache::<ChainId, u64>::new(NonZeroUsize::new(watchers.len()).unwrap());
 
         // Schedule the polls according to average block-times.
@@ -138,7 +138,7 @@ impl Signer {
             let chain = Chain::from_id(remote.chain_id);
             let period = chain
                 .average_blocktime_hint()
-                .unwrap_or(Duration::from_secs(1));
+                .unwrap_or(config.consensus.consensus_timeout);
             poll_sched.insert(chain, period);
         }
 
@@ -149,7 +149,7 @@ impl Signer {
             let chain = due.into_inner();
             let period = chain
                 .average_blocktime_hint()
-                .unwrap_or(Duration::from_secs(10));
+                .unwrap_or(config.consensus.consensus_timeout);
             tracing::trace!(?period, ?chain, "Poll");
             let chain_id = chain.id();
             poll_sched.insert(chain, period);
@@ -169,7 +169,7 @@ impl Signer {
                     .await
                 {
                     let cache_height =
-                        cache.get_or_insert_mut(chain.id(), || final_block.header.number);
+                        heights.get_or_insert_mut(chain.id(), || final_block.header.number);
                     if *cache_height >= final_block.header.number {
                         continue; // skip if stale
                     }
@@ -189,14 +189,11 @@ impl Signer {
                     tracing::error!(?chain, "eth_getLogs(): transport");
                     continue; // skip on errors
                 };
-                if !logs.is_empty() {
-                    tracing::info!(
-                        ?chain,
-                        count=%logs.len(),
-                        range=?(cache_height.saturating_add(1)..=final_height),
-                        "MessageSent(): events",
-                    );
-                }
+                tracing::trace!(
+                    count=%logs.len(),
+                    range=?(cache_height.saturating_add(1)..=final_height),
+                    "MessageSent({chain:?}): events",
+                );
                 *cache_height = final_height; // update final
                 logs
             } else {
@@ -219,38 +216,55 @@ impl Signer {
                     ..
                 }) = super::IERC7786GatewaySource::MessageSent::decode_log_data(log.data())
                 else {
-                    tracing::error!(%txn_hash, "MessageSent({chain:?}): decoder");
+                    tracing::warn!(%txn_hash, "MessageSent({chain:?}): invalid structure");
                     continue; // skip on failure
                 };
-
-                // 5. Validate payload integrity
-                if sendId != keccak256(payload.iter().as_slice()) {
-                    tracing::error!(send_id=%sendId, "MessageSent({chain:?}): invalid");
-                    continue;
-                }
                 tracing::debug!(send_id=%sendId, "MessageSent({chain:?}): seen");
 
+                // 5. Validate payload integrity
+                if sendId != keccak256(payload.iter().as_slice())
+                    && payload.starts_with(&super::IAccountExecute::executeUserOpCall::SELECTOR)
+                {
+                    tracing::warn!(send_id=%sendId, "MessageSent({chain:?}): invalid payload");
+                    continue;
+                }
+
                 // 6. Validate route
-                let dst_chain = get_chain_id(std::str::from_utf8(&recipient)?)?;
-                let src_chain = get_chain_id(std::str::from_utf8(&sender)?)?;
+                let Ok(dst_chain) = get_eip155_chain(std::str::from_utf8(&recipient)?) else {
+                    tracing::warn!(send_id=%sendId, "MessageSent({chain:?}): invalid destination");
+                    continue;
+                };
+                let Ok(src_chain) = get_eip155_chain(std::str::from_utf8(&sender)?) else {
+                    tracing::warn!(send_id=%sendId, "MessageSent({chain:?}): invalid source");
+                    continue;
+                };
                 anyhow::ensure!(
                     src_chain.id() == chain.id(),
                     "MessageSent({chain:?}): invalid source"
                 ); // MessageSent comes from source
 
-                let src_test = src_chain
+                let Ok(sender) = get_eip155_address(std::str::from_utf8(&sender)?) else {
+                    tracing::warn!(send_id=%sendId, "MessageSent({chain:?}): invalid sender");
+                    continue;
+                };
+                anyhow::ensure!(
+                    sender == log.address(),
+                    "MessageSent({chain:?}): invalid sender"
+                ); // Gateway contract is sender
+
+                let is_src_test = src_chain
                     .named()
                     .map(|c| c.is_testnet())
                     .unwrap_or_default();
-                let dst_test = dst_chain
+                let is_dst_test = dst_chain
                     .named()
                     .map(|c| c.is_testnet())
                     .unwrap_or_default();
                 anyhow::ensure!(
-                    src_test == dst_test,
+                    is_src_test == is_dst_test,
                     "MessageSent({chain:?}): testnet != mainnet"
                 ); // Mixing testnet/mainnet
-                tracing::info!(send_id=%sendId, "MessageSent({src_chain:?}): => {dst_chain:?}");
+                tracing::info!(send_id=%sendId, "Sender({src_chain:?}): routing");
 
                 // Warning: may dead-lock, if watchers is locked above
                 if let Some(watcher) = watchers.get(&dst_chain.id()) {
@@ -260,22 +274,13 @@ impl Signer {
                         paymaster,
                         ..
                     } = watcher.value();
-
-                    anyhow::ensure!(
-                        dst_chain != src_chain || *allow_loopback,
-                        "MessageSent({chain:?}): loop-back"
-                    ); // ** DO NOT ALLOW LOOP-BACK **
+                    if !(dst_chain != src_chain || *allow_loopback) {
+                        tracing::warn!("MessageSent({chain:?}): loop-back");
+                        continue;
+                    }
 
                     // 7. Construct partial UserOp; send for signing
-                    let userop = Self::new_user_op(
-                        // sendId,
-                        payload,
-                        sender,
-                        // gateway,
-                        paymaster,
-                        value,
-                        block_height,
-                    );
+                    let userop = Self::new_user_op(payload, sender, paymaster, value, block_height);
                     tracing::trace!(send_id=%sendId, ?userop, "UserOp");
                     if let Err(err) = sign_tx.send(SignUserOp::new(
                         userop,
@@ -321,7 +326,8 @@ impl Signer {
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
 
         // fee cache
-        let mut cache = LruCache::<Hash, U256>::new(NonZeroUsize::new(providers.len()).unwrap());
+        let mut cache =
+            LruCache::<Hash, [u128; 6]>::new(NonZeroUsize::new(providers.len()).unwrap());
 
         // exponential backoff queue
         let mut delayq: DelayQueue<SignUserOp> = DelayQueue::new();
@@ -368,7 +374,7 @@ impl Signer {
 
                     // X. Backoff-retry
                     let Some(backoff) = sign_uop.backoff() else {
-                        // DEAD LETTER OFFICE
+                        // FIXME: DEAD LETTER OFFICE
                         tracing::error!(%send_id, "Signer({chain:?}): dropped");
                         continue;
                     };
@@ -442,7 +448,7 @@ impl Signer {
             // the two backup peers should only be able to submit it after a delay. the userop is lost if all fail.
             let delay_slot = dst_chain
                 .average_blocktime_hint()
-                .map_or_else(|| Duration::from_secs(15).mul(i), |d| d.mul(i)); // slots at 0s, 15s, 45s.
+                .map_or_else(|| Duration::from_secs(60).mul(i), |d| d.mul(i));
 
             sendq.insert((peer, uccb_uop, send_id), delay_slot);
         }
@@ -500,7 +506,7 @@ impl Signer {
         send_id: B256,
         sign_uop: &mut SignUserOp,
         providers: Arc<super::Providers>,
-        cache: &mut LruCache<Hash, U256>,
+        cache: &mut LruCache<Hash, [u128; 6]>,
     ) -> Result<()> {
         if sign_uop.userop.paymaster_verification_gas_limit.is_some() {
             return Ok(());
@@ -526,8 +532,9 @@ impl Signer {
             // .get_or_insert() does not work in async
             *fees
         } else {
+            let caip2 = tap_caip::ChainId::new("eip155", &dst_chain.id().to_string())?;
             let fees = super::IERC4337Extra::new(*gateway, jsonrpc)
-                .getFees(dst_chain.id())
+                .getFees(caip2.to_string())
                 .block(BlockId::number(*blk_height))
                 .call()
                 .await?;
@@ -536,17 +543,23 @@ impl Signer {
         };
 
         // ERC4337 fees
+        tracing::debug!(%send_id, ?fees, "getFees({src_chain:?}): fees");
         let [
+            max_fee_per_gas,
+            max_priority_fee_per_gas,
             paymaster_verification_gas_limit,
             verification_gas_limit,
             pre_verification_gas,
             call_gas_limit,
-        ] = fees.into_limbs(); // ordering is inverted
-        tracing::debug!(%send_id, %call_gas_limit, %pre_verification_gas, %verification_gas_limit, %paymaster_verification_gas_limit, "getFees({src_chain:?}): fees");
+        ] = fees;
+
+        userop.max_fee_per_gas = U256::from(max_fee_per_gas);
+        userop.max_priority_fee_per_gas = U256::from(max_priority_fee_per_gas);
 
         userop.call_gas_limit = U256::from(call_gas_limit);
         userop.pre_verification_gas = U256::from(pre_verification_gas);
         userop.verification_gas_limit = U256::from(verification_gas_limit);
+
         userop.paymaster_verification_gas_limit =
             Some(U256::from(paymaster_verification_gas_limit));
         userop.paymaster_post_op_gas_limit = Some(U256::from(paymaster_verification_gas_limit));
@@ -670,15 +683,15 @@ impl Signer {
         payload: Bytes,
         sender: &Address,
         paymaster: &Address,
-        value: U256,
+        _value: U256,
         block_height: u64,
     ) -> AlloyUserOperation {
         // we can encode some custom things in here
         let paymaster_data = (block_height).abi_encode_packed();
         // FIXME: decode the values
-        let [a, b, c, d] = value.into_limbs();
-        let max_fee_per_gas = (b as u128) << 64 | a as u128;
-        let max_priority_fee_per_gas = (d as u128) << 64 | c as u128;
+        // let [a, b, c, d] = value.into_limbs();
+        // let max_fee_per_gas = (b as u128) << 64 | a as u128;
+        // let max_priority_fee_per_gas = (d as u128) << 64 | c as u128;
         AlloyUserOperation {
             sender: *sender,
             nonce: U256::ZERO, // unpopulated nonce/sig
@@ -690,8 +703,8 @@ impl Signer {
             call_gas_limit: U256::ZERO,         // estimateUserOpGas
             verification_gas_limit: U256::ZERO, // estimateUserOpGas
             pre_verification_gas: U256::ZERO,   // estimateUserOpGas
-            max_fee_per_gas: U256::from(max_fee_per_gas),
-            max_priority_fee_per_gas: U256::from(max_priority_fee_per_gas),
+            max_fee_per_gas: U256::MAX,
+            max_priority_fee_per_gas: U256::MAX,
             paymaster: Some(*paymaster),
             paymaster_verification_gas_limit: None, // estimateUserOpGas
             paymaster_post_op_gas_limit: None,      // estimateUserOpGas

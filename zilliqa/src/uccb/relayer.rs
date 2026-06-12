@@ -2,10 +2,10 @@ use std::{num::NonZeroUsize, sync::Arc};
 
 use alloy::{
     eips::BlockNumberOrTag,
-    primitives::{Address, B256, U256, keccak256},
+    primitives::{Address, B256, ChainId, U256, keccak256},
     providers::{Provider, utils::eip1559_default_estimator},
-    rpc::types::{PackedUserOperation as AlloyUserOperation, UserOperationGasEstimation},
-    sol_types::SolValue,
+    rpc::types::{Filter, PackedUserOperation as AlloyUserOperation, UserOperationGasEstimation},
+    sol_types::{SolEvent, SolValue},
 };
 use alloy_chains::Chain;
 use anyhow::{Context, Result};
@@ -30,7 +30,7 @@ use crate::{
     db::Db,
     message::MAX_COMMITTEE_SIZE,
     state::State,
-    uccb::{BlsUserOp, EndPoint, RelayUserOp},
+    uccb::{BlsUserOp, EndPoint, IERC4337Extra::MessageReceived, RelayUserOp},
 };
 
 #[derive(Debug)]
@@ -76,11 +76,22 @@ impl Relayer {
 
         {
             let relay_tx = relay_tx.clone();
+            let config = config.clone();
+            let providers = providers.clone();
             workers.spawn(async move {
                 if let Err(err) =
                     Self::start_relayer(config, secret_key, relay_tx, relay_rx, providers).await
                 {
                     tracing::error!(%err, "Relayer exception");
+                }
+            });
+        }
+
+        // TODO: Monitor for UserOperationEvent()
+        {
+            workers.spawn(async move {
+                if let Err(err) = Self::start_monitor(config, providers).await {
+                    tracing::error!(%err, "Monitor exception");
                 }
             });
         }
@@ -98,6 +109,96 @@ impl Relayer {
         })
     }
 
+    async fn start_monitor(config: NodeConfig, watchers: Arc<super::Providers>) -> Result<()> {
+        let chain = Chain::from_id(config.eth_chain_id);
+        if watchers.is_empty() {
+            tracing::warn!("Receiver({chain:?}): terminated");
+            return Ok(());
+        }
+        tracing::info!(chains=%watchers.len(), "Receiver({chain:?}): started");
+
+        // Cache last known height
+        let mut heights =
+            lru::LruCache::<ChainId, u64>::new(NonZeroUsize::new(watchers.len()).unwrap());
+
+        // Schedule the polls according to average block-times.
+        let mut poll_sched: DelayQueue<Chain> = DelayQueue::new();
+        for remote in config.remote_chains.iter() {
+            let chain = Chain::from_id(remote.chain_id);
+            let period = chain
+                .average_blocktime_hint()
+                .unwrap_or(config.consensus.consensus_timeout);
+            poll_sched.insert(chain, period);
+        }
+
+        // Subscribing to the live-stream results in 'latest' blocks that may get reorganized.
+        // Manual polling is used to ensure that only finalized blocks are processed.
+        while let Some(due) = poll_sched.next().await {
+            // reschedule the poll
+            let chain = due.into_inner();
+            let period = chain
+                .average_blocktime_hint()
+                .unwrap_or(config.consensus.consensus_timeout);
+            tracing::trace!(?period, ?chain, "Poll");
+            let chain_id = chain.id();
+            poll_sched.insert(chain, period);
+
+            let logs = if let Some(watcher) = watchers.get(&chain_id) {
+                let EndPoint {
+                    gateway,
+                    jsonrpc,
+                    chain,
+                    ..
+                } = watcher.value();
+
+                // 1. Check for progress
+                let (cache_height, final_height) = if let Ok(Some(final_block)) = jsonrpc
+                    .get_block_by_number(BlockNumberOrTag::Finalized)
+                    .await
+                {
+                    let cache_height =
+                        heights.get_or_insert_mut(chain.id(), || final_block.header.number);
+                    if *cache_height >= final_block.header.number {
+                        continue; // skip if stale
+                    }
+                    (cache_height, final_block.header.number)
+                } else {
+                    tracing::error!(?chain, "eth_getBlockByNumber(): transport");
+                    continue; // skip on errors
+                };
+
+                // 2. Retrieve the latest set of finalized logs
+                let filter = Filter::new()
+                    .address(*gateway)
+                    .from_block(BlockNumberOrTag::Number(cache_height.saturating_add(1)))
+                    .to_block(BlockNumberOrTag::Number(final_height)) // ideally, this should be exactly one block length
+                    .event_signature(super::IERC4337Extra::MessageReceived::SIGNATURE_HASH);
+                let Ok(logs) = jsonrpc.get_logs(&filter).await else {
+                    tracing::error!(?chain, "eth_getLogs(): transport");
+                    continue; // skip on errors
+                };
+                tracing::trace!(
+                    count=%logs.len(),
+                    range=?(cache_height.saturating_add(1)..=final_height),
+                    "MessageReceived({chain:?}): events",
+                );
+                *cache_height = final_height; // update final
+                logs
+            } else {
+                continue;
+            };
+
+            for log in logs.into_iter() {
+                if let Ok(MessageReceived { receiveId, .. }) =
+                    super::IERC4337Extra::MessageReceived::decode_log_data(log.data())
+                {
+                    tracing::info!(send_id=%receiveId, "Receiver({chain:?}): received");
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Submit the UserOp
     ///
     /// Handles the submission to the Bundler, skips if the UserOp has been submitted.
@@ -112,7 +213,7 @@ impl Relayer {
             send_id,
             ..
         } = relay_uop;
-        let d = providers.get(&chain.id()).context("{chain} missing")?;
+        let d = providers.get(&chain.id()).context("{chain:?} missing")?;
         let EndPoint {
             entrypoint,
             bundler,
@@ -143,7 +244,9 @@ impl Relayer {
             .raw_request::<_, String>("eth_sendUserOperation".into(), (userop.clone(), entrypoint))
             .await?;
         anyhow::ensure!(
-            result.contains(&userop_hash.to_string()),
+            result
+                .to_uppercase()
+                .contains(&userop_hash.to_string().to_uppercase()),
             "UserOp {userop_hash} mismatch"
         ); // This should never happen
         Ok(())
@@ -224,10 +327,10 @@ impl Relayer {
                 // queue processing
                 Some(mut relay_uop) = relay_rx.recv() => {
                     let dest = relay_uop.chain;
-                    let send_id = relay_uop.send_id;
+                    let send_id = keccak256(relay_uop.userop.call_data.iter().as_slice());
                     // 0: Sanity check
-                    if keccak256(relay_uop.userop.call_data.iter().as_slice()) != send_id.0 {
-                        tracing::error!(%send_id, "Relay({chain:?} => {dest:?}): mismatch");
+                    if relay_uop.send_id.0 != send_id {
+                        tracing::error!(%send_id, "Relayer({chain:?} => {dest:?}): mismatch");
                         continue;
                     } else
                     // TODO: 1. Check for sufficient gas
@@ -238,27 +341,27 @@ impl Relayer {
                     // 2. Submit the UserOp
                     if let Err(err) = Self::submit_userop(&mut relay_uop, providers.clone()).await
                     {
-                        tracing::warn!(%send_id, %err, userop=?relay_uop.userop, "Relay({chain:?} => {dest:?}): transmit");
+                        tracing::warn!(%send_id, %err, userop=?relay_uop.userop, "Relayer({chain:?} => {dest:?}): transmit");
                     } else {
                         // Done
-                        tracing::info!(%send_id, "Relay({chain:?} => {dest:?}): done");
+                        tracing::info!(%send_id, "Relayer({chain:?} => {dest:?}): bundled");
                         continue;
                     }
 
                     // X. Backoff-retry
                     let Some(backoff) = relay_uop.backoff() else {
-                        // TODO: DEAD LETTER OFFICE
-                        tracing::error!(%send_id, "Relay({chain:?} => {dest:?}): dropped");
+                        // FIXME: DEAD LETTER OFFICE
+                        tracing::error!(%send_id, "Relayer({chain:?} => {dest:?}): dropped");
                         continue;
                     };
-                    tracing::warn!(%send_id, ?backoff, "Relay({chain:?} => {dest:?}): backoff");
+                    tracing::warn!(%send_id, ?backoff, "Relayer({chain:?} => {dest:?}): backoff");
                     delayq.insert(relay_uop, backoff);
                 }
                 // retry processing
                 Some(due) = delayq.next() => {
                     let relay_uop = due.into_inner();
                     let RelayUserOp { chain: dest, send_id, .. } = &relay_uop;
-                    tracing::debug!(%send_id, "Relay({chain:?} => {dest:?}): retry");
+                    tracing::debug!(%send_id, "Relayer({chain:?} => {dest:?}): retry");
                     if let Err(err) = relay_tx.send(relay_uop) {
                         tracing::error!(%err, "relay_tx closed");
                         break Ok(());
@@ -359,7 +462,7 @@ impl Relayer {
                 keccak256(uop.call_data.iter().as_slice())
             });
 
-        tracing::info!(%send_id, "Relay({:?} => {chain:?}): promote", self.chain);
+        tracing::info!(%send_id, "Relayer({:?} => {chain:?}): promote", self.chain);
         let (signers, signatures): (Vec<NodePublicKey>, Vec<BlsSignature>) =
             bop.signatures.into_iter().unzip();
 
@@ -408,7 +511,7 @@ impl Relayer {
         let bop = bop.userop.unwrap();
         let final_uop = RelayUserOp::new(
             AlloyUserOperation {
-                signature: (signature.to_bytes(), message).abi_encode_packed().into(), // replace the signature with multi-sig
+                signature: (message, signature.to_bytes()).abi_encode_packed().into(), // replace the signature with multi-sig
                 ..bop
             },
             chain,
@@ -417,7 +520,7 @@ impl Relayer {
         );
 
         // 4. Push UserOp to the sending queue
-        tracing::trace!(%send_id, "Relay({:?} => {chain:?}): queue", self.chain);
+        tracing::trace!(%send_id, "Relayer({:?}): queue", self.chain);
         if let Err(err) = self.relay_tx.send(final_uop) {
             tracing::error!(%err, "relay_tx closed");
         };
