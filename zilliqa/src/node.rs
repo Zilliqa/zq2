@@ -976,15 +976,17 @@ impl Node {
                 let mut inspector = JsInspector::new(js_code, tracer_config.into_json())
                     .map_err(|e| anyhow!("Unable to create js inspector: {e}"))?;
 
+                let caller = call_params.from.unwrap_or_default();
+                let caller_nonce = evm_state.get_account(caller)?.nonce;
                 let (ResultAndState { result, state }, ..) = evm_state.apply_transaction_evm(
-                    call_params.from.unwrap_or_default(),
+                    caller,
                     call_params.to.and_then(|to| to.into_to()),
                     0, // arbitrary price
                     None,
                     call_gas_limit,
                     u128::try_from(call_params.value.unwrap_or_default())?,
                     call_params.input.into_input().unwrap_or_default().to_vec(),
-                    None,
+                    Some(caller_nonce),
                     None,
                     None,
                     block.header,

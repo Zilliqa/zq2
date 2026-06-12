@@ -1199,6 +1199,7 @@ impl TransactionPool {
                 SignedTransaction::Legacy { .. }
                 | SignedTransaction::Eip2930 { .. }
                 | SignedTransaction::Eip1559 { .. }
+                | SignedTransaction::Eip7702 { .. }
                 | SignedTransaction::Zilliqa { .. } => true,
                 SignedTransaction::Intershard { .. } => false,
             })

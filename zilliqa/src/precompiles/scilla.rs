@@ -552,7 +552,7 @@ fn scilla_call_precompile(
     ctx: &mut ZQ2EvmContext,
     gas_exempt: bool,
 ) -> std::result::Result<PrecompileOutput, PrecompileErrors> {
-    if ctx.chain.fork.disable_interop_native_zil_transfers_0 && !input.value.is_apparent() {
+    if ctx.chain.fork.disable_interop_native_zil_transfers_0 && !input.value.get().is_zero() {
         return err("native ZIL transfers to the scilla_call precompile are disabled");
     }
 

@@ -65,7 +65,8 @@ fn discard(
     Ok((
         ResultAndState {
             result: ExecutionResult::Revert {
-                gas_used: result_and_state.result.gas_used(),
+                gas: *result_and_state.result.gas(),
+                logs: vec![],
                 output: Bytes::default(),
             },
             state: result_and_state.state,
@@ -95,7 +96,7 @@ fn charge_gas(
         result,
         state: evm_state,
     } = result_and_state;
-    let gas_used = result.gas_used();
+    let gas_used = result.tx_gas_used();
     let fee = (gas_used as u128).saturating_mul(effective_gas_price);
 
     let pre = state.get_account(from_addr)?;
@@ -126,7 +127,8 @@ fn charge_gas(
     Ok((
         ResultAndState {
             result: ExecutionResult::Revert {
-                gas_used,
+                gas: *result.gas(),
+                logs: vec![],
                 output: Bytes::default(),
             },
             state: charged_state,

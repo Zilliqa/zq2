@@ -473,6 +473,7 @@ impl State {
         amount: u128,
     ) -> Result<Address> {
         let current_block = BlockHeader::genesis(Hash::ZERO);
+        let deployer_nonce = self.get_account(Address::ZERO)?.nonce;
         let (ResultAndState { result, mut state }, ..) = self.apply_transaction_evm(
             Address::ZERO,
             None,
@@ -481,7 +482,7 @@ impl State {
             self.block_gas_limit,
             amount,
             creation_bytecode,
-            None,
+            Some(deployer_nonce),
             None,
             None,
             current_block,
@@ -1294,6 +1295,7 @@ impl State {
         extra_opts: ExtraOpts,
     ) -> Result<u64> {
         let gas_price = gas_price.unwrap_or(self.gas_price);
+        let caller_nonce = self.get_account(from_addr)?.nonce;
 
         let is_simple_transfer = if data.is_empty()
             && let Some(dest_addr) = to_addr
@@ -1314,7 +1316,7 @@ impl State {
                 gas,
                 value,
                 data.clone(),
-                None,
+                Some(caller_nonce),
                 access_list.clone(),
                 authorization_list.clone(),
                 current_block,
@@ -1367,7 +1369,7 @@ impl State {
                 EvmGas(mid),
                 value,
                 data.clone(),
-                None,
+                Some(caller_nonce),
                 access_list.clone(),
                 authorization_list.clone(),
                 current_block,
@@ -1404,6 +1406,7 @@ impl State {
         authorization_list: Option<Vec<SignedAuthorization>>,
         extra_opts: ExtraOpts,
     ) -> Result<u64> {
+        let caller_nonce = self.get_account(from_addr)?.nonce;
         let (ResultAndState { result, .. }, ..) = self.apply_transaction_evm(
             from_addr,
             to_addr,
@@ -1412,7 +1415,7 @@ impl State {
             gas,
             value,
             data.clone(),
-            None,
+            Some(caller_nonce),
             access_list,
             authorization_list,
             current_block,
@@ -1437,6 +1440,7 @@ impl State {
         amount: u128,
         current_block: BlockHeader,
     ) -> Result<ExecutionResult> {
+        let caller_nonce = self.get_account(from_addr)?.nonce;
         let (ResultAndState { result, .. }, ..) = self.apply_transaction_evm(
             from_addr,
             to_addr,
@@ -1445,7 +1449,7 @@ impl State {
             self.block_gas_limit,
             amount,
             data,
-            None,
+            Some(caller_nonce),
             None,
             None,
             current_block,
@@ -1472,6 +1476,7 @@ impl State {
         amount: u128,
         current_block: BlockHeader,
     ) -> Result<ExecutionResult> {
+        let caller_nonce = self.get_account(from_addr)?.nonce;
         let (ResultAndState { result, state }, ..) = self.apply_transaction_evm(
             from_addr,
             to_addr,
@@ -1480,7 +1485,7 @@ impl State {
             self.block_gas_limit,
             amount,
             data,
-            None,
+            Some(caller_nonce),
             None,
             None,
             current_block,

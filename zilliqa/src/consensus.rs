@@ -1816,6 +1816,7 @@ impl Consensus {
                 SignedTransaction::Legacy { .. }
                 | SignedTransaction::Eip2930 { .. }
                 | SignedTransaction::Eip1559 { .. }
+                | SignedTransaction::Eip7702 { .. }
                 | SignedTransaction::Zilliqa { .. } => {
                     info!(?txn, "seen new txn");
                     inserted.push(self.new_transaction(txn, from_broadcast)?)
