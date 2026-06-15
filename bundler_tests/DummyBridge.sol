@@ -15,8 +15,8 @@ import {
     IERC7786GatewaySource,
     IERC7786Recipient
 } from "@openzeppelin/contracts/interfaces/draft-IERC7786.sol";
-import {CAIP2, CAIP10} from "@openzeppelin/contracts/utils/CAIP10.sol";
 import {NoncesKeyed} from "@openzeppelin/contracts/utils/NoncesKeyed.sol";
+import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 
 contract DummyBridge is
     Pausable,
@@ -33,15 +33,17 @@ contract DummyBridge is
     bytes32 private immutable LOCAL_CHAIN_K256;
     address private EP_ADDRESS;
 
-    mapping(string => uint128[6]) private destinationFees;
+    mapping(uint64 => uint128[6]) private destinationFees;
 
     constructor(address _ep) payable {
         entryPoint = IEntryPoint(_ep);
-        LOCAL_CHAIN_K256 = keccak256(bytes(CAIP2.local()));
+        LOCAL_CHAIN_K256 = keccak256(
+            InteroperableAddress.formatEvmV1(block.chainid)
+        );
         EP_ADDRESS = _ep;
 
         // pre-populate
-        destinationFees[CAIP2.local()] = [
+        destinationFees[uint64(block.chainid)] = [
             uint128(0x100001),
             uint128(0x100002),
             uint128(0x100003),
@@ -136,7 +138,7 @@ contract DummyBridge is
     }
 
     function getFees(
-        string calldata chain_id
+        uint64 chain_id
     ) public view virtual returns (uint128[6] memory) {
         return destinationFees[chain_id];
     }
@@ -171,15 +173,16 @@ contract DummyBridge is
         // 4. Nonce replay check
 
         // 5. Send to destination
-        (string memory dst_chain, string memory dst_addr) = CAIP10.parse(
-            string(recipient)
+        (uint256 dst_chain, address dst_addr) = InteroperableAddress.parseEvmV1(
+            recipient
         );
         require(
-            keccak256(bytes(dst_chain)) == LOCAL_CHAIN_K256,
+            keccak256(InteroperableAddress.formatEvmV1(dst_chain)) ==
+                LOCAL_CHAIN_K256,
             "Foreign destination"
         );
-        (string memory src_chain, string memory src_addr) = CAIP10.parse(
-            string(sender)
+        (uint256 src_chain, address src_addr) = InteroperableAddress.parseEvmV1(
+            sender
         );
 
         // require(
@@ -196,22 +199,27 @@ contract DummyBridge is
     /// IERC7786GatewaySource::sendMessage()
     /// Constructs the cross-chain quad-tuple payload to be relayed.
     function sendMessage(
-        bytes calldata recipient, // CAIP10/EIP155 full address
+        bytes calldata recipient, // ERC7930
         bytes calldata payload,
         bytes[] calldata // Stick pricing in here?
     ) public payable virtual whenNotPaused returns (bytes32 sendId) {
-        require(msg.value == 0, "received value");
+        (uint256 chainId, address addr) = InteroperableAddress.parseEvmV1(
+            recipient
+        ); // reverts if recipient is invalid
 
         // retrieve destination fee structure
         bytes[] memory attributes = new bytes[](1);
         bytes memory feeAttribute = abi.encodeWithSignature(
             "feeParams(uint128[6])",
-            destinationFees[CAIP2.local()]
+            destinationFees[block.chainid]
         );
         attributes[0] = feeAttribute;
 
         // wrapping the payload
-        bytes memory sender = bytes(CAIP10.local(msg.sender));
+        bytes memory sender = InteroperableAddress.formatEvmV1(
+            block.chainid,
+            msg.sender
+        );
         uint256 nonce = _useNonce(address(this), uint192(0));
 
         bytes memory wrappedPayload = abi.encodeWithSelector(
@@ -225,7 +233,10 @@ contract DummyBridge is
         // compute sendId
         sendId = keccak256(wrappedPayload);
 
-        bytes memory gateway = bytes(CAIP10.local(address(this)));
+        bytes memory gateway = InteroperableAddress.formatEvmV1(
+            block.chainid,
+            address(this)
+        );
 
         emit MessageSent(
             sendId,

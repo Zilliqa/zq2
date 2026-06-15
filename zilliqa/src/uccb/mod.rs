@@ -62,7 +62,7 @@ sol! {
         function feeParams(uint128[6]);
         event MessageReceived(bytes32 indexed receiveId, address relayer);
         function getFees(
-            string chain_id
+            uint64 chain_id
         ) external view returns (uint128[6]);
     }
 }
