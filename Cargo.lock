@@ -3090,6 +3090,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ensip25"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3a7d61bf320a02b7aeac1e82e1c5acac7bf32a7afcd9605773c64ab09d2344a"
+dependencies = [
+ "alloy-primitives",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "enum-as-inner"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9374,20 +9384,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
 
 [[package]]
-name = "tap-caip"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a00582facd6f675b335e83cea0152aadfc4fcf21d3daa9ccf4fc5de537492c61"
-dependencies = [
- "hex",
- "once_cell",
- "regex",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
-]
-
-[[package]]
 name = "tempfile"
 version = "3.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11493,6 +11489,7 @@ dependencies = [
  "crossbeam",
  "dashmap",
  "duration-str",
+ "ensip25",
  "eth_trie",
  "ethabi",
  "foundry-compilers",
@@ -11540,7 +11537,6 @@ dependencies = [
  "sha2 0.10.9",
  "sha3",
  "sled",
- "tap-caip",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
