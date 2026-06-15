@@ -34,3 +34,6 @@ config.toml
 # Solidity Compiler files
 cache/
 out/
+
+# Foundry cache
+cache-foundry/
