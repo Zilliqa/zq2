@@ -36,7 +36,7 @@ use crate::{
         EndPoint,
         IERC7786GatewaySource::MessageSent,
         SignUserOp,
-        utils::{get_eip155_address, get_eip155_chain, get_user_op_hash},
+        utils::{get_erc7930_address, get_erc7930_chain, get_user_op_hash},
     },
 };
 
@@ -230,11 +230,11 @@ impl Signer {
                 }
 
                 // 6. Validate route
-                let Ok(dst_chain) = get_eip155_chain(std::str::from_utf8(&recipient)?) else {
+                let Ok(dst_chain) = get_erc7930_chain(recipient.iter().as_slice()) else {
                     tracing::warn!(send_id=%sendId, "MessageSent({chain:?}): invalid destination");
                     continue;
                 };
-                let Ok(src_chain) = get_eip155_chain(std::str::from_utf8(&sender)?) else {
+                let Ok(src_chain) = get_erc7930_chain(sender.iter().as_slice()) else {
                     tracing::warn!(send_id=%sendId, "MessageSent({chain:?}): invalid source");
                     continue;
                 };
@@ -243,7 +243,7 @@ impl Signer {
                     "MessageSent({chain:?}): invalid source"
                 ); // MessageSent comes from source
 
-                let Ok(sender) = get_eip155_address(std::str::from_utf8(&sender)?) else {
+                let Ok(sender) = get_erc7930_address(sender.iter().as_slice()) else {
                     tracing::warn!(send_id=%sendId, "MessageSent({chain:?}): invalid sender");
                     continue;
                 };
@@ -532,9 +532,9 @@ impl Signer {
             // .get_or_insert() does not work in async
             *fees
         } else {
-            let caip2 = tap_caip::ChainId::new("eip155", &dst_chain.id().to_string())?;
+            let chain_id = dst_chain.id();
             let fees = super::IERC4337Extra::new(*gateway, jsonrpc)
-                .getFees(caip2.to_string())
+                .getFees(chain_id)
                 .block(BlockId::number(*blk_height))
                 .call()
                 .await?;
