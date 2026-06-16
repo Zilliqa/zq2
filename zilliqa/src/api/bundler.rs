@@ -2,6 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use alloy::{
     eips::BlockId,
+    primitives::Address,
     rpc::types::{
         BlockOverrides, TransactionRequest,
         state::{AccountOverride, StateOverride},
@@ -10,6 +11,7 @@ use alloy::{
 use alloy_rpc_types_trace::geth::{GethDebugTracingCallOptions, GethTrace};
 use anyhow::{Result, anyhow};
 use eth_trie::{EthTrie, Trie as _};
+use itertools::Itertools;
 use jsonrpsee::{
     RpcModule,
     types::{ErrorObjectOwned, Params},
@@ -33,6 +35,12 @@ use crate::{
 pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc<Node>> {
     let mut module = RpcModule::new(node.clone());
     module
+        .merge(super::web3::rpc_module(node.clone(), enabled_apis))
+        .unwrap();
+    module
+        .merge(super::net::rpc_module(node.clone(), enabled_apis))
+        .unwrap();
+    module
         .merge(super::eth::rpc_module(node.clone(), enabled_apis))
         .unwrap();
     module
@@ -45,6 +53,7 @@ pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc
         enabled_apis,
         [
             ("eth_call", eth_call, HandlerType::Fast),
+            ("eth_accounts", eth_accounts, HandlerType::Fast),
             ("debug_traceCall", debug_trace_call, HandlerType::Slow),
         ],
     );
@@ -54,6 +63,17 @@ pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc
     module.merge(overrides).unwrap();
 
     module
+}
+
+fn eth_accounts(_params: Params, node: &Arc<Node>) -> Result<Vec<Address>> {
+    let accounts = node
+        .config
+        .consensus
+        .genesis_accounts
+        .iter()
+        .map(|(addr, _amount)| *addr)
+        .collect_vec();
+    Ok(accounts)
 }
 
 pub fn debug_trace_call(params: Params, node: &Arc<Node>) -> Result<GethTrace> {
