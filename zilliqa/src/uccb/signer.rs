@@ -219,6 +219,10 @@ impl Signer {
                     tracing::warn!(%txn_hash, "MessageSent({chain:?}): invalid structure");
                     continue; // skip on failure
                 };
+                if sendId == alloy::primitives::KECCAK256_EMPTY {
+                    tracing::debug!(send_id=%sendId, "MessageSent({chain:?}): skipped");
+                    continue; // skip local deliveries
+                }
                 tracing::debug!(send_id=%sendId, "MessageSent({chain:?}): seen");
 
                 // 5. Validate payload integrity
