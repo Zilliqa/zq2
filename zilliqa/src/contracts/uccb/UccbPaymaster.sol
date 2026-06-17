@@ -12,10 +12,11 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
-import {ERC165} from "@openzeppelin/contracts/utils/introspection/ERC165.sol";
+import {ERC165Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/introspection/ERC165Upgradeable.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
+import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
 
 /**
  * @title  Paymaster
@@ -26,7 +27,7 @@ contract UccbPaymaster is
     UUPSUpgradeable,
     AccessControlUpgradeable,
     PausableUpgradeable,
-    // EIP712Upgradeable,
+    EIP712Upgradeable,
     ReentrancyGuardTransient,
     IPaymaster
 {
@@ -64,8 +65,10 @@ contract UccbPaymaster is
     ) external initializer {
         assert(admin_ != address(0));
 
+        __EIP712_init("UccbPaymaster", "1");
         __AccessControl_init();
         __Pausable_init();
+        __ERC165_init();
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin_);
     }
@@ -89,9 +92,8 @@ contract UccbPaymaster is
         whenNotPaused
         returns (bytes memory context, uint256 validationData)
     {
-        // Context is for postOp bookkeeping.
-        context = "";
-        validationData = ERC4337Utils.packValidationData(true, 0, 0); // true, forever
+        // TODO: allow from SENDER
+        return ("", ERC4337Utils.packValidationData(true, 0, 0)); // true, forever
     }
 
     /**
@@ -104,7 +106,7 @@ contract UccbPaymaster is
         uint256, // actualGasCost,
         uint256 // actualUserOpFeePerGas
     ) external view override onlyEntryPoint {
-        // Decode the sponsor mode that was stored in context.
+        // TODO: record the signer and co-signers
         if (context.length == 0) return;
     }
 
@@ -112,7 +114,7 @@ contract UccbPaymaster is
      * @notice Deposit ETH into the EntryPoint so the paymaster can cover gas.
      *         Anyone can call; the EntryPoint credits the deposit to this contract.
      */
-    function depositToEntryPoint() external payable nonReentrant {
+    function depositTo() external payable nonReentrant {
         entryPoint().depositTo{value: msg.value}(address(this));
     }
 
@@ -120,7 +122,7 @@ contract UccbPaymaster is
      * @notice Withdraw ETH from the EntryPoint deposit back to this contract.
      * @param  amount  Wei to withdraw.
      */
-    function withdrawFromEntryPoint(
+    function withdrawTo(
         uint256 amount
     ) external onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant {
         entryPoint().withdrawTo(payable(address(this)), amount);
@@ -129,16 +131,12 @@ contract UccbPaymaster is
     /**
      * @notice View the current EntryPoint deposit balance.
      */
-    function getDeposit() external view returns (uint256) {
+    function balanceOf() external view returns (uint256) {
         return entryPoint().balanceOf(address(this));
     }
 
     /**
      * @notice Add stake to the EntryPoint for this paymaster.
-     *
-     * @dev    Paymasters that access global / non-sender-associated storage
-     *         in validatePaymasterUserOp MUST be staked to avoid bundler
-     *         rejection under ERC-7562 reputation rules.
      *
      * @param  unstakeDelaySec  Delay (seconds) before stake can be withdrawn.
      *                          Must meet the EntryPoint's minimum.
@@ -185,7 +183,9 @@ contract UccbPaymaster is
 
     function _authorizeUpgrade(
         address /*newImplementation*/
-    ) internal view override onlyRole(DEFAULT_ADMIN_ROLE) {}
+    ) internal view override onlyRole(DEFAULT_ADMIN_ROLE) {
+        // TODO: audit log
+    }
 
     /**
      * @dev Advertises all interfaces implemented by this contract.
@@ -196,6 +196,7 @@ contract UccbPaymaster is
     ) public view virtual override(AccessControlUpgradeable) returns (bool) {
         return
             interfaceId == type(IPaymaster).interfaceId ||
+            interfaceId == type(IERC165).interfaceId ||
             super.supportsInterface(interfaceId);
     }
 
