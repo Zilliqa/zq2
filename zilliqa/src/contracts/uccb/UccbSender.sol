@@ -74,7 +74,6 @@ contract UccbSmartAccount is
         bytes32 userOpHash
     ) external {}
 
-
     /**
      * @notice Top-up this account's gas deposit in the EntryPoint.
      */
@@ -105,4 +104,12 @@ contract UccbSmartAccount is
     function _authorizeUpgrade(
         address /*newImplementation*/
     ) internal view override onlyEntryPointOrSelf {}
+
+    /**
+     * @dev Account.receive() already exists and emits nothing.
+     *      Override to emit an event so indexers can track deposits.
+     */
+    // receive() external payable virtual override {
+    //     emit Received(msg.sender, msg.value);
+    // }
 }
