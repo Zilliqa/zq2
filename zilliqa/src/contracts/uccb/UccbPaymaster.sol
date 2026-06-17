@@ -12,8 +12,9 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
-import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-
+import {ERC165} from "@openzeppelin/contracts/utils/introspection/ERC165.sol";
+import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 
 /**
@@ -23,7 +24,7 @@ import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 contract UccbPaymaster is
     Initializable,
     UUPSUpgradeable,
-    OwnableUpgradeable,
+    AccessControlUpgradeable,
     PausableUpgradeable,
     // EIP712Upgradeable,
     ReentrancyGuardTransient,
@@ -47,11 +48,7 @@ contract UccbPaymaster is
         return ERC4337Utils.ENTRYPOINT_V08;
     }
 
-    /**
-     * @dev Permanently disables initializers on the bare implementation
-     *      so it cannot be hijacked.
-     * @custom:oz-upgrades-unsafe-allow constructor
-     */
+    /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
     }
@@ -62,12 +59,15 @@ contract UccbPaymaster is
      * @notice One-time initializer called by the factory through the proxy.
      */
     function initialize(
-        address _admin,
+        address admin_,
         uint256 // _maxCostPerOp
     ) external initializer {
-        assert(_admin != address(0));
-        __Ownable_init(_admin);
+        assert(admin_ != address(0));
+
+        __AccessControl_init();
         __Pausable_init();
+
+        _grantRole(DEFAULT_ADMIN_ROLE, admin_);
     }
 
     /**
@@ -122,7 +122,7 @@ contract UccbPaymaster is
      */
     function withdrawFromEntryPoint(
         uint256 amount
-    ) external onlyOwner nonReentrant {
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant {
         entryPoint().withdrawTo(payable(address(this)), amount);
     }
 
@@ -143,7 +143,9 @@ contract UccbPaymaster is
      * @param  unstakeDelaySec  Delay (seconds) before stake can be withdrawn.
      *                          Must meet the EntryPoint's minimum.
      */
-    function addStake(uint32 unstakeDelaySec) external payable onlyOwner {
+    function addStake(
+        uint32 unstakeDelaySec
+    ) external payable onlyRole(DEFAULT_ADMIN_ROLE) {
         entryPoint().addStake{value: msg.value}(unstakeDelaySec);
     }
 
@@ -151,7 +153,7 @@ contract UccbPaymaster is
      * @notice Initiate the stake unlock process.  After the unstake delay
      *         has elapsed, call {withdrawStake}.
      */
-    function unlockStake() external onlyOwner {
+    function unlockStake() external onlyRole(DEFAULT_ADMIN_ROLE) {
         entryPoint().unlockStake();
     }
 
@@ -159,7 +161,9 @@ contract UccbPaymaster is
      * @notice Withdraw previously unlocked stake.
      * @param  to  Recipient of the returned ETH.
      */
-    function withdrawStake(address payable to) external onlyOwner nonReentrant {
+    function withdrawStake(
+        address payable to
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant {
         assert(to != address(0));
         entryPoint().withdrawStake(to);
     }
@@ -168,20 +172,32 @@ contract UccbPaymaster is
      * @notice Pause the paymaster. validatePaymasterUserOp will revert
      *         while paused, preventing new ops from being sponsored.
      */
-    function pause() external onlyOwner {
+    function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
         _pause();
     }
 
     /**
      * @notice Resume normal operation.
      */
-    function unpause() external onlyOwner {
+    function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) {
         _unpause();
     }
 
     function _authorizeUpgrade(
         address /*newImplementation*/
-    ) internal view override onlyOwner {}
+    ) internal view override onlyRole(DEFAULT_ADMIN_ROLE) {}
+
+    /**
+     * @dev Advertises all interfaces implemented by this contract.
+     *      AccessControlUpgradeable already registers IAccessControl.
+     */
+    function supportsInterface(
+        bytes4 interfaceId
+    ) public view virtual override(AccessControlUpgradeable) returns (bool) {
+        return
+            interfaceId == type(IPaymaster).interfaceId ||
+            super.supportsInterface(interfaceId);
+    }
 
     /**
      * @dev Accept ETH (refunds from EntryPoint, direct top-ups, etc.).

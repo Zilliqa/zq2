@@ -8,10 +8,8 @@ import {
     IAccountExecute,
     PackedUserOperation
 } from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
-
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 
@@ -35,9 +33,7 @@ contract UccbSmartAccount is
 {
     using Address for address;
 
-    /**
-     * @custom:oz-upgrades-unsafe-allow constructor
-     */
+    /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
     }
@@ -109,7 +105,7 @@ contract UccbSmartAccount is
      * @dev Account.receive() already exists and emits nothing.
      *      Override to emit an event so indexers can track deposits.
      */
-    // receive() external payable virtual override {
-    //     emit Received(msg.sender, msg.value);
-    // }
+    receive() external payable virtual override {
+        // emit Received(msg.sender, msg.value);
+    }
 }
