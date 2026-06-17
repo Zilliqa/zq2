@@ -85,6 +85,7 @@ contract UccbGateway is
         bytes4 msgType,
         bytes memory body
     ) internal pure returns (bytes memory) {
+        // TODO: Reduce size
         return
             abi.encodeWithSelector(
                 IAccountExecute.executeUserOp.selector, // needed to trigger executeUserOp() later
