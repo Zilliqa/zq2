@@ -201,20 +201,8 @@ contract DummyBridge is
     function sendMessage(
         bytes calldata recipient, // ERC7930
         bytes calldata payload,
-        bytes[] calldata // Stick pricing in here?
+        bytes[] calldata attributes // Stick pricing in here?
     ) public payable virtual whenNotPaused returns (bytes32 sendId) {
-        (uint256 chainId, address addr) = InteroperableAddress.parseEvmV1(
-            recipient
-        ); // reverts if recipient is invalid
-
-        // retrieve destination fee structure
-        bytes[] memory attributes = new bytes[](1);
-        bytes memory feeAttribute = abi.encodeWithSignature(
-            "feeParams(uint128[6])",
-            destinationFees[block.chainid]
-        );
-        attributes[0] = feeAttribute;
-
         // wrapping the payload
         bytes memory sender = InteroperableAddress.formatEvmV1(
             block.chainid,
