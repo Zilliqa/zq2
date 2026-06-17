@@ -10,12 +10,14 @@ import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-Interope
 import {Bytes} from "@openzeppelin/contracts/utils/Bytes.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {NoncesKeyedUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/NoncesKeyedUpgradeable.sol";
 import {IAccountExecute} from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
+import {ERC165} from "@openzeppelin/contracts/utils/introspection/ERC165.sol";
+import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 
 /**
  * @title  UccbGateway
@@ -40,7 +42,7 @@ contract UccbGateway is
     Initializable,
     CrosschainLinkedUpgradeable,
     UUPSUpgradeable,
-    OwnableUpgradeable,
+    AccessControlUpgradeable,
     PausableUpgradeable,
     ReentrancyGuardTransient,
     NoncesKeyedUpgradeable,
@@ -57,18 +59,21 @@ contract UccbGateway is
     /**
      * @notice One-time proxy initializer.
      *
-     * @param  owner   Address granted DEFAULT_ADMIN_ROLE (and all sub-roles).
+     * @param  admin_   Address granted DEFAULT_ADMIN_ROLE (and all sub-roles).
      * @param  links    Initial chain links (gateway ↔ counterpart pairs).
      *                  Each entry is a {CrosschainLinkedUpgradeable.Link} struct.
      */
     function initialize(
-        address owner,
+        address admin_,
         CrosschainLinkedUpgradeable.Link[] memory links
     ) external initializer {
-        assert(owner != address(0));
+        assert(admin_ != address(0));
+
+        __AccessControl_init();
         __Pausable_init();
         __CrosschainLinked_init(links);
-        __Ownable_init(owner);
+
+        _grantRole(DEFAULT_ADMIN_ROLE, admin_);
     }
 
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -177,7 +182,7 @@ contract UccbGateway is
         address sender,
         bytes memory counterpart,
         bool allowOverride
-    ) public onlyOwner {
+    ) public onlyRole(DEFAULT_ADMIN_ROLE) {
         _setLink(sender, counterpart, allowOverride);
     }
 
@@ -236,14 +241,28 @@ contract UccbGateway is
 
     function _authorizeUpgrade(
         address newImplementation
-    ) internal override onlyOwner {}
+    ) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
     // PausableUpgradeable – restricted entry points
 
-    function pause() external onlyOwner {
+    function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
         _pause();
     }
-    function unpause() external onlyOwner {
+    function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) {
         _unpause();
+    }
+
+    /**
+     * @dev Advertises all interfaces implemented by this contract.
+     *      AccessControlUpgradeable already registers IAccessControl.
+     */
+    function supportsInterface(
+        bytes4 interfaceId
+    ) public view virtual override(AccessControlUpgradeable) returns (bool) {
+        return
+            interfaceId == type(IERC7786GatewaySource).interfaceId ||
+            interfaceId == type(IERC7786Recipient).interfaceId ||
+            interfaceId == type(IERC165).interfaceId ||
+            super.supportsInterface(interfaceId);
     }
 }
