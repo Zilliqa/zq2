@@ -5,6 +5,7 @@ import {Account} from "@openzeppelin/contracts/account/Account.sol";
 import {ERC4337Utils} from "@openzeppelin/contracts/account/utils/draft-ERC4337Utils.sol";
 import {
     IEntryPoint,
+    IAccount,
     IAccountExecute,
     PackedUserOperation
 } from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
@@ -12,22 +13,22 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/U
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
+import {ERC165Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/introspection/ERC165Upgradeable.sol";
+import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
 
 /**
- * @title  UccbSmartAccount
+ * @title  UccbSender
  * @notice ERC-4337 Sender contract built entirely on OpenZeppelin v5.6.x.
  *
  * @custom:oz-upgrades-unsafe-allow constructor
  */
-contract UccbSmartAccount is
+contract UccbSender is
     Initializable,
-    // SignerECDSAUpgradeable,
-    // ERC7739Upgradeable,
-    // ERC165Upgradeable,
+    ERC165Upgradeable,
     UUPSUpgradeable,
     ReentrancyGuardTransient,
-    // IERC721Receiver,
-    // IERC1155Receiver
+    EIP712Upgradeable,
     IAccountExecute,
     Account
 {
@@ -43,11 +44,12 @@ contract UccbSmartAccount is
      *         deploying the proxy.
      *
      * @param  signerAddr  Owner / signing key for this account.
-     *
-     * UUPSUpgradeable and ReentrancyGuardTransient have no state to init.
      */
     function initialize(address signerAddr) external initializer {
         assert(signerAddr != address(0));
+
+        __EIP712_init("UccbSender", "1");
+        __ERC165_init();
     }
 
     /// Use v0.8 entrypoint only
@@ -68,19 +70,24 @@ contract UccbSmartAccount is
     function executeUserOp(
         PackedUserOperation calldata userOp,
         bytes32 userOpHash
-    ) external {}
+    ) external {
+        // TODO:
+        // 1. Determine if it is a CALL or CONFIG
+        // 2. On CONFIG, update the stakers; and
+        // 3. update the Paymaster stakers.
+    }
 
     /**
      * @notice Top-up this account's gas deposit in the EntryPoint.
      */
-    function addDeposit() external payable {
+    function depositTo() external payable {
         entryPoint().depositTo{value: msg.value}(address(this));
     }
 
     /**
      * @notice View current EntryPoint deposit balance.
      */
-    function getDeposit() external view returns (uint256) {
+    function balanceOf() external view returns (uint256) {
         return entryPoint().balanceOf(address(this));
     }
 
@@ -89,7 +96,7 @@ contract UccbSmartAccount is
      * @param  to      Recipient.
      * @param  amount  Amount to withdraw (in wei).
      */
-    function withdrawDepositTo(
+    function withdrawTo(
         address payable to,
         uint256 amount
     ) external onlyEntryPointOrSelf {
@@ -99,7 +106,9 @@ contract UccbSmartAccount is
     /// UUPSUpgradeable
     function _authorizeUpgrade(
         address /*newImplementation*/
-    ) internal view override onlyEntryPointOrSelf {}
+    ) internal view override onlyEntryPointOrSelf {
+        // TODO: audit log
+    }
 
     /**
      * @dev Account.receive() already exists and emits nothing.
@@ -107,5 +116,19 @@ contract UccbSmartAccount is
      */
     receive() external payable virtual override {
         // emit Received(msg.sender, msg.value);
+    }
+
+    /**
+     * @dev Advertises every interface this account satisfies.
+     *      ERC165Upgradeable handles IERC165; all others are added here.
+     */
+    function supportsInterface(
+        bytes4 interfaceId
+    ) public view virtual override(ERC165Upgradeable) returns (bool) {
+        return
+            interfaceId == type(IAccountExecute).interfaceId ||
+            interfaceId == type(IAccount).interfaceId ||
+            interfaceId == type(IERC165).interfaceId ||
+            super.supportsInterface(interfaceId);
     }
 }

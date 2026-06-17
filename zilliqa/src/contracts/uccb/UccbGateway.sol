@@ -15,7 +15,7 @@ import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/crypt
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {NoncesKeyedUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/NoncesKeyedUpgradeable.sol";
 import {IAccountExecute} from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
-import {ERC165} from "@openzeppelin/contracts/utils/introspection/ERC165.sol";
+import {ERC165Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/introspection/ERC165Upgradeable.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 
@@ -46,6 +46,7 @@ contract UccbGateway is
     PausableUpgradeable,
     ReentrancyGuardTransient,
     NoncesKeyedUpgradeable,
+    EIP712Upgradeable,
     IERC7786GatewaySource
 {
     // using Address for address payable;
@@ -69,9 +70,11 @@ contract UccbGateway is
     ) external initializer {
         assert(admin_ != address(0));
 
+        __EIP712_init("UccbGateway", "1");
         __AccessControl_init();
         __Pausable_init();
         __CrosschainLinked_init(links);
+        __ERC165_init();
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin_);
     }
@@ -241,7 +244,9 @@ contract UccbGateway is
 
     function _authorizeUpgrade(
         address newImplementation
-    ) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
+    ) internal override onlyRole(DEFAULT_ADMIN_ROLE) {
+        // TODO: audit log
+    }
 
     // PausableUpgradeable – restricted entry points
 
