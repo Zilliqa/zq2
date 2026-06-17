@@ -175,6 +175,7 @@ pub struct Node {
     pub chain_id: ChainId,
     pub filters: Arc<Filters>,
     swarm_peers: Arc<ArcSwap<Vec<PeerId>>>,
+    pub secret_key: SecretKey,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -224,6 +225,7 @@ impl Node {
         )?);
 
         let node = Node {
+            secret_key,
             config: config.clone(),
             peer_id,
             message_sender: message_sender.clone(),

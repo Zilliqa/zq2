@@ -18,46 +18,6 @@ import {NoncesKeyedUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/
 import {IAccountExecute} from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
 
 /**
- * @title  PayloadCodec
- * @notice Encode and decode the application-level message envelope that
- *         travels as the `payload` field of an ERC-7786 message.
- *
- * @dev Envelope format (abi.encode):
- *
- *   ( uint8  version,      - codec version (currently 1)
- *     bytes4 msgType,      - application-defined message type selector
- *     bytes  body    )     - type-specific payload bytes
- *
- * Versioning the envelope at the codec level means the gateway can
- * support rolling upgrades without breaking in-flight messages.
- */
-library PayloadCodec {
-    bytes4 public constant MSG_CALL = 0x1b8b921d; // call(address,bytes)
-    bytes4 public constant MSG_TRANSFER = 0xa9059cbb; // transfer(address,uint256)
-
-    uint8 internal constant VERSION = 1;
-
-    function encode(
-        bytes4 msgType,
-        bytes memory body
-    ) internal pure returns (bytes memory) {
-        return abi.encode(VERSION, msgType, body);
-    }
-
-    function decode(
-        bytes calldata payload
-    ) internal pure returns (bytes4 msgType, bytes memory body) {
-        require(payload.length >= 32, "Payload too short");
-        (uint8 version, bytes4 mType, bytes memory b) = abi.decode(
-            payload,
-            (uint8, bytes4, bytes)
-        );
-        require(version == VERSION, "Payload unsupported");
-        return (mType, b);
-    }
-}
-
-/**
  * @title  UccbGateway
  * @notice ERC-7786 gateway contract that implements both
  *         {IERC7786GatewaySource} and {IERC7786Recipient}.
@@ -70,9 +30,8 @@ library PayloadCodec {
  *
  *  INBOUND (destination side / recipient side):
  *    1. Sender calls receiveMessage() with the cross-chain payload.
- *    2. Gateway verifies the relayer's RELAYER_ROLE attestation signature.
- *    3. Calls receiveMessage on the registered IERC7786Recipient.
- *    4. Emits MessageDelivered.
+ *    2. Calls receiveMessage on the registered IERC7786Recipient.
+ *    3. Emits MessageReceived.
  *
  * @custom:oz-upgrades-unsafe-allow constructor
  */
@@ -106,7 +65,7 @@ contract UccbGateway is
         address owner,
         CrosschainLinkedUpgradeable.Link[] memory links
     ) external initializer {
-        require(owner != address(0), "Owner == 0");
+        assert(owner != address(0));
         __Pausable_init();
         __CrosschainLinked_init(links);
         __Ownable_init(owner);
@@ -115,6 +74,36 @@ contract UccbGateway is
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
+    }
+
+    /// CoDec
+    uint8 internal constant MSG_VERSION = 1;
+    bytes4 internal constant MSG_CALL = 0x1b8b921d; // call(address,bytes)
+    bytes4 internal constant MSG_TRANSFER = 0xa9059cbb; // transfer(address,uint256)
+
+    function _encode(
+        bytes4 msgType,
+        bytes memory body
+    ) internal pure returns (bytes memory) {
+        return
+            abi.encodeWithSelector(
+                IAccountExecute.executeUserOp.selector, // needed to trigger executeUserOp() later
+                MSG_VERSION,
+                msgType,
+                body
+            );
+    }
+
+    function _decode(
+        bytes calldata payload
+    ) internal pure returns (bytes4, bytes memory) {
+        assert(payload.length >= 32);
+        (uint8 version, bytes4 mType, bytes memory b) = abi.decode(
+            payload[4:],
+            (uint8, bytes4, bytes)
+        );
+        assert(version == MSG_VERSION);
+        return (mType, b);
     }
 
     // IERC7786GatewaySource
@@ -128,17 +117,10 @@ contract UccbGateway is
         bytes calldata recipient, // ERC7930(recipient)
         bytes calldata payload,
         bytes[] calldata attributes
-    )
-        external
-        payable
-        override
-        whenNotPaused
-        nonReentrant
-        returns (bytes32 sendId)
-    {
-        require(payload.length != 0, "Payload == 0");
-        require(msg.value == 0, "Value != 0");
-        require(attributes.length == 0, "Attributes != 0");
+    ) external payable override whenNotPaused nonReentrant returns (bytes32) {
+        assert(payload.length != 0);
+        assert(msg.value == 0);
+        assert(attributes.length == 0);
 
         // ERC7930(sender)
         bytes memory sender = InteroperableAddress.formatEvmV1(
@@ -148,12 +130,9 @@ contract UccbGateway is
 
         uint256 nonce = _useNonce(address(this), uint192(0));
 
-        bytes memory wrappedPayload = abi.encodeWithSelector(
-            IAccountExecute.executeUserOp.selector, // needed to trigger executeUserOp() later
-            PayloadCodec.encode(
-                PayloadCodec.MSG_CALL,
-                abi.encode(sender, recipient, payload, nonce)
-            )
+        bytes memory wrappedPayload = _encode(
+            MSG_CALL,
+            abi.encode(sender, recipient, payload, nonce)
         );
 
         // TODO: deliver local messages directly?
@@ -174,14 +153,21 @@ contract UccbGateway is
     ) internal override returns (bytes32) {
         (, bytes memory counterpart) = getLink(chain);
 
-        bytes memory sender = InteroperableAddress.formatEvmV1(
+        bytes memory originator = InteroperableAddress.formatEvmV1(
             block.chainid,
             address(this)
         );
 
         bytes32 sendId = keccak256(payload);
 
-        emit MessageSent(sendId, sender, counterpart, payload, 0, attributes);
+        emit MessageSent(
+            sendId,
+            originator,
+            counterpart,
+            payload,
+            0,
+            attributes
+        );
 
         return sendId;
     }
@@ -208,10 +194,8 @@ contract UccbGateway is
         (, address senderAddr) = relayer.parseEvmV1();
 
         // Deconstruct the quad-tuple payload
-        (bytes4 msgType, bytes memory quadtuple) = PayloadCodec.decode(
-            wrappedPayload[4:]
-        );
-        require(msgType == PayloadCodec.MSG_CALL);
+        (bytes4 msgType, bytes memory quadtuple) = _decode(wrappedPayload);
+        require(msgType == MSG_CALL);
         (
             bytes memory sender,
             bytes memory recipient,
@@ -241,9 +225,9 @@ contract UccbGateway is
 
     // Helper
     function __extractChain(
-        bytes memory self
+        bytes memory s
     ) private pure returns (bytes memory) {
-        (bytes2 chainType, bytes memory chainReference, ) = self.parseV1();
+        (bytes2 chainType, bytes memory chainReference, ) = s.parseV1();
         return InteroperableAddress.formatV1(chainType, chainReference, hex"");
     }
 
