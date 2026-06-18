@@ -17,6 +17,7 @@ import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
+import {MultiSignerERC7913WeightedUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/signers/MultiSignerERC7913WeightedUpgradeable.sol";
 
 /**
  * @title  Paymaster
@@ -29,11 +30,19 @@ contract UccbPaymaster is
     PausableUpgradeable,
     EIP712Upgradeable,
     ReentrancyGuardTransient,
+    // MultiSignerERC7913WeightedUpgradeable,
     IPaymaster
 {
     // using SafeERC20     for IERC20;
     using Address for address payable;
     using ERC4337Utils for PackedUserOperation;
+
+    // Roles
+    bytes32 public constant SPONSORED_SENDER_ROLE = keccak256(
+        "SPONSORED_SENDER_ROLE"
+    );
+    bytes32 public constant WITHDRAWER_ROLE = keccak256("WITHDRAWER_ROLE");
+    bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
     /**
      * @dev Restricts a function to the trusted EntryPoint.
@@ -44,9 +53,9 @@ contract UccbPaymaster is
         _;
     }
 
-    /// Use v0.8 entrypoint only
+    /// Use v0.9 entrypoint only
     function entryPoint() private pure returns (IEntryPoint) {
-        return ERC4337Utils.ENTRYPOINT_V08;
+        return ERC4337Utils.ENTRYPOINT_V09;
     }
 
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -71,17 +80,16 @@ contract UccbPaymaster is
         __ERC165_init();
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin_);
+        _grantRole(WITHDRAWER_ROLE, admin_);
+        _grantRole(PAUSER_ROLE, admin_);
     }
 
     /**
      * @notice Called by the EntryPoint during the verification loop.
      *         Must decide whether to sponsor this UserOp and return:
-     *           - context: arbitrary bytes forwarded to postOp (may be empty)
-     *           - validationData: packed (sigFailure | validUntil | validAfter)
-     *                             via ERC4337Utils.packValidationData
      */
     function validatePaymasterUserOp(
-        PackedUserOperation calldata, // userOp,
+        PackedUserOperation calldata userOp,
         bytes32, // userOpHash,
         uint256 // maxCost
     )
@@ -90,10 +98,13 @@ contract UccbPaymaster is
         override
         onlyEntryPoint
         whenNotPaused
-        returns (bytes memory context, uint256 validationData)
+        returns (bytes memory, uint256)
     {
-        // TODO: allow from SENDER
-        return ("", ERC4337Utils.packValidationData(true, 0, 0)); // true, forever
+        // allow all from SENDER
+        bool allowed = hasRole(SPONSORED_SENDER_ROLE, userOp.sender);
+        // extract validUntil/validAfter
+        // context = relayer + signers
+        return ("", ERC4337Utils.packValidationData(allowed, 0, 0)); // true, forever
     }
 
     /**
@@ -124,7 +135,7 @@ contract UccbPaymaster is
      */
     function withdrawTo(
         uint256 amount
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant {
+    ) external onlyRole(WITHDRAWER_ROLE) nonReentrant {
         entryPoint().withdrawTo(payable(address(this)), amount);
     }
 
@@ -161,7 +172,7 @@ contract UccbPaymaster is
      */
     function withdrawStake(
         address payable to
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant {
+    ) external onlyRole(WITHDRAWER_ROLE) nonReentrant {
         assert(to != address(0));
         entryPoint().withdrawStake(to);
     }
@@ -170,14 +181,14 @@ contract UccbPaymaster is
      * @notice Pause the paymaster. validatePaymasterUserOp will revert
      *         while paused, preventing new ops from being sponsored.
      */
-    function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function pause() external onlyRole(PAUSER_ROLE) {
         _pause();
     }
 
     /**
      * @notice Resume normal operation.
      */
-    function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function unpause() external onlyRole(PAUSER_ROLE) {
         _unpause();
     }
 
