@@ -18,6 +18,7 @@ import {IAccountExecute} from "@openzeppelin/contracts/interfaces/draft-IERC4337
 import {ERC165Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/introspection/ERC165Upgradeable.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 
 /**
  * @title  UccbGateway
@@ -49,10 +50,14 @@ contract UccbGateway is
     EIP712Upgradeable,
     IERC7786GatewaySource
 {
-    // using Address for address payable;
+    using Address for address payable;
     // using SafeCast for uint256;
     using InteroperableAddress for bytes;
     using Bytes for bytes;
+
+    // Roles
+    bytes32 public constant WITHDRAWER_ROLE = keccak256("WITHDRAWER_ROLE");
+    bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
     /// Emitted when an inbound message is successfully received.
     event MessageReceived(bytes32 indexed receiveId, address gateway);
@@ -77,6 +82,8 @@ contract UccbGateway is
         __ERC165_init();
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin_);
+        _grantRole(WITHDRAWER_ROLE, admin_);
+        _grantRole(PAUSER_ROLE, admin_);
     }
 
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -240,6 +247,18 @@ contract UccbGateway is
         return InteroperableAddress.formatV1(chainType, chainReference, hex"");
     }
 
+    /**
+     * @notice Withdraw accumulated message fees.
+     * @param  to  Recipient of the fees.
+     */
+    function withdrawTo(
+        address payable to,
+        uint256 amount
+    ) external onlyRole(WITHDRAWER_ROLE) nonReentrant {
+        require(to != address(0));
+        to.sendValue(amount);
+    }
+
     // UUPSUpgradeable
 
     function _authorizeUpgrade(
@@ -250,10 +269,10 @@ contract UccbGateway is
 
     // PausableUpgradeable – restricted entry points
 
-    function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function pause() external onlyRole(PAUSER_ROLE) {
         _pause();
     }
-    function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function unpause() external onlyRole(PAUSER_ROLE) {
         _unpause();
     }
 

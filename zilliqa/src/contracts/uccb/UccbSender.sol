@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Account} from "@openzeppelin/contracts/account/Account.sol";
+import {AbstractSigner} from "@openzeppelin/contracts/utils/cryptography/signers/AbstractSigner.sol";
 import {ERC4337Utils} from "@openzeppelin/contracts/account/utils/draft-ERC4337Utils.sol";
 import {
     IEntryPoint,
@@ -16,6 +17,8 @@ import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {ERC165Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/introspection/ERC165Upgradeable.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
+import {MultiSignerERC7913Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/signers/MultiSignerERC7913Upgradeable.sol";
+// import {MultiSignerERC7913WeightedUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/signers/MultiSignerERC7913WeightedUpgradeable.sol";
 
 /**
  * @title  UccbSender
@@ -25,6 +28,7 @@ import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/crypt
  */
 contract UccbSender is
     Initializable,
+    MultiSignerERC7913Upgradeable,
     ERC165Upgradeable,
     UUPSUpgradeable,
     ReentrancyGuardTransient,
@@ -43,27 +47,14 @@ contract UccbSender is
      * @notice One-time initializer called by the factory immediately after
      *         deploying the proxy.
      *
-     * @param  signerAddr  Owner / signing key for this account.
+     * @param  signers  Owner / signing key for this account.
      */
-    function initialize(address signerAddr) external initializer {
-        assert(signerAddr != address(0));
-
+    function initialize(bytes[] memory signers) external initializer {
         __EIP712_init("UccbSender", "1");
         __ERC165_init();
-    }
 
-    /// Use v0.8 entrypoint only
-    function entryPoint() public pure override returns (IEntryPoint) {
-        return ERC4337Utils.ENTRYPOINT_V08;
-    }
-
-    /// Called by validateUserOp()
-    function _rawSignatureValidation(
-        bytes32 hash,
-        bytes calldata // signature
-    ) internal pure override returns (bool) {
-        // TODO: Check signature
-        return hash != 0x0;
+        _addSigners(signers);
+        _setThreshold(uint64(1)); // one signer will pass
     }
 
     /// Called by handleOps()
@@ -76,6 +67,22 @@ contract UccbSender is
         // 2. On CONFIG, update the stakers; and
         // 3. update the Paymaster stakers.
     }
+
+    /// Called by entrypoint
+    function _rawSignatureValidation(
+        bytes32 hash,
+        bytes calldata signature
+    )
+        internal
+        pure
+        override(AbstractSigner, MultiSignerERC7913Upgradeable)
+        returns (bool)
+    {
+        // TODO: verify all signatures signature
+        return hash != 0 && signature.length != 0;
+    }
+
+    // ***** ENTRYPOINT *****
 
     /**
      * @notice Top-up this account's gas deposit in the EntryPoint.
@@ -103,7 +110,8 @@ contract UccbSender is
         entryPoint().withdrawTo(to, amount);
     }
 
-    /// UUPSUpgradeable
+    // ***** BOILER-PLATE *****
+
     function _authorizeUpgrade(
         address /*newImplementation*/
     ) internal view override onlyEntryPointOrSelf {
