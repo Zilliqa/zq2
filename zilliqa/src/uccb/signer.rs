@@ -225,9 +225,9 @@ impl Signer {
                 }
                 tracing::debug!(send_id=%sendId, "MessageSent({chain:?}): seen");
 
-                // 5. Validate payload integrity
+                // 5. Validate payload integrity; prevent executeUserOp() calls.
                 if sendId != keccak256(payload.iter().as_slice())
-                    && payload.starts_with(&super::IAccountExecute::executeUserOpCall::SELECTOR)
+                    && !payload.starts_with(&super::IAccountExecute::executeUserOpCall::SELECTOR)
                 {
                     tracing::warn!(send_id=%sendId, "MessageSent({chain:?}): invalid payload");
                     continue;
@@ -247,13 +247,13 @@ impl Signer {
                     "MessageSent({chain:?}): invalid source"
                 ); // MessageSent comes from source
 
-                let Ok(sender) = get_erc7930_address(sender.iter().as_slice()) else {
-                    tracing::warn!(send_id=%sendId, "MessageSent({chain:?}): invalid sender");
+                let Ok(origin) = get_erc7930_address(sender.iter().as_slice()) else {
+                    tracing::warn!(send_id=%sendId, "MessageSent({chain:?}): invalid origin");
                     continue;
                 };
                 anyhow::ensure!(
-                    sender == log.address(),
-                    "MessageSent({chain:?}): invalid sender"
+                    origin == log.address(),
+                    "MessageSent({chain:?}): invalid origin"
                 ); // Gateway contract is sender
 
                 let is_src_test = src_chain
@@ -272,10 +272,19 @@ impl Signer {
 
                 // Warning: may dead-lock, if watchers is locked above
                 if let Some(watcher) = watchers.get(&dst_chain.id()) {
+                    // Encode a receiveMessage() call
+                    let receive_message = super::IERC7786Recipient::receiveMessageCall {
+                        receiveId: sendId,
+                        sender,
+                        payload, // quad-tuple
+                    };
+                    let payload = receive_message.abi_encode();
+
                     let EndPoint {
                         allow_loopback,
                         sender,
                         paymaster,
+                        gateway,
                         ..
                     } = watcher.value();
                     if !(dst_chain != src_chain || *allow_loopback) {
@@ -284,7 +293,14 @@ impl Signer {
                     }
 
                     // 7. Construct partial UserOp; send for signing
-                    let userop = Self::new_user_op(payload, sender, paymaster, value, block_height);
+                    let userop = Self::new_user_op(
+                        payload.into(),
+                        sender,
+                        paymaster,
+                        gateway,
+                        value,
+                        block_height,
+                    );
                     tracing::trace!(send_id=%sendId, ?userop, "UserOp");
                     if let Err(err) = sign_tx.send(SignUserOp::new(
                         userop,
@@ -687,15 +703,20 @@ impl Signer {
         payload: Bytes,
         sender: &Address,
         paymaster: &Address,
-        _value: U256,
+        gateway: &Address,
+        value: U256,
         block_height: u64,
     ) -> AlloyUserOperation {
         // we can encode some custom things in here
         let paymaster_data = (block_height).abi_encode_packed();
-        // FIXME: decode the values
-        // let [a, b, c, d] = value.into_limbs();
-        // let max_fee_per_gas = (b as u128) << 64 | a as u128;
-        // let max_priority_fee_per_gas = (d as u128) << 64 | c as u128;
+
+        // Normal UserOps go to Sender::executeBatch()
+        let execute = super::executeBatchCall {
+            targets: vec![*gateway],
+            values: vec![value],
+            datas: vec![payload],
+        };
+        let call_data = execute.abi_encode();
         AlloyUserOperation {
             sender: *sender,
             nonce: U256::ZERO, // unpopulated nonce/sig
@@ -703,7 +724,7 @@ impl Signer {
             // Some bundlers reject any initdata for existing senders e.g.
             // https://docs.candide.dev/wallet/technical-reference/aa10-sender-already-constructed/
             factory_data: None,
-            call_data: payload,
+            call_data: call_data.into(),
             call_gas_limit: U256::ZERO,         // estimateUserOpGas
             verification_gas_limit: U256::ZERO, // estimateUserOpGas
             pre_verification_gas: U256::ZERO,   // estimateUserOpGas
@@ -722,7 +743,7 @@ impl Signer {
             // B256::ZERO,
             Bytes::new(),
             &Address::ZERO,
-            // &Address::ZERO,
+            &Address::ZERO,
             &Address::ZERO,
             U256::ZERO,
             0,

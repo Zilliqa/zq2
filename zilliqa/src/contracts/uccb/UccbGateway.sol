@@ -66,19 +66,19 @@ contract UccbGateway is
      * @notice One-time proxy initializer.
      *
      * @param  admin_   Address granted DEFAULT_ADMIN_ROLE (and all sub-roles).
-     * @param  links    Initial chain links (gateway ↔ counterpart pairs).
+     * @param  links_   Initial chain links (gateway ↔ counterpart pairs).
      *                  Each entry is a {CrosschainLinkedUpgradeable.Link} struct.
      */
     function initialize(
         address admin_,
-        CrosschainLinkedUpgradeable.Link[] memory links
+        CrosschainLinkedUpgradeable.Link[] memory links_
     ) external initializer {
         assert(admin_ != address(0));
 
         __EIP712_init("UccbGateway", "1");
         __AccessControl_init();
         __Pausable_init();
-        __CrosschainLinked_init(links);
+        __CrosschainLinked_init(links_);
         __ERC165_init();
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin_);
@@ -113,7 +113,7 @@ contract UccbGateway is
     function _decode(
         bytes calldata payload
     ) internal pure returns (bytes4, bytes memory) {
-        assert(payload.length >= 32);
+        assert(payload.length > 32);
         (uint8 version, bytes4 mType, bytes memory b) = abi.decode(
             payload[4:],
             (uint8, bytes4, bytes)
@@ -166,13 +166,15 @@ contract UccbGateway is
         bytes memory chain,
         bytes memory payload,
         bytes[] memory attributes
-    ) internal override returns (bytes32) {
+    ) internal override(CrosschainLinkedUpgradeable) returns (bytes32) {
         (, bytes memory counterpart) = getLink(chain);
 
         bytes memory originator = InteroperableAddress.formatEvmV1(
             block.chainid,
             address(this)
         );
+
+        assert(!counterpart.equal(originator)); // prevent loop-back
 
         bytes32 sendId = keccak256(payload);
 
