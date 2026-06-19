@@ -3,20 +3,11 @@ pragma solidity ^0.8.28;
 
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
-import {
-    IEntryPointNonces,
-    IPaymaster,
-    IEntryPoint,
-    PackedUserOperation,
-    IAccount,
-    IAccountExecute
-} from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
-import {
-    IERC7786GatewaySource,
-    IERC7786Recipient
-} from "@openzeppelin/contracts/interfaces/draft-IERC7786.sol";
+import {IEntryPointNonces, IPaymaster, IEntryPoint, PackedUserOperation, IAccount, IAccountExecute} from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
+import {IERC7786GatewaySource, IERC7786Recipient} from "@openzeppelin/contracts/interfaces/draft-IERC7786.sol";
 import {NoncesKeyed} from "@openzeppelin/contracts/utils/NoncesKeyed.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
+import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 
 contract DummyBridge is
     Pausable,
@@ -62,28 +53,62 @@ contract DummyBridge is
         _;
     }
 
+    /// Called in the execution phase of UserOp handling.
+    function executeBatch(
+        address[] calldata targets,
+        uint256[] calldata values,
+        bytes[] calldata datas
+    ) external onlyEntryPointOrOwner {
+        uint256 len = targets.length;
+        require(len == values.length && len == datas.length);
+        for (uint256 i; i < len; ++i) {
+            _execute(targets[i], values[i], datas[i]);
+        }
+    }
+
+    /**
+     * @dev Low-level call with revert bubbling.
+     *      Uses Address.functionCallWithValue so reverts propagate correctly
+     *      even when returndata is empty.
+     */
+    function _execute(
+        address target,
+        uint256 value,
+        bytes memory data
+    ) internal {
+        // Address.functionCallWithValue reverts with the upstream reason on failure.
+        // We catch it here to emit ExecutionFailure before re-reverting.
+        try this._callExternal(target, value, data) {
+            // emit ExecutionSuccess(target, value, data);
+        } catch (bytes memory reason) {
+            // emit ExecutionFailure(target, value, data, reason);
+            // Re-revert with the original reason.
+            assembly {
+                revert(add(reason, 32), mload(reason))
+            }
+        }
+    }
+
+    /**
+     * @dev External shim so try/catch can wrap a low-level call.
+     *      Only callable by this contract itself (via _execute's try/catch).
+     */
+    function _callExternal(
+        address target,
+        uint256 value,
+        bytes calldata data
+    ) external {
+        assert(msg.sender == address(this));
+        Address.functionCallWithValue(target, data, value);
+    }
+
     /// IAccountExecute::executeUserOp()
     /// Called in the execution phase of UserOp handling.
     function executeUserOp(
         PackedUserOperation calldata userOp,
         bytes32 _userOpHash
     ) external onlyEntryPointOrOwner {
-        // 1. Validate the userOp
-
-        // 2. Extract the call arguments
-        bytes32 sendId = keccak256(userOp.callData);
-        address gateway = address(uint160(userOp.nonce >> 96)); // byte20 prefix with gateway address
-        address relayer = address(bytes20(userOp.signature[:20])); // byte20 prefix with signer wallet
-
-        // Call the gateway
-        require(
-            IERC7786Recipient(gateway).receiveMessage(
-                sendId,
-                abi.encodePacked(relayer),
-                userOp.callData
-            ) == IERC7786Recipient.receiveMessage.selector,
-            "Gateway.receiveMessage() failed"
-        );
+        // return success
     }
 
     /// IAccount::validateUserOp()
@@ -169,7 +194,7 @@ contract DummyBridge is
             bytes memory recipient,
             bytes memory payload,
             uint256 _nonce
-        ) = abi.decode(_payload[4:], (bytes, bytes, bytes, uint256));
+        ) = abi.decode(_payload, (bytes, bytes, bytes, uint256));
         // 4. Nonce replay check
 
         // 5. Send to destination
@@ -210,8 +235,7 @@ contract DummyBridge is
         );
         uint256 nonce = _useNonce(address(this), uint192(0));
 
-        bytes memory wrappedPayload = abi.encodeWithSelector(
-            IAccountExecute.executeUserOp.selector, // needed to trigger executeUserOp() later
+        bytes memory wrappedPayload = abi.encode(
             sender,
             recipient,
             payload,

@@ -51,6 +51,11 @@ sol!(
 );
 
 sol! {
+    function executeBatch(
+        address[] calldata targets,
+        uint256[] calldata values,
+        bytes[] calldata datas
+    ) external;
     interface IERC7786Attributes {
         function eip1559_fees(uint128 max_priority_gas_fee,uint128 max_base_gas_fee) external;
     }
