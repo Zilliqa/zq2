@@ -6,9 +6,8 @@ use alloy::{
 use alloy_chains::Chain;
 use anyhow::Result;
 
-use crate::api::to_hex::ToHex;
-
 use super::PackedUserOperation;
+use crate::api::to_hex::ToHex;
 
 /// Retrieve the chain from a given CAIP-10 account
 pub fn get_erc7930_chain(account_id: &[u8]) -> Result<Chain> {
