@@ -53,57 +53,38 @@ contract DummyBridge is
         _;
     }
 
-    /// Called in the execution phase of UserOp handling.
-    function executeBatch(
-        address[] calldata targets,
-        uint256[] calldata values,
-        bytes[] calldata datas
+    /// Execution calls
+    function execute(
+        address target,
+        uint256 value,
+        bytes calldata data
     ) external onlyEntryPointOrOwner {
-        uint256 len = targets.length;
-        require(len == values.length && len == datas.length);
-        for (uint256 i; i < len; ++i) {
-            _execute(targets[i], values[i], datas[i]);
-        }
+        _execute(target, value, data);
     }
 
-    /**
-     * @dev Low-level call with revert bubbling.
-     *      Uses Address.functionCallWithValue so reverts propagate correctly
-     *      even when returndata is empty.
-     */
+    /// Called in the execution phase of UserOp handling.
+    // function executeBatch(
+    //     address[] calldata targets,
+    //     uint256[] calldata values,
+    //     bytes[] calldata datas
+    // ) external onlyEntryPointOrOwner {
+    //     uint256 len = targets.length;
+    //     require(len == values.length && len == datas.length);
+    //     for (uint256 i; i < len; ++i) {
+    //         _execute(targets[i], values[i], datas[i]);
+    //     }
+    // }
+
     function _execute(
         address target,
         uint256 value,
         bytes memory data
     ) internal {
-        // Address.functionCallWithValue reverts with the upstream reason on failure.
-        // We catch it here to emit ExecutionFailure before re-reverting.
-        try this._callExternal(target, value, data) {
-            // emit ExecutionSuccess(target, value, data);
-        } catch (bytes memory reason) {
-            // emit ExecutionFailure(target, value, data, reason);
-            // Re-revert with the original reason.
-            assembly {
-                revert(add(reason, 32), mload(reason))
-            }
-        }
-    }
-
-    /**
-     * @dev External shim so try/catch can wrap a low-level call.
-     *      Only callable by this contract itself (via _execute's try/catch).
-     */
-    function _callExternal(
-        address target,
-        uint256 value,
-        bytes calldata data
-    ) external {
-        assert(msg.sender == address(this));
         Address.functionCallWithValue(target, data, value);
     }
 
     /// IAccountExecute::executeUserOp()
-    /// Called in the execution phase of UserOp handling.
+    /// Configuration calls
     function executeUserOp(
         PackedUserOperation calldata userOp,
         bytes32 _userOpHash
