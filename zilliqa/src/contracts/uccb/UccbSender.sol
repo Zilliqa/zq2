@@ -56,19 +56,15 @@ contract UccbSender is
     /// ***** External execution *****
 
     /**
-     * @notice Execute multiple calls atomically.
-     *         Any single revert aborts the entire batch.
+     * @notice Execute a single arbitrary call.
+     *         Called by the EntryPoint after successful validateUserOp.
      */
-    function executeBatch(
-        address[] calldata targets,
-        uint256[] calldata values,
-        bytes[] calldata datas
+    function execute(
+        address target,
+        uint256 value,
+        bytes calldata data
     ) external onlyEntryPointOrSelf nonReentrant {
-        uint256 len = targets.length;
-        require(len == values.length && len == datas.length);
-        for (uint256 i; i < len; ++i) {
-            _execute(targets[i], values[i], datas[i]);
-        }
+        _execute(target, value, data);
     }
 
     /**

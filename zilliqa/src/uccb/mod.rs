@@ -51,10 +51,10 @@ sol!(
 );
 
 sol! {
-    function executeBatch(
-        address[] calldata targets,
-        uint256[] calldata values,
-        bytes[] calldata datas
+    function execute(
+        address target,
+        uint256 value,
+        bytes calldata data
     ) external;
     interface IERC7786Attributes {
         function eip1559_fees(uint128 max_priority_gas_fee,uint128 max_base_gas_fee) external;
@@ -125,10 +125,12 @@ pub struct SignUserOp {
     pub src_chain: Chain,
     pub blk_height: u64,
     pub uop_hash: Option<Hash>,
+    pub send_id: B256,
     retry_s: u16,
 }
 impl SignUserOp {
     pub fn new(
+        send_id: B256,
         userop: AlloyUserOperation,
         dst_chain: Chain,
         src_chain: Chain,
@@ -137,6 +139,7 @@ impl SignUserOp {
         blk_height: u64,
     ) -> Self {
         Self {
+            send_id,
             userop,
             dst_chain,
             src_chain,
@@ -166,12 +169,12 @@ pub struct RelayUserOp {
     pub userop: AlloyUserOperation,
     pub chain: Chain,
     pub userop_hash: Hash,
-    pub send_id: Hash,
+    pub send_id: B256,
     retry_s: u16,
 }
 
 impl RelayUserOp {
-    pub fn new(userop: AlloyUserOperation, chain: Chain, userop_hash: Hash, send_id: Hash) -> Self {
+    pub fn new(userop: AlloyUserOperation, chain: Chain, userop_hash: Hash, send_id: B256) -> Self {
         Self {
             userop,
             chain,
@@ -196,6 +199,7 @@ impl RelayUserOp {
 #[derive(Default)]
 pub struct BlsUserOp {
     pub userop: Option<AlloyUserOperation>,
+    pub send_id: B256,
     pub signatures: Vec<(NodePublicKey, BlsSignature)>,
     pub threshold: u128,
 }
@@ -385,9 +389,11 @@ impl Uccb {
                 public_key,
                 block_hash,
                 chain,
+                send_id,
             }) => {
                 // handle
                 self.relayer.collect_userop(
+                    send_id,
                     from,
                     chain,
                     block_hash,

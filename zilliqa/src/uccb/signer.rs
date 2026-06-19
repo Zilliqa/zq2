@@ -294,6 +294,7 @@ impl Signer {
 
                     // 7. Construct partial UserOp; send for signing
                     let userop = Self::new_user_op(
+                        sendId,
                         payload.into(),
                         sender,
                         paymaster,
@@ -303,6 +304,7 @@ impl Signer {
                     );
                     tracing::trace!(send_id=%sendId, ?userop, "UserOp");
                     if let Err(err) = sign_tx.send(SignUserOp::new(
+                        sendId,
                         userop,
                         dst_chain,
                         src_chain,
@@ -352,12 +354,12 @@ impl Signer {
         // exponential backoff queue
         let mut delayq: DelayQueue<SignUserOp> = DelayQueue::new();
         // time-slot sending queue
-        let mut sendq: DelayQueue<(PeerId, UccbUserOp, B256)> = DelayQueue::new();
+        let mut sendq: DelayQueue<(PeerId, UccbUserOp)> = DelayQueue::new();
 
         loop {
             select! {
                 Some(mut sign_uop) = sign_rx.recv() => {
-                    let send_id = keccak256(sign_uop.userop.call_data.iter().as_slice());
+                    let send_id = sign_uop.send_id;
                     // 1. Populate the nonce
                     if let Err(err) = Self::populate_nonce(send_id, &mut sign_uop, providers.clone()).await
                     {
@@ -404,8 +406,7 @@ impl Signer {
                 // retry
                 Some(due) = delayq.next() => {
                     let sign_uop = due.into_inner();
-                    let send_id = keccak256(sign_uop.userop.call_data.iter().as_slice());
-                    tracing::debug!(%send_id, "Signer({chain:?}): retry");
+                    tracing::debug!(send_id=%sign_uop.send_id, "Signer({chain:?}): retry");
                     if let Err(err) = sign_tx.send(sign_uop) {
                         tracing::error!(%err, "sign_rx closed");
                         break Ok(());
@@ -413,8 +414,8 @@ impl Signer {
                 }
                 // delay send
                 Some(due) = sendq.next() => {
-                    let (peer, uccb_uop, send_id) = due.into_inner();
-                    tracing::debug!(%send_id, "Signer({chain:?}): relayed");
+                    let (peer, uccb_uop) = due.into_inner();
+                    tracing::debug!(send_id=%uccb_uop.send_id, "Signer({chain:?}): relayed");
                     if let Err(err) = message_sender.send_external_message(peer, ExternalMessage::UccbUserOp(uccb_uop)) {
                         tracing::error!(%err, "message_sender closed");
                         break Ok(());
@@ -431,7 +432,7 @@ impl Signer {
     fn queue_userop(
         send_id: B256,
         sign_uop: &mut SignUserOp,
-        sendq: &mut DelayQueue<(PeerId, UccbUserOp, B256)>,
+        sendq: &mut DelayQueue<(PeerId, UccbUserOp)>,
         state: Arc<State>,
         db: Arc<Db>,
         peer_id: PeerId,
@@ -463,6 +464,7 @@ impl Signer {
                     None
                 },
                 signature,
+                send_id,
             };
             // we use delay-slots to ensure that the first peer always has the first priority to submit the userop.
             // the two backup peers should only be able to submit it after a delay. the userop is lost if all fail.
@@ -470,7 +472,7 @@ impl Signer {
                 .average_blocktime_hint()
                 .map_or_else(|| Duration::from_secs(60).mul(i), |d| d.mul(i));
 
-            sendq.insert((peer, uccb_uop, send_id), delay_slot);
+            sendq.insert((peer, uccb_uop), delay_slot);
         }
         Ok(())
     }
@@ -700,6 +702,7 @@ impl Signer {
     /// Some dummy data is used to populate the UserOp initially. They *must* be replaced before submission.
     #[allow(clippy::too_many_arguments)]
     pub fn new_user_op(
+        _send_id: B256,
         payload: Bytes,
         sender: &Address,
         paymaster: &Address,
@@ -708,13 +711,13 @@ impl Signer {
         block_height: u64,
     ) -> AlloyUserOperation {
         // we can encode some custom things in here
-        let paymaster_data = (block_height).abi_encode_packed();
+        let paymaster_data = (block_height).abi_encode();
 
         // Normal UserOps go to Sender::executeBatch()
-        let execute = super::executeBatchCall {
-            targets: vec![*gateway],
-            values: vec![value],
-            datas: vec![payload],
+        let execute = super::executeCall {
+            value,
+            target: *gateway,
+            data: payload,
         };
         let call_data = execute.abi_encode();
         AlloyUserOperation {
@@ -734,13 +737,13 @@ impl Signer {
             paymaster_verification_gas_limit: None, // estimateUserOpGas
             paymaster_post_op_gas_limit: None,      // estimateUserOpGas
             paymaster_data: Some(Bytes::from(paymaster_data)),
-            signature: Bytes::new(), // unpopulated signature
+            signature: Bytes::new(), // blank signature
         }
     }
 
     pub fn default_user_op() -> AlloyUserOperation {
         Self::new_user_op(
-            // B256::ZERO,
+            B256::ZERO,
             Bytes::new(),
             &Address::ZERO,
             &Address::ZERO,
