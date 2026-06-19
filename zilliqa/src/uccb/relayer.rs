@@ -2,7 +2,7 @@ use std::{num::NonZeroUsize, sync::Arc};
 
 use alloy::{
     eips::BlockNumberOrTag,
-    primitives::{Address, B256, ChainId, U256, keccak256},
+    primitives::{Address, B256, ChainId, U256},
     providers::{Provider, utils::eip1559_default_estimator},
     rpc::types::{Filter, PackedUserOperation as AlloyUserOperation, UserOperationGasEstimation},
     sol_types::{SolEvent, SolValue},
@@ -327,12 +327,7 @@ impl Relayer {
                 // queue processing
                 Some(mut relay_uop) = relay_rx.recv() => {
                     let dest = relay_uop.chain;
-                    let send_id = keccak256(relay_uop.userop.call_data.iter().as_slice());
-                    // 0: Sanity check
-                    if relay_uop.send_id.0 != send_id {
-                        tracing::error!(%send_id, "Relayer({chain:?} => {dest:?}): mismatch");
-                        continue;
-                    } else
+                    let send_id = relay_uop.send_id;
                     // TODO: 1. Check for sufficient gas
                     // if let Err(err) = Self::check_gasfees(send_id, &mut relay_uop, providers.clone()).await
                     // {
@@ -377,6 +372,7 @@ impl Relayer {
     #[allow(clippy::too_many_arguments)]
     pub fn collect_userop(
         &self,
+        send_id: B256,
         from: PeerId,
         chain: Chain,
         block_hash: Hash,
@@ -418,6 +414,7 @@ impl Relayer {
                 .sum();
             BlsUserOp {
                 userop: None,
+                send_id: B256::ZERO,
                 threshold: 2 * total_stake / 3 + 1,
                 signatures: Vec::with_capacity(len),
             }
@@ -430,8 +427,9 @@ impl Relayer {
         bop.threshold = bop.threshold.saturating_sub(stake.get());
         bop.signatures.push((public_key, signature));
 
-        // use only the UserOp we constructed ourselves.
+        // use only the (UserOp, send_id) we constructed ourselves.
         if from == self.peer_id {
+            bop.send_id = send_id;
             bop.userop = userop;
         }
 
@@ -439,7 +437,8 @@ impl Relayer {
         if bop.userop.is_some() && bop.threshold == 0 {
             let bop = cache.pop(&userop_hash).unwrap();
             let stakers = state.get_stakers(block.header).expect("must exist");
-            self.relay_userop(userop_hash, chain, stakers, bop)?;
+            let send_id = bop.send_id;
+            self.relay_userop(send_id, userop_hash, chain, stakers, bop)?;
         }
         Ok(())
     }
@@ -449,19 +448,17 @@ impl Relayer {
     /// Multi-sign the UserOp; and queues it for sending to the Bundler.
     pub fn relay_userop(
         &self,
+        send_id: B256,
         userop_hash: Hash,
         chain: Chain,
         stakers: Vec<NodePublicKey>,
         bop: BlsUserOp,
     ) -> Result<()> {
         anyhow::ensure!(!stakers.is_empty(), "stakers cannot be empty");
-        let send_id = bop
-            .userop
-            .as_ref()
-            .map_or(alloy::primitives::KECCAK256_EMPTY, |uop| {
-                keccak256(uop.call_data.iter().as_slice())
-            });
-
+        anyhow::ensure!(
+            send_id != alloy::primitives::KECCAK256_EMPTY,
+            "invalid send_id"
+        );
         tracing::info!(%send_id, "Relayer({:?} => {chain:?}): promote", self.chain);
         let (signers, signatures): (Vec<NodePublicKey>, Vec<BlsSignature>) =
             bop.signatures.into_iter().unzip();
@@ -516,7 +513,7 @@ impl Relayer {
             },
             chain,
             userop_hash,
-            Hash(send_id.0),
+            send_id,
         );
 
         // 4. Push UserOp to the sending queue
