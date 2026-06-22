@@ -23,7 +23,7 @@ jobs:
       GCP_REGISTRY: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public
     steps:
     - name: 'Checkout scm'
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
       with:
         fetch-depth: 0
         submodules: recursive
@@ -98,7 +98,7 @@ jobs:
         GCP_REGISTRY: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-private
       steps:
       - name: 'Checkout scm'
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           submodules: recursive
