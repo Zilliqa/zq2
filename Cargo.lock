@@ -2689,7 +2689,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "18e4fdb82bd54a12e42fb58a800dcae6b9e13982238ce2296dc3570b92148e1f"
 dependencies = [
  "data-encoding",
- "syn 2.0.117",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -11308,7 +11308,7 @@ dependencies = [
  "primitive-types 0.14.0",
  "prost 0.14.4",
  "prost-build",
- "rand 0.8.6",
+ "rand 0.9.4",
  "regex",
  "reqwest 0.13.4",
  "rustls",
@@ -11519,7 +11519,7 @@ dependencies = [
  "prost 0.14.4",
  "r2d2",
  "r2d2_sqlite",
- "rand 0.8.6",
+ "rand 0.9.4",
  "rand_chacha 0.3.1",
  "redis",
  "reth-ipc",
