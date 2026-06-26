@@ -14,6 +14,7 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/U
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
+import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {ERC165Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/introspection/ERC165Upgradeable.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
@@ -32,12 +33,15 @@ contract UccbSender is
     MultiSignerERC7913Upgradeable,
     ERC165Upgradeable,
     UUPSUpgradeable,
+    AccessControlUpgradeable,
     ReentrancyGuardTransient,
     EIP712Upgradeable,
     IAccountExecute,
     Account
 {
     using Address for address;
+
+    bytes32 public constant WITHDRAWER_ROLE = keccak256("WITHDRAWER_ROLE");
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -50,9 +54,16 @@ contract UccbSender is
      *
      * @param  signers  Owner / signing key for this account.
      */
-    function initialize(bytes[] memory signers) external initializer {
+    function initialize(
+        address admin_,
+        bytes[] memory signers
+    ) external initializer {
         __EIP712_init("UccbSender", "1");
+        __AccessControl_init();
         __ERC165_init();
+
+        _grantRole(DEFAULT_ADMIN_ROLE, admin_);
+        _grantRole(WITHDRAWER_ROLE, admin_);
 
         _addSigners(signers);
         _setThreshold(uint64(1)); // one signer will pass
@@ -154,7 +165,7 @@ contract UccbSender is
     function withdrawTo(
         address payable to,
         uint256 amount
-    ) external onlyEntryPointOrSelf {
+    ) external onlyRole(WITHDRAWER_ROLE) {
         entryPoint().withdrawTo(to, amount);
     }
 
@@ -180,11 +191,10 @@ contract UccbSender is
      */
     function supportsInterface(
         bytes4 interfaceId
-    ) public view virtual override(ERC165Upgradeable) returns (bool) {
+    ) public view virtual override(ERC165Upgradeable, AccessControlUpgradeable) returns (bool) {
         return
             interfaceId == type(IAccountExecute).interfaceId ||
             interfaceId == type(IAccount).interfaceId ||
-            interfaceId == type(IERC165).interfaceId ||
             super.supportsInterface(interfaceId);
     }
 }

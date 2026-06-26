@@ -58,6 +58,9 @@ contract UccbGateway is
     // Roles
     bytes32 public constant WITHDRAWER_ROLE = keccak256("WITHDRAWER_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
+    bytes32 public constant SENDER_ROLE = keccak256("SENDER_ROLE");
+    bytes32 public constant ORIGINATOR_ROLE = keccak256("ORIGINATOR_ROLE");
+    bytes32 public constant RECIPIENT_ROLE = keccak256("RECIPIENT_ROLE");
 
     /// Emitted when an inbound message is successfully received.
     event MessageReceived(bytes32 indexed receiveId, address gateway);
@@ -133,7 +136,15 @@ contract UccbGateway is
         bytes calldata recipient, // ERC7930(recipient)
         bytes calldata payload,
         bytes[] calldata attributes
-    ) external payable override whenNotPaused nonReentrant returns (bytes32) {
+    )
+        external
+        payable
+        override
+        whenNotPaused
+        nonReentrant
+        onlyRole(ORIGINATOR_ROLE) // only registered senders
+        returns (bytes32)
+    {
         assert(payload.length != 0);
         assert(msg.value == 0);
         assert(attributes.length == 0);
@@ -222,14 +233,16 @@ contract UccbGateway is
         ) = abi.decode(quadtuple, (bytes, bytes, bytes, uint256));
 
         // prevent replays
-        require(!_usedIds[receiveId], "Already processed");
+        require(!_usedIds[receiveId], "Replayed message");
         _usedIds[receiveId] = true;
 
         // signal received
         emit MessageReceived(receiveId, senderAddr);
 
-        // pass-thru to target
+        // pass-thru to registered target
         (, address target) = recipient.parseEvmV1();
+        require(hasRole(RECIPIENT_ROLE, target), "Unregistered receiver");
+
         // TODO: allow failed execution
         require(
             IERC7786Recipient(target).receiveMessage(
@@ -274,6 +287,7 @@ contract UccbGateway is
     function pause() external onlyRole(PAUSER_ROLE) {
         _pause();
     }
+
     function unpause() external onlyRole(PAUSER_ROLE) {
         _unpause();
     }
