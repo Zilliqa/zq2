@@ -1,14 +1,17 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy::{
+    consensus::TxLegacy,
     eips::BlockId,
+    network::TxSignerSync as _,
+    primitives::{Address, B256, TxKind},
     rpc::types::{
         BlockOverrides, TransactionRequest,
         state::{AccountOverride, StateOverride},
+        trace::geth::{GethDebugTracingCallOptions, GethTrace},
     },
 };
-use alloy_rpc_types_trace::geth::{GethDebugTracingCallOptions, GethTrace};
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use eth_trie::{EthTrie, Trie as _};
 use jsonrpsee::{
     RpcModule,
@@ -22,6 +25,7 @@ use crate::{
         to_hex::ToHex as _,
     },
     cfg::EnabledApi,
+    crypto::Hash,
     error::ensure_success,
     node::Node,
     state::Code,
@@ -32,6 +36,12 @@ use crate::{
 /// Provides bundler-specific API alternatives and implementations.
 pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc<Node>> {
     let mut module = RpcModule::new(node.clone());
+    module
+        .merge(super::web3::rpc_module(node.clone(), enabled_apis))
+        .unwrap();
+    module
+        .merge(super::net::rpc_module(node.clone(), enabled_apis))
+        .unwrap();
     module
         .merge(super::eth::rpc_module(node.clone(), enabled_apis))
         .unwrap();
@@ -45,6 +55,12 @@ pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc
         enabled_apis,
         [
             ("eth_call", eth_call, HandlerType::Fast),
+            ("eth_accounts", eth_accounts, HandlerType::Fast),
+            (
+                "eth_sendTransaction",
+                eth_send_transaction,
+                HandlerType::Fast
+            ),
             ("debug_traceCall", debug_trace_call, HandlerType::Slow),
         ],
     );
@@ -54,6 +70,47 @@ pub fn rpc_module(node: Arc<Node>, enabled_apis: &[EnabledApi]) -> RpcModule<Arc
     module.merge(overrides).unwrap();
 
     module
+}
+
+fn eth_accounts(_params: Params, node: &Arc<Node>) -> Result<Vec<Address>> {
+    let address = node.secret_key.to_evm_address();
+    Ok(vec![address])
+}
+
+// FIXME: DO NOT EXPOSE THIS TO THE PUBLIC
+#[cfg(not(debug_assertions))]
+fn eth_send_transaction(_params: Params, _node: &Arc<Node>) -> Result<String> {
+    Err(anyhow!("API method eth_sendTransaction is not available"))
+}
+// This is only for local development use.
+#[cfg(debug_assertions)]
+fn eth_send_transaction(params: Params, node: &Arc<Node>) -> Result<String> {
+    let txn = params.one::<alloy::rpc::types::TransactionRequest>()?;
+
+    let address = node.secret_key.to_evm_address();
+    let block = node.get_block(BlockId::latest())?.context("must exist")?;
+    let nonce = node.get_state(&block)?.get_account(address)?.nonce;
+
+    let mut tx_legacy = TxLegacy {
+        chain_id: Some(node.chain_id.eth),
+        gas_price: node.config.consensus.gas_price.0,
+        gas_limit: txn.gas.unwrap_or_default(),
+        to: txn.to.unwrap_or(TxKind::Create),
+        value: txn.value.unwrap_or_default(),
+        input: txn.input.into_input().unwrap_or_default(),
+        nonce,
+    };
+
+    let signer = alloy::signers::local::PrivateKeySigner::from_bytes(&B256::from_slice(
+        node.secret_key.as_bytes().as_slice(),
+    ))?;
+    let sig = signer.sign_transaction_sync(&mut tx_legacy)?;
+
+    let stx = crate::transaction::SignedTransaction::Legacy { tx: tx_legacy, sig };
+    let vtx = stx.verify_bypass(Hash::ZERO)?;
+
+    let (txn_hash, _result) = node.create_transaction(vtx)?;
+    Ok(txn_hash.0.to_hex())
 }
 
 pub fn debug_trace_call(params: Params, node: &Arc<Node>) -> Result<GethTrace> {

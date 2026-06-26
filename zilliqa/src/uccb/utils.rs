@@ -1,6 +1,5 @@
 use alloy::{
     dyn_abi::Eip712Domain,
-    hex::FromHex,
     primitives::{Address, B256, U256, keccak256},
     sol_types::SolValue,
 };
@@ -8,28 +7,31 @@ use alloy_chains::Chain;
 use anyhow::Result;
 
 use super::PackedUserOperation;
+use crate::api::to_hex::ToHex;
 
 /// Retrieve the chain from a given CAIP-10 account
-pub fn get_eip155_chain(account_id: &str) -> Result<Chain> {
-    if let Ok(caip_id) = tap_caip::parse(account_id)
-        && let tap_caip::CaipId::AccountId(account_id) = caip_id
-        && account_id.chain_id().namespace() == "eip155"
+pub fn get_erc7930_chain(account_id: &[u8]) -> Result<Chain> {
+    if let Ok(erc7930) = ensip25::erc7930::InteropAddress::decode(account_id)
+        && erc7930.is_evm()
     {
-        return Ok(Chain::from_id(
-            account_id.chain_id().reference().parse::<u64>()?,
-        ));
+        return Ok(Chain::from_id(erc7930.evm_chain_id().expect("is evm")));
     }
-    Err(anyhow::anyhow!("Invalid eip155 chain {account_id}"))
+    Err(anyhow::anyhow!(
+        "Invalid erc7930 chain {}",
+        account_id.to_hex()
+    ))
 }
 
-pub fn get_eip155_address(account_id: &str) -> Result<Address> {
-    if let Ok(caip_id) = tap_caip::parse(account_id)
-        && let tap_caip::CaipId::AccountId(account_id) = caip_id
-        && account_id.chain_id().namespace() == "eip155"
+pub fn get_erc7930_address(account_id: &[u8]) -> Result<Address> {
+    if let Ok(erc7930) = ensip25::erc7930::InteropAddress::decode(account_id)
+        && erc7930.is_evm()
     {
-        return Ok(Address::from_hex(account_id.address())?);
+        return Ok(erc7930.evm_address().expect("is evm"));
     }
-    Err(anyhow::anyhow!("Invalid eip155 account {account_id}"))
+    Err(anyhow::anyhow!(
+        "Invalid erc7930 account {}",
+        account_id.to_hex()
+    ))
 }
 
 /// keccak256("PackedUserOperation(address sender,uint256 nonce,bytes initCode,bytes callData,
