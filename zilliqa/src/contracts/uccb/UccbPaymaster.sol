@@ -26,7 +26,7 @@ contract UccbPaymaster is
     PausableUpgradeable,
     EIP712Upgradeable,
     ReentrancyGuardTransient,
-    // MultiSignerERC7913WeightedUpgradeable,
+    MultiSignerERC7913WeightedUpgradeable,
     IPaymaster
 {
     // using SafeERC20     for IERC20;
@@ -114,6 +114,26 @@ contract UccbPaymaster is
     ) external view override onlyEntryPoint {
         // TODO: record the signer and co-signers
         if (context.length == 0) return;
+    }
+
+    // ***** SIGNERS MANAGEMENT *****
+
+    function addSigners(
+        bytes[] memory signers
+    ) public onlyRole(SPONSORED_CONTRACT) {
+        _addSigners(signers);
+    }
+
+    function removeSigners(
+        bytes[] memory signers
+    ) public onlyRole(SPONSORED_CONTRACT) {
+        _removeSigners(signers);
+    }
+
+    function setThreshold(
+        uint64 threshold
+    ) public onlyRole(SPONSORED_CONTRACT) {
+        _setThreshold(threshold);
     }
 
     /**
