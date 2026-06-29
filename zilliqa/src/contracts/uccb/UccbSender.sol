@@ -51,7 +51,8 @@ contract UccbSender is
      */
     function initialize(
         address admin_,
-        bytes[] memory signers
+        bytes[] memory signers,
+        uint64 threshold
     ) external initializer {
         __EIP712_init("UccbSender", "1");
         __AccessControl_init();
@@ -60,8 +61,8 @@ contract UccbSender is
         _grantRole(DEFAULT_ADMIN_ROLE, admin_);
         _grantRole(WITHDRAWER_ROLE, admin_);
 
-        _addSigners(signers);
-        _setThreshold(uint64(1)); // one signer will pass
+        // _addSigners(signers);
+        // _setThreshold(uint64(1)); // one signer will pass
     }
 
     /// ***** External execution *****
@@ -136,7 +137,31 @@ contract UccbSender is
         return hash != 0 && signature.length != 0;
     }
 
+    // ***** SIGNERS MANAGEMENT *****
+
+    function addSigners(
+        bytes[] memory signers
+    ) public onlyRole(DEFAULT_ADMIN_ROLE) {
+        _addSigners(signers);
+    }
+
+    function removeSigners(
+        bytes[] memory signers
+    ) public onlyRole(DEFAULT_ADMIN_ROLE) {
+        _removeSigners(signers);
+    }
+
+    function setThreshold(
+        uint64 threshold
+    ) public onlyRole(DEFAULT_ADMIN_ROLE) {
+        _setThreshold(threshold);
+    }
+
     // ***** ENTRYPOINT *****
+
+    function entryPoint() public pure override returns (IEntryPoint) {
+        return ERC4337Utils.ENTRYPOINT_V08;
+    }
 
     /**
      * @notice Top-up this account's gas deposit in the EntryPoint.
