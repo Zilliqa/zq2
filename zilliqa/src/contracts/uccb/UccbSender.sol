@@ -4,12 +4,7 @@ pragma solidity ^0.8.28;
 import {Account} from "@openzeppelin/contracts/account/Account.sol";
 import {AbstractSigner} from "@openzeppelin/contracts/utils/cryptography/signers/AbstractSigner.sol";
 import {ERC4337Utils} from "@openzeppelin/contracts/account/utils/draft-ERC4337Utils.sol";
-import {
-    IEntryPoint,
-    IAccount,
-    IAccountExecute,
-    PackedUserOperation
-} from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
+import {IEntryPoint, IAccount, IAccountExecute, PackedUserOperation} from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
@@ -173,7 +168,7 @@ contract UccbSender is
 
     function _authorizeUpgrade(
         address /*newImplementation*/
-    ) internal view override onlyEntryPointOrSelf {
+    ) internal view override onlyRole(DEFAULT_ADMIN_ROLE) {
         // TODO: audit log
     }
 
@@ -191,7 +186,13 @@ contract UccbSender is
      */
     function supportsInterface(
         bytes4 interfaceId
-    ) public view virtual override(ERC165Upgradeable, AccessControlUpgradeable) returns (bool) {
+    )
+        public
+        view
+        virtual
+        override(ERC165Upgradeable, AccessControlUpgradeable)
+        returns (bool)
+    {
         return
             interfaceId == type(IAccountExecute).interfaceId ||
             interfaceId == type(IAccount).interfaceId ||
