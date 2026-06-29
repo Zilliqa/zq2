@@ -4,7 +4,12 @@ pragma solidity ^0.8.28;
 import {Account} from "@openzeppelin/contracts/account/Account.sol";
 import {AbstractSigner} from "@openzeppelin/contracts/utils/cryptography/signers/AbstractSigner.sol";
 import {ERC4337Utils} from "@openzeppelin/contracts/account/utils/draft-ERC4337Utils.sol";
-import {IEntryPoint, IAccount, IAccountExecute, PackedUserOperation} from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
+import {
+    IEntryPoint,
+    IAccount,
+    IAccountExecute,
+    PackedUserOperation
+} from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
@@ -46,23 +51,20 @@ contract UccbSender is
     /**
      * @notice One-time initializer called by the factory immediately after
      *         deploying the proxy.
-     *
-     * @param  signers  Owner / signing key for this account.
      */
-    function initialize(
-        address admin_,
-        bytes[] memory signers,
-        uint64 threshold
-    ) external initializer {
+    function initialize(address admin_) external initializer {
         __EIP712_init("UccbSender", "1");
         __AccessControl_init();
         __ERC165_init();
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin_);
         _grantRole(WITHDRAWER_ROLE, admin_);
+    }
 
-        // _addSigners(signers);
-        // _setThreshold(uint64(1)); // one signer will pass
+    // This is needed to allow UccbGateway::setLink() to work.
+    function supportsAttribute(bytes4) external pure returns (bool) {
+        // TODO: Support some ERC7985 attributes
+        return false;
     }
 
     /// ***** External execution *****

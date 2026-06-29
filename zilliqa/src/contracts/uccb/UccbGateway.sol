@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {IERC7786GatewaySource, IERC7786Recipient} from "@openzeppelin/contracts/interfaces/draft-IERC7786.sol";
+import {
+    IERC7786GatewaySource,
+    IERC7786Recipient
+} from "@openzeppelin/contracts/interfaces/draft-IERC7786.sol";
 import {CrosschainLinkedUpgradeable} from "@openzeppelin/contracts-upgradeable/crosschain/CrosschainLinkedUpgradeable.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 import {Bytes} from "@openzeppelin/contracts/utils/Bytes.sol";
@@ -55,26 +58,22 @@ contract UccbGateway is
     // Roles
     bytes32 public constant WITHDRAWER_ROLE = keccak256("WITHDRAWER_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
-    bytes32 public constant ORIGINATOR_CONTRACT =
-        keccak256("ORIGINATOR_CONTRACT");
-    bytes32 public constant RECIPIENT_CONTRACT =
-        keccak256("RECIPIENT_CONTRACT");
+    bytes32 public constant ORIGINATOR_CONTRACT = keccak256(
+        "ORIGINATOR_CONTRACT"
+    );
+    bytes32 public constant RECIPIENT_CONTRACT = keccak256(
+        "RECIPIENT_CONTRACT"
+    );
 
     /// Emitted when an inbound message is successfully received.
     event MessageReceived(bytes32 indexed receiveId, address gateway);
 
     /**
      * @notice One-time proxy initializer.
-     *
-     * @param  admin_   Address granted DEFAULT_ADMIN_ROLE (and all sub-roles).
-     * @param  links_   Initial chain links (gateway ↔ counterpart pairs).
-     *                  Each entry is a {CrosschainLinkedUpgradeable.Link} struct.
      */
-    function initialize(
-        address admin_,
-        CrosschainLinkedUpgradeable.Link[] memory links_
-    ) external initializer {
+    function initialize(address admin_) external initializer {
         assert(admin_ != address(0));
+        CrosschainLinkedUpgradeable.Link[] memory links_;
 
         __EIP712_init("UccbGateway", "1");
         __AccessControl_init();
@@ -96,6 +95,43 @@ contract UccbGateway is
     uint8 internal constant MSG_VERSION = 1;
     bytes4 internal constant MSG_CALL = 0x1b8b921d; // call(address,bytes)
     bytes4 internal constant MSG_TRANSFER = 0xa9059cbb; // transfer(address,uint256)
+
+    /// ***** Fee Management Functions *****
+    event FeesUpdated(uint64 indexed id, uint128[6] fees);
+    /// @custom:storage-location erc7201:zilliqa.storage.UccbGateway
+    struct GatewayStorage {
+        mapping(uint64 => uint128[6]) fees;
+    }
+
+    // keccak256(abi.encode(uint256(keccak256("zilliqa.storage.UccbGateway")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant STORAGE_SLOT =
+        0x92031f62218d4a32004c55a85ae23890f7585155ae9d18edef0cbbb077fb9a00;
+
+    function _getFeeStorage() private pure returns (GatewayStorage storage $) {
+        bytes32 slot = STORAGE_SLOT;
+        assembly {
+            $.slot := slot
+        }
+    }
+
+    function setFees(
+        uint64 id,
+        uint128[6] calldata fees
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        GatewayStorage storage $ = _getFeeStorage(); // Get data pointer
+        $.fees[id] = fees;
+        emit FeesUpdated(id, fees);
+    }
+
+    function getFees(uint64 id) external view returns (uint128[6] memory) {
+        GatewayStorage storage $ = _getFeeStorage(); // Get data pointer
+        return $.fees[id];
+    }
+
+    function deleteFees(uint64 id) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        GatewayStorage storage $ = _getFeeStorage(); // Get data pointer
+        delete $.fees[id];
+    }
 
     // IERC7786GatewaySource
     function supportsAttribute(bytes4) external pure override returns (bool) {
@@ -144,11 +180,7 @@ contract UccbGateway is
         // TODO: deliver local messages directly?
 
         return
-            _sendMessageToCounterpart(
-                counterpart,
-                wrappedPayload,
-                attributes
-            );
+            _sendMessageToCounterpart(counterpart, wrappedPayload, attributes);
     }
 
     // CrosschainLinked
@@ -209,8 +241,8 @@ contract UccbGateway is
             bytes4 msgType,
             bytes memory sender,
             bytes memory recipient,
-            bytes memory payload,
-            // uint256 nonce
+            bytes memory payload, // uint256 nonce
+
         ) = abi.decode(
                 wrappedPayload,
                 (uint8, bytes4, bytes, bytes, bytes, uint256)

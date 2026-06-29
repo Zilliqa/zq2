@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {IPaymaster, PackedUserOperation} from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
+import {
+    IPaymaster,
+    PackedUserOperation
+} from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
 import {IEntryPoint} from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
 import {ERC4337Utils} from "@openzeppelin/contracts/account/utils/draft-ERC4337Utils.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
@@ -34,8 +37,9 @@ contract UccbPaymaster is
     using ERC4337Utils for PackedUserOperation;
 
     // Roles
-    bytes32 public constant SPONSORED_CONTRACT =
-        keccak256("SPONSORED_CONTRACT");
+    bytes32 public constant SPONSORED_CONTRACT = keccak256(
+        "SPONSORED_CONTRACT"
+    );
     bytes32 public constant WITHDRAWER_ROLE = keccak256("WITHDRAWER_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
@@ -50,7 +54,7 @@ contract UccbPaymaster is
 
     /// Use v0.9 entrypoint only
     function entryPoint() private pure returns (IEntryPoint) {
-        return ERC4337Utils.ENTRYPOINT_V09;
+        return ERC4337Utils.ENTRYPOINT_V08;
     }
 
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -63,10 +67,7 @@ contract UccbPaymaster is
     /**
      * @notice One-time initializer called by the factory through the proxy.
      */
-    function initialize(
-        address admin_,
-        uint256 // _maxCostPerOp
-    ) external initializer {
+    function initialize(address admin_) external initializer {
         assert(admin_ != address(0));
 
         __EIP712_init("UccbPaymaster", "1");
