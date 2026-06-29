@@ -97,32 +97,6 @@ contract UccbGateway is
     bytes4 internal constant MSG_CALL = 0x1b8b921d; // call(address,bytes)
     bytes4 internal constant MSG_TRANSFER = 0xa9059cbb; // transfer(address,uint256)
 
-    function _encode(
-        bytes4 msgType,
-        bytes memory body
-    ) internal pure returns (bytes memory) {
-        // TODO: Reduce size
-        return
-            abi.encodeWithSelector(
-                IAccountExecute.executeUserOp.selector, // needed to trigger executeUserOp() later
-                MSG_VERSION,
-                msgType,
-                body
-            );
-    }
-
-    function _decode(
-        bytes calldata payload
-    ) internal pure returns (bytes4, bytes memory) {
-        assert(payload.length > 32);
-        (uint8 version, bytes4 mType, bytes memory b) = abi.decode(
-            payload[4:],
-            (uint8, bytes4, bytes)
-        );
-        assert(version == MSG_VERSION);
-        return (mType, b);
-    }
-
     // IERC7786GatewaySource
     function supportsAttribute(bytes4) external pure override returns (bool) {
         // TODO: Support some ERC7985 attributes
@@ -140,12 +114,15 @@ contract UccbGateway is
         override
         whenNotPaused
         nonReentrant
-        onlyRole(ORIGINATOR_CONTRACT) // only registered senders
+        onlyRole(ORIGINATOR_CONTRACT) // only registered contracts
         returns (bytes32)
     {
         assert(payload.length != 0);
         assert(msg.value == 0);
         assert(attributes.length == 0);
+
+        // check format
+        bytes memory counterpart = __extractChain(recipient);
 
         // ERC7930(sender)
         bytes memory sender = InteroperableAddress.formatEvmV1(
@@ -155,16 +132,20 @@ contract UccbGateway is
 
         uint256 nonce = _useNonce(address(this), uint192(0));
 
-        bytes memory wrappedPayload = _encode(
+        bytes memory wrappedPayload = abi.encode(
+            MSG_VERSION,
             MSG_CALL,
-            abi.encode(sender, recipient, payload, nonce)
+            sender,
+            recipient,
+            payload,
+            nonce
         );
 
         // TODO: deliver local messages directly?
 
         return
             _sendMessageToCounterpart(
-                __extractChain(recipient),
+                counterpart,
                 wrappedPayload,
                 attributes
             );
@@ -183,7 +164,8 @@ contract UccbGateway is
             address(this)
         );
 
-        assert(!counterpart.equal(originator)); // prevent loop-back
+        // FIXME: prevent loop-back
+        // assert(!counterpart.equal(originator));
 
         bytes32 sendId = keccak256(payload);
 
@@ -221,14 +203,20 @@ contract UccbGateway is
         (, address senderAddr) = relayer.parseEvmV1();
 
         // Deconstruct the quad-tuple payload
-        (bytes4 msgType, bytes memory quadtuple) = _decode(wrappedPayload);
-        require(msgType == MSG_CALL);
+        assert(wrappedPayload.length > 32);
         (
+            uint8 version,
+            bytes4 msgType,
             bytes memory sender,
             bytes memory recipient,
             bytes memory payload,
-
-        ) = abi.decode(quadtuple, (bytes, bytes, bytes, uint256));
+            // uint256 nonce
+        ) = abi.decode(
+                wrappedPayload,
+                (uint8, bytes4, bytes, bytes, bytes, uint256)
+            );
+        assert(version == MSG_VERSION);
+        require(msgType == MSG_CALL);
 
         // prevent replays
         require(!_usedIds[receiveId], "Replayed message");
@@ -275,8 +263,8 @@ contract UccbGateway is
     // UUPSUpgradeable
 
     function _authorizeUpgrade(
-        address newImplementation
-    ) internal override onlyRole(DEFAULT_ADMIN_ROLE) {
+        address /*newImplementation*/
+    ) internal view override onlyRole(DEFAULT_ADMIN_ROLE) {
         // TODO: audit log
     }
 
