@@ -1,10 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {
-    IERC7786GatewaySource,
-    IERC7786Recipient
-} from "@openzeppelin/contracts/interfaces/draft-IERC7786.sol";
+import {IERC7786GatewaySource, IERC7786Recipient} from "@openzeppelin/contracts/interfaces/draft-IERC7786.sol";
 import {CrosschainLinkedUpgradeable} from "@openzeppelin/contracts-upgradeable/crosschain/CrosschainLinkedUpgradeable.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 import {Bytes} from "@openzeppelin/contracts/utils/Bytes.sol";
@@ -58,9 +55,10 @@ contract UccbGateway is
     // Roles
     bytes32 public constant WITHDRAWER_ROLE = keccak256("WITHDRAWER_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
-    bytes32 public constant SENDER_ROLE = keccak256("SENDER_ROLE");
-    bytes32 public constant ORIGINATOR_ROLE = keccak256("ORIGINATOR_ROLE");
-    bytes32 public constant RECIPIENT_ROLE = keccak256("RECIPIENT_ROLE");
+    bytes32 public constant ORIGINATOR_CONTRACT =
+        keccak256("ORIGINATOR_CONTRACT");
+    bytes32 public constant RECIPIENT_CONTRACT =
+        keccak256("RECIPIENT_CONTRACT");
 
     /// Emitted when an inbound message is successfully received.
     event MessageReceived(bytes32 indexed receiveId, address gateway);
@@ -142,7 +140,7 @@ contract UccbGateway is
         override
         whenNotPaused
         nonReentrant
-        onlyRole(ORIGINATOR_ROLE) // only registered senders
+        onlyRole(ORIGINATOR_CONTRACT) // only registered senders
         returns (bytes32)
     {
         assert(payload.length != 0);
@@ -241,7 +239,7 @@ contract UccbGateway is
 
         // pass-thru to registered target
         (, address target) = recipient.parseEvmV1();
-        require(hasRole(RECIPIENT_ROLE, target), "Unregistered receiver");
+        require(hasRole(RECIPIENT_CONTRACT, target), "Unregistered receiver");
 
         // TODO: allow failed execution
         require(

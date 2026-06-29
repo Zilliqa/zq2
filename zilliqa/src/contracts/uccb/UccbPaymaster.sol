@@ -1,10 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {
-    IPaymaster,
-    PackedUserOperation
-} from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
+import {IPaymaster, PackedUserOperation} from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
 import {IEntryPoint} from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
 import {ERC4337Utils} from "@openzeppelin/contracts/account/utils/draft-ERC4337Utils.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
@@ -37,9 +34,8 @@ contract UccbPaymaster is
     using ERC4337Utils for PackedUserOperation;
 
     // Roles
-    bytes32 public constant SPONSORED_SENDER_ROLE = keccak256(
-        "SPONSORED_SENDER_ROLE"
-    );
+    bytes32 public constant SPONSORED_CONTRACT =
+        keccak256("SPONSORED_CONTRACT");
     bytes32 public constant WITHDRAWER_ROLE = keccak256("WITHDRAWER_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
@@ -100,7 +96,7 @@ contract UccbPaymaster is
         returns (bytes memory, uint256)
     {
         // allow all from SENDER
-        bool allowed = hasRole(SPONSORED_SENDER_ROLE, userOp.sender);
+        bool allowed = hasRole(SPONSORED_CONTRACT, userOp.sender);
         // extract validUntil/validAfter
         // context = relayer + signers
         return ("", ERC4337Utils.packValidationData(allowed, 0, 0)); // true, forever
