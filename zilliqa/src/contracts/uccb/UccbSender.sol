@@ -19,6 +19,7 @@ import {ERC165Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/intro
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
 import {MultiSignerERC7913Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/signers/MultiSignerERC7913Upgradeable.sol";
+
 // import {MultiSignerERC7913WeightedUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/signers/MultiSignerERC7913WeightedUpgradeable.sol";
 
 /**
@@ -133,6 +134,29 @@ contract UccbSender is
     /*
      * Overrides internal signature verification function
      */
+
+    function _decodeSignature(
+        bytes calldata packedSig
+    )
+        private
+        pure
+        returns (
+            address addr,
+            bytes memory msig,
+            bytes memory cosig,
+            bytes memory sig
+        )
+    {
+        // Sanity check to prevent out-of-bounds errors
+        require(packedSig.length == 244, "Invalid signature length");
+
+        // Slice out each segment and cast manually
+        addr = address(bytes20(packedSig[0:20]));
+        msig = bytes(packedSig[20:116]);
+        cosig = bytes(packedSig[116:148]);
+        sig = bytes(packedSig[148:244]);
+    }
+
     function _rawSignatureValidation(
         bytes32 hash,
         bytes calldata signature
@@ -142,6 +166,14 @@ contract UccbSender is
         override(AbstractSigner, MultiSignerERC7913Upgradeable)
         returns (bool)
     {
+        (
+            address signer,
+            bytes memory msig,
+            bytes memory cosig,
+            bytes memory sig
+        ) = _decodeSignature(signature);
+        bytes memory message = abi.encodePacked(signer, msig, cosig);
+
         // TODO: verify all signatures signature
         return hash != 0 && signature.length != 0;
     }
