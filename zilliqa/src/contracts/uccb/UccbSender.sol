@@ -63,7 +63,7 @@ contract UccbSender is
 
     // This is needed to allow UccbGateway::setLink() to work.
     function supportsAttribute(bytes4) external pure returns (bool) {
-        // TODO: Support some ERC7985 attributes
+        // does not need to do anything
         return false;
     }
 
@@ -117,15 +117,23 @@ contract UccbSender is
         Address.functionCallWithValue(target, data, value);
     }
 
-    /// ***** Internal execution *****
+    /*
+     * Configuration Messages
+     * ======================
+     * Used by the Rust pipeline to send updates to the Sender/Paymaster contracts e.g.
+     * - Updated stakers list
+     * - Updated stakes
+     */
     function executeUserOp(
         PackedUserOperation calldata userOp,
         bytes32 userOpHash
-    ) external {
-        // TODO: Update stakers
+    ) external onlyEntryPoint {
+        // TODO: Update stakers/stakes
     }
 
-    /// Called by entrypoint
+    /*
+     * Overrides internal signature verification function
+     */
     function _rawSignatureValidation(
         bytes32 hash,
         bytes calldata signature
@@ -143,19 +151,19 @@ contract UccbSender is
 
     function addSigners(
         bytes[] memory signers
-    ) public onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _addSigners(signers);
     }
 
     function removeSigners(
         bytes[] memory signers
-    ) public onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _removeSigners(signers);
     }
 
     function setThreshold(
         uint64 threshold
-    ) public onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _setThreshold(threshold);
     }
 
@@ -181,8 +189,6 @@ contract UccbSender is
 
     /**
      * @notice Withdraw ETH from the EntryPoint deposit.
-     * @param  to      Recipient.
-     * @param  amount  Amount to withdraw (in wei).
      */
     function withdrawTo(
         address payable to,
@@ -195,22 +201,8 @@ contract UccbSender is
 
     function _authorizeUpgrade(
         address /*newImplementation*/
-    ) internal view override onlyRole(DEFAULT_ADMIN_ROLE) {
-        // TODO: audit log
-    }
+    ) internal view override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
-    /**
-     * @dev Account.receive() already exists and emits nothing.
-     *      Override to emit an event so indexers can track deposits.
-     */
-    receive() external payable virtual override {
-        // emit Received(msg.sender, msg.value);
-    }
-
-    /**
-     * @dev Advertises every interface this account satisfies.
-     *      ERC165Upgradeable handles IERC165; all others are added here.
-     */
     function supportsInterface(
         bytes4 interfaceId
     )
@@ -224,5 +216,13 @@ contract UccbSender is
             interfaceId == type(IAccountExecute).interfaceId ||
             interfaceId == type(IAccount).interfaceId ||
             super.supportsInterface(interfaceId);
+    }
+
+    /**
+     * @dev Account.receive() already exists and emits nothing.
+     *      Override to emit an event so indexers can track deposits.
+     */
+    receive() external payable virtual override {
+        // emit Received(msg.sender, msg.value);
     }
 }

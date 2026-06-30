@@ -201,22 +201,16 @@ contract UccbPaymaster is
         _pause();
     }
 
-    /**
-     * @notice Resume normal operation.
-     */
     function unpause() external onlyRole(PAUSER_ROLE) {
         _unpause();
     }
 
     function _authorizeUpgrade(
         address /*newImplementation*/
-    ) internal view override onlyRole(DEFAULT_ADMIN_ROLE) {
-        // TODO: audit log
-    }
+    ) internal view override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
     /**
-     * @dev Advertises all interfaces implemented by this contract.
-     *      AccessControlUpgradeable already registers IAccessControl.
+     * @dev Advertises interfaces implemented by this contract.
      */
     function supportsInterface(
         bytes4 interfaceId

@@ -330,9 +330,7 @@ contract UccbGateway is
 
     function _authorizeUpgrade(
         address /*newImplementation*/
-    ) internal view override onlyRole(DEFAULT_ADMIN_ROLE) {
-        // TODO: audit log
-    }
+    ) internal view override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
     // Pausable
     function pause() external onlyRole(PAUSER_ROLE) {
