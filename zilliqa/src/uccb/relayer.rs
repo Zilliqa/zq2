@@ -36,7 +36,7 @@ use crate::{
 #[derive(Debug)]
 pub struct Relayer {
     peer_id: PeerId,
-    address: Address,
+    _address: Address,
     secret_key: SecretKey,
     db: Arc<Db>,
     state: State,
@@ -99,7 +99,7 @@ impl Relayer {
         Ok(Self {
             workers,
             secret_key,
-            address,
+            _address: address,
             relay_tx,
             db,
             state,
@@ -479,12 +479,14 @@ impl Relayer {
                 )
             })
             .collect_vec();
+        // use uncompressed format for EIP-2537 compatibility
+        let pubkey = self.secret_key.as_bls().public_key().0.to_uncompressed();
         let multi_signature = if signatures.len() == 1 {
-            signatures.first().unwrap().as_raw_value().to_compressed()
+            signatures.first().unwrap().as_raw_value().to_uncompressed()
         } else {
             blsful::MultiSignature::from_signatures(signatures)?
                 .as_raw_value()
-                .to_compressed()
+                .to_uncompressed()
         };
         tracing::trace!(%send_id, "Multi-sig({})", multi_signature.to_hex_no_prefix());
 
@@ -496,19 +498,26 @@ impl Relayer {
             }
         }
         let message = (
-            self.address,               // Address(20)
-            multi_signature.as_slice(), // Signature(48)
+            pubkey.as_slice(),          // PublicKey(96)
             cosigner.as_raw_slice(),    // Signers(32)
+            multi_signature.as_slice(), // Signature(192)
         )
             .abi_encode_packed();
-        let signature = self.secret_key.sign(message.as_slice());
-        tracing::trace!(%send_id, "Signature({signature})");
+        let signature = self
+            .secret_key
+            .as_bls()
+            .sign(blsful::SignatureSchemes::Basic, message.as_slice())?
+            .as_raw_value()
+            .to_uncompressed();
+        tracing::trace!(%send_id, "Signature({})", signature.to_hex());
 
         // 3. Construct final UserOp
         let bop = bop.userop.unwrap();
         let final_uop = RelayUserOp::new(
             AlloyUserOperation {
-                signature: (message, signature.to_bytes()).abi_encode_packed().into(), // replace the signature with multi-sig
+                signature: (message.as_slice(), signature.as_slice())
+                    .abi_encode_packed()
+                    .into(), // replace the signature with multi-sig
                 ..bop
             },
             chain,
