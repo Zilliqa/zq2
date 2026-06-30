@@ -19,7 +19,6 @@ import {ERC165Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/intro
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
 import {MultiSignerERC7913Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/signers/MultiSignerERC7913Upgradeable.sol";
-
 // import {MultiSignerERC7913WeightedUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/signers/MultiSignerERC7913WeightedUpgradeable.sol";
 
 /**
@@ -167,12 +166,6 @@ contract UccbSender is
         _setThreshold(threshold);
     }
 
-    // ***** ENTRYPOINT *****
-
-    function entryPoint() public pure override returns (IEntryPoint) {
-        return ERC4337Utils.ENTRYPOINT_V08;
-    }
-
     /**
      * @notice Top-up this account's gas deposit in the EntryPoint.
      */
@@ -222,7 +215,5 @@ contract UccbSender is
      * @dev Account.receive() already exists and emits nothing.
      *      Override to emit an event so indexers can track deposits.
      */
-    receive() external payable virtual override {
-        // emit Received(msg.sender, msg.value);
-    }
+    receive() external payable virtual override {}
 }

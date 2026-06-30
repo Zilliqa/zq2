@@ -315,15 +315,14 @@ contract UccbGateway is
     }
 
     /**
-     * @notice Withdraw accumulated message fees.
+     * @notice Sweep accumulated message fees.
      * This is only used in the event that fees are accidentally sent to this contract.
      */
-    function withdrawTo(
-        address payable to,
-        uint256 amount
+    function sweep(
+        address payable to
     ) external onlyRole(WITHDRAWER_ROLE) nonReentrant {
         require(to != address(0));
-        to.sendValue(amount);
+        to.sendValue(address(this).balance);
     }
 
     // UUPSUpgradeable

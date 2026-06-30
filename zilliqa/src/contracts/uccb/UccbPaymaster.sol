@@ -54,7 +54,7 @@ contract UccbPaymaster is
 
     /// Use v0.9 entrypoint only
     function entryPoint() private pure returns (IEntryPoint) {
-        return ERC4337Utils.ENTRYPOINT_V08;
+        return ERC4337Utils.ENTRYPOINT_V09;
     }
 
     /// @custom:oz-upgrades-unsafe-allow constructor
