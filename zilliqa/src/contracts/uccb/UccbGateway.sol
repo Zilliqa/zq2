@@ -58,11 +58,11 @@ contract UccbGateway is
     // Roles
     bytes32 public constant WITHDRAWER_ROLE = keccak256("WITHDRAWER_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
-    bytes32 public constant ORIGINATOR_CONTRACT = keccak256(
-        "ORIGINATOR_CONTRACT"
+    bytes32 public constant ORIGINATING_CONTRACT = keccak256(
+        "ORIGINATING_CONTRACT"
     );
-    bytes32 public constant RECIPIENT_CONTRACT = keccak256(
-        "RECIPIENT_CONTRACT"
+    bytes32 public constant RECEIVING_CONTRACT = keccak256(
+        "RECEIVING_CONTRACT"
     );
 
     /// Emitted when an inbound message is successfully received.
@@ -96,50 +96,61 @@ contract UccbGateway is
     bytes4 internal constant MSG_CALL = 0x1b8b921d; // call(address,bytes)
     bytes4 internal constant MSG_TRANSFER = 0xa9059cbb; // transfer(address,uint256)
 
-    /// ***** Fee Management Functions *****
+    /*
+     * Fee Management Functions
+     * ========================
+     *
+     * The gateway contract stores a set of gas/fees for the User Op.
+     * Changes to the gas/fees will need to be managed via these functions.
+     */
+
     event FeesUpdated(uint64 indexed id, uint128[6] fees);
+
     /// @custom:storage-location erc7201:zilliqa.storage.UccbGateway
     struct GatewayStorage {
-        mapping(uint64 => uint128[6]) fees;
+        mapping(bytes32 => bool) _usedIds;
+        mapping(uint64 => uint128[6]) _fees;
     }
 
     // keccak256(abi.encode(uint256(keccak256("zilliqa.storage.UccbGateway")) - 1)) & ~bytes32(uint256(0xff))
-    bytes32 private constant STORAGE_SLOT =
+    bytes32 private constant GatewayStorageSlot =
         0x92031f62218d4a32004c55a85ae23890f7585155ae9d18edef0cbbb077fb9a00;
 
-    function _getFeeStorage() private pure returns (GatewayStorage storage $) {
-        bytes32 slot = STORAGE_SLOT;
+    function _getStorage() private pure returns (GatewayStorage storage $) {
         assembly {
-            $.slot := slot
+            $.slot := GatewayStorageSlot
         }
     }
 
+    /**
+     * Set the fees
+     */
     function setFees(
         uint64 id,
         uint128[6] calldata fees
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        GatewayStorage storage $ = _getFeeStorage(); // Get data pointer
-        $.fees[id] = fees;
+        GatewayStorage storage $ = _getStorage(); // Get data pointer
+        $._fees[id] = fees;
         emit FeesUpdated(id, fees);
     }
 
     function getFees(uint64 id) external view returns (uint128[6] memory) {
-        GatewayStorage storage $ = _getFeeStorage(); // Get data pointer
-        return $.fees[id];
+        GatewayStorage storage $ = _getStorage(); // Get data pointer
+        return $._fees[id];
     }
 
     function deleteFees(uint64 id) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        GatewayStorage storage $ = _getFeeStorage(); // Get data pointer
-        delete $.fees[id];
+        GatewayStorage storage $ = _getStorage(); // Get data pointer
+        delete $._fees[id];
     }
 
-    // IERC7786GatewaySource
-    function supportsAttribute(bytes4) external pure override returns (bool) {
-        // TODO: Support some ERC7985 attributes
-        return false;
-    }
-
-    // IERC7786GatewaySource
+    /**
+     * Sending Message
+     *
+     * This function is called by all external contracts that wish to use the UCCB to
+     * bridge calls to other chains/networks. The calling contract must be registered
+     * as a ORIGINATING_CONTRACT.
+     */
     function sendMessage(
         bytes calldata recipient, // ERC7930(recipient)
         bytes calldata payload,
@@ -150,7 +161,7 @@ contract UccbGateway is
         override
         whenNotPaused
         nonReentrant
-        onlyRole(ORIGINATOR_CONTRACT) // only registered contracts
+        onlyRole(ORIGINATING_CONTRACT) // only registered contracts
         returns (bytes32)
     {
         assert(payload.length != 0);
@@ -177,13 +188,19 @@ contract UccbGateway is
             nonce
         );
 
+        // TODO: Record the original message?
         // TODO: deliver local messages directly?
 
         return
             _sendMessageToCounterpart(counterpart, wrappedPayload, attributes);
     }
 
-    // CrosschainLinked
+    /**
+     * Bridge Mechanism
+     *
+     * This function emits the MessageSent() event that is picked up by the Rust code,
+     * which triggers the signing-relaying-bundling pipeline.
+     */
     function _sendMessageToCounterpart(
         bytes memory chain,
         bytes memory payload,
@@ -213,66 +230,83 @@ contract UccbGateway is
         return sendId;
     }
 
-    function setLink(
-        address sender,
-        bytes memory counterpart,
-        bool allowOverride
-    ) public onlyRole(DEFAULT_ADMIN_ROLE) {
-        _setLink(sender, counterpart, allowOverride);
-    }
-
-    mapping(bytes32 => bool) private _usedIds;
-
-    // ERC7786Recipient
+    /**
+     * Process Received Message
+     *
+     * This function is called internally after checking that the message came from an authorized sender.
+     * We check that the message itself is valid and proceed to deliver the mesage to the external contract,
+     * which must be registered as a RECEIVING_CONTRACT.
+     */
     function _processMessage(
         address, // ERC4337(sender),
         bytes32 receiveId,
         bytes calldata relayer,
         bytes calldata wrappedPayload
     ) internal override {
+        // prevent replays
         require(receiveId == keccak256(wrappedPayload), "Invalid payload");
+        GatewayStorage storage $ = _getStorage();
+        require(!$._usedIds[receiveId], "Replayed message");
+        $._usedIds[receiveId] = true;
 
+        // signal received
         (, address senderAddr) = relayer.parseEvmV1();
+        emit MessageReceived(receiveId, senderAddr);
 
         // Deconstruct the quad-tuple payload
-        assert(wrappedPayload.length > 32);
+        assert(wrappedPayload.length > 128);
         (
             uint8 version,
             bytes4 msgType,
-            bytes memory sender,
-            bytes memory recipient,
-            bytes memory payload, // uint256 nonce
+            bytes memory originator,
+            bytes memory receiver,
+            bytes memory payload,
 
         ) = abi.decode(
                 wrappedPayload,
                 (uint8, bytes4, bytes, bytes, bytes, uint256)
             );
         assert(version == MSG_VERSION);
-        require(msgType == MSG_CALL);
-
-        // prevent replays
-        require(!_usedIds[receiveId], "Replayed message");
-        _usedIds[receiveId] = true;
-
-        // signal received
-        emit MessageReceived(receiveId, senderAddr);
+        assert(msgType == MSG_CALL);
 
         // pass-thru to registered target
-        (, address target) = recipient.parseEvmV1();
-        require(hasRole(RECIPIENT_CONTRACT, target), "Unregistered receiver");
+        (, address target) = receiver.parseEvmV1();
+        require(hasRole(RECEIVING_CONTRACT, target), "Unregistered receiver");
 
         // TODO: allow failed execution
         require(
             IERC7786Recipient(target).receiveMessage(
                 receiveId,
-                sender,
+                originator,
                 payload
             ) == IERC7786Recipient.receiveMessage.selector,
             "Execution failure"
         );
     }
 
-    // Helper
+    /**
+     * @notice Configure the Sender/Remote mapping.
+     *
+     * When a message is received, it will be checked against this mapping to determine if the Sender is
+     * authorised to deliver messages from that counterpart originating chain/network.
+     *
+     * @param sender         The local ERC4337 sender contract allowed to call this Gateway.
+     * @param counterpart    The full ERC7930 address of the remote Gateway contract.
+     */
+    function setLink(
+        address sender,
+        bytes memory counterpart
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _setLink(sender, counterpart, true);
+    }
+
+    /* HELPERS */
+
+    function supportsAttribute(bytes4) external pure override returns (bool) {
+        // TODO: Support some ERC7985 attributes
+        return false;
+    }
+
     function __extractChain(
         bytes memory s
     ) private pure returns (bytes memory) {
@@ -282,7 +316,7 @@ contract UccbGateway is
 
     /**
      * @notice Withdraw accumulated message fees.
-     * @param  to  Recipient of the fees.
+     * This is only used in the event that fees are accidentally sent to this contract.
      */
     function withdrawTo(
         address payable to,
@@ -300,8 +334,7 @@ contract UccbGateway is
         // TODO: audit log
     }
 
-    // PausableUpgradeable – restricted entry points
-
+    // Pausable
     function pause() external onlyRole(PAUSER_ROLE) {
         _pause();
     }
@@ -311,8 +344,7 @@ contract UccbGateway is
     }
 
     /**
-     * @dev Advertises all interfaces implemented by this contract.
-     *      AccessControlUpgradeable already registers IAccessControl.
+     * @dev Advertises interfaces implemented by this contract.
      */
     function supportsInterface(
         bytes4 interfaceId
