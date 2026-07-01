@@ -1,10 +1,16 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.28;
+pragma solidity ^0.8.30;
 
 import {Account} from "@openzeppelin/contracts/account/Account.sol";
 import {AbstractSigner} from "@openzeppelin/contracts/utils/cryptography/signers/AbstractSigner.sol";
+import {BLS2} from "../lib/BLS2.sol";
 import {ERC4337Utils} from "@openzeppelin/contracts/account/utils/draft-ERC4337Utils.sol";
-import {IEntryPoint, IAccount, IAccountExecute, PackedUserOperation} from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
+import {
+    IEntryPoint,
+    IAccount,
+    IAccountExecute,
+    PackedUserOperation
+} from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
@@ -128,65 +134,28 @@ contract UccbSender is
     /*
      * Overrides internal signature verification function
      */
-
-    // EIP-2537 Pairing Check Precompile Address
-    address constant BLS12_PAIRING_CHECK = address(0x0f);
-
+    bytes private constant DST = "BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
     /**
-     * @notice High-level verification of a BLS12-381 signature
-     * @param publicKeyThe G1 public key point (128 bytes: x, y padded to 64 bytes each)
-     * @param messageG2   The message mapped to a G2 point (256 bytes: x0, x1, y0, y1 padded)
-     * @param signature   The G2 signature point (256 bytes: x0, x1, y0, y1 padded)
+     * @notice Verifies a BLS12-381 signature.
+     * @param payload The raw byte array message that was signed.
+     * @param pubkeyG1 The public key, encoded as a 128-byte G1 point.
+     * @param signatureG2 The signature, encoded as a 256-byte G2 point.
+     * @return bool True if the signature is valid, false otherwise.
      */
-    function verify(
-        bytes calldata publicKey,
-        bytes calldata messageG2,
-        bytes calldata signature
-    ) external view returns (bool) {
-        // Validation: Verify standard EVM EIP-2537 input sizes
-        require(publicKey.length == 128, "Invalid G1 Public Key size");
-        require(messageG2.length == 256, "Invalid G2 Message size");
-        require(signature.length == 256, "Invalid G2 Signature size");
+    function verifySignature(
+        bytes memory payload,
+        bytes memory pubkeyG1,
+        bytes memory signatureG2
+    ) private view returns (bool) {
+        require(pubkeyG1.length == 96, "Invalid G1 pubkey length");
+        require(signatureG2.length == 192, "Invalid G2 signature length");
 
-        // According to EIP-2537, the pairing precompile accepts an array of pairs.
-        // It returns 1 if: e(P1, Q1) * e(P2, Q2) * ... * e(Pk, Qk) == 1
-        // We verify the BLS relation: e(G1_Generator, Signature) == e(PublicKey, Message)
-        // Which translates mathematically to: e(-G1_Generator, Signature) * e(PublicKey, Message) == 1
-
-        bytes memory pairingInput = abi.encodePacked(
-            getNegativeG1Generator(), // 128 bytes (G1)
-            signature, // 256 bytes (G2)
-            publicKey, // 128 bytes (G1)
-            messageG2 // 256 bytes (G2)
-        );
-
-        // Execute staticcall to EIP-2537 pairing precompile
-        (bool success, bytes memory result) = BLS12_PAIRING_CHECK.staticcall(
-            pairingInput
-        );
-
-        if (!success || result.length == 0) {
-            return false;
-        }
-
-        // Returns 1 if pairing condition holds true, 0 otherwise
-        return abi.decode(result, (uint256)) == 1;
-    }
-
-    /**
-     * @dev Returns the standard negated G1 generator point for BLS12-381
-     * encoded as two 64-byte padded elements (EIP-2537 format).
-     */
-    function getNegativeG1Generator() internal pure returns (bytes memory) {
-        return
-            abi.encodePacked(
-                uint256(
-                    0x17f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb
-                ),
-                uint256(
-                    0x08b3f481e3aaa6a3ec3133761014e59c1b76617054b01750a630659c00de45b1b51b8e83162c118e8609531193300a2a
-                )
-            );
+        BLS2.PointG1 memory pubkey = BLS2.g1Unmarshal(pubkeyG1); // 96 bytes
+        BLS2.PointG2 memory signature = BLS2.g2Unmarshal(signatureG2); // 192 bytes
+        BLS2.PointG2 memory message = BLS2.hashToPointG2(DST, payload);
+        (bool ok, bool called) = BLS2.verifySingle(signature, pubkey, message);
+        // return BLS12381Verifier.verify(pubkeyG1, signatureG2, payload);
+        return called && ok;
     }
 
     function _decodeSignature(
@@ -195,20 +164,20 @@ contract UccbSender is
         private
         pure
         returns (
-            address addr,
+            bytes memory addr,
             bytes memory msig,
             bytes memory cosig,
             bytes memory sig
         )
     {
         // Sanity check to prevent out-of-bounds errors
-        require(packedSig.length == 244, "Invalid signature length");
+        require(packedSig.length == 512, "Invalid signature length");
 
         // Slice out each segment and cast manually
-        addr = address(bytes20(packedSig[0:20]));
-        msig = bytes(packedSig[20:116]);
-        cosig = bytes(packedSig[116:148]);
-        sig = bytes(packedSig[148:244]);
+        addr = bytes(packedSig[0:96]);
+        cosig = bytes(packedSig[96:128]);
+        msig = bytes(packedSig[128:320]);
+        sig = bytes(packedSig[320:512]);
     }
 
     function _rawSignatureValidation(
@@ -216,20 +185,21 @@ contract UccbSender is
         bytes calldata signature
     )
         internal
-        pure
+        view
         override(AbstractSigner, MultiSignerERC7913Upgradeable)
         returns (bool)
     {
         if (signature.length == 0) return false; // For ERC-7739 compatibility
         (
-            address signer,
-            bytes memory msig,
+            bytes memory signer,
             bytes memory cosig,
+            bytes memory msig,
             bytes memory sig
         ) = _decodeSignature(signature);
-        bytes memory message = signature[0:148];
+        bytes memory message = signature[0:320];
 
         // verify sig(message)
+        require(verifySignature(message, signer, sig), "Invalid signature");
 
         // verify msig(hash)
 

@@ -78,12 +78,7 @@ fn eth_accounts(_params: Params, node: &Arc<Node>) -> Result<Vec<Address>> {
 }
 
 // FIXME: DO NOT EXPOSE THIS TO THE PUBLIC
-#[cfg(not(debug_assertions))]
-fn eth_send_transaction(_params: Params, _node: &Arc<Node>) -> Result<String> {
-    Err(anyhow!("API method eth_sendTransaction is not available"))
-}
 // This is only for local development use.
-#[cfg(debug_assertions)]
 fn eth_send_transaction(params: Params, node: &Arc<Node>) -> Result<String> {
     let txn = params.one::<alloy::rpc::types::TransactionRequest>()?;
 

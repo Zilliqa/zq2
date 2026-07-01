@@ -21,6 +21,7 @@ use rand::Rng as _;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
+    api::to_hex::ToHex,
     cfg::{NodeConfig, RemoteChain},
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey},
     db::Db,
@@ -279,6 +280,8 @@ impl Uccb {
     ) -> Result<Self> {
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
         let eth_chain_id = ChainId::from(config.eth_chain_id);
+        let bls_pubkey = secret_key.as_bls().public_key().0.to_uncompressed();
+        tracing::info!("BLS {}", bls_pubkey.to_hex());
 
         let message_sender = Arc::new(MessageSender {
             our_shard: eth_chain_id,
