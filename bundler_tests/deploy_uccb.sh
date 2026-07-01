@@ -6,11 +6,11 @@ echo "WALLET: ${ADDRESS}"
 
 INIT_DATA=$(cast calldata "initialize(address)" 0x99f7f7c00526426b8dca99302e96d85a0e5fd400)
 
-GW_IMPL=$(forge create \
+GW_IMPL=$(forge create --optimize --optimizer-runs 200 \
     --private-key $PRIVATE_KEY \
     --broadcast ./zilliqa/src/contracts/uccb/UccbGateway.sol:UccbGateway \
     | grep "Deployed to:" | awk '{print $3}')
-GW_PROXY=$(forge create \
+GW_PROXY=$(forge create --optimize --optimizer-runs 200 \
     --private-key $PRIVATE_KEY \
     --broadcast \
     vendor/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol:ERC1967Proxy \
@@ -18,11 +18,11 @@ GW_PROXY=$(forge create \
     | grep "Deployed to:" | awk '{print $3}')
 echo "GATEWAY: ${GW_PROXY}"
 
-PM_IMPL=$(forge create \
+PM_IMPL=$(forge create --optimize --optimizer-runs 200 \
     --private-key $PRIVATE_KEY \
     --broadcast ./zilliqa/src/contracts/uccb/UccbPaymaster.sol:UccbPaymaster \
     | grep "Deployed to:" | awk '{print $3}')
-PM_PROXY=$(forge create \
+PM_PROXY=$(forge create --optimize --optimizer-runs 200 \
     --private-key $PRIVATE_KEY \
     --broadcast \
     vendor/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol:ERC1967Proxy \
@@ -30,11 +30,11 @@ PM_PROXY=$(forge create \
     | grep "Deployed to:" | awk '{print $3}')
 echo "PAYMASTER: ${PM_PROXY}"
 
-SA_IMPL=$(forge create \
+SA_IMPL=$(forge create --optimize --optimizer-runs 200 \
     --private-key $PRIVATE_KEY \
     --broadcast ./zilliqa/src/contracts/uccb/UccbSender.sol:UccbSender \
     | grep "Deployed to:" | awk '{print $3}')
-SA_PROXY=$(forge create \
+SA_PROXY=$(forge create --optimize --optimizer-runs 200 \
     --private-key $PRIVATE_KEY \
     --broadcast \
     vendor/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol:ERC1967Proxy \

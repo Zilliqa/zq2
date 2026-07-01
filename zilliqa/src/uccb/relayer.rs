@@ -481,14 +481,14 @@ impl Relayer {
             .collect_vec();
         // use uncompressed format for EIP-2537 compatibility
         let pubkey = self.secret_key.as_bls().public_key().0.to_uncompressed();
-        let multi_signature = if signatures.len() == 1 {
+        let mulsig = if signatures.len() == 1 {
             signatures.first().unwrap().as_raw_value().to_uncompressed()
         } else {
             blsful::MultiSignature::from_signatures(signatures)?
                 .as_raw_value()
                 .to_uncompressed()
         };
-        tracing::trace!(%send_id, "Multi-sig({})", multi_signature.to_hex_no_prefix());
+        tracing::trace!(%send_id, "Multi-sig({})", mulsig.to_hex_no_prefix());
 
         // 2. Count signers
         let mut cosigner = bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE];
@@ -497,25 +497,26 @@ impl Relayer {
                 cosigner.set(index, true);
             }
         }
+
         let message = (
-            pubkey.as_slice(),          // PublicKey(96)
-            cosigner.as_raw_slice(),    // Signers(32)
-            multi_signature.as_slice(), // Signature(192)
+            pubkey.as_slice(),       // PublicKey(96)
+            cosigner.as_raw_slice(), // Signers(32)
+            mulsig.as_slice(),       // Signature(192)
         )
             .abi_encode_packed();
-        let signature = self
+        let sig = self
             .secret_key
             .as_bls()
             .sign(blsful::SignatureSchemes::Basic, message.as_slice())?
             .as_raw_value()
             .to_uncompressed();
-        tracing::trace!(%send_id, "Signature({})", signature.to_hex());
+        tracing::trace!(%send_id, "Signature({})", sig.to_hex());
 
         // 3. Construct final UserOp
         let bop = bop.userop.unwrap();
         let final_uop = RelayUserOp::new(
             AlloyUserOperation {
-                signature: (message.as_slice(), signature.as_slice())
+                signature: (message.as_slice(), sig.as_slice()) // Bytes(416) + Bytes(256) Bytes
                     .abi_encode_packed()
                     .into(), // replace the signature with multi-sig
                 ..bop
