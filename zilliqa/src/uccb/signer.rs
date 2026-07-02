@@ -504,14 +504,14 @@ impl Signer {
             .get(&dst_chain.id())
             .context("dst_chain missing")?;
         let EndPoint {
-            gateway,
+            aggregator,
             entrypoint,
             sender,
             jsonrpc,
             ..
         } = p.value();
 
-        let key = Self::pack_nonce_key(gateway, txn_hash);
+        let key = Self::pack_nonce_key(aggregator, txn_hash);
         let nonce = super::IEntryPointNonces::new(*entrypoint, jsonrpc)
             .getNonce(*sender, key)
             .call()
@@ -630,10 +630,10 @@ impl Signer {
     /// This function packs the gateway address and a pseudo-random value into these bits.
     ///
     /// NOTE: Some bundlers impose a limit on parallel nonces e.g. https://www.alchemy.com/docs/wallets/reference/bundler-faqs#parallel-nonces
-    pub fn pack_nonce_key(gateway: &Address, txn_hash: &Hash) -> U192 {
+    pub fn pack_nonce_key(addr: &Address, txn_hash: &Hash) -> U192 {
         // U192 expects big-endian bytes
-        let hash = B32::from_slice(&txn_hash.0[..4]);
-        let bytes = (*gateway, hash).abi_encode_packed();
+        let hash32 = B32::from_slice(&txn_hash.0[..4]);
+        let bytes = (*addr, hash32).abi_encode_packed();
         U192::from_be_slice(bytes.as_slice())
     }
 
