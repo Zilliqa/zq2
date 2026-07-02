@@ -240,6 +240,7 @@ pub struct EndPoint {
     pub gateway: Address,
     pub sender: Address,
     pub entrypoint: Address,
+    pub aggregator: Address,
     pub paymaster: Address,
     pub bundler: Wallet,
     pub jsonrpc: Wallet,
@@ -300,6 +301,7 @@ impl Uccb {
             sender,
             paymaster,
             allow_loopback,
+            aggregator,
         } in config.remote_chains.clone().into_iter()
         {
             let bundler = build_wallet(&bundler_url)?;
@@ -345,6 +347,7 @@ impl Uccb {
                     jsonrpc,
                     chain,
                     allow_loopback,
+                    aggregator,
                 },
             );
         }

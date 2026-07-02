@@ -2,7 +2,6 @@
 pragma solidity ^0.8.30;
 
 import {Account} from "@openzeppelin/contracts/account/Account.sol";
-import {AbstractSigner} from "@openzeppelin/contracts/utils/cryptography/signers/AbstractSigner.sol";
 import {BLS2} from "../lib/BLS2.sol";
 import {ERC4337Utils} from "@openzeppelin/contracts/account/utils/draft-ERC4337Utils.sol";
 import {
@@ -19,8 +18,6 @@ import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/acce
 import {ERC165Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/introspection/ERC165Upgradeable.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
-import {MultiSignerERC7913Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/signers/MultiSignerERC7913Upgradeable.sol";
-import {MultiSignerERC7913WeightedUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/signers/MultiSignerERC7913WeightedUpgradeable.sol";
 
 /**
  * @title  UccbSender
@@ -30,7 +27,6 @@ import {MultiSignerERC7913WeightedUpgradeable} from "@openzeppelin/contracts-upg
  */
 contract UccbSender is
     Initializable,
-    MultiSignerERC7913WeightedUpgradeable,
     ERC165Upgradeable,
     UUPSUpgradeable,
     AccessControlUpgradeable,
@@ -42,6 +38,9 @@ contract UccbSender is
     using Address for address;
 
     bytes32 public constant WITHDRAWER_ROLE = keccak256("WITHDRAWER_ROLE");
+    bytes32 public constant AGGREGATOR_CONTRACT = keccak256(
+        "AGGREGATOR_CONTRACT"
+    );
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -61,10 +60,34 @@ contract UccbSender is
         _grantRole(WITHDRAWER_ROLE, admin_);
     }
 
-    // This is needed to allow UccbGateway::setLink() to work.
+    // REQUIRED - UNUSED
     function supportsAttribute(bytes4) external pure returns (bool) {
-        // does not need to do anything
         return false;
+    }
+    // REQUIRED - UNUSED
+    function _rawSignatureValidation(
+        bytes32,
+        bytes calldata
+    ) internal pure override returns (bool) {
+        assert(false);
+        return false;
+    }
+
+    // VALIDATION PHASE
+
+    /**
+     * Overrides validation function.
+     * Returns the aggregator address responsible for checking the signatures off-chain.
+     */
+    function _validateUserOp(
+        PackedUserOperation calldata userOp,
+        bytes32,
+        bytes calldata
+    ) internal view override returns (uint256) {
+        address aggregator = address(uint160(userOp.nonce >> 96));
+        bool valid = hasRole(AGGREGATOR_CONTRACT, aggregator);
+        require(valid, "Unregistered aggregator");
+        return ERC4337Utils.packValidationData(aggregator, 0, 0);
     }
 
     /// ***** External execution *****
@@ -129,109 +152,6 @@ contract UccbSender is
         bytes32 userOpHash
     ) external onlyEntryPoint {
         // TODO: Update stakers/stakes
-    }
-
-    /*
-     * Overrides internal signature verification function
-     */
-    bytes private constant DST = "BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
-    /**
-     * @notice Verifies a BLS12-381 signature.
-     * @param payload The raw byte array message that was signed.
-     * @param pubkeyG1 The public key, encoded as a 128-byte G1 point.
-     * @param signatureG2 The signature, encoded as a 256-byte G2 point.
-     * @return bool True if the signature is valid, false otherwise.
-     */
-    function verifySignature(
-        bytes memory payload,
-        bytes memory pubkeyG1,
-        bytes memory signatureG2
-    ) private view returns (bool) {
-        require(pubkeyG1.length == 96, "Invalid G1 pubkey length");
-        require(signatureG2.length == 192, "Invalid G2 signature length");
-
-        BLS2.PointG1 memory pubkey = BLS2.g1Unmarshal(pubkeyG1); // 96 bytes
-        BLS2.PointG2 memory signature = BLS2.g2Unmarshal(signatureG2); // 192 bytes
-        BLS2.PointG2 memory message = BLS2.hashToPointG2(DST, payload);
-        (bool ok, bool called) = BLS2.verifySingle(signature, pubkey, message);
-        // return BLS12381Verifier.verify(pubkeyG1, signatureG2, payload);
-        return called && ok;
-    }
-
-    function _decodeSignature(
-        bytes calldata packedSig
-    )
-        private
-        pure
-        returns (
-            bytes memory addr,
-            bytes memory msig,
-            bytes memory cosig,
-            bytes memory sig
-        )
-    {
-        // Sanity check to prevent out-of-bounds errors
-        require(packedSig.length == 512, "Invalid signature length");
-
-        // Slice out each segment and cast manually
-        addr = bytes(packedSig[0:96]);
-        cosig = bytes(packedSig[96:128]);
-        msig = bytes(packedSig[128:320]);
-        sig = bytes(packedSig[320:512]);
-    }
-
-    function _rawSignatureValidation(
-        bytes32 hash,
-        bytes calldata signature
-    )
-        internal
-        view
-        override(AbstractSigner, MultiSignerERC7913Upgradeable)
-        returns (bool)
-    {
-        if (signature.length == 0) return false; // For ERC-7739 compatibility
-        (
-            bytes memory signer,
-            bytes memory cosig,
-            bytes memory msig,
-            bytes memory sig
-        ) = _decodeSignature(signature);
-        bytes memory message = signature[0:320];
-
-        // verify sig(message)
-        require(verifySignature(message, signer, sig), "Invalid signature");
-
-        // verify msig(hash)
-
-        // TODO: verify all signatures signature
-        return hash != 0 && signature.length != 0;
-    }
-
-    // ***** SIGNERS MANAGEMENT *****
-
-    function addSigners(
-        bytes[] memory signers
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _addSigners(signers);
-    }
-
-    function removeSigners(
-        bytes[] memory signers
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _removeSigners(signers);
-    }
-
-    function setThreshold(
-        uint64 threshold
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _setThreshold(threshold);
-    }
-
-    function setSignerWeights(
-        bytes[] memory signers,
-        uint64[] memory weights
-    ) public onlyRole(DEFAULT_ADMIN_ROLE) {
-        _setSignerWeights(signers, weights);
     }
 
     /**

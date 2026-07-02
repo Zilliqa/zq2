@@ -98,6 +98,7 @@ contract UccbPaymaster is
     {
         // allow all from SENDER
         bool allowed = hasRole(SPONSORED_CONTRACT, userOp.sender);
+
         // extract validUntil/validAfter
         // context = relayer + signers
         return ("", ERC4337Utils.packValidationData(allowed, 0, 0)); // true, forever
@@ -115,26 +116,6 @@ contract UccbPaymaster is
     ) external view override onlyEntryPoint {
         // TODO: record the signer and co-signers
         if (context.length == 0) return;
-    }
-
-    // ***** SIGNERS MANAGEMENT *****
-
-    function addSigners(
-        bytes[] memory signers
-    ) public onlyRole(SPONSORED_CONTRACT) {
-        _addSigners(signers);
-    }
-
-    function removeSigners(
-        bytes[] memory signers
-    ) public onlyRole(SPONSORED_CONTRACT) {
-        _removeSigners(signers);
-    }
-
-    function setThreshold(
-        uint64 threshold
-    ) public onlyRole(SPONSORED_CONTRACT) {
-        _setThreshold(threshold);
     }
 
     /**
