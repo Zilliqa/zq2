@@ -73,6 +73,54 @@ contract UccbSender is
         return false;
     }
 
+    // BLS12381
+
+    bytes private constant DST = "BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
+    /**
+     * @notice Verifies a BLS12-381 signature.
+     * @param payload The raw byte array message that was signed.
+     * @param pubkeyG1 The public key, encoded as a 128-byte G1 point.
+     * @param signatureG2 The signature, encoded as a 256-byte G2 point.
+     * @return bool True if the signature is valid, false otherwise.
+     */
+    function verifySignature(
+        bytes memory payload,
+        bytes memory pubkeyG1,
+        bytes memory signatureG2
+    ) private view returns (bool) {
+        require(pubkeyG1.length == 96, "Invalid G1 pubkey length");
+        require(signatureG2.length == 192, "Invalid G2 signature length");
+
+        BLS2.PointG1 memory pubkey = BLS2.g1Unmarshal(pubkeyG1); // 96 bytes
+        BLS2.PointG2 memory signature = BLS2.g2Unmarshal(signatureG2); // 192 bytes
+        BLS2.PointG2 memory message = BLS2.hashToPointG2(DST, payload);
+        (bool ok, bool called) = BLS2.verifySingle(signature, pubkey, message);
+        // return BLS12381Verifier.verify(pubkeyG1, signatureG2, payload);
+        return called && ok;
+    }
+
+    function _decodeSignature(
+        bytes calldata packedSig
+    )
+        private
+        pure
+        returns (
+            bytes memory addr,
+            bytes memory msig,
+            bytes memory cosig,
+            bytes memory sig
+        )
+    {
+        // Sanity check to prevent out-of-bounds errors
+        require(packedSig.length == 512, "Invalid signature length");
+
+        // Slice out each segment and cast manually
+        addr = bytes(packedSig[0:96]);
+        cosig = bytes(packedSig[96:128]);
+        msig = bytes(packedSig[128:320]);
+        sig = bytes(packedSig[320:512]);
+    }
+
     // VALIDATION PHASE
 
     /**
@@ -84,10 +132,22 @@ contract UccbSender is
         bytes32,
         bytes calldata
     ) internal view override returns (uint256) {
-        address aggregator = address(uint160(userOp.nonce >> 96));
-        bool valid = hasRole(AGGREGATOR_CONTRACT, aggregator);
-        require(valid, "Unregistered aggregator");
-        return ERC4337Utils.packValidationData(aggregator, 0, 0);
+        (
+            bytes memory pubkey,
+            bytes memory cosig,
+            bytes memory msig,
+            bytes memory sig
+        ) = _decodeSignature(userOp.signature);
+        return
+            verifySignature(userOp.signature[0:320], pubkey, sig)
+                ? ERC4337Utils.SIG_VALIDATION_SUCCESS
+                : ERC4337Utils.SIG_VALIDATION_FAILED;
+
+        // address aggregator = address(uint160(userOp.nonce >> 96));
+        // bool valid = hasRole(AGGREGATOR_CONTRACT, aggregator);
+        // require(valid, "Unregistered aggregator");
+        // return ERC4337Utils.SIG_VALIDATION_SUCCESS;
+        // return ERC4337Utils.packValidationData(aggregator, 0, 0);
     }
 
     /// ***** External execution *****
