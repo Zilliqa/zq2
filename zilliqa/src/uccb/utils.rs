@@ -143,10 +143,10 @@ mod tests {
     #[test]
     fn test_erc7930() {
         let account_id = alloy::hex!("0001000002053914f7c337A02CCf847356783Ab47cAF431D3a1E4e44");
-        let x = get_erc7930_chain(&account_id.as_slice()).unwrap();
+        let x = get_erc7930_chain(account_id.as_slice()).unwrap();
         assert_eq!(x.id(), 1337);
 
-        let x = get_erc7930_address(&account_id.as_slice()).unwrap();
+        let x = get_erc7930_address(account_id.as_slice()).unwrap();
         assert_eq!(x, Address::from_slice(&account_id[8..]).0);
     }
 }
