@@ -106,8 +106,8 @@ contract UccbSender is
         pure
         returns (
             bytes memory addr,
+            bytes32 cosig,
             bytes memory msig,
-            bytes memory cosig,
             bytes memory sig
         )
     {
@@ -116,7 +116,7 @@ contract UccbSender is
 
         // Slice out each segment and cast manually
         addr = bytes(packedSig[0:96]);
-        cosig = bytes(packedSig[96:128]);
+        cosig = bytes32(packedSig[96:128]);
         msig = bytes(packedSig[128:320]);
         sig = bytes(packedSig[320:512]);
     }
@@ -129,25 +129,27 @@ contract UccbSender is
      */
     function _validateUserOp(
         PackedUserOperation calldata userOp,
-        bytes32,
-        bytes calldata
+        bytes32 userOpHash,
+        bytes calldata signature
     ) internal view override returns (uint256) {
+        require(address(this) == userOp.sender, "Alien UserOp");
+
+        // 1. Relayer signature check
         (
             bytes memory pubkey,
-            bytes memory cosig,
+            bytes32 cosig,
             bytes memory msig,
             bytes memory sig
-        ) = _decodeSignature(userOp.signature);
-        return
-            verifySignature(userOp.signature[0:320], pubkey, sig)
-                ? ERC4337Utils.SIG_VALIDATION_SUCCESS
-                : ERC4337Utils.SIG_VALIDATION_FAILED;
+        ) = _decodeSignature(signature);
 
-        // address aggregator = address(uint160(userOp.nonce >> 96));
-        // bool valid = hasRole(AGGREGATOR_CONTRACT, aggregator);
-        // require(valid, "Unregistered aggregator");
-        // return ERC4337Utils.SIG_VALIDATION_SUCCESS;
-        // return ERC4337Utils.packValidationData(aggregator, 0, 0);
+        if (!verifySignature(signature[0:320], pubkey, sig))
+            return ERC4337Utils.SIG_VALIDATION_FAILED;
+
+        // 2. Co-signers multi-signature check
+        if (!verifySignature(bytes.concat(userOpHash), pubkey, msig))
+            return ERC4337Utils.SIG_VALIDATION_FAILED;
+
+        return ERC4337Utils.packValidationData(true, 0, 0);
     }
 
     /// ***** External execution *****
