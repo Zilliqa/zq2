@@ -225,7 +225,7 @@ impl Relayer {
         let res = bundler
             .raw_request::<_, serde_json::Value>(
                 "eth_getUserOperationByHash".into(),
-                [*userop_hash],
+                [userop_hash.0.to_hex()],
             )
             .await?;
         // responds with NULL if userop hash does not exist; else userop details.
