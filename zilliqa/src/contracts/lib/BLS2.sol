@@ -613,4 +613,76 @@ library BLS2 {
         }
         return (out[0] != 0, callSuccess);
     }
+
+    /// @notice Adds two points on G1, using the EIP-2537 G1 point addition precompile.
+    /// @param p1 The first point on the G1 curve.
+    /// @param p2 The second point on the G1 curve.
+    /// @return sum The resulting point p1 + p2 on G1.
+    function addG1Points(
+        PointG1 memory p1,
+        PointG1 memory p2
+    ) internal view returns (PointG1 memory sum) {
+        uint256[8] memory input = [
+            uint256(p1.x_hi),
+            p1.x_lo,
+            uint256(p1.y_hi),
+            p1.y_lo,
+            uint256(p2.x_hi),
+            p2.x_lo,
+            uint256(p2.y_hi),
+            p2.y_lo
+        ];
+        uint256[4] memory out;
+        bool ok;
+        assembly {
+            ok := staticcall(gas(), BLS12_G1ADD, input, 256, out, 128)
+        }
+        require(ok, "g1add failed");
+        sum = PointG1(uint128(out[0]), out[1], uint128(out[2]), out[3]);
+    }
+
+    /// @notice Aggregates an array of 96-byte G1 public keys into a single multi/aggregated public key.
+    /// @dev Aggregation is a simple sum on G1: pkAgg = pubkeys[0] + pubkeys[1] + ... + pubkeys[n-1].
+    ///      This matches the corresponding multi-signature aggregation, sigAgg = sig_0 + sig_1 + ... + sig_(n-1)
+    ///      on G2, so that verifySingle(sigAgg, pkAgg, H(m)) succeeds iff every signer signed the same message.
+    /// @param pubkeys Array of signer public keys, each 96 bytes (uncompressed, on G1). Must be non-empty.
+    /// @return aggPubkey The aggregated public key, on G1
+    function aggregatePublicKeys(
+        bytes[] memory pubkeys
+    ) internal view returns (PointG1 memory aggPubkey) {
+        require(pubkeys.length > 0, "no public keys provided");
+        aggPubkey = g1Unmarshal(pubkeys[0]);
+        for (uint256 i = 1; i < pubkeys.length; i++) {
+            aggPubkey = addG1Points(aggPubkey, g1Unmarshal(pubkeys[i]));
+        }
+    }
+
+    /// @notice Verify a payload against a BLS multi-signature and the individual signers' public keys.
+    /// @dev "min-pubkey-size" convention: 96-byte G1 public keys, 192-byte G2 multi-signature.
+    ///      Computes the aggregated public key (sum of the individual G1 public keys) and checks it against
+    ///      the (already aggregated) multi-signature using the same pairing equation as
+    ///      `verifySingle(PointG2 signature, PointG1 pubkey, PointG2 message)`, i.e.
+    ///      e(-g1, sigAgg) * e(pkAgg, H(m)) == 1.
+    /// @dev Every signer is assumed to have signed the exact same `message` with the same `dst`. This does not
+    ///      perform subgroup-membership checks on the supplied public keys/signature.
+    /// @param dst Domain separation tag used to hash `message` onto G2
+    /// @param signature The 192-byte aggregated multi-signature, on G2
+    /// @param pubkeys Array of signer public keys, each 96 bytes, on G1
+    /// @param message The signed payload (raw bytes; this function hashes it onto G2 internally)
+    /// @return pairingSuccess bool indicating if the pairing check was successful
+    /// @return callSuccess bool indicating if the static call to the evm precompile was successful
+    function verifyMulti(
+        bytes memory dst,
+        bytes memory signature,
+        bytes[] memory pubkeys,
+        bytes memory message
+    ) internal view returns (bool pairingSuccess, bool callSuccess) {
+        require(signature.length == 192, "Invalid G2 signature bytes length");
+
+        PointG1 memory aggPubkey = aggregatePublicKeys(pubkeys);
+        PointG2 memory sig = g2Unmarshal(signature);
+        PointG2 memory hashedMessage = hashToPointG2(dst, message);
+
+        return verifySingle(sig, aggPubkey, hashedMessage);
+    }
 }
