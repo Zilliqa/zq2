@@ -18,18 +18,6 @@ GW_PROXY=$(forge create --optimize --optimizer-runs 200 \
     | grep "Deployed to:" | awk '{print $3}')
 echo "GATEWAY: ${GW_PROXY}"
 
-AG_IMPL=$(forge create --optimize --optimizer-runs 200 \
-    --private-key $PRIVATE_KEY \
-    --broadcast ./zilliqa/src/contracts/uccb/UccbAggregator.sol:UccbAggregator \
-    | grep "Deployed to:" | awk '{print $3}')
-AG_PROXY=$(forge create --optimize --optimizer-runs 200 \
-    --private-key $PRIVATE_KEY \
-    --broadcast \
-    vendor/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol:ERC1967Proxy \
-    --constructor-args $AG_IMPL $INIT_DATA \
-    | grep "Deployed to:" | awk '{print $3}')
-echo "AGGREGATOR: ${AG_PROXY}"
-
 SA_IMPL=$(forge create --optimize --optimizer-runs 200 \
     --private-key $PRIVATE_KEY \
     --broadcast ./zilliqa/src/contracts/uccb/UccbSender.sol:UccbSender \
@@ -60,9 +48,9 @@ cast send $GW_PROXY "grantRole(bytes32,address)" 0x4395ac258ce87896ffc4b11b82c2c
 cast send $GW_PROXY "setLink(address,bytes)" $SA_PROXY 0x0001000002053914f7c337A02CCf847356783Ab47cAF431D3a1E4e44 --private-key $PRIVATE_KEY
 
 # stake aggregator
-cast send $AG_PROXY "addStake(uint32)" 86400 --value 1ether --private-key $PRIVATE_KEY
-cast send $AG_PROXY "grantRole(bytes32,address)" 0x3b4cd66db375c0da1847e3f9f0eb937920b54c4f398e28d67b8d95ca76727550 $SA_PROXY --private-key $PRIVATE_KEY
-cast send $SA_PROXY "grantRole(bytes32,address)" 0x54b33b84def860fc0ed7585146fa01e2f8cad98d6b7d2a963f1c36bf92af53a3 $AG_PROXY --private-key $PRIVATE_KEY
+#cast send $AG_PROXY "addStake(uint32)" 86400 --value 1ether --private-key $PRIVATE_KEY
+#cast send $AG_PROXY "grantRole(bytes32,address)" 0x3b4cd66db375c0da1847e3f9f0eb937920b54c4f398e28d67b8d95ca76727550 $SA_PROXY --private-key $PRIVATE_KEY
+#cast send $SA_PROXY "grantRole(bytes32,address)" 0x54b33b84def860fc0ed7585146fa01e2f8cad98d6b7d2a963f1c36bf92af53a3 $AG_PROXY --private-key $PRIVATE_KEY
 
 # stake/deposit paymaster
 cast send $PM_PROXY "depositTo()" --value 1ether --private-key $PRIVATE_KEY
