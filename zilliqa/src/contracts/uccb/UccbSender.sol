@@ -2,7 +2,7 @@
 pragma solidity ^0.8.30;
 
 import {Account} from "@openzeppelin/contracts/account/Account.sol";
-import {BLS2} from "../lib/BLS2.sol";
+import {BLS2} from "./BLS2.sol";
 import {ERC4337Utils} from "@openzeppelin/contracts/account/utils/draft-ERC4337Utils.sol";
 import {
     IEntryPoint,
@@ -18,6 +18,8 @@ import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/acce
 import {ERC165Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/introspection/ERC165Upgradeable.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
+import {AbstractSigner} from "@openzeppelin/contracts/utils/cryptography/signers/AbstractSigner.sol";
+import {MultiSignerERC7913WeightedCheckpointedUpgradeable} from "./MultiSignerERC7913WeightedCheckpointedUpgradeable.sol";
 
 /**
  * @title  UccbSender
@@ -32,10 +34,12 @@ contract UccbSender is
     AccessControlUpgradeable,
     ReentrancyGuardTransient,
     EIP712Upgradeable,
+    MultiSignerERC7913WeightedCheckpointedUpgradeable,
     IAccountExecute,
     Account
 {
     using Address for address;
+    using ERC4337Utils for PackedUserOperation;
 
     bytes32 public constant WITHDRAWER_ROLE = keccak256("WITHDRAWER_ROLE");
     bytes32 public constant AGGREGATOR_CONTRACT = keccak256(
@@ -64,14 +68,9 @@ contract UccbSender is
     function supportsAttribute(bytes4) external pure returns (bool) {
         return false;
     }
-    // REQUIRED - UNUSED
-    function _rawSignatureValidation(
-        bytes32,
-        bytes calldata
-    ) internal pure override returns (bool) {
-        assert(false);
-        return false;
-    }
+ 
+
+    // ***** SIGNERS MANAGEMENT *****
 
     // BLS12381
 
@@ -123,17 +122,18 @@ contract UccbSender is
 
     // VALIDATION PHASE
 
-    /**
-     * Overrides validation function.
-     * Returns the aggregator address responsible for checking the signatures off-chain.
-     */
-    function _validateUserOp(
-        PackedUserOperation calldata userOp,
+    function _rawSignatureValidation(
         bytes32 userOpHash,
         bytes calldata signature
-    ) internal view override returns (uint256) {
-        require(address(this) == userOp.sender, "Alien UserOp");
-
+    )
+        internal
+        view
+        override(
+            MultiSignerERC7913WeightedCheckpointedUpgradeable,
+            AbstractSigner
+        )
+        returns (bool)
+    {
         // 1. Relayer signature check
         (
             bytes memory pubkey,
@@ -143,13 +143,14 @@ contract UccbSender is
         ) = _decodeSignature(signature);
 
         if (!verifySignature(signature[0:320], pubkey, sig))
-            return ERC4337Utils.SIG_VALIDATION_FAILED;
+            return false;
 
         // 2. Co-signers multi-signature check
         if (!verifySignature(bytes.concat(userOpHash), pubkey, msig))
-            return ERC4337Utils.SIG_VALIDATION_FAILED;
+            return false;
 
-        return ERC4337Utils.packValidationData(true, 0, 0);
+        
+        return true;
     }
 
     /// ***** External execution *****
@@ -214,6 +215,29 @@ contract UccbSender is
         bytes32 userOpHash
     ) external onlyEntryPoint {
         // TODO: Update stakers/stakes
+        require(userOp.callData.length % 104 == 14, "Invalid length");
+
+        uint256 count = userOp.callData.length / 104;
+
+        bytes[] memory signers = new bytes[](count);
+        uint64[] memory weights = new uint64[](count);
+
+        uint256 offset = 0;
+        // each element is a G1 uncompressed public key(96) + weight(8).
+        for (uint256 i = 0; i < count; i++) {
+            signers[i] = bytes(userOp.callData[offset:offset + 96]);
+            weights[i] = uint64(
+                bytes8(userOp.callData[offset + 96:offset + 104])
+            );
+            offset += 104;
+        }
+
+        uint64 threshold = uint64(bytes8(userOp.callData[offset:offset + 16]));
+        uint48 effectiveBlock = uint48(
+            bytes6(userOp.callData[offset + 16:offset + 20])
+        );
+
+        _scheduleSignerSet(signers, weights, threshold, effectiveBlock);
     }
 
     /**
