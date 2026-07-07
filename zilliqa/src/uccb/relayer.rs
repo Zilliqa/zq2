@@ -413,6 +413,7 @@ impl Relayer {
                 })
                 .sum();
             BlsUserOp {
+                height: block.number(), // TODO: Set zero for foreign chain
                 userop: None,
                 send_id: B256::ZERO,
                 threshold: 2 * total_stake / 3 + 1,
@@ -500,6 +501,7 @@ impl Relayer {
 
         let message = (
             pubkey.as_slice(),       // PublicKey(96)
+            bop.height,              // u64(8)
             cosigner.as_raw_slice(), // Signers(32)
             mulsig.as_slice(),       // Signature(192)
         )
@@ -516,9 +518,9 @@ impl Relayer {
         let bop = bop.userop.unwrap();
         let final_uop = RelayUserOp::new(
             AlloyUserOperation {
-                signature: (message.as_slice(), sig.as_slice()) // Bytes(416) + Bytes(256) Bytes
+                signature: (message.as_slice(), sig.as_slice())
                     .abi_encode_packed()
-                    .into(), // replace the signature with multi-sig
+                    .into(), // replace the signature with packed struct
                 ..bop
             },
             chain,

@@ -270,7 +270,6 @@ pub struct RemoteChain {
     pub gateway: Address,
     pub sender: Address,
     pub paymaster: Address,
-    pub aggregator: Address,
     #[serde(default)]
     pub allow_loopback: bool,
 }

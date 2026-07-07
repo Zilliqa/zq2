@@ -2,7 +2,6 @@
 pragma solidity ^0.8.30;
 
 import {Account} from "@openzeppelin/contracts/account/Account.sol";
-import {BLS2} from "./BLS2.sol";
 import {ERC4337Utils} from "@openzeppelin/contracts/account/utils/draft-ERC4337Utils.sol";
 import {
     IEntryPoint,
@@ -71,87 +70,6 @@ contract UccbSender is
  
 
     // ***** SIGNERS MANAGEMENT *****
-
-    // BLS12381
-
-    bytes private constant DST = "BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
-    /**
-     * @notice Verifies a BLS12-381 signature.
-     * @param payload The raw byte array message that was signed.
-     * @param pubkeyG1 The public key, encoded as a 128-byte G1 point.
-     * @param signatureG2 The signature, encoded as a 256-byte G2 point.
-     * @return bool True if the signature is valid, false otherwise.
-     */
-    function verifySignature(
-        bytes memory payload,
-        bytes memory pubkeyG1,
-        bytes memory signatureG2
-    ) private view returns (bool) {
-        require(pubkeyG1.length == 96, "Invalid G1 pubkey length");
-        require(signatureG2.length == 192, "Invalid G2 signature length");
-
-        BLS2.PointG1 memory pubkey = BLS2.g1Unmarshal(pubkeyG1); // 96 bytes
-        BLS2.PointG2 memory signature = BLS2.g2Unmarshal(signatureG2); // 192 bytes
-        BLS2.PointG2 memory message = BLS2.hashToPointG2(DST, payload);
-        (bool ok, bool called) = BLS2.verifySingle(signature, pubkey, message);
-        // return BLS12381Verifier.verify(pubkeyG1, signatureG2, payload);
-        return called && ok;
-    }
-
-    function _decodeSignature(
-        bytes calldata packedSig
-    )
-        private
-        pure
-        returns (
-            bytes memory addr,
-            bytes32 cosig,
-            bytes memory msig,
-            bytes memory sig
-        )
-    {
-        // Sanity check to prevent out-of-bounds errors
-        require(packedSig.length == 512, "Invalid signature length");
-
-        // Slice out each segment and cast manually
-        addr = bytes(packedSig[0:96]);
-        cosig = bytes32(packedSig[96:128]);
-        msig = bytes(packedSig[128:320]);
-        sig = bytes(packedSig[320:512]);
-    }
-
-    // VALIDATION PHASE
-
-    function _rawSignatureValidation(
-        bytes32 userOpHash,
-        bytes calldata signature
-    )
-        internal
-        view
-        override(
-            MultiSignerERC7913WeightedCheckpointedUpgradeable,
-            AbstractSigner
-        )
-        returns (bool)
-    {
-        // 1. Relayer signature check
-        (
-            bytes memory pubkey,
-            bytes32 cosig,
-            bytes memory msig,
-            bytes memory sig
-        ) = _decodeSignature(signature);
-
-        if (!verifySignature(signature[0:320], pubkey, sig))
-            return false;
-
-        // 2. Co-signers multi-signature check
-        if (!verifySignature(bytes.concat(userOpHash), pubkey, msig))
-            return false;
-
-        
-        return true;
-    }
 
     /// ***** External execution *****
 

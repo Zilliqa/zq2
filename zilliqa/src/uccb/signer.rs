@@ -504,14 +504,13 @@ impl Signer {
             .get(&dst_chain.id())
             .context("dst_chain missing")?;
         let EndPoint {
-            aggregator,
             entrypoint,
             sender,
             jsonrpc,
             ..
         } = p.value();
 
-        let key = Self::pack_nonce_key(aggregator, txn_hash);
+        let key = Self::pack_nonce_key(&Address::ZERO, txn_hash);
         let nonce = super::IEntryPointNonces::new(*entrypoint, jsonrpc)
             .getNonce(*sender, key)
             .call()

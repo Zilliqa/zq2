@@ -3,8 +3,8 @@ pragma solidity ^0.8.27;
 
 import {Checkpoints} from "@openzeppelin/contracts/utils/structs/Checkpoints.sol";
 import {AbstractSigner} from "@openzeppelin/contracts/utils/cryptography/signers/AbstractSigner.sol";
-import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {BLS2} from "./BLS2.sol";
 
 /**
  * @dev Upgradeable variant of `MultiSignerERC7913WeightedCheckpointed`.
@@ -426,6 +426,55 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
     /// Signature validation
     /// ------------------------------------------------------------------
 
+
+    bytes private constant DST = "BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
+    /**
+     * @notice Verifies a BLS12-381 signature.
+     * @param payload The raw byte array message that was signed.
+     * @param pubkeyG1 The public key, encoded as a 128-byte G1 point.
+     * @param signatureG2 The signature, encoded as a 256-byte G2 point.
+     * @return bool True if the signature is valid, false otherwise.
+     */
+    function verifySignature(
+        bytes memory payload,
+        bytes memory pubkeyG1,
+        bytes memory signatureG2
+    ) private view returns (bool) {
+        require(pubkeyG1.length == 96, "Invalid G1 pubkey length");
+        require(signatureG2.length == 192, "Invalid G2 signature length");
+
+        BLS2.PointG1 memory pubkey = BLS2.g1Unmarshal(pubkeyG1); // 96 bytes
+        BLS2.PointG2 memory signature = BLS2.g2Unmarshal(signatureG2); // 192 bytes
+        BLS2.PointG2 memory message = BLS2.hashToPointG2(DST, payload);
+        (bool ok, bool called) = BLS2.verifySingle(signature, pubkey, message);
+        return called && ok;
+    }
+
+
+    function _decodeSignature(
+        bytes calldata packedSig
+    )
+        private
+        pure
+        returns (
+            bytes memory addr,
+            bytes32 cosig,
+            bytes memory msig,
+            bytes memory sig,
+            uint64 height
+        )
+    {
+        // Sanity check to prevent out-of-bounds errors
+        require(packedSig.length == 520, "Invalid signature length");
+
+        // Slice out each segment and cast manually
+        addr = bytes(packedSig[0:96]);
+        height = uint64(bytes8(packedSig[96:104]));
+        cosig = bytes32(packedSig[104:136]);
+        msig = bytes(packedSig[136:328]);
+        sig = bytes(packedSig[328:520]);
+    }
+
     /**
      * @dev Decodes, validates the signature and checks the signers are authorized as of the
      * current block (`block.number`). Mirrors `MultiSignerERC7913._rawSignatureValidation`.
@@ -438,13 +487,27 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
         bytes32 hash,
         bytes calldata signature
     ) internal view virtual override returns (bool) {
-        (bytes[] memory signers, bytes[] memory signatures) = abi.decode(
-            signature,
-            (bytes[], bytes[])
-        );
-        return
-            _validateSignatures(hash, signers, signatures) &&
-            _validateThreshold(signers);
+        // 1. Relayer signature check
+        (
+            bytes memory pubkey,
+            bytes32 cosig,
+            bytes memory msig,
+            bytes memory sig,
+            uint64 height
+        ) = _decodeSignature(signature);
+
+        if (!isSigner(pubkey, uint48(height)) || !verifySignature(signature[0:320], pubkey, sig))
+            return false;
+
+        // 2. Co-signers multi-signature check
+        if (!verifySignature(bytes.concat(hash), pubkey, msig))
+            return false;
+
+        return true;
+
+        // return
+        //     _validateSignatures(hash, signers, signatures) &&
+        //     _validateThreshold(signers);
     }
 
     /// @dev See `MultiSignerERC7913._validateSignatures`. Sorting signers by their `keccak256`
@@ -452,11 +515,9 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
     function _validateSignatures(
         bytes32 hash,
         bytes[] memory signers,
-        bytes[] memory signatures
-    ) internal view virtual returns (bool valid) {
-        if (signers.length != signatures.length) return false;
-        return
-            SignatureChecker.areValidSignaturesNow(hash, signers, signatures);
+        bytes memory signatures
+    ) internal view virtual returns (bool valid) {        
+
     }
 
     /// @dev Validates that the total weight of `signers`, evaluated against the generation
