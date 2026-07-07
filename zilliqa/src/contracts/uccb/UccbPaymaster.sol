@@ -16,7 +16,7 @@ import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
-import {MultiSignerERC7913WeightedUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/signers/MultiSignerERC7913WeightedUpgradeable.sol";
+// import {MultiSignerERC7913WeightedUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/signers/MultiSignerERC7913WeightedUpgradeable.sol";
 
 /**
  * @title  Paymaster
@@ -29,7 +29,6 @@ contract UccbPaymaster is
     PausableUpgradeable,
     EIP712Upgradeable,
     ReentrancyGuardTransient,
-    MultiSignerERC7913WeightedUpgradeable,
     IPaymaster
 {
     // using SafeERC20     for IERC20;

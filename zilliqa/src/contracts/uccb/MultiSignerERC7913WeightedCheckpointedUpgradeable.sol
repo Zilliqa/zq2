@@ -426,7 +426,6 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
     /// Signature validation
     /// ------------------------------------------------------------------
 
-
     bytes private constant DST = "BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
     /**
      * @notice Verifies a BLS12-381 signature.
@@ -435,21 +434,17 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
      * @param signatureG2 The signature, encoded as a 256-byte G2 point.
      * @return bool True if the signature is valid, false otherwise.
      */
-    function verifySignature(
+    function _verifySignature(
         bytes memory payload,
         bytes memory pubkeyG1,
         bytes memory signatureG2
     ) private view returns (bool) {
-        require(pubkeyG1.length == 96, "Invalid G1 pubkey length");
-        require(signatureG2.length == 192, "Invalid G2 signature length");
-
-        BLS2.PointG1 memory pubkey = BLS2.g1Unmarshal(pubkeyG1); // 96 bytes
-        BLS2.PointG2 memory signature = BLS2.g2Unmarshal(signatureG2); // 192 bytes
+        BLS2.PointG1 memory pubkey = BLS2.g1UnmarshalCompressed(pubkeyG1);
+        BLS2.PointG2 memory signature = BLS2.g2Unmarshal(signatureG2);
         BLS2.PointG2 memory message = BLS2.hashToPointG2(DST, payload);
         (bool ok, bool called) = BLS2.verifySingle(signature, pubkey, message);
         return called && ok;
     }
-
 
     function _decodeSignature(
         bytes calldata packedSig
@@ -457,57 +452,85 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
         private
         pure
         returns (
-            bytes memory addr,
+            bytes memory key,
+            uint64 height,
             bytes32 cosig,
-            bytes memory msig,
-            bytes memory sig,
-            uint64 height
+            bytes memory aggsig,
+            bytes memory sig
         )
     {
         // Sanity check to prevent out-of-bounds errors
-        require(packedSig.length == 520, "Invalid signature length");
+        require(packedSig.length == 472, "Invalid signature length");
 
         // Slice out each segment and cast manually
-        addr = bytes(packedSig[0:96]);
-        height = uint64(bytes8(packedSig[96:104]));
-        cosig = bytes32(packedSig[104:136]);
-        msig = bytes(packedSig[136:328]);
-        sig = bytes(packedSig[328:520]);
+        key = bytes(packedSig[0:48]);
+        height = uint64(bytes8(packedSig[48:56]));
+        cosig = bytes32(packedSig[56:88]);
+        aggsig = bytes(packedSig[88:280]);
+        sig = bytes(packedSig[280:472]);
+    }
+
+    uint256 constant MSB_MASK = (1 << 255);
+    /// @dev Interprets `bitVector` as a set membership mask over the signer
+    ///      range [0, 256) and returns only the selected signers' pubkeys.
+    function _getCosignersFromBitVector(
+        bytes32 bitVector,
+        uint64 height
+    ) internal view returns (bytes[] memory selected) {
+        uint256 n = getSignerCount(uint48(height));
+        bytes[] memory allSigners = getSigners(0, uint64(n), uint48(height));
+        uint256 bits = uint256(bitVector);
+
+        selected = new bytes[](n); // over-allocate, trim below
+        uint256 count;
+
+        for (uint256 i = 0; i < n; i++) {
+            if (bits == 0) break; // quick exit
+            if (bits & MSB_MASK != 0) {
+                selected[count] = allSigners[i];
+                unchecked {
+                    ++count;
+                }
+            }
+            bits <<= 1;
+        }
+
+        // shrink the array's length in place - safe since we're only
+        // reducing it, never exceeding the original allocation
+        assembly {
+            mstore(selected, count)
+        }
     }
 
     /**
      * @dev Decodes, validates the signature and checks the signers are authorized as of the
      * current block (`block.number`). Mirrors `MultiSignerERC7913._rawSignatureValidation`.
-     *
-     * Requirements:
-     *
-     * - The `signature` must be encoded as `abi.encode(signers, signatures)`.
      */
     function _rawSignatureValidation(
         bytes32 hash,
         bytes calldata signature
     ) internal view virtual override returns (bool) {
-        // 1. Relayer signature check
+        // 0. Decode the signature
         (
             bytes memory pubkey,
+            uint64 height,
             bytes32 cosig,
-            bytes memory msig,
-            bytes memory sig,
-            uint64 height
+            bytes memory aggsig,
+            bytes memory sig
         ) = _decodeSignature(signature);
 
-        if (!isSigner(pubkey, uint48(height)) || !verifySignature(signature[0:320], pubkey, sig))
-            return false;
+        // 1. Relayer signature check
+        if (
+            !isSigner(pubkey, uint48(height)) ||
+            !_verifySignature(signature[0:280], pubkey, sig)
+        ) return false;
 
         // 2. Co-signers multi-signature check
-        if (!verifySignature(bytes.concat(hash), pubkey, msig))
-            return false;
+        bytes[] memory signers = _getCosignersFromBitVector(cosig, height);
 
-        return true;
-
-        // return
-        //     _validateSignatures(hash, signers, signatures) &&
-        //     _validateThreshold(signers);
+        return
+            _validateSignatures(hash, signers, aggsig) &&
+            _validateThreshold(signers, height);
     }
 
     /// @dev See `MultiSignerERC7913._validateSignatures`. Sorting signers by their `keccak256`
@@ -515,9 +538,16 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
     function _validateSignatures(
         bytes32 hash,
         bytes[] memory signers,
-        bytes memory signatures
-    ) internal view virtual returns (bool valid) {        
-
+        bytes memory aggregate
+    ) internal view virtual returns (bool valid) {
+        BLS2.PointG1 memory pubkey = BLS2.aggregatePublicKeys(signers);
+        BLS2.PointG2 memory signature = BLS2.g2Unmarshal(aggregate);
+        BLS2.PointG2 memory message = BLS2.hashToPointG2(
+            DST,
+            bytes.concat(hash)
+        );
+        (bool ok, bool called) = BLS2.verifySingle(signature, pubkey, message);
+        return called && ok;
     }
 
     /// @dev Validates that the total weight of `signers`, evaluated against the generation
@@ -525,11 +555,12 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
     /// already validated by {_validateSignatures}. Returns `false` if no generation has been
     /// scheduled yet as of `block.number`.
     function _validateThreshold(
-        bytes[] memory signers
+        bytes[] memory signers,
+        uint64 height
     ) internal view virtual returns (bool) {
         MultiSignerERC7913WeightedCheckpointedStorage
             storage $ = _getMultiSignerERC7913WeightedCheckpointedStorage();
-        uint256 generationId = _generationAt(block.number);
+        uint256 generationId = _generationAt(uint48(height));
         if (generationId == 0) return false;
 
         Generation storage gen = $.generations[generationId];

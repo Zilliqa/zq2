@@ -61,3 +61,6 @@ cast send $PM_PROXY "grantRole(bytes32,address)" 0x66dd01afc7631f150b0e4dbf32dd8
 cast send $GW_PROXY "setFees(uint64,uint128[6])" 1337 [0x100000,0x110000,0x120000,0x130000,0x140000,0x150000] --private-key $PRIVATE_KEY
 cast send $GW_PROXY "grantRole(bytes32,address)" 0x6648225b86b157a7976fcdfdf25f480eecb7817c1c7ad2e2d38c803e0c05680b 0x70997970C51812dc3A010C7d01b50e0d17dc79C8 --private-key $PRIVATE_KEY
 cast send $GW_PROXY "grantRole(bytes32,address)" 0x4395ac258ce87896ffc4b11b82c2c2465de0edf678b075f467682e243bd03abb 0x70997970C51812dc3A010C7d01b50e0d17dc79C8 --private-key $PRIVATE_KEY
+
+# set signer(s)
+cast send $SA_PROXY "setSigners(bytes[],uint64[],uint64,uint48)" "[0xb27aebb3b54effd7af87c4a064a711554ee0f3f5abf56ca910b46422f2b21603bc383d42eb3b927c4c3b0b8381ca30a3]" "[100]" 50 10 --private-key $PRIVATE_KEY

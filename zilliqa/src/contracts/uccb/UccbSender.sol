@@ -67,9 +67,17 @@ contract UccbSender is
     function supportsAttribute(bytes4) external pure returns (bool) {
         return false;
     }
- 
 
     // ***** SIGNERS MANAGEMENT *****
+
+    function setSigners(
+        bytes[] calldata signers,
+        uint64[] calldata weights,
+        uint64 threshold,
+        uint48 effectiveBlock
+    ) public onlyRole(DEFAULT_ADMIN_ROLE) {
+        _scheduleSignerSet(signers, weights, threshold, effectiveBlock);
+    }
 
     /// ***** External execution *****
 
@@ -133,26 +141,26 @@ contract UccbSender is
         bytes32 userOpHash
     ) external onlyEntryPoint {
         // TODO: Update stakers/stakes
-        require(userOp.callData.length % 104 == 14, "Invalid length");
+        require(userOp.callData.length % 56 == 16, "Invalid length");
 
-        uint256 count = userOp.callData.length / 104;
+        uint256 count = userOp.callData.length / 56;
 
         bytes[] memory signers = new bytes[](count);
         uint64[] memory weights = new uint64[](count);
 
         uint256 offset = 0;
-        // each element is a G1 uncompressed public key(96) + weight(8).
+        // each element is a G1 compressed public key(48) + weight(8).
         for (uint256 i = 0; i < count; i++) {
-            signers[i] = bytes(userOp.callData[offset:offset + 96]);
+            signers[i] = bytes(userOp.callData[offset:offset + 48]);
             weights[i] = uint64(
-                bytes8(userOp.callData[offset + 96:offset + 104])
+                bytes8(userOp.callData[offset + 48:offset + 56])
             );
-            offset += 104;
+            offset += 56;
         }
 
-        uint64 threshold = uint64(bytes8(userOp.callData[offset:offset + 16]));
+        uint64 threshold = uint64(bytes8(userOp.callData[offset:offset + 8]));
         uint48 effectiveBlock = uint48(
-            bytes6(userOp.callData[offset + 16:offset + 20])
+            uint64(bytes8(userOp.callData[offset + 8:offset + 16]))
         );
 
         _scheduleSignerSet(signers, weights, threshold, effectiveBlock);

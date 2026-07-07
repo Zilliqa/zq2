@@ -678,7 +678,7 @@ library BLS2 {
         bytes[] memory pubkeys
     ) internal view returns (PointG1 memory aggPubkey) {
         require(pubkeys.length > 0, "no public keys provided");
-        aggPubkey = g1Unmarshal(pubkeys[0]);
+        aggPubkey = g1UnmarshalCompressed(pubkeys[0]);
         for (uint256 i = 1; i < pubkeys.length; i++) {
             aggPubkey = addG1Points(aggPubkey, g1Unmarshal(pubkeys[i]));
         }
