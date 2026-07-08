@@ -203,7 +203,7 @@ pub struct BlsUserOp {
     pub send_id: B256,
     pub signatures: Vec<(NodePublicKey, BlsSignature)>,
     pub threshold: u128,
-    pub height: u64,
+    pub block_height: u64,
 }
 
 // Used to send an updated list of SIGNER keys
@@ -392,6 +392,7 @@ impl Uccb {
                 signature,
                 public_key,
                 block_hash,
+                block_height,
                 chain,
                 send_id,
             }) => {
@@ -401,6 +402,7 @@ impl Uccb {
                     from,
                     chain,
                     block_hash,
+                    block_height,
                     userop_hash,
                     public_key,
                     signature,
