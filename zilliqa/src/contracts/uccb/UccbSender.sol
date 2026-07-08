@@ -154,7 +154,7 @@ contract UccbSender is
         _scheduleSignerSet(signers, weights, threshold, effectiveBlock);
     }
 
-    // ****** DEPOSIT MANAGEMENT *******
+    // ****** DEPOSIT/STAKE MANAGEMENT *******
 
     function depositTo() external payable {
         entryPoint().depositTo{value: msg.value}(address(this));
@@ -169,6 +169,23 @@ contract UccbSender is
         uint256 amount
     ) external onlyRole(WITHDRAWER_ROLE) {
         entryPoint().withdrawTo(to, amount);
+    }
+
+    function addStake(
+        uint32 unstakeDelaySec
+    ) external payable onlyRole(DEFAULT_ADMIN_ROLE) {
+        entryPoint().addStake{value: msg.value}(unstakeDelaySec);
+    }
+
+    function unlockStake() external onlyRole(DEFAULT_ADMIN_ROLE) {
+        entryPoint().unlockStake();
+    }
+
+    function withdrawStake(
+        address payable to
+    ) external onlyRole(WITHDRAWER_ROLE) nonReentrant {
+        assert(to != address(0));
+        entryPoint().withdrawStake(to);
     }
 
     // ****** BOILER-PLATE ******
