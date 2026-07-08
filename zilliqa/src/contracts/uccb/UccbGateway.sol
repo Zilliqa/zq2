@@ -96,16 +96,6 @@ contract UccbGateway is
     bytes4 internal constant MSG_CALL = 0x1b8b921d; // call(address,bytes)
     bytes4 internal constant MSG_TRANSFER = 0xa9059cbb; // transfer(address,uint256)
 
-    /*
-     * Fee Management Functions
-     * ========================
-     *
-     * The gateway contract stores a set of gas/fees for the User Op.
-     * Changes to the gas/fees will need to be managed via these functions.
-     */
-
-    event FeesUpdated(uint64 indexed id, uint128[6] fees);
-
     /// @custom:storage-location erc7201:zilliqa.storage.UccbGateway
     struct GatewayStorage {
         mapping(bytes32 => bool) _usedIds;
@@ -122,9 +112,14 @@ contract UccbGateway is
         }
     }
 
-    /**
-     * Set the fees
+    // ****** FEE MANAGEMENT FUNCTIONS ******
+
+    /*
+     * The gateway contract stores a set of gas/fees for the User Op.
+     * Changes to the gas/fees will need to be managed via these functions.
      */
+    event FeesUpdated(uint64 indexed id, uint128[6] fees);
+
     function setFees(
         uint64 id,
         uint128[6] calldata fees
@@ -152,7 +147,7 @@ contract UccbGateway is
      * as a ORIGINATING_CONTRACT.
      */
     function sendMessage(
-        bytes calldata recipient, // ERC7930(recipient)
+        bytes calldata erc7930Recipient, // ERC7930(recipient)
         bytes calldata payload,
         bytes[] calldata attributes
     )
@@ -169,10 +164,10 @@ contract UccbGateway is
         assert(attributes.length == 0);
 
         // check format
-        bytes memory counterpart = __extractChain(recipient);
+        bytes memory counterpart = __extractChain(erc7930Recipient);
 
         // ERC7930(sender)
-        bytes memory sender = InteroperableAddress.formatEvmV1(
+        bytes memory erc7930Sender = InteroperableAddress.formatEvmV1(
             block.chainid,
             msg.sender
         );
@@ -182,8 +177,8 @@ contract UccbGateway is
         bytes memory wrappedPayload = abi.encode(
             MSG_VERSION,
             MSG_CALL,
-            sender,
-            recipient,
+            erc7930Sender,
+            erc7930Recipient,
             payload,
             nonce
         );
@@ -196,7 +191,9 @@ contract UccbGateway is
     }
 
     /**
-     * Bridge Mechanism
+     * @notice  Bridge Mechanism
+     *
+     * @dev     Called internally from sendMessage().
      *
      * This function emits the MessageSent() event that is picked up by the Rust code,
      * which triggers the signing-relaying-bundling pipeline.
@@ -213,8 +210,7 @@ contract UccbGateway is
             address(this)
         );
 
-        // FIXME: prevent loop-back
-        // assert(!counterpart.equal(originator));
+        // FIXME: assert(!counterpart.equal(originator));
 
         bytes32 sendId = keccak256(payload);
 
@@ -231,7 +227,9 @@ contract UccbGateway is
     }
 
     /**
-     * Process Received Message
+     * @notice  Process Received Message
+     *
+     * @dev     Called internally from ERC7786Recipient.receiveMessage().
      *
      * This function is called internally after checking that the message came from an authorized sender.
      * We check that the message itself is valid and proceed to deliver the mesage to the external contract,
@@ -273,15 +271,7 @@ contract UccbGateway is
         (, address target) = receiver.parseEvmV1();
         require(hasRole(RECEIVING_CONTRACT, target), "Unregistered receiver");
 
-        // TODO: allow failed execution
-        require(
-            IERC7786Recipient(target).receiveMessage(
-                receiveId,
-                originator,
-                payload
-            ) == IERC7786Recipient.receiveMessage.selector,
-            "Execution failure"
-        );
+        Address.functionCall(target, payload);
     }
 
     /**
@@ -300,23 +290,23 @@ contract UccbGateway is
         _setLink(sender, counterpart, true);
     }
 
-    /* HELPERS */
+    // HELPERS
 
     function supportsAttribute(bytes4) external pure override returns (bool) {
-        // TODO: Support some ERC7985 attributes
+        // TODO: Support some ERC7985 attributes e.g. timeout
         return false;
     }
 
     function __extractChain(
-        bytes memory s
+        bytes memory erc7930
     ) private pure returns (bytes memory) {
-        (bytes2 chainType, bytes memory chainReference, ) = s.parseV1();
+        (bytes2 chainType, bytes memory chainReference, ) = erc7930.parseV1();
         return InteroperableAddress.formatV1(chainType, chainReference, hex"");
     }
 
     /**
      * @notice Sweep accumulated message fees.
-     * This is only used in the event that fees are accidentally sent to this contract.
+     *         This is only used in the event that fees are accidentally sent to this contract.
      */
     function sweep(
         address payable to
@@ -325,13 +315,8 @@ contract UccbGateway is
         to.sendValue(address(this).balance);
     }
 
-    // UUPSUpgradeable
+    // ****** BOILER-PLATE ******
 
-    function _authorizeUpgrade(
-        address /*newImplementation*/
-    ) internal view override onlyRole(DEFAULT_ADMIN_ROLE) {}
-
-    // Pausable
     function pause() external onlyRole(PAUSER_ROLE) {
         _pause();
     }
@@ -340,9 +325,10 @@ contract UccbGateway is
         _unpause();
     }
 
-    /**
-     * @dev Advertises interfaces implemented by this contract.
-     */
+    function _authorizeUpgrade(
+        address /*newImplementation*/
+    ) internal view override onlyRole(DEFAULT_ADMIN_ROLE) {}
+
     function supportsInterface(
         bytes4 interfaceId
     ) public view virtual override(AccessControlUpgradeable) returns (bool) {
