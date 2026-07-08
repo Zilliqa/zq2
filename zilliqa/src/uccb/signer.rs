@@ -116,17 +116,17 @@ impl Signer {
     /// Opens persistent connections to each remote chain; and monitors the logs for MessageSent events.
     /// Validates and submits each event for signing.
     async fn start_watcher(
-        chain: Chain,
+        self_chain: Chain,
         config: NodeConfig,
         _db: Arc<Db>,
         watchers: Arc<super::Providers>,
         sign_tx: UnboundedSender<SignUserOp>,
     ) -> Result<()> {
         if watchers.is_empty() {
-            tracing::warn!("Sender({chain:?}): terminated");
+            tracing::warn!("Sender({self_chain:?}): terminated");
             return Ok(());
         }
-        tracing::info!(chains=%watchers.len(), "Sender({chain:?}): started");
+        tracing::info!(chains=%watchers.len(), "Sender({self_chain:?}): started");
 
         // Cache last known height
         let mut heights =
@@ -155,7 +155,7 @@ impl Signer {
             poll_sched.insert(chain, period);
 
             //  poll the chain
-            let logs = if let Some(watcher) = watchers.get(&chain_id) {
+            let (logs, poll_chain) = if let Some(watcher) = watchers.get(&chain_id) {
                 let EndPoint {
                     gateway,
                     jsonrpc,
@@ -195,7 +195,7 @@ impl Signer {
                     "MessageSent({chain:?}): events",
                 );
                 *cache_height = final_height; // update final
-                logs
+                (logs, *chain)
             } else {
                 continue;
             };
@@ -203,7 +203,23 @@ impl Signer {
             for log in logs {
                 let blk_hash = log.block_hash.expect("block_hash != none").into();
                 let txn_hash = log.transaction_hash.expect("txn_hash != none").into();
-                let block_height = log.block_number.expect("block_number != none");
+
+                // The block height is recorded to allow the receiving chain to select the set of signers.
+                //
+                // It is set to MAX for incoming messages, to use the 'latest' set of signers in the incoming path as
+                // the remote chain block numbers are not synced with the local block numbers.
+                //
+                // There is a low possibility that an incoming message crosses an epoch boundary where the set of signers changed.
+                let block_height = log
+                    .block_number
+                    .map(|h| {
+                        if poll_chain.id() != self_chain.id() {
+                            u64::MAX
+                        } else {
+                            h
+                        }
+                    })
+                    .expect("block_number != none");
 
                 // 4. Decode the MessageSent event.
                 let Ok(MessageSent {
@@ -300,7 +316,6 @@ impl Signer {
                         paymaster,
                         gateway,
                         value,
-                        block_height,
                     );
                     tracing::trace!(send_id=%sendId, ?userop, "UserOp");
                     if let Err(err) = sign_tx.send(SignUserOp::new(
@@ -444,6 +459,7 @@ impl Signer {
             txn_hash,
             dst_chain,
             uop_hash,
+            blk_height,
             ..
         } = sign_uop;
 
@@ -456,6 +472,7 @@ impl Signer {
                 chain: *dst_chain,
                 userop_hash: uop_hash.context("uop_hash exists")?,
                 block_hash: *blk_hash,
+                block_height: *blk_height,
                 public_key: secret_key.node_public_key(),
                 // Only send userop to self - userop_hash assures integrity from other nodes
                 userop: if peer == peer_id {
@@ -707,10 +724,8 @@ impl Signer {
         paymaster: &Address,
         gateway: &Address,
         value: U256,
-        block_height: u64,
     ) -> AlloyUserOperation {
         // we can encode some custom things in here
-        let paymaster_data = (block_height).abi_encode();
 
         // Normal UserOps go to Sender::executeBatch()
         let execute = super::executeCall {
@@ -735,7 +750,7 @@ impl Signer {
             paymaster: Some(*paymaster),
             paymaster_verification_gas_limit: None, // estimateUserOpGas
             paymaster_post_op_gas_limit: None,      // estimateUserOpGas
-            paymaster_data: Some(Bytes::from(paymaster_data)),
+            paymaster_data: Some(Bytes::new()),
             signature: Bytes::new(), // blank signature
         }
     }
@@ -748,7 +763,6 @@ impl Signer {
             &Address::ZERO,
             &Address::ZERO,
             U256::ZERO,
-            0,
         )
     }
 }

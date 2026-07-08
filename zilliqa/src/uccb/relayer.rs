@@ -376,6 +376,7 @@ impl Relayer {
         from: PeerId,
         chain: Chain,
         block_hash: Hash,
+        block_height: u64,
         userop_hash: Hash,
         public_key: NodePublicKey,
         signature: BlsSignature,
@@ -413,7 +414,7 @@ impl Relayer {
                 })
                 .sum();
             BlsUserOp {
-                height: block.number(), // TODO: Set zero for foreign chain
+                block_height: u64::MIN,
                 userop: None,
                 send_id: B256::ZERO,
                 threshold: 2 * total_stake / 3 + 1,
@@ -428,8 +429,9 @@ impl Relayer {
         bop.threshold = bop.threshold.saturating_sub(stake.get());
         bop.signatures.push((public_key, signature));
 
-        // use only the (UserOp, send_id) we constructed ourselves.
+        // use only the (UserOp, send_id, block_height) we constructed ourselves.
         if from == self.peer_id {
+            bop.block_height = block_height;
             bop.send_id = send_id;
             bop.userop = userop;
         }
@@ -502,7 +504,7 @@ impl Relayer {
 
         let message = (
             pubkey.as_slice(),       // PublicKey(48)
-            bop.height,              // u64(8)
+            bop.block_height,        // u64(8)
             cosigner.as_raw_slice(), // Signers(32)
             mulsig.as_slice(),       // Signature(192)
         )
