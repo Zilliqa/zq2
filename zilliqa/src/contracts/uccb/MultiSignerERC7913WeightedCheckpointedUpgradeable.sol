@@ -391,7 +391,7 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
         bytes memory payload,
         bytes memory signatureG2
     ) private view returns (bool) {
-        BLS2.PointG1 memory pubkey = BLS2.g1UnmarshalCompressed(pubkeyG1);
+        BLS2.PointG1 memory pubkey = BLS2.g1Unmarshal(pubkeyG1);
         BLS2.PointG2 memory signature = BLS2.g2Unmarshal(signatureG2);
         BLS2.PointG2 memory message = BLS2.hashToPointG2(DST, payload);
         (bool ok, bool called) = BLS2.verifySingle(signature, pubkey, message);
@@ -412,14 +412,14 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
         )
     {
         // Sanity check to prevent out-of-bounds errors
-        require(packedSig.length == 472, "Invalid signature length");
+        require(packedSig.length == 520, "Invalid signature length");
 
         // Slice out each segment and cast manually
-        key = bytes(packedSig[0:48]);
-        height = uint64(bytes8(packedSig[48:56]));
-        cosig = bytes32(packedSig[56:88]);
-        aggsig = bytes(packedSig[88:280]);
-        sig = bytes(packedSig[280:472]);
+        key = bytes(packedSig[0:96]);
+        height = uint64(bytes8(packedSig[96:104]));
+        cosig = bytes32(packedSig[104:136]);
+        aggsig = bytes(packedSig[136:328]);
+        sig = bytes(packedSig[328:520]);
     }
 
     uint256 constant MSB_MASK = (1 << 255);
@@ -475,7 +475,7 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
         // 1. Relayer signature check
         if (
             !isSigner(pubkey, uint48(height)) ||
-            !_validateSignature(pubkey, signature[0:280], sig)
+            !_validateSignature(pubkey, signature[0:328], sig)
         ) return false;
 
         // 2. Co-signers multi-signature check
