@@ -5,6 +5,7 @@ import {Checkpoints} from "@openzeppelin/contracts/utils/structs/Checkpoints.sol
 import {AbstractSigner} from "@openzeppelin/contracts/utils/cryptography/signers/AbstractSigner.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {BLS2} from "./BLS2.sol";
+import {BLS} from "./BLS.sol";
 
 /**
  * @dev Upgradeable variant of `MultiSignerERC7913WeightedCheckpointed`.
@@ -248,7 +249,7 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
     }
 
     /// ------------------------------------------------------------------
-    /// Views — current (as of block.number)
+    /// Views - current (as of block.number)
     /// ------------------------------------------------------------------
 
     function getSigners(
@@ -281,7 +282,7 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
     }
 
     /// ------------------------------------------------------------------
-    /// Views — historical / scheduled (as of an arbitrary block number)
+    /// Views - historical / scheduled (as of an arbitrary block number)
     /// ------------------------------------------------------------------
 
     /**
@@ -377,25 +378,87 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
     /// ------------------------------------------------------------------
 
     // Official RFC domain separation tag
-    bytes private constant DST = "BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
+    // bytes private constant DST = "BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
+    function NEG_G1_GEN() public pure returns (BLS.G1Point memory) {
+        return
+            BLS.G1Point(
+                bytes32(uint256(31827880280837800241567138048534752271)),
+                bytes32(
+                    uint256(
+                        88385725958748408079899006800036250932223001591707578097800747617502997169851
+                    )
+                ),
+                bytes32(uint256(22997279242622214937712647648895181298)),
+                bytes32(
+                    uint256(
+                        46816884707101390882112958134453447585552332943769894357249934112654335001290
+                    )
+                )
+            );
+    }
 
-    /**
-     * @notice Verifies a BLS12-381 signature.
-     * @param payload The raw byte array message that was signed.
-     * @param pubkeyG1 The public key, encoded as a 128-byte G1 point.
-     * @param signatureG2 The signature, encoded as a 256-byte G2 point.
-     * @return bool True if the signature is valid, false otherwise.
-     */
-    function _validateSignature(
-        bytes memory pubkeyG1,
-        bytes memory payload,
-        bytes memory signatureG2
-    ) private view returns (bool) {
-        BLS2.PointG1 memory pubkey = BLS2.g1Unmarshal(pubkeyG1);
-        BLS2.PointG2 memory signature = BLS2.g2Unmarshal(signatureG2);
-        BLS2.PointG2 memory message = BLS2.hashToPointG2(DST, payload);
-        (bool ok, bool called) = BLS2.verifySingle(signature, pubkey, message);
-        return called && ok;
+    function _g1Decode(
+        bytes memory m
+    ) internal pure returns (BLS.G1Point memory) {
+        require(m.length == 96, "Invalid G1 bytes length");
+
+        uint128 xHi;
+        uint256 xLo;
+        uint128 yHi;
+        uint256 yLo;
+
+        assembly {
+            xHi := shr(128, mload(add(m, 0x20)))
+            xLo := mload(add(m, 0x30))
+            yHi := shr(128, mload(add(m, 0x50)))
+            yLo := mload(add(m, 0x60))
+        }
+
+        return
+            BLS.G1Point(
+                bytes32(uint256(xHi)),
+                bytes32(xLo),
+                bytes32(uint256(yHi)),
+                bytes32(yLo)
+            );
+    }
+
+    function _g2Decode(
+        bytes memory m
+    ) internal pure returns (BLS.G2Point memory) {
+        require(m.length == 192, "Invalid G2 bytes length");
+
+        uint128 x1Hi;
+        uint256 x1Lo;
+        uint128 x0Hi;
+        uint256 x0Lo;
+        uint128 y1Hi;
+        uint256 y1Lo;
+        uint128 y0Hi;
+        uint256 y0Lo;
+
+        assembly {
+            x1Hi := shr(128, mload(add(m, 0x20)))
+            x1Lo := mload(add(m, 0x30))
+            x0Hi := shr(128, mload(add(m, 0x50)))
+            x0Lo := mload(add(m, 0x60))
+            y1Hi := shr(128, mload(add(m, 0x80)))
+            y1Lo := mload(add(m, 0x90))
+            y0Hi := shr(128, mload(add(m, 0xb0)))
+            y0Lo := mload(add(m, 0xc0))
+        }
+
+        return
+            BLS.G2Point(
+                bytes32(uint256(x0Hi)),
+                bytes32(x0Lo),
+                bytes32(uint256(x1Hi)),
+                bytes32(x1Lo),
+                bytes32(uint256(y0Hi)),
+                bytes32(y0Lo),
+                bytes32(uint256(y1Hi)),
+                bytes32(y1Lo)
+            );
     }
 
     function _decodeSignature(
@@ -430,9 +493,10 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
         bytes32 bitVector,
         uint64 height
     ) internal view returns (bytes[] memory selected) {
+        uint256 bits = uint256(bitVector);
+        require(bits != 0, "no co-signers");
         uint256 n = getSignerCount(uint48(height));
         bytes[] memory allSigners = getSigners(0, uint64(n), uint48(height));
-        uint256 bits = uint256(bitVector);
 
         selected = new bytes[](n); // over-allocate, trim below
         uint256 count;
@@ -486,21 +550,57 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
             _validateThreshold(signers, height);
     }
 
+    /**
+     * @notice Verifies a BLS12-381 signature.
+     * @param payload The raw byte array message that was signed.
+     * @param pubkeyG1 The public key, encoded as a 96-byte G1 point.
+     * @param signatureG2 The signature, encoded as a 192-byte G2 point.
+     * @return bool True if the signature is valid, false otherwise.
+     */
+    function _validateSignature(
+        bytes memory pubkeyG1,
+        bytes memory payload,
+        bytes memory signatureG2
+    ) private view returns (bool) {
+        BLS.G2Point memory hmsg = BLS.hashToG2(payload);
+
+        BLS.G1Point[] memory g1points = new BLS.G1Point[](2);
+        BLS.G2Point[] memory g2points = new BLS.G2Point[](2);
+
+        g1points[0] = NEG_G1_GEN();
+        g1points[1] = _g1Decode(pubkeyG1);
+        g2points[0] = _g2Decode(signatureG2);
+        g2points[1] = hmsg;
+
+        return BLS.pairing(g1points, g2points);
+    }
+
     /// @dev See `MultiSignerERC7913._validateSignatures`. Sorting signers by their `keccak256`
     /// hash improves gas efficiency, as with the non-checkpointed version.
     function _validateSignatures(
         bytes32 hash,
         bytes[] memory signers,
-        bytes memory aggregate
+        bytes memory aggSig
     ) internal view virtual returns (bool valid) {
-        BLS2.PointG1 memory pubkey = BLS2.aggregatePublicKeys(signers);
-        BLS2.PointG2 memory signature = BLS2.g2Unmarshal(aggregate);
-        BLS2.PointG2 memory message = BLS2.hashToPointG2(
-            DST,
-            bytes.concat(hash)
-        );
-        (bool ok, bool called) = BLS2.verifySingle(signature, pubkey, message);
-        return called && ok;
+        require(signers.length > 0, "no public keys provided");
+        // aggregate public keys
+        BLS.G1Point memory aggPubkey;
+        aggPubkey = _g1Decode(signers[0]);
+        for (uint256 i = 1; i < signers.length; i++) {
+            aggPubkey = BLS.add(aggPubkey, _g1Decode(signers[i]));
+        }
+
+        BLS.G2Point memory hmsg = BLS.hashToG2(bytes.concat(hash));
+
+        BLS.G1Point[] memory g1points = new BLS.G1Point[](2);
+        BLS.G2Point[] memory g2points = new BLS.G2Point[](2);
+
+        g1points[0] = NEG_G1_GEN();
+        g1points[1] = aggPubkey;
+        g2points[0] = _g2Decode(aggSig);
+        g2points[1] = hmsg;
+
+        return BLS.pairing(g1points, g2points);
     }
 
     /// @dev Validates that the total weight of `signers`, evaluated against the generation
