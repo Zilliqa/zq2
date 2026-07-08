@@ -281,8 +281,9 @@ impl Uccb {
     ) -> Result<Self> {
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
         let eth_chain_id = ChainId::from(config.eth_chain_id);
-        let bls_pubkey = secret_key.as_bls().public_key().0.to_compressed();
-        tracing::info!("BLS {}", bls_pubkey.to_hex());
+        tracing::info!(compressed=%secret_key.as_bls().public_key().0.to_compressed().to_hex(),
+            uncompressed=%secret_key.as_bls().public_key().0.to_uncompressed().to_hex(),
+            "BLS Public Key");
 
         let message_sender = Arc::new(MessageSender {
             our_shard: eth_chain_id,

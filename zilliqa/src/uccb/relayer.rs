@@ -482,7 +482,7 @@ impl Relayer {
                 )
             })
             .collect_vec();
-        let pubkey = self.secret_key.as_bls().public_key().0.to_compressed();
+        let pubkey = self.secret_key.as_bls().public_key().0.to_uncompressed();
 
         // use uncompressed format for EIP-2537 compatibility
         let mulsig = if signatures.len() == 1 {
@@ -503,7 +503,7 @@ impl Relayer {
         }
 
         let message = (
-            pubkey.as_slice(),       // PublicKey(48)
+            pubkey.as_slice(),       // PublicKey(96)
             bop.block_height,        // u64(8)
             cosigner.as_raw_slice(), // Signers(32)
             mulsig.as_slice(),       // Signature(192)
