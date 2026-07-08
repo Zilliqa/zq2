@@ -41,9 +41,6 @@ contract UccbSender is
     using ERC4337Utils for PackedUserOperation;
 
     bytes32 public constant WITHDRAWER_ROLE = keccak256("WITHDRAWER_ROLE");
-    bytes32 public constant AGGREGATOR_CONTRACT = keccak256(
-        "AGGREGATOR_CONTRACT"
-    );
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -63,27 +60,11 @@ contract UccbSender is
         _grantRole(WITHDRAWER_ROLE, admin_);
     }
 
-    // REQUIRED - UNUSED
-    function supportsAttribute(bytes4) external pure returns (bool) {
-        return false;
-    }
-
-    // ***** SIGNERS MANAGEMENT *****
-
-    function setSigners(
-        bytes[] calldata signers,
-        uint64[] calldata weights,
-        uint64 threshold,
-        uint48 effectiveBlock
-    ) public onlyRole(DEFAULT_ADMIN_ROLE) {
-        _scheduleSignerSet(signers, weights, threshold, effectiveBlock);
-    }
-
-    /// ***** External execution *****
+    // ****** EXECUTION STAGE ******
 
     /**
-     * @notice Execute a single arbitrary call.
-     *         Called by the EntryPoint after successful validateUserOp.
+     * @dev Execute a single arbitrary call.
+     *      Called by the EntryPoint after successful validateUserOp.
      */
     function execute(
         address target,
@@ -129,18 +110,14 @@ contract UccbSender is
         Address.functionCallWithValue(target, data, value);
     }
 
-    /*
-     * Configuration Messages
-     * ======================
-     * Used by the Rust pipeline to send updates to the Sender/Paymaster contracts e.g.
-     * - Updated stakers list
-     * - Updated stakes
+    /**
+     * @dev Used by the Rust pipeline to update stakers/stakes
+     *      Called by the EntryPoint after successful validateUserOp.
      */
     function executeUserOp(
         PackedUserOperation calldata userOp,
-        bytes32 userOpHash
+        bytes32
     ) external onlyEntryPoint {
-        // TODO: Update stakers/stakes
         require(userOp.callData.length % 56 == 16, "Invalid length");
 
         uint256 count = userOp.callData.length / 56;
@@ -166,23 +143,27 @@ contract UccbSender is
         _scheduleSignerSet(signers, weights, threshold, effectiveBlock);
     }
 
-    /**
-     * @notice Top-up this account's gas deposit in the EntryPoint.
-     */
+    // ****** SIGNERS MANAGEMENT ******
+
+    function setSigners(
+        bytes[] calldata signers,
+        uint64[] calldata weights,
+        uint64 threshold,
+        uint48 effectiveBlock
+    ) public onlyRole(DEFAULT_ADMIN_ROLE) {
+        _scheduleSignerSet(signers, weights, threshold, effectiveBlock);
+    }
+
+    // ****** DEPOSIT MANAGEMENT *******
+
     function depositTo() external payable {
         entryPoint().depositTo{value: msg.value}(address(this));
     }
 
-    /**
-     * @notice View current EntryPoint deposit balance.
-     */
     function balanceOf() external view returns (uint256) {
         return entryPoint().balanceOf(address(this));
     }
 
-    /**
-     * @notice Withdraw ETH from the EntryPoint deposit.
-     */
     function withdrawTo(
         address payable to,
         uint256 amount
@@ -190,7 +171,7 @@ contract UccbSender is
         entryPoint().withdrawTo(to, amount);
     }
 
-    // ***** BOILER-PLATE *****
+    // ****** BOILER-PLATE ******
 
     function _authorizeUpgrade(
         address /*newImplementation*/
@@ -211,9 +192,10 @@ contract UccbSender is
             super.supportsInterface(interfaceId);
     }
 
-    /**
-     * @dev Account.receive() already exists and emits nothing.
-     *      Override to emit an event so indexers can track deposits.
-     */
     receive() external payable virtual override {}
+
+    // REQUIRED - UNUSED
+    function supportsAttribute(bytes4) external pure returns (bool) {
+        return false;
+    }
 }

@@ -1,31 +1,18 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8;
+// Adapted from https://github.com/randa-mu/bls-solidity
+pragma solidity ^0.8.28;
 
 // @notice address of the EIP-198 modular exponentiation precompile
 uint256 constant MODEXP_ADDRESS = 5;
-
-// @notice address of the EIP-196 BN254 G1 point addition
-uint256 constant ECADD_ADDRESS = 6;
-
-// @notice address of the EIP-196 BN254 G1 scalar multiplication
-uint256 constant ECMUL_ADDRESS = 7;
-
-// @notice address of the EIP-197 BN254 pairing check
-uint256 constant BN254_ECPAIRING_ADDRESS = 8;
-
 // @notice address of the EIP-2537 BLS12-381 point addition precompile (G1)
 uint256 constant BLS12_G1ADD = 0x0b;
-
 // @notice address of the EIP-2537 BLS12-381 point addition precompile (G2)
 uint256 constant BLS12_G2ADD = 0x0d;
-
 // @notice address of the EIP-2537 BLS12-381 pairing check precompile
 uint256 constant BLS12_PAIRING_CHECK = 0x0f;
-
 // @notice address of the EIP-2537 BLS12-381 base field element to G1 point precompile
 // @dev it uses the Simplified Shallue-van de Woestĳne-Ulas mapping (SSWU)
 uint256 constant BLS12_MAP_FP_TO_G1 = 0x10;
-
 // @notice address of the EIP-2537 BLS12-381 quadratic extension field element to G2 point precompile
 // @dev it uses the Simplified Shallue-van de Woestĳne-Ulas mapping (SSWU)
 uint256 constant BLS12_MAP_FP2_TO_G2 = 0x11;
@@ -40,21 +27,21 @@ uint256 constant BLS12_MAP_FP2_TO_G2 = 0x11;
 /// @dev G1 is 96 bytes and G2 is 192 bytes. Compression is not currently available.
 library BLS2 {
     struct PointG1 {
-        uint128 x_hi;
-        uint256 x_lo;
-        uint128 y_hi;
-        uint256 y_lo;
+        uint128 xHi;
+        uint256 xLo;
+        uint128 yHi;
+        uint256 yLo;
     }
 
     struct PointG2 {
-        uint128 x1_hi;
-        uint256 x1_lo;
-        uint128 x0_hi;
-        uint256 x0_lo;
-        uint128 y1_hi;
-        uint256 y1_lo;
-        uint128 y0_hi;
-        uint256 y0_lo;
+        uint128 x1Hi;
+        uint256 x1Lo;
+        uint128 x0Hi;
+        uint256 x0Lo;
+        uint128 y1Hi;
+        uint256 y1Lo;
+        uint128 y0Hi;
+        uint256 y0Lo;
     }
 
     uint128 private constant N_G2_X0_HI = 0x024aa2b2f08f0a91260805272dc51051;
@@ -96,19 +83,19 @@ library BLS2 {
     ) internal pure returns (PointG1 memory) {
         require(m.length == 96, "Invalid G1 bytes length");
 
-        uint128 x_hi;
-        uint256 x_lo;
-        uint128 y_hi;
-        uint256 y_lo;
+        uint128 xHi;
+        uint256 xLo;
+        uint128 yHi;
+        uint256 yLo;
 
         assembly {
-            x_hi := shr(128, mload(add(m, 0x20)))
-            x_lo := mload(add(m, 0x30))
-            y_hi := shr(128, mload(add(m, 0x50)))
-            y_lo := mload(add(m, 0x60))
+            xHi := shr(128, mload(add(m, 0x20)))
+            xLo := mload(add(m, 0x30))
+            yHi := shr(128, mload(add(m, 0x50)))
+            yLo := mload(add(m, 0x60))
         }
 
-        return PointG1(x_hi, x_lo, y_hi, y_lo);
+        return PointG1(xHi, xLo, yHi, yLo);
     }
 
     // @notice Unmarshal a G1 point in compressed form.
@@ -117,10 +104,10 @@ library BLS2 {
     ) internal view returns (PointG1 memory) {
         require(m.length == 48, "Invalid G1 bytes length");
 
-        uint128 x_hi;
-        uint256 x_lo;
-        uint128 y_hi;
-        uint256 y_lo;
+        uint128 xHi;
+        uint256 xLo;
+        uint128 yHi;
+        uint256 yLo;
 
         bytes memory buf = new bytes(288);
 
@@ -128,10 +115,10 @@ library BLS2 {
         bool larger = false;
 
         assembly {
-            x_hi := shr(128, mload(add(m, 0x20)))
-            x_lo := mload(add(m, 0x30))
-            flags := byte(16, x_hi)
-            x_hi := and(x_hi, 0x1FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF)
+            xHi := shr(128, mload(add(m, 0x20)))
+            xLo := mload(add(m, 0x30))
+            flags := byte(16, xHi)
+            xHi := and(xHi, 0x1FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF)
         }
 
         if (flags & 0x80 == 0) {
@@ -154,9 +141,9 @@ library BLS2 {
             p := add(p, 32)
             mstore(p, 64) // length of modulus
             p := add(p, 32)
-            mstore(p, x_hi)
+            mstore(p, xHi)
             p := add(p, 32)
-            mstore(p, x_lo)
+            mstore(p, xLo)
             p := add(p, 32)
             mstore8(p, 3) // exponent
             p := add(p, 1)
@@ -171,16 +158,16 @@ library BLS2 {
                 add(32, buf),
                 64
             )
-            y_hi := mload(add(buf, 32))
-            y_lo := mload(add(buf, 64))
+            yHi := mload(add(buf, 32))
+            yLo := mload(add(buf, 64))
         }
         assert(ok);
         unchecked {
-            y_lo += 4;
+            yLo += 4;
         }
-        if (y_lo < 4) {
+        if (yLo < 4) {
             // overflow -> carry
-            y_hi += 1;
+            yHi += 1;
         }
 
         // compute y = sqrt(x**3 + 4) mod p = (x**3 + 4)^(p+1)/2 mod p
@@ -192,9 +179,9 @@ library BLS2 {
             p := add(p, 32)
             mstore(p, 64) // length of modulus
             p := add(p, 32)
-            mstore(p, y_hi)
+            mstore(p, yHi)
             p := add(p, 32)
-            mstore(p, y_lo)
+            mstore(p, yLo)
             p := add(p, 32)
             mstore(p, P_PLUS_ONE_SLASH_2_HI)
             p := add(p, 32)
@@ -211,46 +198,46 @@ library BLS2 {
                 add(32, buf),
                 64
             )
-            y_hi := mload(add(buf, 32))
-            y_lo := mload(add(buf, 64))
+            yHi := mload(add(buf, 32))
+            yLo := mload(add(buf, 64))
         }
         assert(ok);
 
-        uint128 alt_y_hi = P_HI - y_hi;
-        uint256 alt_y_lo;
+        uint128 alt_yHi = P_HI - yHi;
+        uint256 alt_yLo;
         unchecked {
-            alt_y_lo = P_LO - y_lo;
+            alt_yLo = P_LO - yLo;
         }
-        if (alt_y_lo > P_LO) {
+        if (alt_yLo > P_LO) {
             // underflow -> carry
-            alt_y_hi -= 1;
+            alt_yHi -= 1;
         }
 
-        bool do_swap = y_hi > alt_y_hi || (y_hi == alt_y_hi && y_lo > alt_y_lo);
+        bool do_swap = yHi > alt_yHi || (yHi == alt_yHi && yLo > alt_yLo);
         do_swap = larger == do_swap;
         if (do_swap) {
-            y_hi = alt_y_hi;
-            y_lo = alt_y_lo;
+            yHi = alt_yHi;
+            yLo = alt_yLo;
         }
 
-        return PointG1(x_hi, x_lo, y_hi, y_lo);
+        return PointG1(xHi, xLo, yHi, yLo);
     }
 
-    /// @notice Marshals a point on G1 to bytes form.
+    /// @notice Marshals a point on G1 to uncompressed bytes form.
     function g1Marshal(
         PointG1 memory point
     ) internal pure returns (bytes memory) {
         bytes memory m = new bytes(96);
-        uint256 x_hi = point.x_hi;
-        uint256 x_lo = point.x_lo;
-        uint256 y_hi = point.y_hi;
-        uint256 y_lo = point.y_lo;
+        uint256 xHi = point.xHi;
+        uint256 xLo = point.xLo;
+        uint256 yHi = point.yHi;
+        uint256 yLo = point.yLo;
 
         assembly {
-            mstore(add(m, 0x20), shl(128, x_hi))
-            mstore(add(m, 0x30), x_lo)
-            mstore(add(m, 0x50), shl(128, y_hi))
-            mstore(add(m, 0x60), y_lo)
+            mstore(add(m, 0x20), shl(128, xHi))
+            mstore(add(m, 0x30), xLo)
+            mstore(add(m, 0x50), shl(128, yHi))
+            mstore(add(m, 0x60), yLo)
         }
 
         return m;
@@ -261,51 +248,51 @@ library BLS2 {
     ) internal pure returns (PointG2 memory) {
         require(m.length == 192, "Invalid G2 bytes length");
 
-        uint128 x1_hi;
-        uint256 x1_lo;
-        uint128 x0_hi;
-        uint256 x0_lo;
-        uint128 y1_hi;
-        uint256 y1_lo;
-        uint128 y0_hi;
-        uint256 y0_lo;
+        uint128 x1Hi;
+        uint256 x1Lo;
+        uint128 x0Hi;
+        uint256 x0Lo;
+        uint128 y1Hi;
+        uint256 y1Lo;
+        uint128 y0Hi;
+        uint256 y0Lo;
 
         assembly {
-            x1_hi := shr(128, mload(add(m, 0x20)))
-            x1_lo := mload(add(m, 0x30))
-            x0_hi := shr(128, mload(add(m, 0x50)))
-            x0_lo := mload(add(m, 0x60))
-            y1_hi := shr(128, mload(add(m, 0x80)))
-            y1_lo := mload(add(m, 0x90))
-            y0_hi := shr(128, mload(add(m, 0xb0)))
-            y0_lo := mload(add(m, 0xc0))
+            x1Hi := shr(128, mload(add(m, 0x20)))
+            x1Lo := mload(add(m, 0x30))
+            x0Hi := shr(128, mload(add(m, 0x50)))
+            x0Lo := mload(add(m, 0x60))
+            y1Hi := shr(128, mload(add(m, 0x80)))
+            y1Lo := mload(add(m, 0x90))
+            y0Hi := shr(128, mload(add(m, 0xb0)))
+            y0Lo := mload(add(m, 0xc0))
         }
 
-        return PointG2(x1_hi, x1_lo, x0_hi, x0_lo, y1_hi, y1_lo, y0_hi, y0_lo);
+        return PointG2(x1Hi, x1Lo, x0Hi, x0Lo, y1Hi, y1Lo, y0Hi, y0Lo);
     }
 
     function g2Marshal(
         PointG2 memory point
     ) internal pure returns (bytes memory) {
         bytes memory m = new bytes(192);
-        uint256 x1_hi = point.x1_hi;
-        uint256 x1_lo = point.x1_lo;
-        uint256 x0_hi = point.x0_hi;
-        uint256 x0_lo = point.x0_lo;
-        uint256 y1_hi = point.y1_hi;
-        uint256 y1_lo = point.y1_lo;
-        uint256 y0_hi = point.y0_hi;
-        uint256 y0_lo = point.y0_lo;
+        uint256 x1Hi = point.x1Hi;
+        uint256 x1Lo = point.x1Lo;
+        uint256 x0Hi = point.x0Hi;
+        uint256 x0Lo = point.x0Lo;
+        uint256 y1Hi = point.y1Hi;
+        uint256 y1Lo = point.y1Lo;
+        uint256 y0Hi = point.y0Hi;
+        uint256 y0Lo = point.y0Lo;
 
         assembly {
-            mstore(add(m, 0x20), shl(128, x1_hi))
-            mstore(add(m, 0x30), x1_lo)
-            mstore(add(m, 0x50), shl(128, x0_hi))
-            mstore(add(m, 0x60), x0_lo)
-            mstore(add(m, 0x80), shl(128, y1_hi))
-            mstore(add(m, 0x90), y1_lo)
-            mstore(add(m, 0xb0), shl(128, y0_hi))
-            mstore(add(m, 0xc0), y0_lo)
+            mstore(add(m, 0x20), shl(128, x1Hi))
+            mstore(add(m, 0x30), x1Lo)
+            mstore(add(m, 0x50), shl(128, x0Hi))
+            mstore(add(m, 0x60), x0Lo)
+            mstore(add(m, 0x80), shl(128, y1Hi))
+            mstore(add(m, 0x90), y1Lo)
+            mstore(add(m, 0xb0), shl(128, y0Hi))
+            mstore(add(m, 0xc0), y0Lo)
         }
 
         return m;
@@ -458,25 +445,25 @@ library BLS2 {
 
         // res is laid out as EIP-2537 G2 point: x_c0 || x_c1 || y_c0 || y_c1 (64 bytes each, already
         // zero-padded), which maps onto our x0/x1/y0/y1 fields (c0 -> x0/y0, c1 -> x1/y1).
-        uint128 x0_hi;
-        uint256 x0_lo;
-        uint128 x1_hi;
-        uint256 x1_lo;
-        uint128 y0_hi;
-        uint256 y0_lo;
-        uint128 y1_hi;
-        uint256 y1_lo;
+        uint128 x0Hi;
+        uint256 x0Lo;
+        uint128 x1Hi;
+        uint256 x1Lo;
+        uint128 y0Hi;
+        uint256 y0Lo;
+        uint128 y1Hi;
+        uint256 y1Lo;
         assembly {
-            x0_hi := mload(add(res, 0x20))
-            x0_lo := mload(add(res, 0x40))
-            x1_hi := mload(add(res, 0x60))
-            x1_lo := mload(add(res, 0x80))
-            y0_hi := mload(add(res, 0xa0))
-            y0_lo := mload(add(res, 0xc0))
-            y1_hi := mload(add(res, 0xe0))
-            y1_lo := mload(add(res, 0x100))
+            x0Hi := mload(add(res, 0x20))
+            x0Lo := mload(add(res, 0x40))
+            x1Hi := mload(add(res, 0x60))
+            x1Lo := mload(add(res, 0x80))
+            y0Hi := mload(add(res, 0xa0))
+            y0Lo := mload(add(res, 0xc0))
+            y1Hi := mload(add(res, 0xe0))
+            y1Lo := mload(add(res, 0x100))
         }
-        out = PointG2(x1_hi, x1_lo, x0_hi, x0_lo, y1_hi, y1_lo, y0_hi, y0_lo);
+        out = PointG2(x1Hi, x1Lo, x0Hi, x0Lo, y1Hi, y1Lo, y0Hi, y0Lo);
     }
 
     /// @notice Expand arbitrary message to n bytes, as described
@@ -548,10 +535,10 @@ library BLS2 {
         PointG1 memory message
     ) internal view returns (bool pairingSuccess, bool callSuccess) {
         uint256[24] memory input = [
-            signature.x_hi,
-            signature.x_lo,
-            signature.y_hi,
-            signature.y_lo,
+            signature.xHi,
+            signature.xLo,
+            signature.yHi,
+            signature.yLo,
             N_G2_X0_HI,
             N_G2_X0_LO,
             N_G2_X1_HI,
@@ -560,18 +547,18 @@ library BLS2 {
             N_G2_Y0_LO,
             N_G2_Y1_HI,
             N_G2_Y1_LO,
-            message.x_hi,
-            message.x_lo,
-            message.y_hi,
-            message.y_lo,
-            pubkey.x0_hi,
-            pubkey.x0_lo,
-            pubkey.x1_hi,
-            pubkey.x1_lo,
-            pubkey.y0_hi,
-            pubkey.y0_lo,
-            pubkey.y1_hi,
-            pubkey.y1_lo
+            message.xHi,
+            message.xLo,
+            message.yHi,
+            message.yLo,
+            pubkey.x0Hi,
+            pubkey.x0Lo,
+            pubkey.x1Hi,
+            pubkey.x1Lo,
+            pubkey.y0Hi,
+            pubkey.y0Lo,
+            pubkey.y1Hi,
+            pubkey.y1Lo
         ];
         uint256[1] memory out;
         assembly {
@@ -606,26 +593,26 @@ library BLS2 {
             N_G1_X_LO,
             N_G1_Y_HI,
             N_G1_Y_LO,
-            signature.x0_hi,
-            signature.x0_lo,
-            signature.x1_hi,
-            signature.x1_lo,
-            signature.y0_hi,
-            signature.y0_lo,
-            signature.y1_hi,
-            signature.y1_lo,
-            pubkey.x_hi,
-            pubkey.x_lo,
-            pubkey.y_hi,
-            pubkey.y_lo,
-            message.x0_hi,
-            message.x0_lo,
-            message.x1_hi,
-            message.x1_lo,
-            message.y0_hi,
-            message.y0_lo,
-            message.y1_hi,
-            message.y1_lo
+            signature.x0Hi,
+            signature.x0Lo,
+            signature.x1Hi,
+            signature.x1Lo,
+            signature.y0Hi,
+            signature.y0Lo,
+            signature.y1Hi,
+            signature.y1Lo,
+            pubkey.xHi,
+            pubkey.xLo,
+            pubkey.yHi,
+            pubkey.yLo,
+            message.x0Hi,
+            message.x0Lo,
+            message.x1Hi,
+            message.x1Lo,
+            message.y0Hi,
+            message.y0Lo,
+            message.y1Hi,
+            message.y1Lo
         ];
         uint256[1] memory out;
         assembly {
@@ -650,14 +637,14 @@ library BLS2 {
         PointG1 memory p2
     ) internal view returns (PointG1 memory sum) {
         uint256[8] memory input = [
-            uint256(p1.x_hi),
-            p1.x_lo,
-            uint256(p1.y_hi),
-            p1.y_lo,
-            uint256(p2.x_hi),
-            p2.x_lo,
-            uint256(p2.y_hi),
-            p2.y_lo
+            uint256(p1.xHi),
+            p1.xLo,
+            uint256(p1.yHi),
+            p1.yLo,
+            uint256(p2.xHi),
+            p2.xLo,
+            uint256(p2.yHi),
+            p2.yLo
         ];
         uint256[4] memory out;
         bool ok;
@@ -668,7 +655,7 @@ library BLS2 {
         sum = PointG1(uint128(out[0]), out[1], uint128(out[2]), out[3]);
     }
 
-    /// @notice Aggregates an array of 96-byte G1 public keys into a single multi/aggregated public key.
+    /// @notice Aggregates an array of 48-byte G1 public keys into a single multi/aggregated public key.
     /// @dev Aggregation is a simple sum on G1: pkAgg = pubkeys[0] + pubkeys[1] + ... + pubkeys[n-1].
     ///      This matches the corresponding multi-signature aggregation, sigAgg = sig_0 + sig_1 + ... + sig_(n-1)
     ///      on G2, so that verifySingle(sigAgg, pkAgg, H(m)) succeeds iff every signer signed the same message.
@@ -682,34 +669,5 @@ library BLS2 {
         for (uint256 i = 1; i < pubkeys.length; i++) {
             aggPubkey = addG1Points(aggPubkey, g1Unmarshal(pubkeys[i]));
         }
-    }
-
-    /// @notice Verify a payload against a BLS multi-signature and the individual signers' public keys.
-    /// @dev "min-pubkey-size" convention: 96-byte G1 public keys, 192-byte G2 multi-signature.
-    ///      Computes the aggregated public key (sum of the individual G1 public keys) and checks it against
-    ///      the (already aggregated) multi-signature using the same pairing equation as
-    ///      `verifySingle(PointG2 signature, PointG1 pubkey, PointG2 message)`, i.e.
-    ///      e(-g1, sigAgg) * e(pkAgg, H(m)) == 1.
-    /// @dev Every signer is assumed to have signed the exact same `message` with the same `dst`. This does not
-    ///      perform subgroup-membership checks on the supplied public keys/signature.
-    /// @param dst Domain separation tag used to hash `message` onto G2
-    /// @param signature The 192-byte aggregated multi-signature, on G2
-    /// @param pubkeys Array of signer public keys, each 96 bytes, on G1
-    /// @param message The signed payload (raw bytes; this function hashes it onto G2 internally)
-    /// @return pairingSuccess bool indicating if the pairing check was successful
-    /// @return callSuccess bool indicating if the static call to the evm precompile was successful
-    function verifyMulti(
-        bytes memory dst,
-        bytes memory signature,
-        bytes[] memory pubkeys,
-        bytes memory message
-    ) internal view returns (bool pairingSuccess, bool callSuccess) {
-        require(signature.length == 192, "Invalid G2 signature bytes length");
-
-        PointG1 memory aggPubkey = aggregatePublicKeys(pubkeys);
-        PointG2 memory sig = g2Unmarshal(signature);
-        PointG2 memory hashedMessage = hashToPointG2(dst, message);
-
-        return verifySingle(sig, aggPubkey, hashedMessage);
     }
 }

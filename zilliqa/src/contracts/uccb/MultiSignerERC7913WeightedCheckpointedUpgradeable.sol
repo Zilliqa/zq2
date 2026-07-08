@@ -12,8 +12,8 @@ import {BLS2} from "./BLS2.sol";
  * Combines a checkpointed (block-height indexed) history of signer sets with an API modeled
  * after OpenZeppelin's `MultiSignerERC7913Weighted`. Instead of mutating a single "current"
  * signer set in place, this contract schedules complete signer-set snapshots ("generations")
- * to take effect at a given future block number, so signatures — and any other access-control
- * decision — can be checked against whatever signer set was, is, or will be active at any given
+ * to take effect at a given future block number, so signatures - and any other access-control
+ * decision - can be checked against whatever signer set was, is, or will be active at any given
  * block height.
  *
  * This variant follows the OpenZeppelin Upgradeable conventions:
@@ -23,41 +23,6 @@ import {BLS2} from "./BLS2.sol";
  * - All state lives in a single struct at an ERC-7201 namespaced storage slot, so this
  *   contract is safe to use behind a proxy and safe to combine with other upgradeable base
  *   contracts without storage collisions, and without needing manual `__gap` reservations.
- *
- * IMPORTANT: The storage namespace string below (`"openzeppelin.storage.
- * MultiSignerERC7913WeightedCheckpointed"`) is used here only because this contract mirrors
- * an OpenZeppelin API; it is NOT an official OpenZeppelin contract. If you fork or rename this
- * contract, change the namespace string (and recompute `_STORAGE_LOCATION`) to something
- * project-specific to avoid any risk of colliding with a real OpenZeppelin contract that might
- * use the same namespace in the future.
- *
- * Example of usage:
- *
- * ```solidity
- * contract MyWeightedCheckpointedAccount is
- *     Initializable,
- *     AccountUpgradeable,
- *     MultiSignerERC7913WeightedCheckpointedUpgradeable
- * {
- *     function initialize(
- *         bytes[] memory signers,
- *         uint64[] memory weights,
- *         uint64 threshold,
- *         uint48 effectiveBlock
- *     ) public initializer {
- *         __MultiSignerERC7913WeightedCheckpointed_init(signers, weights, threshold, effectiveBlock);
- *     }
- *
- *     function scheduleSignerSet(
- *         bytes[] memory signers,
- *         uint64[] memory weights,
- *         uint64 threshold,
- *         uint48 effectiveBlock
- *     ) public onlyEntryPointOrSelf {
- *         _scheduleSignerSet(signers, weights, threshold, effectiveBlock);
- *     }
- * }
- * ```
  *
  * Failing to call `__MultiSignerERC7913WeightedCheckpointed_init` (directly, or transitively
  * through your contract's own `_init`) during initialization will leave the contract with no
@@ -76,7 +41,7 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
         mapping(bytes32 signerHash => uint64 weight) weights; // 0 => not a signer
     }
 
-    /// @custom:storage-location erc7201:openzeppelin.storage.MultiSignerERC7913WeightedCheckpointed
+    /// @custom:storage-location erc7201:zq2.storage.MultiSignerERC7913WeightedCheckpointed
     struct MultiSignerERC7913WeightedCheckpointedStorage {
         // generationId => generation data. Generation 0 is reserved for "no generation scheduled".
         mapping(uint256 generationId => Generation) generations;
@@ -86,11 +51,11 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
         Checkpoints.Trace208 schedule;
     }
 
-    // keccak256(abi.encode(uint256(keccak256("zq2.storage.MultiSignerERC7913WeightedCheckpointed")) - 1)) & ~bytes32(uint256(0xff))
+    // keccak256(abi.encode(uint256(keccak256("zilliqa.storage.MultiSignerERC7913WeightedCheckpointed")) - 1)) & ~bytes32(uint256(0xff))
     bytes32
         private
         constant MultiSignerERC7913WeightedCheckpointedStorageLocation =
-            0x55a01cc5201b55d0eb0c67e940fdae9e2a47e4c946d455a9f6df2194d229ec00;
+            0xf9b51b7eea1d1d089cb8b3c9aa80c8467980d8d2b2fb095da23bb10a3a922700;
 
     function _getMultiSignerERC7913WeightedCheckpointedStorage()
         private
@@ -209,7 +174,7 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
      * intentionally not restricted to `onlyInitializing` itself.
      */
     function _scheduleSignerSet(
-        bytes[] memory signers,
+        bytes[] memory signers, // G1 compressed keys
         uint64[] memory weights,
         uint64 threshold_,
         uint48 effectiveBlock
@@ -398,21 +363,6 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
                 .totalWeight;
     }
 
-    /// @dev Returns the id of the generation that was/is/will be active at `blockNumber`.
-    /// Returns 0 if no generation had been scheduled yet as of that block.
-    function generationAt(
-        uint256 blockNumber
-    ) public view virtual returns (uint256) {
-        return _generationAt(blockNumber);
-    }
-
-    /// @dev Returns the total number of generations scheduled so far (regardless of whether
-    /// their effective block has passed).
-    function generationCount() public view virtual returns (uint256) {
-        return
-            _getMultiSignerERC7913WeightedCheckpointedStorage().generationCount;
-    }
-
     function _generationAt(
         uint256 blockNumber
     ) internal view virtual returns (uint256) {
@@ -426,7 +376,9 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
     /// Signature validation
     /// ------------------------------------------------------------------
 
+    // Official RFC domain separation tag
     bytes private constant DST = "BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
+
     /**
      * @notice Verifies a BLS12-381 signature.
      * @param payload The raw byte array message that was signed.
@@ -434,9 +386,9 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
      * @param signatureG2 The signature, encoded as a 256-byte G2 point.
      * @return bool True if the signature is valid, false otherwise.
      */
-    function _verifySignature(
-        bytes memory payload,
+    function _validateSignature(
         bytes memory pubkeyG1,
+        bytes memory payload,
         bytes memory signatureG2
     ) private view returns (bool) {
         BLS2.PointG1 memory pubkey = BLS2.g1UnmarshalCompressed(pubkeyG1);
@@ -471,6 +423,7 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
     }
 
     uint256 constant MSB_MASK = (1 << 255);
+
     /// @dev Interprets `bitVector` as a set membership mask over the signer
     ///      range [0, 256) and returns only the selected signers' pubkeys.
     function _getCosignersFromBitVector(
@@ -522,7 +475,7 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
         // 1. Relayer signature check
         if (
             !isSigner(pubkey, uint48(height)) ||
-            !_verifySignature(signature[0:280], pubkey, sig)
+            !_validateSignature(pubkey, signature[0:280], sig)
         ) return false;
 
         // 2. Co-signers multi-signature check
