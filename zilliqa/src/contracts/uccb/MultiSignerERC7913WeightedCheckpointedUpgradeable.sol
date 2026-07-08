@@ -255,29 +255,29 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
         uint64 start,
         uint64 end
     ) public view virtual returns (bytes[] memory) {
-        return getSigners(start, end, block.number);
+        return getSigners(start, end, type(uint48).max);
     }
 
     function getSignerCount() public view virtual returns (uint256) {
-        return getSignerCount(block.number);
+        return getSignerCount(type(uint48).max);
     }
 
     function isSigner(bytes memory signer) public view virtual returns (bool) {
-        return isSigner(signer, block.number);
+        return isSigner(signer, type(uint48).max);
     }
 
     function signerWeight(
         bytes memory signer
     ) public view virtual returns (uint64) {
-        return signerWeight(signer, block.number);
+        return signerWeight(signer, type(uint48).max);
     }
 
     function threshold() public view virtual returns (uint64) {
-        return threshold(block.number);
+        return threshold(type(uint48).max);
     }
 
     function totalWeight() public view virtual returns (uint64) {
-        return totalWeight(block.number);
+        return totalWeight(type(uint48).max);
     }
 
     /// ------------------------------------------------------------------
@@ -369,7 +369,7 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
         return
             _getMultiSignerERC7913WeightedCheckpointedStorage()
                 .schedule
-                .upperLookup(uint48(blockNumber));
+                .upperLookupRecent(uint48(blockNumber));
     }
 
     /// ------------------------------------------------------------------
