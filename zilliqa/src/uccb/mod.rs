@@ -56,31 +56,17 @@ sol!(
     "../vendor/openzeppelin-contracts/contracts/interfaces/draft-IERC7786.sol"
 );
 
-sol! {
-    function execute(
-        address target,
-        uint256 value,
-        bytes calldata data
-    ) external;
-    interface IERC7786Attributes {
-        function eip1559_fees(uint128 max_priority_gas_fee,uint128 max_base_gas_fee) external;
-    }
-}
-
+// This is to pass doctest
+#[cfg(doctest)]
 sol! {
     #[sol(rpc)]
-    interface IERC4337Extra {
+    interface IUccbGateway {
         event MessageReceived(bytes32 indexed receiveId, address relayer);
-        function feeParams(uint128[6]);
         function getFees(
             uint64 chain_id
         ) external view returns (uint128[6]);
     }
-}
 
-// This is to pass doctest
-#[cfg(doctest)]
-sol! {
     // https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/interfaces/draft-IERC7786.sol
     #[sol(rpc)]
     interface IERC7786GatewaySource {
