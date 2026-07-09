@@ -143,6 +143,22 @@ contract UccbSender is
         _scheduleSignerSet(signers, weights, threshold, effectiveBlock);
     }
 
+    // Override to include nonce check
+    function _validateUserOp(
+        PackedUserOperation calldata userOp,
+        bytes32 userOpHash,
+        bytes calldata signature
+    ) internal view override returns (uint256) {
+        require(userOp.nonce & type(uint64).max == 0, "Invalid nonce");
+        return
+            _rawSignatureValidation(
+                _signableUserOpHash(userOp, userOpHash),
+                signature
+            )
+                ? ERC4337Utils.SIG_VALIDATION_SUCCESS
+                : ERC4337Utils.SIG_VALIDATION_FAILED;
+    }
+
     // ****** SIGNERS MANAGEMENT ******
 
     function setSigners(
