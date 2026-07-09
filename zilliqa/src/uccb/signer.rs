@@ -647,6 +647,9 @@ impl Signer {
     ///
     /// NOTE: Some bundlers impose a limit on parallel nonces e.g. https://www.alchemy.com/docs/wallets/reference/bundler-faqs#parallel-nonces
     pub fn pack_nonce_key(addr: &Address, txn_hash: &Hash) -> U192 {
+        if addr.is_zero() {
+            return U192::from_be_slice(&txn_hash.0[..24]);
+        }
         // U192 expects big-endian bytes
         let hash32 = B32::from_slice(&txn_hash.0[..4]);
         let bytes = (*addr, hash32).abi_encode_packed();
