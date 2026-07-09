@@ -1,14 +1,14 @@
 use std::{str::FromStr as _, sync::Arc, time::Duration};
 
 use alloy::{
-    primitives::{Address, B256, Bytes, ChainId, address},
+    primitives::{Address, B256, Bytes, ChainId, U256, address},
     providers::{
         Identity, Provider as _, ProviderBuilder, RootProvider,
         fillers::{BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller},
     },
     rpc::{client::RpcClient, types::PackedUserOperation as AlloyUserOperation},
     sol,
-    sol_types::SolValue as _,
+    sol_types::{SolCall as _, SolValue as _},
     transports::layers::RetryBackoffLayer,
 };
 use alloy_chains::Chain;
@@ -43,6 +43,11 @@ pub const ENTRYPOINT_V09: Address = address!("0x433709009B8330FDa32311DF1C2AFA40
 #[cfg(not(doctest))]
 sol!(
     #[sol(rpc)]
+    "./src/contracts/uccb/Uccb.sol"
+);
+#[cfg(not(doctest))]
+sol!(
+    #[sol(rpc)]
     "../vendor/openzeppelin-contracts/contracts/interfaces/draft-IERC4337.sol"
 );
 #[cfg(not(doctest))]
@@ -65,8 +70,8 @@ sol! {
 sol! {
     #[sol(rpc)]
     interface IERC4337Extra {
-        function feeParams(uint128[6]);
         event MessageReceived(bytes32 indexed receiveId, address relayer);
+        function feeParams(uint128[6]);
         function getFees(
             uint64 chain_id
         ) external view returns (uint128[6]);
@@ -485,6 +490,82 @@ impl From<AlloyUserOperation> for PackedUserOperation {
             },
             signature: userop.signature,
         }
+    }
+}
+
+/// Construct a partial UserOp
+///
+/// Constructs a partial UserOp during the Watching stage; to be completed during the Signing stage.
+/// Some dummy data is used to populate the UserOp initially. They *must* be replaced before submission.
+#[allow(clippy::too_many_arguments)]
+pub fn new_call_op(
+    send_id: B256,
+    payload: Bytes,
+    sender: &Address,
+    paymaster: &Address,
+    gateway: &Address,
+    _value: U256,
+) -> AlloyUserOperation {
+    // we can encode some custom things in here
+
+    // Normal UserOps go to Sender::executeBatch()
+    let call_data = (
+        IAccountExecute::executeUserOpCall::SELECTOR,
+        UopTypes::Call,
+        gateway,
+        payload,
+    )
+        .abi_encode_packed();
+    AlloyUserOperation {
+        sender: *sender,
+        nonce: U256::ZERO, // unpopulated nonce/sig
+        factory: None,
+        // Some bundlers reject any initdata for existing senders e.g.
+        // https://docs.candide.dev/wallet/technical-reference/aa10-sender-already-constructed/
+        factory_data: None,
+        call_data: call_data.into(),
+        call_gas_limit: U256::ZERO,         // estimateUserOpGas
+        verification_gas_limit: U256::ZERO, // estimateUserOpGas
+        pre_verification_gas: U256::ZERO,   // estimateUserOpGas
+        max_fee_per_gas: U256::MAX,
+        max_priority_fee_per_gas: U256::MAX,
+        paymaster: Some(*paymaster),
+        paymaster_verification_gas_limit: None, // estimateUserOpGas
+        paymaster_post_op_gas_limit: None,      // estimateUserOpGas
+        paymaster_data: Some(send_id.into()),
+        signature: Bytes::new(), // blank signature
+    }
+}
+
+pub fn new_set_staker_op(
+    send_id: B256,
+    payload: Bytes,
+    sender: &Address,
+    paymaster: &Address,
+) -> AlloyUserOperation {
+    // Encode a MSG_ADDSTAKER operation
+    let call_data = (
+        IAccountExecute::executeUserOpCall::SELECTOR,
+        UopTypes::SetStaker,
+        payload,
+    )
+        .abi_encode_packed();
+    AlloyUserOperation {
+        sender: *sender,
+        nonce: U256::ZERO, // unpopulated nonce/sig
+        factory: None,
+        factory_data: None,
+        call_data: call_data.into(),
+        call_gas_limit: U256::ZERO,         // estimateUserOpGas
+        verification_gas_limit: U256::ZERO, // estimateUserOpGas
+        pre_verification_gas: U256::ZERO,   // estimateUserOpGas
+        max_fee_per_gas: U256::MAX,
+        max_priority_fee_per_gas: U256::MAX,
+        paymaster: Some(*paymaster),
+        paymaster_verification_gas_limit: None, // estimateUserOpGas
+        paymaster_post_op_gas_limit: None,      // estimateUserOpGas
+        paymaster_data: Some(send_id.into()),
+        signature: Bytes::new(), // blank signature
     }
 }
 

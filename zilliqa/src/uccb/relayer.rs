@@ -110,12 +110,13 @@ impl Relayer {
     }
 
     async fn start_monitor(config: NodeConfig, watchers: Arc<super::Providers>) -> Result<()> {
-        let chain = Chain::from_id(config.eth_chain_id);
+        let blocks_per_epoch = config.consensus.blocks_per_epoch;
+        let self_chain = Chain::from_id(config.eth_chain_id);
         if watchers.is_empty() {
-            tracing::warn!("Receiver({chain:?}): terminated");
+            tracing::warn!("Receiver({self_chain:?}): terminated");
             return Ok(());
         }
-        tracing::info!(chains=%watchers.len(), "Receiver({chain:?}): started");
+        tracing::info!(chains=%watchers.len(), "Receiver({self_chain:?}): started");
 
         // Cache last known height
         let mut heights =
@@ -143,7 +144,7 @@ impl Relayer {
             let chain_id = chain.id();
             poll_sched.insert(chain, period);
 
-            let logs = if let Some(watcher) = watchers.get(&chain_id) {
+            let (logs, _update_epoch) = if let Some(watcher) = watchers.get(&chain_id) {
                 let EndPoint {
                     gateway,
                     jsonrpc,
@@ -177,13 +178,19 @@ impl Relayer {
                     tracing::error!(?chain, "eth_getLogs(): transport");
                     continue; // skip on errors
                 };
+                let range = cache_height.saturating_add(1)..=final_height;
+                *cache_height = final_height; // update final
+
+                // 3. Update epoch
+                let epoch = *cache_height / blocks_per_epoch * blocks_per_epoch;
+                let update_epoch = (chain.id() == self_chain.id()) && range.contains(&epoch);
+
                 tracing::trace!(
                     count=%logs.len(),
-                    range=?(cache_height.saturating_add(1)..=final_height),
+                    ?range,
                     "MessageReceived({chain:?}): events",
                 );
-                *cache_height = final_height; // update final
-                logs
+                (logs, update_epoch)
             } else {
                 continue;
             };
