@@ -19,6 +19,7 @@ import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
 import {AbstractSigner} from "@openzeppelin/contracts/utils/cryptography/signers/AbstractSigner.sol";
 import {MultiSignerERC7913WeightedCheckpointedUpgradeable} from "./MultiSignerERC7913WeightedCheckpointedUpgradeable.sol";
+import {UopTypes} from "./Uccb.sol";
 
 /**
  * @title  UccbSender
@@ -63,51 +64,15 @@ contract UccbSender is
     // ****** EXECUTION STAGE ******
 
     /**
-     * @dev Execute a single arbitrary call.
-     *      Called by the EntryPoint after successful validateUserOp.
-     */
-    function execute(
-        address target,
-        uint256 value,
-        bytes calldata data
-    ) external onlyEntryPointOrSelf nonReentrant {
-        _execute(target, value, data);
-    }
-
-    /**
-     * @dev Low-level call with revert bubbling.
-     *      Uses Address.functionCallWithValue so reverts propagate correctly
-     *      even when returndata is empty.
-     */
-    function _execute(
-        address target,
-        uint256 value,
-        bytes memory data
-    ) internal {
-        // Address.functionCallWithValue reverts with the upstream reason on failure.
-        // We catch it here to emit ExecutionFailure before re-reverting.
-        try this._callExternal(target, value, data) {
-            // emit ExecutionSuccess(target, value, data);
-        } catch (bytes memory reason) {
-            // emit ExecutionFailure(target, value, data, reason);
-            // Re-revert with the original reason.
-            assembly {
-                revert(add(reason, 32), mload(reason))
-            }
-        }
-    }
-
-    /**
      * @dev External shim so try/catch can wrap a low-level call.
      *      Only callable by this contract itself (via _execute's try/catch).
      */
     function _callExternal(
         address target,
-        uint256 value,
         bytes calldata data
-    ) external {
+    ) external onlyEntryPointOrSelf {
         assert(msg.sender == address(this));
-        Address.functionCallWithValue(target, data, value);
+        target.functionCall(data);
     }
 
     /**
@@ -118,29 +83,51 @@ contract UccbSender is
         PackedUserOperation calldata userOp,
         bytes32
     ) external onlyEntryPoint {
-        require(userOp.callData.length % 56 == 16, "Invalid length");
+        require(userOp.callData.length > 5, "Invalid length");
+        UopTypes msgType = UopTypes(uint8(bytes1(userOp.callData[4])));
 
-        uint256 count = userOp.callData.length / 56;
-
-        bytes[] memory signers = new bytes[](count);
-        uint64[] memory weights = new uint64[](count);
-
-        uint256 offset = 0;
-        // each element is a G1 compressed public key(48) + weight(8).
-        for (uint256 i = 0; i < count; i++) {
-            signers[i] = bytes(userOp.callData[offset:offset + 48]);
-            weights[i] = uint64(
-                bytes8(userOp.callData[offset + 48:offset + 56])
-            );
-            offset += 56;
+        if (msgType == UopTypes.Call) {
+            require(userOp.callData.length > 32, "Invalid call()");
+            address gateway = address(bytes20(userOp.callData[5:25]));
+            try this._callExternal(gateway, userOp.callData[25:]) {
+                return;
+            } catch (bytes memory reason) {
+                // Re-revert with the original reason.
+                assembly {
+                    revert(add(reason, 32), mload(reason))
+                }
+            }
         }
 
-        uint64 threshold = uint64(bytes8(userOp.callData[offset:offset + 8]));
-        uint48 effectiveBlock = uint48(
-            uint64(bytes8(userOp.callData[offset + 8:offset + 16]))
-        );
+        if (msgType == UopTypes.SetStaker) {
+            require(userOp.callData.length % 104 == 21, "Invalid addStaker()");
 
-        _scheduleSignerSet(signers, weights, threshold, effectiveBlock);
+            uint256 count = userOp.callData.length / 104;
+
+            bytes[] memory signers = new bytes[](count);
+            uint64[] memory weights = new uint64[](count);
+
+            uint256 offset = 8;
+            // each element is a G1 public key (96) + weight(8).
+            for (uint256 i = 0; i < count; i++) {
+                signers[i] = bytes(userOp.callData[offset:offset + 96]);
+                offset += 96;
+            }
+            for (uint256 i = 0; i < count; i++) {
+                weights[i] = uint64(bytes8(userOp.callData[offset:offset + 8]));
+                offset += 8;
+            }
+
+            uint64 threshold = uint64(
+                bytes8(userOp.callData[offset:offset + 8])
+            );
+            uint48 effectiveBlock = uint48(
+                uint64(bytes8(userOp.callData[offset + 8:offset + 16]))
+            );
+
+            _scheduleSignerSet(signers, weights, threshold, effectiveBlock);
+            return;
+        }
     }
 
     // Override to include nonce check

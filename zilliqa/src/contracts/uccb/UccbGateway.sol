@@ -272,6 +272,7 @@ contract UccbGateway is
         require(hasRole(RECEIVING_CONTRACT, target), "Unregistered receiver");
 
         Address.functionCall(target, payload);
+        originator = originator;
     }
 
     /**

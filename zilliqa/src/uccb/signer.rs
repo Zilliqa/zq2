@@ -4,11 +4,11 @@ use std::{num::NonZeroUsize, ops::Mul, sync::Arc, time::Duration};
 use alloy::{
     eips::{BlockId, BlockNumberOrTag},
     primitives::{
-        Address, B256, Bytes, ChainId, U256,
+        Address, B256, ChainId, U256,
         aliases::{B32, U192},
     },
     providers::Provider as _,
-    rpc::types::{Filter, PackedUserOperation as AlloyUserOperation},
+    rpc::types::Filter,
     sol_types::{SolCall, SolEvent, SolValue},
 };
 use alloy_chains::Chain;
@@ -309,7 +309,7 @@ impl Signer {
                     }
 
                     // 7. Construct partial UserOp; send for signing
-                    let userop = Self::new_user_op(
+                    let userop = super::new_call_op(
                         sendId,
                         payload.into(),
                         sender,
@@ -645,6 +645,10 @@ impl Signer {
     /// The upper 192-bits of the nonce are user-defined; with the lower 64-bits as a sequence.
     /// This function packs the gateway address and a pseudo-random value into these bits.
     ///
+    /// If the address is:
+    /// - zero      : the prefix is a pseudo-random value based on the txn hash;
+    /// - non-zero  : the prefix is a partial-random value based on the address || txn_hash(8).
+    ///
     /// NOTE: Some bundlers impose a limit on parallel nonces e.g. https://www.alchemy.com/docs/wallets/reference/bundler-faqs#parallel-nonces
     pub fn pack_nonce_key(addr: &Address, txn_hash: &Hash) -> U192 {
         if addr.is_zero() {
@@ -715,57 +719,14 @@ impl Signer {
         Ok(stakers)
     }
 
-    /// Construct a partial UserOp
-    ///
-    /// Constructs a partial UserOp during the Watching stage; to be completed during the Signing stage.
-    /// Some dummy data is used to populate the UserOp initially. They *must* be replaced before submission.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_user_op(
-        _send_id: B256,
-        payload: Bytes,
-        sender: &Address,
-        paymaster: &Address,
-        gateway: &Address,
-        value: U256,
-    ) -> AlloyUserOperation {
-        // we can encode some custom things in here
-
-        // Normal UserOps go to Sender::executeBatch()
-        let execute = super::executeCall {
-            value,
-            target: *gateway,
-            data: payload,
-        };
-        let call_data = execute.abi_encode();
-        AlloyUserOperation {
-            sender: *sender,
-            nonce: U256::ZERO, // unpopulated nonce/sig
-            factory: None,
-            // Some bundlers reject any initdata for existing senders e.g.
-            // https://docs.candide.dev/wallet/technical-reference/aa10-sender-already-constructed/
-            factory_data: None,
-            call_data: call_data.into(),
-            call_gas_limit: U256::ZERO,         // estimateUserOpGas
-            verification_gas_limit: U256::ZERO, // estimateUserOpGas
-            pre_verification_gas: U256::ZERO,   // estimateUserOpGas
-            max_fee_per_gas: U256::MAX,
-            max_priority_fee_per_gas: U256::MAX,
-            paymaster: Some(*paymaster),
-            paymaster_verification_gas_limit: None, // estimateUserOpGas
-            paymaster_post_op_gas_limit: None,      // estimateUserOpGas
-            paymaster_data: Some(Bytes::new()),
-            signature: Bytes::new(), // blank signature
-        }
-    }
-
-    pub fn default_user_op() -> AlloyUserOperation {
-        Self::new_user_op(
-            B256::ZERO,
-            Bytes::new(),
-            &Address::ZERO,
-            &Address::ZERO,
-            &Address::ZERO,
-            U256::ZERO,
-        )
-    }
+    // pub fn default_user_op() -> AlloyUserOperation {
+    //     super::new_call_op(
+    //         B256::ZERO,
+    //         Bytes::new(),
+    //         &Address::ZERO,
+    //         &Address::ZERO,
+    //         &Address::ZERO,
+    //         U256::ZERO,
+    //     )
+    // }
 }
