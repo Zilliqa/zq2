@@ -29,10 +29,10 @@ abstract contract BLS12381 {
     ) private pure returns (BLS.G1Point memory) {
         require(m.length == 96, "Invalid G1 bytes length");
 
-        uint128 xHi;
-        uint256 xLo;
-        uint128 yHi;
-        uint256 yLo;
+        bytes32 xHi;
+        bytes32 xLo;
+        bytes32 yHi;
+        bytes32 yLo;
 
         assembly {
             xHi := shr(128, mload(add(m, 0x20)))
@@ -41,13 +41,7 @@ abstract contract BLS12381 {
             yLo := mload(add(m, 0x60))
         }
 
-        return
-            BLS.G1Point(
-                bytes32(uint256(xHi)),
-                bytes32(xLo),
-                bytes32(uint256(yHi)),
-                bytes32(yLo)
-            );
+        return BLS.G1Point(xHi, xLo, yHi, yLo);
     }
 
     function _g2Decode(
@@ -55,14 +49,14 @@ abstract contract BLS12381 {
     ) private pure returns (BLS.G2Point memory) {
         require(m.length == 192, "Invalid G2 bytes length");
 
-        uint128 x1Hi;
-        uint256 x1Lo;
-        uint128 x0Hi;
-        uint256 x0Lo;
-        uint128 y1Hi;
-        uint256 y1Lo;
-        uint128 y0Hi;
-        uint256 y0Lo;
+        bytes32 x1Hi;
+        bytes32 x1Lo;
+        bytes32 x0Hi;
+        bytes32 x0Lo;
+        bytes32 y1Hi;
+        bytes32 y1Lo;
+        bytes32 y0Hi;
+        bytes32 y0Lo;
 
         assembly {
             x1Hi := shr(128, mload(add(m, 0x20)))
@@ -75,17 +69,7 @@ abstract contract BLS12381 {
             y0Lo := mload(add(m, 0xc0))
         }
 
-        return
-            BLS.G2Point(
-                bytes32(uint256(x0Hi)),
-                bytes32(x0Lo),
-                bytes32(uint256(x1Hi)),
-                bytes32(x1Lo),
-                bytes32(uint256(y0Hi)),
-                bytes32(y0Lo),
-                bytes32(uint256(y1Hi)),
-                bytes32(y1Lo)
-            );
+        return BLS.G2Point(x0Hi, x0Lo, x1Hi, x1Lo, y0Hi, y0Lo, y1Hi, y1Lo);
     }
 
     /**

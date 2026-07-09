@@ -30,7 +30,7 @@ use crate::{
     db::Db,
     message::MAX_COMMITTEE_SIZE,
     state::State,
-    uccb::{BlsUserOp, EndPoint, IERC4337Extra::MessageReceived, RelayUserOp},
+    uccb::{BlsUserOp, EndPoint, IUccbGateway::MessageReceived, RelayUserOp},
 };
 
 #[derive(Debug)]
@@ -110,7 +110,6 @@ impl Relayer {
     }
 
     async fn start_monitor(config: NodeConfig, watchers: Arc<super::Providers>) -> Result<()> {
-        let blocks_per_epoch = config.consensus.blocks_per_epoch;
         let self_chain = Chain::from_id(config.eth_chain_id);
         if watchers.is_empty() {
             tracing::warn!("Receiver({self_chain:?}): terminated");
@@ -144,7 +143,7 @@ impl Relayer {
             let chain_id = chain.id();
             poll_sched.insert(chain, period);
 
-            let (logs, _update_epoch) = if let Some(watcher) = watchers.get(&chain_id) {
+            let logs = if let Some(watcher) = watchers.get(&chain_id) {
                 let EndPoint {
                     gateway,
                     jsonrpc,
@@ -169,35 +168,32 @@ impl Relayer {
                 };
 
                 // 2. Retrieve the latest set of finalized logs
+                let range = cache_height.saturating_add(1)..=final_height;
                 let filter = Filter::new()
                     .address(*gateway)
-                    .from_block(BlockNumberOrTag::Number(cache_height.saturating_add(1)))
-                    .to_block(BlockNumberOrTag::Number(final_height)) // ideally, this should be exactly one block length
-                    .event_signature(super::IERC4337Extra::MessageReceived::SIGNATURE_HASH);
+                    .from_block(BlockNumberOrTag::Number(*range.start()))
+                    .to_block(BlockNumberOrTag::Number(*range.end())) // ideally, this should be exactly one block length
+                    .event_signature(MessageReceived::SIGNATURE_HASH);
                 let Ok(logs) = jsonrpc.get_logs(&filter).await else {
                     tracing::error!(?chain, "eth_getLogs(): transport");
                     continue; // skip on errors
                 };
-                let range = cache_height.saturating_add(1)..=final_height;
                 *cache_height = final_height; // update final
-
-                // 3. Update epoch
-                let epoch = *cache_height / blocks_per_epoch * blocks_per_epoch;
-                let update_epoch = (chain.id() == self_chain.id()) && range.contains(&epoch);
 
                 tracing::trace!(
                     count=%logs.len(),
                     ?range,
                     "MessageReceived({chain:?}): events",
                 );
-                (logs, update_epoch)
+
+                logs
             } else {
                 continue;
             };
 
             for log in logs.into_iter() {
                 if let Ok(MessageReceived { receiveId, .. }) =
-                    super::IERC4337Extra::MessageReceived::decode_log_data(log.data())
+                    MessageReceived::decode_log_data(log.data())
                 {
                     tracing::info!(send_id=%receiveId, "Receiver({chain:?}): received");
                 }

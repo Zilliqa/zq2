@@ -19,6 +19,7 @@ import {ERC165Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/intro
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
+import {IUccbGateway} from "./Uccb.sol";
 
 /**
  * @title  UccbGateway
@@ -48,7 +49,8 @@ contract UccbGateway is
     ReentrancyGuardTransient,
     NoncesKeyedUpgradeable,
     EIP712Upgradeable,
-    IERC7786GatewaySource
+    IERC7786GatewaySource,
+    IUccbGateway
 {
     using Address for address payable;
     // using SafeCast for uint256;
@@ -64,9 +66,6 @@ contract UccbGateway is
     bytes32 public constant RECEIVING_CONTRACT = keccak256(
         "RECEIVING_CONTRACT"
     );
-
-    /// Emitted when an inbound message is successfully received.
-    event MessageReceived(bytes32 indexed receiveId, address gateway);
 
     /**
      * @notice One-time proxy initializer.
@@ -120,6 +119,14 @@ contract UccbGateway is
      */
     event FeesUpdated(uint64 indexed id, uint128[6] fees);
 
+    /**
+     * Set/Update the Fees
+     *
+     * Set or update the set of fees for a destination chain, effective immediately.
+     * @param id    the chain-id for the destination chain.
+     * @param fees  the array of fees
+     */
+
     function setFees(
         uint64 id,
         uint128[6] calldata fees
@@ -129,10 +136,24 @@ contract UccbGateway is
         emit FeesUpdated(id, fees);
     }
 
+    /**
+     * List the Fees
+     *
+     * Called by ZQ2 nodes to retrieve the fee structure for a given chain.
+     * @param id    the chain-id for the destination chain.
+     */
+
     function getFees(uint64 id) external view returns (uint128[6] memory) {
         GatewayStorage storage $ = _getStorage(); // Get data pointer
         return $._fees[id];
     }
+
+    /**
+     * Delete the Fees
+     *
+     * Manual deletion of the fees for a given chain.
+     * @param id    the chain-id for the destination chain.
+     */
 
     function deleteFees(uint64 id) external onlyRole(DEFAULT_ADMIN_ROLE) {
         GatewayStorage storage $ = _getStorage(); // Get data pointer
@@ -145,7 +166,12 @@ contract UccbGateway is
      * This function is called by all external contracts that wish to use the UCCB to
      * bridge calls to other chains/networks. The calling contract must be registered
      * as a ORIGINATING_CONTRACT.
+     *
+     * @param erc7930Recipient  the full ERC7930 recipient address
+     * @param payload           an arbitrary payload sent to the recipient.
+     * @param attributes        ERC7985 attributes; none supported at the moment.
      */
+
     function sendMessage(
         bytes calldata erc7930Recipient, // ERC7930(recipient)
         bytes calldata payload,
@@ -160,7 +186,6 @@ contract UccbGateway is
         returns (bytes32)
     {
         assert(payload.length != 0);
-        assert(msg.value == 0);
         assert(attributes.length == 0);
 
         // check format
@@ -175,12 +200,10 @@ contract UccbGateway is
         uint256 nonce = _useNonce(address(this), uint192(0));
 
         bytes memory wrappedPayload = abi.encode(
-            MSG_VERSION,
-            MSG_CALL,
-            erc7930Sender,
-            erc7930Recipient,
-            payload,
-            nonce
+            erc7930Sender, // ERC7985 original sender
+            erc7930Recipient, // ERC7985 receipient
+            payload, // arbitrary payload
+            nonce // to mitigate replays
         );
 
         // TODO: Record the original message?
@@ -191,17 +214,19 @@ contract UccbGateway is
     }
 
     /**
-     * @notice  Bridge Mechanism
+     * Bridge Mechanism
      *
-     * @dev     Called internally from sendMessage().
-     *
+     * Called internally from sendMessage().
      * This function emits the MessageSent() event that is picked up by the Rust code,
      * which triggers the signing-relaying-bundling pipeline.
+     * @param chain     ERC7930 destination chain
+     * @param payload   the wrapped quad-tuple payload
+     * @param attr      ERC7985 set of attributes; none for now.
      */
     function _sendMessageToCounterpart(
         bytes memory chain,
         bytes memory payload,
-        bytes[] memory attributes
+        bytes[] memory attr
     ) internal override(CrosschainLinkedUpgradeable) returns (bytes32) {
         (, bytes memory counterpart) = getLink(chain);
 
@@ -214,26 +239,21 @@ contract UccbGateway is
 
         bytes32 sendId = keccak256(payload);
 
-        emit MessageSent(
-            sendId,
-            originator,
-            counterpart,
-            payload,
-            0,
-            attributes
-        );
+        emit MessageSent(sendId, originator, counterpart, payload, 0, attr);
 
         return sendId;
     }
 
     /**
-     * @notice  Process Received Message
+     * Process Received Message
      *
-     * @dev     Called internally from ERC7786Recipient.receiveMessage().
-     *
+     * Called internally from ERC7786Recipient.receiveMessage().
      * This function is called internally after checking that the message came from an authorized sender.
      * We check that the message itself is valid and proceed to deliver the mesage to the external contract,
      * which must be registered as a RECEIVING_CONTRACT.
+     * @param receiveId         the keccak256() value of the payload
+     * @param relayer           the address of the ERC4337 sender.
+     * @param wrappedPayload    the wrapped quad-tuple payload
      */
     function _processMessage(
         address, // ERC4337(sender),
@@ -276,13 +296,12 @@ contract UccbGateway is
     }
 
     /**
-     * @notice Configure the Sender/Remote mapping.
+     * Configure the Sender/Remote mapping.
      *
      * When a message is received, it will be checked against this mapping to determine if the Sender is
      * authorised to deliver messages from that counterpart originating chain/network.
-     *
-     * @param sender         The local ERC4337 sender contract allowed to call this Gateway.
-     * @param counterpart    The full ERC7930 address of the remote Gateway contract.
+     * @param sender         The local ERC4337 sender contract allowed to call this Gateway receiveMessage().
+     * @param counterpart    The full ERC7930 address of the remote Gateway contract, where sendMessage() sends it.
      */
     function setLink(
         address sender,
@@ -302,12 +321,13 @@ contract UccbGateway is
         bytes memory erc7930
     ) private pure returns (bytes memory) {
         (bytes2 chainType, bytes memory chainReference, ) = erc7930.parseV1();
-        return InteroperableAddress.formatV1(chainType, chainReference, hex"");
+        return InteroperableAddress.formatV1(chainType, chainReference, "");
     }
 
     /**
-     * @notice Sweep accumulated message fees.
-     *         This is only used in the event that fees are accidentally sent to this contract.
+     * Sweep accumulated message fees.
+     *
+     * This is only used in the event that fees are accidentally sent to this contract.
      */
     function sweep(
         address payable to

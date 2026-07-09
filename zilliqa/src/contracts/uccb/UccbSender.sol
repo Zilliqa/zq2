@@ -64,20 +64,24 @@ contract UccbSender is
     // ****** EXECUTION STAGE ******
 
     /**
-     * @dev External shim so try/catch can wrap a low-level call.
-     *      Only callable by this contract itself (via _execute's try/catch).
+     * Execution Shim
+     *
+     * Only callable by this contract itself so that try/catch can wrap a low-level call.
+     * @param target    the contract address
+     * @param data      the calldata passed to that contract
      */
     function _callExternal(
         address target,
         bytes calldata data
     ) external onlyEntryPointOrSelf {
-        assert(msg.sender == address(this));
         target.functionCall(data);
     }
 
     /**
-     * @dev Used by the Rust pipeline to update stakers/stakes
-     *      Called by the EntryPoint after successful validateUserOp.
+     * Execution Pipeline
+     *
+     * Called by the EntryPoint after successful validateUserOp.
+     * @param userOp the validated UserOp.
      */
     function executeUserOp(
         PackedUserOperation calldata userOp,
@@ -89,6 +93,7 @@ contract UccbSender is
         if (msgType == UopTypes.Call) {
             require(userOp.callData.length > 32, "Invalid call()");
             address gateway = address(bytes20(userOp.callData[5:25]));
+            // calls the external shim
             try this._callExternal(gateway, userOp.callData[25:]) {
                 return;
             } catch (bytes memory reason) {
@@ -107,13 +112,11 @@ contract UccbSender is
             bytes[] memory signers = new bytes[](count);
             uint64[] memory weights = new uint64[](count);
 
-            uint256 offset = 8;
+            uint256 offset = 5;
             // each element is a G1 public key (96) + weight(8).
             for (uint256 i = 0; i < count; i++) {
                 signers[i] = bytes(userOp.callData[offset:offset + 96]);
                 offset += 96;
-            }
-            for (uint256 i = 0; i < count; i++) {
                 weights[i] = uint64(bytes8(userOp.callData[offset:offset + 8]));
                 offset += 8;
             }
@@ -130,7 +133,12 @@ contract UccbSender is
         }
     }
 
-    // Override to include nonce check
+    /**
+     * Validate the UserOp.
+     *
+     * Override the parent implementation to include nonce check.
+     * Since we use a 192-bit parallel prefix, each nonce should have a 0 suffix.
+     */
     function _validateUserOp(
         PackedUserOperation calldata userOp,
         bytes32 userOpHash,
@@ -148,13 +156,24 @@ contract UccbSender is
 
     // ****** SIGNERS MANAGEMENT ******
 
+    /**
+     * Manual Signers Update
+     *
+     * Sets the set of signers, weights and threshold at an effective height.
+     * This is used to manually update the signers, in the event it falls out of sync.
+     *
+     * @param signers   array of 96-byte G1 public keys
+     * @param weights   array of corresponding stakes/weights
+     * @param threshold the signers must exceed this threshold.
+     * @param effective the height where this set of signers is effective.
+     */
     function setSigners(
         bytes[] calldata signers,
         uint64[] calldata weights,
         uint64 threshold,
-        uint48 effectiveBlock
+        uint48 effective
     ) public onlyRole(DEFAULT_ADMIN_ROLE) {
-        _scheduleSignerSet(signers, weights, threshold, effectiveBlock);
+        _scheduleSignerSet(signers, weights, threshold, effective);
     }
 
     // ****** DEPOSIT/STAKE MANAGEMENT *******
