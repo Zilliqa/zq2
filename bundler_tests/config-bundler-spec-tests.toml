@@ -34,7 +34,7 @@ consensus.genesis_accounts = [
 # Reward parameters
 consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"
 consensus.blocks_per_hour = 36
-consensus.blocks_per_epoch = 72
+consensus.blocks_per_epoch = 108
 consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
 # Gas parameters
 consensus.eth_block_gas_limit = 84_000_000

@@ -420,7 +420,7 @@ impl Relayer {
                 block_height: u64::MIN,
                 userop: None,
                 send_id: B256::ZERO,
-                threshold: 2 * total_stake / 3 + 1,
+                threshold: 2 * total_stake.saturating_add(2) / 3,
                 signatures: Vec::with_capacity(len),
             }
         });
