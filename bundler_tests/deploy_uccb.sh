@@ -58,9 +58,7 @@ cast send $GW_PROXY "grantRole(bytes32,address)" 0x6648225b86b157a7976fcdfdf25f4
 cast send $GW_PROXY "grantRole(bytes32,address)" 0x4395ac258ce87896ffc4b11b82c2c2465de0edf678b075f467682e243bd03abb 0xe8dcAcED8cC42b9a8517f2c6EB156d8140A46CA6 --private-key $PRIVATE_KEY
 
 # set signer(s)
-#cast send $SA_PROXY "setSigners(bytes[],uint64[],uint64,uint48)" "[0xb27aebb3b54effd7af87c4a064a711554ee0f3f5abf56ca910b46422f2b21603bc383d42eb3b927c4c3b0b8381ca30a3]" "[100]" 50 1 --private-key $PRIVATE_KEY
-cast send $SA_PROXY "setSigners(bytes[],uint64[],uint64,uint48)" "[0x127aebb3b54effd7af87c4a064a711554ee0f3f5abf56ca910b46422f2b21603bc383d42eb3b927c4c3b0b8381ca30a30e861c6ad56556f0fde034ad20a88b832c1cc2a4152af40704571f992df8627ead0e314cf142322cafa85c868c567362]" "[100]" 50 1 --private-key $PRIVATE_KEY
+cast send $SA_PROXY "setSigners(bytes[],uint128[],uint128,uint48)" "[0x127aebb3b54effd7af87c4a064a711554ee0f3f5abf56ca910b46422f2b21603bc383d42eb3b927c4c3b0b8381ca30a30e861c6ad56556f0fde034ad20a88b832c1cc2a4152af40704571f992df8627ead0e314cf142322cafa85c868c567362]" "[100]" 50 1 --private-key $PRIVATE_KEY
 
 # send TestCounter.count()
 cast send $GW_PROXY "sendMessage(bytes,bytes,bytes[])" 0001000002053914e8dcAcED8cC42b9a8517f2c6EB156d8140A46CA6 0x06661abd "[]" --private-key $PRIVATE_KEY
-

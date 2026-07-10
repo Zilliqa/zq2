@@ -94,13 +94,15 @@ impl Signer {
         }
 
         {
+            let state = state.clone();
             let config = config.clone();
             let db = db.clone();
             let providers = providers.clone();
             let sign_tx = sign_tx.clone();
             workers.spawn(async move {
                 if let Err(err) =
-                    Self::start_watcher(secret_key, chain, config, db, providers, sign_tx).await
+                    Self::start_watcher(secret_key, chain, config, db, providers, sign_tx, state)
+                        .await
                 {
                     tracing::error!(%err, "SIGNER error");
                 }
@@ -117,6 +119,7 @@ impl Signer {
     ///
     /// Opens persistent connections to each remote chain; and monitors the logs for MessageSent events.
     /// Validates and submits each event for signing.
+    #[allow(clippy::too_many_arguments)]
     async fn start_watcher(
         secret_key: SecretKey,
         self_chain: Chain,
@@ -124,6 +127,7 @@ impl Signer {
         db: Arc<Db>,
         watchers: Arc<super::Providers>,
         sign_tx: UnboundedSender<SignUserOp>,
+        state: Arc<State>,
     ) -> Result<()> {
         let blocks_per_epoch = config.consensus.blocks_per_epoch;
         if watchers.is_empty() {
@@ -224,6 +228,7 @@ impl Signer {
                 db.clone(),
                 epochs,
                 self_chain,
+                state.clone(),
             ) {
                 tracing::error!(%err, "SendUpdates()");
                 continue;
@@ -242,29 +247,44 @@ impl Signer {
     /// Send Epoch Updates
     ///
     /// Broadcast epoch updates to all chains.
+    #[allow(clippy::too_many_arguments)]
     fn send_updates(
-        secret_key: SecretKey,
+        _secret_key: SecretKey,
         sign_tx: UnboundedSender<SignUserOp>,
         watchers: Arc<super::Providers>,
         db: Arc<Db>,
         epochs: Vec<u64>,
         self_chain: Chain,
+        state: Arc<State>,
     ) -> Result<()> {
         for epoch in epochs {
             let height = epoch.saturating_sub(1); // send the epoch update signed by previous height
-            tracing::info!(chain=?self_chain, %height, "updateEpoch()");
-            // build the payload
-            let Ok(Some(block)) = db.get_transactionless_block(BlockFilter::Height(height)) else {
-                continue; // skip
-            };
+            let block = db
+                .get_transactionless_block(BlockFilter::Height(height))?
+                .context("must exist")?;
+            let epoch_block = db
+                .get_transactionless_block(BlockFilter::Height(epoch))?
+                .context("must exist")?;
+            let state = state.at_root(epoch_block.state_root_hash().into());
 
-            // TODO: Dummy values
-            let signers: Vec<(Bytes, u64)> = vec![(
-                secret_key.as_bls().public_key().0.to_uncompressed().into(),
-                123_456_789,
-            )];
+            // *** Ensure that this is in the same order as Relayer.rs ***
+            let stakers = state.get_stakers(epoch_block.header.clone())?;
+            tracing::info!(chain=?self_chain, %height, len=%stakers.len(), "updateEpoch()");
 
-            let payload = (signers, 1000u64, epoch).abi_encode_packed();
+            let mut signers: Vec<(Bytes, u128)> = Vec::new();
+            let mut totalstake = u128::MIN;
+            for staker in stakers {
+                let pubkey = staker.as_uncompressed(); // 96-byte G1 keys
+                let stake = state
+                    .get_stake(staker, epoch_block.header.clone())?
+                    .context("must exist")?
+                    .get();
+                totalstake = totalstake.saturating_add(stake);
+                signers.push((pubkey.into(), stake));
+            }
+            let threshold = 2 * totalstake.saturating_add(2) / 3;
+
+            let payload = (signers, threshold, epoch).abi_encode_packed();
             let send_id = keccak256(payload.iter().as_slice());
             for watcher in watchers.iter() {
                 let EndPoint {

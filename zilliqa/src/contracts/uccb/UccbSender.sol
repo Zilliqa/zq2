@@ -105,27 +105,27 @@ contract UccbSender is
         }
 
         if (msgType == UopTypes.SetStaker) {
-            require(userOp.callData.length % 104 == 21, "Invalid addStaker()");
+            require(userOp.callData.length % 112 == 29, "Invalid addStaker()");
 
-            uint256 count = userOp.callData.length / 104;
+            uint256 count = userOp.callData.length / 112;
 
             bytes[] memory signers = new bytes[](count);
-            uint64[] memory weights = new uint64[](count);
+            uint128[] memory weights = new uint128[](count);
 
             uint256 offset = 5;
-            // each element is a G1 public key (96) + weight(8).
+            // each element is a G1 public key (96) + weight(16).
             for (uint256 i = 0; i < count; i++) {
                 signers[i] = bytes(userOp.callData[offset:offset + 96]);
                 offset += 96;
-                weights[i] = uint64(bytes8(userOp.callData[offset:offset + 8]));
-                offset += 8;
+                weights[i] = uint128(bytes16(userOp.callData[offset:offset + 16]));
+                offset += 16;
             }
 
-            uint64 threshold = uint64(
-                bytes8(userOp.callData[offset:offset + 8])
+            uint128 threshold = uint128(
+                bytes16(userOp.callData[offset:offset + 16])
             );
             uint48 effectiveBlock = uint48(
-                uint64(bytes8(userOp.callData[offset + 8:offset + 16]))
+                uint64(bytes8(userOp.callData[offset + 16:offset + 24]))
             );
 
             _scheduleSignerSet(signers, weights, threshold, effectiveBlock);
@@ -169,8 +169,8 @@ contract UccbSender is
      */
     function setSigners(
         bytes[] calldata signers,
-        uint64[] calldata weights,
-        uint64 threshold,
+        uint128[] calldata weights,
+        uint128 threshold,
         uint48 effective
     ) public onlyRole(DEFAULT_ADMIN_ROLE) {
         _scheduleSignerSet(signers, weights, threshold, effective);

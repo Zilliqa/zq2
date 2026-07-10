@@ -272,20 +272,16 @@ contract UccbGateway is
         emit MessageReceived(receiveId, senderAddr);
 
         // Deconstruct the quad-tuple payload
-        assert(wrappedPayload.length > 128);
+        require(wrappedPayload.length > 224, "Invalid quad-tuple");
         (
-            uint8 version,
-            bytes4 msgType,
             bytes memory originator,
             bytes memory receiver,
             bytes memory payload,
 
         ) = abi.decode(
                 wrappedPayload,
-                (uint8, bytes4, bytes, bytes, bytes, uint256)
+                (bytes, bytes, bytes, uint256)
             );
-        assert(version == MSG_VERSION);
-        assert(msgType == MSG_CALL);
 
         // pass-thru to registered target
         (, address target) = receiver.parseEvmV1();

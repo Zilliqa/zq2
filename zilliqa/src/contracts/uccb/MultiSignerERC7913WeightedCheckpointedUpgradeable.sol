@@ -37,9 +37,9 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
 
     struct Generation {
         bytes[] signers;
-        uint64 threshold;
-        uint64 totalWeight;
-        mapping(bytes32 signerHash => uint64 weight) weights; // 0 => not a signer
+        uint128 threshold;
+        uint128 totalWeight;
+        mapping(bytes32 signerHash => uint128 weight) weights; // 0 => not a signer
     }
 
     /// @custom:storage-location erc7201:zq2.storage.MultiSignerERC7913WeightedCheckpointed
@@ -72,13 +72,13 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
     event SignerSetScheduled(
         uint256 indexed generationId,
         uint48 indexed effectiveBlock,
-        uint64 threshold
+        uint128 threshold
     );
 
     /// @dev Emitted for each signer when a generation that authorizes them is scheduled.
     event ERC7913SignerWeightChanged(
         bytes indexed signer,
-        uint64 weight,
+        uint128 weight,
         uint256 indexed generationId
     );
 
@@ -86,13 +86,13 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
     error MultiSignerERC7913WeightedCheckpointedDuplicateSigner(bytes signer);
     error MultiSignerERC7913WeightedCheckpointedInvalidWeight(
         bytes signer,
-        uint64 weight
+        uint128 weight
     );
     error MultiSignerERC7913WeightedCheckpointedMismatchedLength();
     error MultiSignerERC7913WeightedCheckpointedZeroThreshold();
     error MultiSignerERC7913WeightedCheckpointedUnreachableThreshold(
-        uint64 totalWeight,
-        uint64 threshold
+        uint128 totalWeight,
+        uint128 threshold
     );
     error MultiSignerERC7913WeightedCheckpointedInvalidEffectiveBlock(
         uint48 effectiveBlock,
@@ -111,8 +111,8 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
      */
     function __MultiSignerERC7913WeightedCheckpointed_init(
         bytes[] memory signers,
-        uint64[] memory weights,
-        uint64 threshold_,
+        uint128[] memory weights,
+        uint128 threshold_,
         uint48 effectiveBlock
     ) internal onlyInitializing {
         __MultiSignerERC7913WeightedCheckpointed_init_unchained(
@@ -125,8 +125,8 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
 
     function __MultiSignerERC7913WeightedCheckpointed_init_unchained(
         bytes[] memory signers,
-        uint64[] memory weights,
-        uint64 threshold_,
+        uint128[] memory weights,
+        uint128 threshold_,
         uint48 effectiveBlock
     ) internal onlyInitializing {
         _scheduleSignerSet(signers, weights, threshold_, effectiveBlock);
@@ -176,8 +176,8 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
      */
     function _scheduleSignerSet(
         bytes[] memory signers, // G1 compressed keys
-        uint64[] memory weights,
-        uint64 threshold_,
+        uint128[] memory weights,
+        uint128 threshold_,
         uint48 effectiveBlock
     ) internal virtual returns (uint256 generationId) {
         MultiSignerERC7913WeightedCheckpointedStorage
@@ -198,7 +198,7 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
         generationId = ++$.generationCount;
         Generation storage gen = $.generations[generationId];
 
-        uint64 totalWeight_ = 0;
+        uint128 totalWeight_ = 0;
         for (uint256 i = 0; i < signers.length; i++) {
             bytes memory signer = signers[i];
             if (signer.length < 20) {
@@ -207,7 +207,7 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
                 );
             }
 
-            uint64 weight = weights[i];
+            uint128 weight = weights[i];
             if (weight == 0) {
                 revert MultiSignerERC7913WeightedCheckpointedInvalidWeight(
                     signer,
@@ -269,15 +269,15 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
 
     function signerWeight(
         bytes memory signer
-    ) public view virtual returns (uint64) {
+    ) public view virtual returns (uint128) {
         return signerWeight(signer, type(uint48).max);
     }
 
-    function threshold() public view virtual returns (uint64) {
+    function threshold() public view virtual returns (uint128) {
         return threshold(type(uint48).max);
     }
 
-    function totalWeight() public view virtual returns (uint64) {
+    function totalWeight() public view virtual returns (uint128) {
         return totalWeight(type(uint48).max);
     }
 
@@ -337,7 +337,7 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
     function signerWeight(
         bytes memory signer,
         uint256 blockNumber
-    ) public view virtual returns (uint64) {
+    ) public view virtual returns (uint128) {
         return
             _getMultiSignerERC7913WeightedCheckpointedStorage()
                 .generations[_generationAt(blockNumber)]
@@ -347,7 +347,7 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
     /// @dev Returns the threshold that was/is/will be active as of `blockNumber`.
     function threshold(
         uint256 blockNumber
-    ) public view virtual returns (uint64) {
+    ) public view virtual returns (uint128) {
         return
             _getMultiSignerERC7913WeightedCheckpointedStorage()
                 .generations[_generationAt(blockNumber)]
@@ -357,7 +357,7 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
     /// @dev Returns the total signer weight that was/is/will be active as of `blockNumber`.
     function totalWeight(
         uint256 blockNumber
-    ) public view virtual returns (uint64) {
+    ) public view virtual returns (uint128) {
         return
             _getMultiSignerERC7913WeightedCheckpointedStorage()
                 .generations[_generationAt(blockNumber)]
@@ -476,7 +476,7 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
         if (generationId == 0) return false;
 
         Generation storage gen = $.generations[generationId];
-        uint64 totalValidatingWeight = 0;
+        uint128 totalValidatingWeight = 0;
         for (uint256 i = 0; i < signers.length; i++) {
             totalValidatingWeight += gen.weights[keccak256(signers[i])];
         }
