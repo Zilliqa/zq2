@@ -7,7 +7,7 @@ use alloy_chains::Chain;
 use anyhow::Result;
 
 use super::PackedUserOperation;
-use crate::api::to_hex::ToHex;
+use crate::{api::to_hex::ToHex, crypto::NodePublicKey, message::BlockHeader, state::State};
 
 /// Retrieve the chain from a given CAIP-10 account
 pub fn get_erc7930_chain(account_id: &[u8]) -> Result<Chain> {
@@ -132,6 +132,27 @@ pub fn get_user_op_hash(
         }
         _ => Err(anyhow::anyhow!("Entrypoint {entry_point:?} unsupported")),
     }
+}
+
+/// Return an ordered list of stakers.
+///
+/// This function is factorised here to ensure that the same set of stakers is returned in the same order, to all UCCB functions.
+pub fn committee(
+    state: &State,
+    block_header: BlockHeader,
+) -> Result<(Vec<NodePublicKey>, Vec<u128>, u128)> {
+    let stakers = state.get_stakers(block_header)?;
+    let mut stakes = Vec::with_capacity(stakers.len());
+    let mut totalstake = u128::MIN;
+    for staker in stakers.iter() {
+        let stake = state
+            .get_stake(*staker, block_header)?
+            .expect("must exist")
+            .get();
+        totalstake = totalstake.saturating_add(stake);
+        stakes.push(stake);
+    }
+    Ok((stakers, stakes, totalstake))
 }
 
 #[cfg(test)]

@@ -404,24 +404,14 @@ impl Relayer {
         // 2. Get the cache entry
         let mut cache = self.bls_uop.lock();
         let bop = cache.get_or_insert_mut_ref(&userop_hash, || {
-            let stakers = state.get_stakers(block.header).expect("must exist");
-            let len = stakers.len();
-            let total_stake: u128 = stakers
-                .into_iter()
-                .map(|pub_key| {
-                    state
-                        .get_stake(pub_key, block.header)
-                        .expect("must have stake")
-                        .expect("stake != 0")
-                        .get()
-                })
-                .sum();
+            let (_, stakes, total_stake) =
+                super::utils::committee(&state, block.header).expect("must exist");
             BlsUserOp {
                 block_height: u64::MIN,
                 userop: None,
                 send_id: B256::ZERO,
                 threshold: 2 * total_stake.saturating_add(2) / 3,
-                signatures: Vec::with_capacity(len),
+                signatures: Vec::with_capacity(stakes.len()),
             }
         });
 
@@ -442,7 +432,7 @@ impl Relayer {
         // 4. Majority reached: promote
         if bop.userop.is_some() && bop.threshold == 0 {
             let bop = cache.pop(&userop_hash).unwrap();
-            let stakers = state.get_stakers(block.header).expect("must exist");
+            let (stakers, _, _) = super::utils::committee(&state, block.header)?;
             let send_id = bop.send_id;
             self.relay_userop(send_id, userop_hash, chain, stakers, bop)?;
         }
