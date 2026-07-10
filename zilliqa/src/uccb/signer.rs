@@ -28,7 +28,7 @@ use tokio_util::time::DelayQueue;
 use crate::{
     cfg::NodeConfig,
     crypto::{BlsSignature, Hash, SecretKey},
-    db::{BlockFilter, Db},
+    db::Db,
     message::{ExternalMessage, UccbUserOp},
     node::MessageSender,
     state::State,
@@ -244,6 +244,13 @@ impl Signer {
     /// Send Epoch Updates
     ///
     /// Broadcast epoch updates to all chains.
+    /// This function will collect the set of stakers, stakes, and total_stake from the local network; and encode it into the
+    /// required structure that will be decoded by the UccbSender::executeUserOp() function. The same structure needs to be
+    /// sent to all the remote networks.
+    ///
+    /// Note:
+    /// - the public keys are 96-byte uncompressed G1 points; and the amounts are all u128.
+    /// - the block must be signed by the previous set of signers that it seeks to replace.
     #[allow(clippy::too_many_arguments)]
     fn send_updates(
         sign_tx: UnboundedSender<SignUserOp>,
@@ -254,20 +261,16 @@ impl Signer {
         state: Arc<State>,
     ) -> Result<()> {
         for epoch in epochs {
-            let height = epoch.saturating_sub(1); // send the epoch update signed by previous height
-            let block = db
-                .get_transactionless_block(BlockFilter::Height(height))?
-                .expect("must exist");
             let epoch_block = db
-                .get_transactionless_block(BlockFilter::Height(epoch))?
+                .get_transactionless_block(epoch.into())?
                 .expect("must exist");
             let state = state.at_root(epoch_block.state_root_hash().into());
 
             // *** Ensure that co-signer list is same order as Relayer.rs ***
             let (stakers, stakes, totalstake) =
                 super::utils::committee(&state, epoch_block.header)?;
-            anyhow::ensure!(stakers.len() == stakes.len(), "Missing committee");
-            tracing::info!(chain=?self_chain, %height, len=%stakers.len(), "updateEpoch()");
+            anyhow::ensure!(stakers.len() == stakes.len(), "Invalid committee");
+            tracing::info!(chain=?self_chain, %epoch, len=%stakers.len(), "updateEpoch()");
 
             let signers = stakers
                 .into_iter()
@@ -275,10 +278,10 @@ impl Signer {
                 .map(|(key, w)| (key.as_uncompressed(), w))
                 .collect_vec();
 
-            let threshold = 2 * totalstake.saturating_add(2) / 3;
+            let threshold = 2 * totalstake.saturating_add(2) / 3; // round up
 
+            // send update to all networks, including self.
             let payload = (signers, threshold, epoch).abi_encode_packed();
-            let send_id = keccak256(payload.iter().as_slice());
             for watcher in watchers.iter() {
                 let EndPoint {
                     chain,
@@ -286,17 +289,28 @@ impl Signer {
                     paymaster,
                     ..
                 } = watcher.value();
+                // the payloads for each network must be different, to prevent signature reuse.
+                let send_id =
+                    keccak256((chain.id(), payload.clone()).abi_encode_packed().as_slice());
+
                 let userop =
                     super::new_set_staker_op(send_id, payload.clone().into(), sender, paymaster);
+
+                // Epoch update must be signed by the previous block
+                let blk_height = epoch.saturating_sub(1);
+                let blk_hash = db
+                    .get_transactionless_block(blk_height.into())?
+                    .expect("must exist")
+                    .hash();
 
                 if let Err(err) = sign_tx.send(SignUserOp::new(
                     send_id,
                     userop,
-                    *chain,          // destination chain
-                    self_chain,      // source chain
-                    Hash(send_id.0), // TODO: a better hash?
-                    block.hash(),
-                    epoch, // effective next block
+                    *chain,
+                    self_chain,
+                    Hash(send_id.0), // substitute the pseudo-random txn_hash with send_id
+                    blk_hash,
+                    blk_height,
                 )) {
                     tracing::error!(%err, "sign_rx closed");
                     break;
@@ -318,21 +332,6 @@ impl Signer {
         for log in logs {
             let blk_hash = log.block_hash.expect("block_hash != none").into();
             let txn_hash = log.transaction_hash.expect("txn_hash != none").into();
-
-            // The block height is recorded to allow the receiving chain to select the set of signers.
-            //
-            // It is set to MAX for incoming messages, to use the 'latest' set of signers in the incoming path as
-            // the remote chain block numbers are not synced with the local block numbers.
-            let block_height = log
-                .block_number
-                .map(|h| {
-                    if chain.id() != self_chain.id() {
-                        u64::MAX
-                    } else {
-                        h
-                    }
-                })
-                .expect("block_number != none");
 
             // 4. Decode the MessageSent event.
             let Ok(MessageSent {
@@ -425,14 +424,17 @@ impl Signer {
                 let userop =
                     super::new_call_op(sendId, payload.into(), sender, paymaster, gateway, value);
                 tracing::trace!(send_id=%sendId, ?userop, "UserOp");
+
+                // Outgoing: the block height allows the receiving chain to select the effective set of signers.
+                // Incoming: the block height is rubbish, and is replaced with u64::MAX to select the latest set.
+                let blk_height = if dst_chain.id() == self_chain.id() {
+                    u64::MAX
+                } else {
+                    log.block_number.expect("block_number != none")
+                };
+
                 if let Err(err) = sign_tx.send(SignUserOp::new(
-                    sendId,
-                    userop,
-                    dst_chain,
-                    src_chain,
-                    txn_hash,
-                    blk_hash,
-                    block_height,
+                    sendId, userop, dst_chain, src_chain, txn_hash, blk_hash, blk_height,
                 )) {
                     tracing::error!(%err, "sign_rx closed");
                     break;
