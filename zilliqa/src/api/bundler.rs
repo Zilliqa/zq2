@@ -78,8 +78,10 @@ fn eth_accounts(_params: Params, node: &Arc<Node>) -> Result<Vec<Address>> {
 }
 
 // FIXME: DO NOT EXPOSE THIS TO THE PUBLIC
-// This is only for local development use.
 fn eth_send_transaction(params: Params, node: &Arc<Node>) -> Result<String> {
+    // This is only for local development use.
+    anyhow::ensure!(node.chain_id.eth == 1337, "Development use only");
+
     let txn = params.one::<alloy::rpc::types::TransactionRequest>()?;
 
     let address = node.secret_key.to_evm_address();

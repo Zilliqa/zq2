@@ -109,7 +109,7 @@ zip = { version = "8.6.0", default-features = false, features = ["zstd"] }
 eth_trie = { git = "https://github.com/Zilliqa/eth-trie.rs.git", branch = "zilliqa-revm" }
 arc-swap = "1.9.1"
 redis = { version = "0.32.7", features = ["keep-alive", "r2d2", "tcp_nodelay"], default-features = false }
-alloy = { version = "2.0.4", default-features = false, features = ["consensus", "contract", "dyn-abi", "eips", "hyper", "json-abi", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types"] }
+alloy = { version = "2.0.4", default-features = false, features = ["consensus", "contract", "dyn-abi", "eips", "hyper", "json-abi", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "signer-local", "signers", "sol-types"] }
 crossbeam = "0.8.4"
 lru = "0.18.0"
 tokio-util = { version = "0.7.18", default-features = false, features = ["time"] }

@@ -4,7 +4,7 @@ use std::{num::NonZeroUsize, ops::Mul, sync::Arc, time::Duration};
 use alloy::{
     eips::{BlockId, BlockNumberOrTag},
     primitives::{
-        Address, B256, Bytes, ChainId, U256,
+        Address, B256, ChainId, U256,
         aliases::{B32, U192},
     },
     providers::Provider as _,
@@ -101,8 +101,7 @@ impl Signer {
             let sign_tx = sign_tx.clone();
             workers.spawn(async move {
                 if let Err(err) =
-                    Self::start_watcher(secret_key, chain, config, db, providers, sign_tx, state)
-                        .await
+                    Self::start_watcher(chain, config, db, providers, sign_tx, state).await
                 {
                     tracing::error!(%err, "SIGNER error");
                 }
@@ -121,7 +120,6 @@ impl Signer {
     /// Validates and submits each event for signing.
     #[allow(clippy::too_many_arguments)]
     async fn start_watcher(
-        secret_key: SecretKey,
         self_chain: Chain,
         config: NodeConfig,
         db: Arc<Db>,
@@ -160,7 +158,7 @@ impl Signer {
                 .unwrap_or(config.consensus.consensus_timeout);
             tracing::trace!(?period, ?chain, "Poll");
             let chain_id = chain.id();
-            poll_sched.insert(chain.clone(), period);
+            poll_sched.insert(chain, period);
 
             //  poll the chain
             let (logs, epochs) = if let Some(watcher) = watchers.get(&chain_id) {
@@ -222,7 +220,6 @@ impl Signer {
             };
 
             if let Err(err) = Self::send_updates(
-                secret_key.clone(),
                 sign_tx.clone(),
                 watchers.clone(),
                 db.clone(),
@@ -249,7 +246,6 @@ impl Signer {
     /// Broadcast epoch updates to all chains.
     #[allow(clippy::too_many_arguments)]
     fn send_updates(
-        _secret_key: SecretKey,
         sign_tx: UnboundedSender<SignUserOp>,
         watchers: Arc<super::Providers>,
         db: Arc<Db>,
@@ -261,27 +257,24 @@ impl Signer {
             let height = epoch.saturating_sub(1); // send the epoch update signed by previous height
             let block = db
                 .get_transactionless_block(BlockFilter::Height(height))?
-                .context("must exist")?;
+                .expect("must exist");
             let epoch_block = db
                 .get_transactionless_block(BlockFilter::Height(epoch))?
-                .context("must exist")?;
+                .expect("must exist");
             let state = state.at_root(epoch_block.state_root_hash().into());
 
-            // *** Ensure that this is in the same order as Relayer.rs ***
-            let stakers = state.get_stakers(epoch_block.header.clone())?;
+            // *** Ensure that co-signer list is same order as Relayer.rs ***
+            let (stakers, stakes, totalstake) =
+                super::utils::committee(&state, epoch_block.header)?;
+            anyhow::ensure!(stakers.len() == stakes.len(), "Missing committee");
             tracing::info!(chain=?self_chain, %height, len=%stakers.len(), "updateEpoch()");
 
-            let mut signers: Vec<(Bytes, u128)> = Vec::new();
-            let mut totalstake = u128::MIN;
-            for staker in stakers {
-                let pubkey = staker.as_uncompressed(); // 96-byte G1 keys
-                let stake = state
-                    .get_stake(staker, epoch_block.header.clone())?
-                    .context("must exist")?
-                    .get();
-                totalstake = totalstake.saturating_add(stake);
-                signers.push((pubkey.into(), stake));
-            }
+            let signers = stakers
+                .into_iter()
+                .zip(stakes)
+                .map(|(key, w)| (key.as_uncompressed(), w))
+                .collect_vec();
+
             let threshold = 2 * totalstake.saturating_add(2) / 3;
 
             let payload = (signers, threshold, epoch).abi_encode_packed();
@@ -299,9 +292,9 @@ impl Signer {
                 if let Err(err) = sign_tx.send(SignUserOp::new(
                     send_id,
                     userop,
-                    *chain,             // destination chain
-                    self_chain.clone(), // source chain
-                    Hash(send_id.0),    // TODO: a better hash?
+                    *chain,          // destination chain
+                    self_chain,      // source chain
+                    Hash(send_id.0), // TODO: a better hash?
                     block.hash(),
                     epoch, // effective next block
                 )) {
