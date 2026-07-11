@@ -577,7 +577,7 @@ dependencies = [
  "alloy-rlp",
  "alloy-serde 2.0.4",
  "alloy-sol-types",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "serde",
  "serde_json",
  "serde_with",
@@ -759,7 +759,7 @@ dependencies = [
  "hyper",
  "hyper-tls",
  "hyper-util",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "serde_json",
  "tower 0.5.3",
  "tracing",
@@ -3462,7 +3462,7 @@ dependencies = [
  "dyn-clone",
  "foundry-compilers-artifacts",
  "foundry-compilers-core",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "path-slash",
  "rayon",
  "semver 1.0.26",
@@ -5902,9 +5902,9 @@ dependencies = [
 
 [[package]]
 name = "lru"
-version = "0.18.0"
+version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a860605968fce16869fd239cf4237a82f3ac470723415db603b0e8b6c8d4fb9"
+checksum = "0b6180140927ee907000b0aa540091f6ea512ead4447c92b8fc35bc72788a5a6"
 dependencies = [
  "hashbrown 0.17.0",
 ]
@@ -7254,7 +7254,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "03da047801ff44bb6a4d407d4860c05fd70bb81714e6b2f3812603d5b145b042"
 dependencies = [
  "heck",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "log",
  "multimap",
  "petgraph 0.8.3",
@@ -7286,7 +7286,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.118",
@@ -9037,7 +9037,7 @@ dependencies = [
  "derive_more",
  "dunce",
  "inturn",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "itoa",
  "normalize-path",
  "once_map",
@@ -9073,7 +9073,7 @@ dependencies = [
  "alloy-primitives",
  "bitflags 2.11.1",
  "bumpalo",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "memchr",
  "num-bigint",
  "num-rational",
@@ -11519,7 +11519,7 @@ dependencies = [
  "jsonrpsee 0.25.1",
  "k256",
  "libp2p",
- "lru 0.18.0",
+ "lru 0.18.1",
  "lz4",
  "once_cell",
  "opentelemetry",
