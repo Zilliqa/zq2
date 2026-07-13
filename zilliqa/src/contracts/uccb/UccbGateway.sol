@@ -229,6 +229,7 @@ contract UccbGateway is
         bytes[] memory attr
     ) internal override(CrosschainLinkedUpgradeable) returns (bytes32) {
         (, bytes memory counterpart) = getLink(chain);
+        require(counterpart.length != 0, "Unregistered chain");
 
         bytes memory originator = InteroperableAddress.formatEvmV1(
             block.chainid,

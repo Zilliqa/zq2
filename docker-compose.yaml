@@ -54,7 +54,7 @@ services:
       - "62831"
       - 56d7a450d75c6ba2706ef71da6ca80143ec4971add9c44d7d129a12fa7d3a364
     ports:
-      - "4200:4200"
+      - "8545:4200"
     networks:
       localnet:
         ipv4_address: 198.51.100.102
@@ -120,7 +120,7 @@ services:
       MAX_VERIFICATION_GAS: 10000000
       TRACER_TIMEOUT: 30s
       PROVIDER_CLIENT_TIMEOUT_SECONDS: 30
-      ENABLED_ENTRY_POINTS: v0.8
+      ENABLED_ENTRY_POINTS: v0.8,v0.9
     command: node --log.json
     ports:
       - "5300:3000"
