@@ -371,7 +371,9 @@ impl Relayer {
 
     /// Collect UserOpHash signature
     ///
-    /// Collect signatures, until majority, then compute the final signature.
+    /// Collect signatures, until majority, then promote and compute the final signature.
+    /// The complexity of this function takes into account that signatures may arrive in any order; and
+    /// we only trust our own UserOp structure.
     #[allow(clippy::too_many_arguments)]
     pub fn collect_userop(
         &self,
@@ -386,63 +388,80 @@ impl Relayer {
         userop: Option<AlloyUserOperation>,
     ) -> Result<()> {
         tracing::trace!(%from, hash=%userop_hash, "UserOp");
-        // 1. Validate inputs
+        // 1. Validate signature
         public_key.verify(userop_hash.as_bytes(), signature)?;
 
-        // fetch related block
-        let block = self
-            .db
-            .get_transactionless_block(block_hash.into())?
-            .context("must exist")?;
-        let state_hash = block.state_root_hash().into();
-        let state = self.state.at_root(state_hash);
-
-        // check if peer_id matches
-        let peer_id = state.get_peer_id(public_key)?.context("faux peer-id")?;
-        anyhow::ensure!(peer_id == from, "peer-id {from} mismatch"); // must not happen
-
-        // 2. Get the cache entry
+        // 2. Cache the key + signature first,
+        // at this point, we may not yet have the state at the block yet to validate committee, stakes, etc.
         let mut cache = self.bls_uop.lock();
-        let bop = cache.get_or_insert_mut_ref(&userop_hash, || {
-            let (_, stakes, total_stake) =
-                super::utils::committee(&state, block.header).expect("must exist");
-            BlsUserOp {
-                block_height: u64::MIN,
-                userop: None,
-                send_id: B256::ZERO,
-                threshold: 2 * total_stake.saturating_add(2) / 3,
-                signatures: Vec::with_capacity(stakes.len()),
-            }
-        });
+        let bop = cache.get_or_insert_mut_ref(&userop_hash, || BlsUserOp::default());
+        bop.signatures.push((from, (public_key, signature)));
 
-        // 3. Cache the signature entry
-        let stake = state
-            .get_stake(public_key, block.header)?
-            .context("missing stake")?;
-        bop.threshold = bop.threshold.saturating_sub(stake.get());
-        bop.signatures.push((public_key, signature));
-
-        // use only the (UserOp, send_id, block_height) we constructed ourselves.
+        // 3. Use only the (UserOp, send_id, block_height, block_hash) we constructed ourselves.
+        // at this point, we have the state at the block - so, we fill out the rest of the BlsUop structure.
         if from == self.peer_id {
             bop.block_height = block_height;
             bop.send_id = send_id;
             bop.userop = userop;
+
+            let block = self
+                .db
+                .get_transactionless_block(block_hash.into())?
+                .context("must exist")?;
+            bop.block_hash = block.hash().into();
+
+            let state = self.state.at_root(block.state_root_hash().into());
+            let (_, _, total_stake) = super::utils::committee(&state, block.header)?;
+            bop.threshold = 2 * total_stake.saturating_add(2) / 3;
         }
 
-        // 4. Majority reached: promote
-        if bop.userop.is_some() && bop.threshold == 0 {
-            let bop = cache.pop(&userop_hash).unwrap();
-            let (stakers, _, _) = super::utils::committee(&state, block.header)?;
-            let send_id = bop.send_id;
-            self.relay_userop(send_id, userop_hash, chain, stakers, bop)?;
+        // 4. Compute stakes
+        if bop.threshold != u128::MIN {
+            // fetch related block
+            let block = self
+                .db
+                .get_transactionless_block(Hash(bop.block_hash.0).into())?
+                .context("must exist")?;
+            let state = self.state.at_root(block.state_root_hash().into());
+
+            // retain valid signatures only
+            bop.signatures.retain(|(frm, (pubkey, _))| {
+                if let Ok(Some(peer)) = state.get_peer_id(*pubkey) {
+                    peer == *frm
+                } else {
+                    false
+                }
+            });
+
+            // sum up stakes
+            let threshold: u128 = bop
+                .signatures
+                .iter()
+                .map(|(_, (pubkey, _))| {
+                    if let Ok(Some(stake)) = state.get_stake(*pubkey, block.header) {
+                        stake.get()
+                    } else {
+                        u128::MIN
+                    }
+                })
+                .sum();
+
+            // 4. Majority reached: promote
+            if threshold > bop.threshold {
+                let bop = cache.pop(&userop_hash).unwrap();
+                let (stakers, _, _) = super::utils::committee(&state, block.header)?;
+                let send_id = bop.send_id;
+                self.promote_userop(send_id, userop_hash, chain, stakers, bop)?;
+            }
         }
+
         Ok(())
     }
 
     /// Send UserOpHash
     ///
     /// Multi-sign the UserOp; and queues it for sending to the Bundler.
-    pub fn relay_userop(
+    pub fn promote_userop(
         &self,
         send_id: B256,
         userop_hash: Hash,
@@ -456,8 +475,13 @@ impl Relayer {
             "invalid send_id"
         );
         tracing::info!(%send_id, "Relayer({:?} => {chain:?}): promote", self.chain);
-        let (signers, signatures): (Vec<NodePublicKey>, Vec<BlsSignature>) =
-            bop.signatures.into_iter().unzip();
+        let (signers, signatures): (Vec<NodePublicKey>, Vec<BlsSignature>) = bop
+            .signatures
+            .into_iter()
+            .map(|(_, b)| b)
+            .collect_vec()
+            .into_iter()
+            .unzip();
 
         // 1. Multi-sig it
         let signatures = signatures
