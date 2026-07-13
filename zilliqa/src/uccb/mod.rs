@@ -192,9 +192,10 @@ impl RelayUserOp {
 pub struct BlsUserOp {
     pub userop: Option<AlloyUserOperation>,
     pub send_id: B256,
-    pub signatures: Vec<(NodePublicKey, BlsSignature)>,
+    pub signatures: Vec<(PeerId, (NodePublicKey, BlsSignature))>,
     pub threshold: u128,
     pub block_height: u64,
+    pub block_hash: B256,
 }
 
 // Used to send an updated list of SIGNER keys
