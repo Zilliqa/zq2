@@ -394,6 +394,7 @@ impl Relayer {
         // 2. Cache the key + signature first,
         // at this point, we may not yet have the state at the block yet to validate committee, stakes, etc.
         let mut cache = self.bls_uop.lock();
+        #[allow(clippy::redundant_closure)]
         let bop = cache.get_or_insert_mut_ref(&userop_hash, || BlsUserOp::default());
         bop.signatures.push((from, (public_key, signature)));
 

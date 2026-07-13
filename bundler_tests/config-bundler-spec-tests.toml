@@ -6,7 +6,7 @@ bundler_port = 8545
 api_servers = [
     { port = 4201, enabled_apis = [ "admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa" ] }
 ]
-eth_chain_id = 1337
+eth_chain_id = 33468
 consensus.scilla_address = "http://localhost:3333"
 consensus.consensus_timeout = { secs = 15, nanos = 0 }
 # consensus.block_time = { secs = 5, nanos = 0 }
@@ -43,7 +43,7 @@ consensus.gas_price = "0"
 # consensus.gas_price = "1_000_000"
 remote_chains = [
     {
-        chain_id = 1337,
+        chain_id = 33468,
         bundler_url = "http://127.0.0.1:3545",
         watcher_url = "http://127.0.0.1:8545",
         entrypoint = "0x433709009B8330FDa32311DF1C2AFA402eD8D009",
