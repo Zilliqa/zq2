@@ -28,7 +28,7 @@ use tokio_util::time::DelayQueue;
 use crate::{
     cfg::NodeConfig,
     crypto::{BlsSignature, Hash, SecretKey},
-    db::Db,
+    db::{BlockFilter, Db},
     message::{ExternalMessage, UccbUserOp},
     node::MessageSender,
     state::State,
@@ -231,9 +231,14 @@ impl Signer {
                 continue;
             }
 
-            if let Err(err) =
-                Self::send_messages(sign_tx.clone(), watchers.clone(), logs, self_chain, chain)
-            {
+            if let Err(err) = Self::send_messages(
+                db.clone(),
+                sign_tx.clone(),
+                watchers.clone(),
+                logs,
+                self_chain,
+                chain,
+            ) {
                 tracing::error!(%err, "SendMessages()");
                 continue;
             };
@@ -323,6 +328,7 @@ impl Signer {
     ///
     /// Process the set of MessageSent() events to be put into the sending queue.
     fn send_messages(
+        db: Arc<Db>,
         sign_tx: UnboundedSender<SignUserOp>,
         watchers: Arc<super::Providers>,
         logs: Vec<Log>,
@@ -330,7 +336,6 @@ impl Signer {
         chain: Chain,
     ) -> Result<()> {
         for log in logs {
-            let blk_hash = log.block_hash.expect("block_hash != none").into();
             let txn_hash = log.transaction_hash.expect("txn_hash != none").into();
 
             // 4. Decode the MessageSent event.
@@ -384,21 +389,20 @@ impl Signer {
                 "MessageSent({chain:?}): invalid origin"
             ); // Gateway contract is sender
 
+            // attempts to check if a chain is a 'test' or 'main' chain.
             let is_src_test = src_chain
                 .named()
-                .map(|c| c.is_testnet())
-                .unwrap_or_default();
+                .map_or_else(|| src_chain.id() == 0x814d, |c| c.is_testnet());
             let is_dst_test = dst_chain
                 .named()
-                .map(|c| c.is_testnet())
-                .unwrap_or_default();
+                .map_or_else(|| dst_chain.id() == 0x814d, |c| c.is_testnet());
             anyhow::ensure!(
                 is_src_test == is_dst_test,
                 "MessageSent({chain:?}): testnet != mainnet"
-            ); // Mixing testnet/mainnet
+            ); // Prevent mixing testnet/mainnet
             tracing::info!(send_id=%sendId, "Sender({src_chain:?}): routing");
 
-            // Warning: may dead-lock, if watchers is locked above
+            // Warning: may dead-lock, if watchers is locked outside of this function. Ensure that it is not.
             if let Some(watcher) = watchers.get(&dst_chain.id()) {
                 // Encode a receiveMessage() call
                 let receive_message = super::IERC7786Recipient::receiveMessageCall {
@@ -425,12 +429,25 @@ impl Signer {
                     super::new_call_op(sendId, payload.into(), sender, paymaster, gateway, value);
                 tracing::trace!(send_id=%sendId, ?userop, "UserOp");
 
-                // Outgoing: the block height allows the receiving chain to select the effective set of signers.
-                // Incoming: the block height is rubbish, and is replaced with u64::MAX to select the latest set.
-                let blk_height = if dst_chain.id() == self_chain.id() {
-                    u64::MAX
+                // Outgoing: determines the effective set of signers - using the block that executed the transaction.
+                // Incoming: rely on the latest set of signers.
+                //
+                // There is a remote possibility that an incoming message can fail if the lifetime of the message crosses an epoch; and
+                // that the set of signers and/or their weights changed during that epoch; or if the node is significantly out-of-sync.
+                let (blk_height, blk_hash) = if dst_chain.id() == self_chain.id() {
+                    match db.get_transactionless_block(BlockFilter::Finalized) {
+                        Ok(Some(b)) => (b.number(), b.hash()),
+                        Err(err) => {
+                            tracing::error!(%err, "Finalized error");
+                            continue;
+                        }
+                        _ => unimplemented!("block != none"),
+                    }
                 } else {
-                    log.block_number.expect("block_number != none")
+                    (
+                        log.block_number.expect("block_number != none"),
+                        log.block_hash.expect("block_hash != none").into(),
+                    )
                 };
 
                 if let Err(err) = sign_tx.send(SignUserOp::new(

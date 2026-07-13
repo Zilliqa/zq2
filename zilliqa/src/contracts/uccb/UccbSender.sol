@@ -117,7 +117,9 @@ contract UccbSender is
             for (uint256 i = 0; i < count; i++) {
                 signers[i] = bytes(userOp.callData[offset:offset + 96]);
                 offset += 96;
-                weights[i] = uint128(bytes16(userOp.callData[offset:offset + 16]));
+                weights[i] = uint128(
+                    bytes16(userOp.callData[offset:offset + 16])
+                );
                 offset += 16;
             }
 

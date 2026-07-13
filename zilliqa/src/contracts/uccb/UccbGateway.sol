@@ -278,10 +278,7 @@ contract UccbGateway is
             bytes memory receiver,
             bytes memory payload,
 
-        ) = abi.decode(
-                wrappedPayload,
-                (bytes, bytes, bytes, uint256)
-            );
+        ) = abi.decode(wrappedPayload, (bytes, bytes, bytes, uint256));
 
         // pass-thru to registered target
         (, address target) = receiver.parseEvmV1();
