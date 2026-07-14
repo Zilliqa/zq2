@@ -190,6 +190,11 @@ contract UccbSender is
         _scheduleSignerSet(signers, weights, threshold, effective);
     }
 
+    /**
+     * Get a hash of the Signers data.
+     *
+     * Called by the Rust code to determine if a signers update is necessary.
+     */
     function getSignersHash() external view returns (bytes32) {
         uint256 count = getSignerCount();
         bytes[] memory signers = getSigners(0, uint64(count));

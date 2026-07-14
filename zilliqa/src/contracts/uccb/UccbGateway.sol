@@ -14,7 +14,6 @@ import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/Pau
 import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {NoncesKeyedUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/NoncesKeyedUpgradeable.sol";
-import {IAccountExecute} from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
 import {ERC165Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/introspection/ERC165Upgradeable.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
@@ -42,6 +41,7 @@ import {IUccbGateway} from "./Uccb.sol";
 
 contract UccbGateway is
     Initializable,
+    ERC165Upgradeable,
     CrosschainLinkedUpgradeable,
     UUPSUpgradeable,
     AccessControlUpgradeable,
@@ -102,12 +102,12 @@ contract UccbGateway is
     }
 
     // keccak256(abi.encode(uint256(keccak256("zilliqa.storage.UccbGateway")) - 1)) & ~bytes32(uint256(0xff))
-    bytes32 private constant GatewayStorageSlot =
+    bytes32 private constant UCCB_GATEWAY_STORAGE_SLOT =
         0x92031f62218d4a32004c55a85ae23890f7585155ae9d18edef0cbbb077fb9a00;
 
     function _getStorage() private pure returns (GatewayStorage storage $) {
         assembly {
-            $.slot := GatewayStorageSlot
+            $.slot := UCCB_GATEWAY_STORAGE_SLOT
         }
     }
 
@@ -326,7 +326,7 @@ contract UccbGateway is
     function sweep(
         address payable to
     ) external onlyRole(WITHDRAWER_ROLE) nonReentrant {
-        require(to != address(0));
+        require(to != address(0), "Invalid to");
         to.sendValue(address(this).balance);
     }
 
@@ -346,7 +346,13 @@ contract UccbGateway is
 
     function supportsInterface(
         bytes4 interfaceId
-    ) public view virtual override(AccessControlUpgradeable) returns (bool) {
+    )
+        public
+        view
+        virtual
+        override(ERC165Upgradeable, AccessControlUpgradeable)
+        returns (bool)
+    {
         return
             interfaceId == type(IERC7786GatewaySource).interfaceId ||
             interfaceId == type(IERC7786Recipient).interfaceId ||

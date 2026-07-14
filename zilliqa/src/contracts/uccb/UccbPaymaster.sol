@@ -16,7 +16,6 @@ import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
-// import {MultiSignerERC7913WeightedUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/signers/MultiSignerERC7913WeightedUpgradeable.sol";
 
 /**
  * @title  Paymaster
@@ -98,9 +97,20 @@ contract UccbPaymaster is
         // allow all from SENDER
         bool allowed = hasRole(SPONSORED_CONTRACT, userOp.sender);
 
+        // Decode the signature
+        require(userOp.signature.length == 520, "Invalid signature length");
+
+        // Slice out each segment and cast manually
+        bytes memory signer = bytes(userOp.signature[0:96]);
+        uint64 height = uint64(bytes8(userOp.signature[96:104]));
+        bytes32 cosig = bytes32(userOp.signature[104:136]);
+
         // extract validUntil/validAfter
         // context = relayer + signers
-        return ("", ERC4337Utils.packValidationData(allowed, 0, 0)); // true, forever
+        return (
+            abi.encodePacked(height, cosig, signer),
+            ERC4337Utils.packValidationData(allowed, 0, 0)
+        ); // valid for 10-blocks
     }
 
     /**
