@@ -12,7 +12,6 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/U
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {ERC165Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/introspection/ERC165Upgradeable.sol";
-import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
@@ -24,6 +23,7 @@ import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/crypt
 contract UccbPaymaster is
     Initializable,
     UUPSUpgradeable,
+    ERC165Upgradeable,
     AccessControlUpgradeable,
     PausableUpgradeable,
     EIP712Upgradeable,
@@ -46,7 +46,7 @@ contract UccbPaymaster is
      *      validatePaymasterUserOp and postOp MUST only be called by it.
      */
     modifier onlyEntryPoint() {
-        require(msg.sender == address(entryPoint()));
+        require(msg.sender == address(entryPoint()), "Entrypoint only");
         _;
     }
 
@@ -196,18 +196,25 @@ contract UccbPaymaster is
     }
 
     function _authorizeUpgrade(
-        address /*newImplementation*/
-    ) internal view override onlyRole(DEFAULT_ADMIN_ROLE) {}
+        address newImplementation
+    ) internal view override onlyRole(DEFAULT_ADMIN_ROLE) {
+        newImplementation = newImplementation;
+    }
 
     /**
      * @dev Advertises interfaces implemented by this contract.
      */
     function supportsInterface(
         bytes4 interfaceId
-    ) public view virtual override(AccessControlUpgradeable) returns (bool) {
+    )
+        public
+        view
+        virtual
+        override(ERC165Upgradeable, AccessControlUpgradeable)
+        returns (bool)
+    {
         return
             interfaceId == type(IPaymaster).interfaceId ||
-            interfaceId == type(IERC165).interfaceId ||
             super.supportsInterface(interfaceId);
     }
 

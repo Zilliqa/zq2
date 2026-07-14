@@ -4,7 +4,6 @@ pragma solidity ^0.8.30;
 import {Account} from "@openzeppelin/contracts/account/Account.sol";
 import {ERC4337Utils} from "@openzeppelin/contracts/account/utils/draft-ERC4337Utils.sol";
 import {
-    IEntryPoint,
     IAccount,
     IAccountExecute,
     PackedUserOperation
@@ -15,9 +14,7 @@ import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/Reentrancy
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {ERC165Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/introspection/ERC165Upgradeable.sol";
-import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
-import {AbstractSigner} from "@openzeppelin/contracts/utils/cryptography/signers/AbstractSigner.sol";
 import {MultiSignerERC7913WeightedCheckpointedUpgradeable} from "./MultiSignerERC7913WeightedCheckpointedUpgradeable.sol";
 import {UopTypes, IUccbSender} from "./Uccb.sol";
 
@@ -249,8 +246,10 @@ contract UccbSender is
     // ****** BOILER-PLATE ******
 
     function _authorizeUpgrade(
-        address /*newImplementation*/
-    ) internal view override onlyRole(DEFAULT_ADMIN_ROLE) {}
+        address newImplementation
+    ) internal view override onlyRole(DEFAULT_ADMIN_ROLE) {
+        newImplementation = newImplementation;
+    }
 
     function supportsInterface(
         bytes4 interfaceId
