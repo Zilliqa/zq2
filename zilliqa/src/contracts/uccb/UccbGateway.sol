@@ -15,7 +15,6 @@ import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/crypt
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {NoncesKeyedUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/NoncesKeyedUpgradeable.sol";
 import {ERC165Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/introspection/ERC165Upgradeable.sol";
-import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {IUccbGateway} from "./Uccb.sol";
@@ -341,8 +340,10 @@ contract UccbGateway is
     }
 
     function _authorizeUpgrade(
-        address /*newImplementation*/
-    ) internal view override onlyRole(DEFAULT_ADMIN_ROLE) {}
+        address newImplementation
+    ) internal view override onlyRole(DEFAULT_ADMIN_ROLE) {
+        newImplementation = newImplementation;
+    }
 
     function supportsInterface(
         bytes4 interfaceId
@@ -356,7 +357,6 @@ contract UccbGateway is
         return
             interfaceId == type(IERC7786GatewaySource).interfaceId ||
             interfaceId == type(IERC7786Recipient).interfaceId ||
-            interfaceId == type(IERC165).interfaceId ||
             super.supportsInterface(interfaceId);
     }
 }
