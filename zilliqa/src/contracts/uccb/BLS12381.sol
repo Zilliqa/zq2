@@ -4,25 +4,22 @@ pragma solidity ^0.8.28;
 import {BLS} from "solady/src/utils/ext/ithaca/BLS.sol";
 
 abstract contract BLS12381 {
-    // Official RFC domain separation tag
-    // bytes private constant DST = "BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
-    function NEG_G1_GEN() private pure returns (BLS.G1Point memory) {
-        return
-            BLS.G1Point(
-                bytes32(uint256(31827880280837800241567138048534752271)),
-                bytes32(
-                    uint256(
-                        88385725958748408079899006800036250932223001591707578097800747617502997169851
-                    )
-                ),
-                bytes32(uint256(22997279242622214937712647648895181298)),
-                bytes32(
-                    uint256(
-                        46816884707101390882112958134453447585552332943769894357249934112654335001290
-                    )
-                )
-            );
-    }
+    bytes32 private constant NEG_G1_GEN_X_A = bytes32(
+        uint256(31827880280837800241567138048534752271)
+    );
+    bytes32 private constant NEG_G1_GEN_X_B = bytes32(
+        uint256(
+            88385725958748408079899006800036250932223001591707578097800747617502997169851
+        )
+    );
+    bytes32 private constant NEG_G1_GEN_Y_A = bytes32(
+        uint256(22997279242622214937712647648895181298)
+    );
+    bytes32 private constant NEG_G1_GEN_Y_B = bytes32(
+        uint256(
+            46816884707101390882112958134453447585552332943769894357249934112654335001290
+        )
+    );
 
     function _g1Decode(
         bytes memory m
@@ -73,7 +70,8 @@ abstract contract BLS12381 {
     }
 
     /**
-     * @notice Verifies a BLS12-381 signature.
+     * Verifies a BLS12-381 signature.
+     *
      * @param payload The raw byte array message that was signed.
      * @param pubkeyG1 The public key, encoded as a 96-byte G1 point.
      * @param signatureG2 The signature, encoded as a 192-byte G2 point.
@@ -89,7 +87,12 @@ abstract contract BLS12381 {
         BLS.G1Point[] memory g1points = new BLS.G1Point[](2);
         BLS.G2Point[] memory g2points = new BLS.G2Point[](2);
 
-        g1points[0] = NEG_G1_GEN();
+        g1points[0] = BLS.G1Point(
+            NEG_G1_GEN_X_A,
+            NEG_G1_GEN_X_B,
+            NEG_G1_GEN_Y_A,
+            NEG_G1_GEN_Y_B
+        );
         g1points[1] = _g1Decode(pubkeyG1);
         g2points[0] = _g2Decode(signatureG2);
         g2points[1] = hmsg;
@@ -117,7 +120,12 @@ abstract contract BLS12381 {
         BLS.G1Point[] memory g1points = new BLS.G1Point[](2);
         BLS.G2Point[] memory g2points = new BLS.G2Point[](2);
 
-        g1points[0] = NEG_G1_GEN();
+        g1points[0] = BLS.G1Point(
+            NEG_G1_GEN_X_A,
+            NEG_G1_GEN_X_B,
+            NEG_G1_GEN_Y_A,
+            NEG_G1_GEN_Y_B
+        );
         g1points[1] = aggPubkey;
         g2points[0] = _g2Decode(aggSig);
         g2points[1] = hmsg;

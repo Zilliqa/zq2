@@ -53,10 +53,8 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
     }
 
     // keccak256(abi.encode(uint256(keccak256("zilliqa.storage.MultiSignerERC7913WeightedCheckpointed")) - 1)) & ~bytes32(uint256(0xff))
-    bytes32
-        private
-        constant MultiSignerERC7913WeightedCheckpointedStorageLocation =
-            0xf9b51b7eea1d1d089cb8b3c9aa80c8467980d8d2b2fb095da23bb10a3a922700;
+    bytes32 private constant MULTI_SIGNER_CHECKPOINT_STORAGE_SLOT =
+        0xf9b51b7eea1d1d089cb8b3c9aa80c8467980d8d2b2fb095da23bb10a3a922700;
 
     function _getMultiSignerERC7913WeightedCheckpointedStorage()
         private
@@ -64,7 +62,7 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
         returns (MultiSignerERC7913WeightedCheckpointedStorage storage $)
     {
         assembly {
-            $.slot := MultiSignerERC7913WeightedCheckpointedStorageLocation
+            $.slot := MULTI_SIGNER_CHECKPOINT_STORAGE_SLOT
         }
     }
 
@@ -98,39 +96,6 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
         uint48 effectiveBlock,
         uint48 lastScheduledBlock
     );
-
-    /// ------------------------------------------------------------------
-    /// Initialization
-    /// ------------------------------------------------------------------
-
-    /**
-     * @dev Initializes the contract by scheduling an initial signer set. See
-     * {_scheduleSignerSet} for the full requirements on the arguments.
-     *
-     * Typically called once, from your contract's own initializer function.
-     */
-    function __MultiSignerERC7913WeightedCheckpointed_init(
-        bytes[] memory signers,
-        uint128[] memory weights,
-        uint128 threshold_,
-        uint48 effectiveBlock
-    ) internal onlyInitializing {
-        __MultiSignerERC7913WeightedCheckpointed_init_unchained(
-            signers,
-            weights,
-            threshold_,
-            effectiveBlock
-        );
-    }
-
-    function __MultiSignerERC7913WeightedCheckpointed_init_unchained(
-        bytes[] memory signers,
-        uint128[] memory weights,
-        uint128 threshold_,
-        uint48 effectiveBlock
-    ) internal onlyInitializing {
-        _scheduleSignerSet(signers, weights, threshold_, effectiveBlock);
-    }
 
     /// ------------------------------------------------------------------
     /// Scheduling
@@ -201,7 +166,7 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
         uint128 totalWeight_ = 0;
         for (uint256 i = 0; i < signers.length; i++) {
             bytes memory signer = signers[i];
-            if (signer.length < 20) {
+            if (signer.length != 96) {
                 revert MultiSignerERC7913WeightedCheckpointedInvalidSigner(
                     signer
                 );
@@ -403,7 +368,7 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
 
     /// @dev Interprets `bitVector` as a set membership mask over the signer
     ///      range [0, 256) and returns only the selected signers' pubkeys.
-    uint256 constant MSB_MASK = (1 << 255);
+    uint256 private constant MSB_MASK = (1 << 255);
     function _getCosignersFromBitVector(
         bytes32 bitVector,
         uint64 height
@@ -455,7 +420,7 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
 
         return
             // 1. Relayer signature check
-            isSigner(pubkey, uint48(height)) &&
+            isSigner(pubkey, height) &&
             _validateSignature(pubkey, signature[0:328], sig) &&
             // 2. Co-signers multi-signature check
             _validateSignatures(hash, signers, aggsig) &&
