@@ -66,6 +66,20 @@ sol! {
         ) external view returns (uint128[6]);
     }
 
+    #[sol(rpc)]
+    interface IUccbSender {
+        /// Sets the internal signers data.
+        function setSigners(
+            bytes[] calldata signers,
+            uint128[] calldata weights,
+            uint128 threshold,
+            uint48 effective
+        ) external;
+
+        /// Returns a Keccak256 hash of the internal signers data; useful for detecting changes
+        function getSignersHash() external view returns (bytes32);
+    }
+
     // https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/interfaces/draft-IERC7786.sol
     #[sol(rpc)]
     interface IERC7786GatewaySource {
