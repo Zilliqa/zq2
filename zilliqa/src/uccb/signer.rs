@@ -226,7 +226,9 @@ impl Signer {
                 epochs,
                 self_chain,
                 state.clone(),
-            ) {
+            )
+            .await
+            {
                 tracing::error!(%err, "SendUpdates()");
                 continue;
             }
@@ -238,7 +240,9 @@ impl Signer {
                 logs,
                 self_chain,
                 chain,
-            ) {
+            )
+            .await
+            {
                 tracing::error!(%err, "SendMessages()");
                 continue;
             };
@@ -257,7 +261,7 @@ impl Signer {
     /// - the public keys are 96-byte uncompressed G1 points; and the amounts are all u128.
     /// - the block must be signed by the previous set of signers that it seeks to replace.
     #[allow(clippy::too_many_arguments)]
-    fn send_updates(
+    async fn send_updates(
         sign_tx: UnboundedSender<SignUserOp>,
         watchers: Arc<super::Providers>,
         db: Arc<Db>,
@@ -294,6 +298,7 @@ impl Signer {
                     paymaster,
                     ..
                 } = watcher.value();
+
                 // the payloads for each network must be different, to prevent signature reuse.
                 let send_id =
                     keccak256((chain.id(), payload.clone()).abi_encode_packed().as_slice());
@@ -327,7 +332,7 @@ impl Signer {
     /// Send Messages
     ///
     /// Process the set of MessageSent() events to be put into the sending queue.
-    fn send_messages(
+    async fn send_messages(
         db: Arc<Db>,
         sign_tx: UnboundedSender<SignUserOp>,
         watchers: Arc<super::Providers>,

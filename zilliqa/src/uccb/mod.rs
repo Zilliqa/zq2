@@ -43,11 +43,6 @@ pub const ENTRYPOINT_V09: Address = address!("0x433709009B8330FDa32311DF1C2AFA40
 #[cfg(not(doctest))]
 sol!(
     #[sol(rpc)]
-    "./src/contracts/uccb/Uccb.sol"
-);
-#[cfg(not(doctest))]
-sol!(
-    #[sol(rpc)]
     "../vendor/openzeppelin-contracts/contracts/interfaces/draft-IERC4337.sol"
 );
 #[cfg(not(doctest))]
@@ -55,7 +50,11 @@ sol!(
     #[sol(rpc)]
     "../vendor/openzeppelin-contracts/contracts/interfaces/draft-IERC7786.sol"
 );
-
+#[cfg(not(doctest))]
+sol!(
+    #[sol(rpc)]
+    "./src/contracts/uccb/Uccb.sol"
+);
 // This is to pass doctest
 #[cfg(doctest)]
 sol! {
