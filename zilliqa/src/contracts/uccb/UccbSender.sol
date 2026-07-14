@@ -78,6 +78,35 @@ contract UccbSender is
     }
 
     /**
+     * Execution Shim
+     *
+     * Only callable by this contract itself so that try/catch can wrap a low-level call.
+     * @param data      the calldata passed to that contract
+     */
+    function _updateEpoch(bytes calldata data) external onlyEntryPointOrSelf {
+        uint256 count = data.length / 112;
+
+        bytes[] memory signers = new bytes[](count);
+        uint128[] memory weights = new uint128[](count);
+
+        uint256 offset = 5;
+        // each element is a G1 public key (96) + weight(16).
+        for (uint256 i = 0; i < count; i++) {
+            signers[i] = bytes(data[offset:offset + 96]);
+            offset += 96;
+            weights[i] = uint128(bytes16(data[offset:offset + 16]));
+            offset += 16;
+        }
+
+        uint128 threshold = uint128(bytes16(data[offset:offset + 16]));
+        uint48 effectiveBlock = uint48(
+            uint64(bytes8(data[offset + 16:offset + 24]))
+        );
+
+        _scheduleSignerSet(signers, weights, threshold, effectiveBlock);
+    }
+
+    /**
      * Execution Pipeline
      *
      * Called by the EntryPoint after successful validateUserOp.
@@ -106,32 +135,14 @@ contract UccbSender is
 
         if (msgType == UopTypes.SetStaker) {
             require(userOp.callData.length % 112 == 29, "Invalid addStaker()");
-
-            uint256 count = userOp.callData.length / 112;
-
-            bytes[] memory signers = new bytes[](count);
-            uint128[] memory weights = new uint128[](count);
-
-            uint256 offset = 5;
-            // each element is a G1 public key (96) + weight(16).
-            for (uint256 i = 0; i < count; i++) {
-                signers[i] = bytes(userOp.callData[offset:offset + 96]);
-                offset += 96;
-                weights[i] = uint128(
-                    bytes16(userOp.callData[offset:offset + 16])
-                );
-                offset += 16;
+            try this._updateEpoch(userOp.callData) {
+                return;
+            } catch (bytes memory reason) {
+                // Re-revert with the original reason.
+                assembly {
+                    revert(add(reason, 32), mload(reason))
+                }
             }
-
-            uint128 threshold = uint128(
-                bytes16(userOp.callData[offset:offset + 16])
-            );
-            uint48 effectiveBlock = uint48(
-                uint64(bytes8(userOp.callData[offset + 16:offset + 24]))
-            );
-
-            _scheduleSignerSet(signers, weights, threshold, effectiveBlock);
-            return;
         }
     }
 
