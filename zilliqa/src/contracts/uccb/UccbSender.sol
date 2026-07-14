@@ -19,7 +19,7 @@ import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
 import {AbstractSigner} from "@openzeppelin/contracts/utils/cryptography/signers/AbstractSigner.sol";
 import {MultiSignerERC7913WeightedCheckpointedUpgradeable} from "./MultiSignerERC7913WeightedCheckpointedUpgradeable.sol";
-import {UopTypes} from "./Uccb.sol";
+import {UopTypes, IUccbSender} from "./Uccb.sol";
 
 /**
  * @title  UccbSender
@@ -36,7 +36,8 @@ contract UccbSender is
     EIP712Upgradeable,
     MultiSignerERC7913WeightedCheckpointedUpgradeable,
     IAccountExecute,
-    Account
+    Account,
+    IUccbSender
 {
     using Address for address;
     using ERC4337Utils for PackedUserOperation;
@@ -185,8 +186,25 @@ contract UccbSender is
         uint128[] calldata weights,
         uint128 threshold,
         uint48 effective
-    ) public onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _scheduleSignerSet(signers, weights, threshold, effective);
+    }
+
+    function getSignersHash() external view returns (bytes32) {
+        uint256 count = getSignerCount();
+        bytes[] memory signers = getSigners(0, uint64(count));
+        uint128 total = totalWeight();
+
+        bytes32[] memory signerHashes = new bytes32[](signers.length);
+        for (uint256 i = 0; i < signers.length; i++) {
+            signerHashes[i] = keccak256(signers[i]);
+        }
+        bytes memory payload = abi.encodePacked(
+            uint64(block.chainid),
+            signerHashes,
+            total
+        );
+        return keccak256(payload);
     }
 
     // ****** DEPOSIT/STAKE MANAGEMENT *******

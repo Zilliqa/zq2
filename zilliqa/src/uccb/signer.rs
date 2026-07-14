@@ -279,15 +279,19 @@ impl Signer {
             let (stakers, stakes, totalstake) =
                 super::utils::committee(&state, epoch_block.header)?;
             anyhow::ensure!(stakers.len() == stakes.len(), "Invalid committee");
-            tracing::info!(chain=?self_chain, %epoch, len=%stakers.len(), "updateEpoch()");
+
+            let threshold = 2 * totalstake.saturating_add(2) / 3; // round up
+
+            let stakers_hash = stakers
+                .iter()
+                .map(|k| keccak256(k.as_uncompressed().as_slice()))
+                .collect_vec();
 
             let signers = stakers
                 .into_iter()
                 .zip(stakes)
                 .map(|(key, w)| (key.as_uncompressed(), w))
                 .collect_vec();
-
-            let threshold = 2 * totalstake.saturating_add(2) / 3; // round up
 
             // send update to all networks, including self.
             let payload = (signers, threshold, epoch).abi_encode_packed();
@@ -296,12 +300,41 @@ impl Signer {
                     chain,
                     sender,
                     paymaster,
+                    jsonrpc,
                     ..
                 } = watcher.value();
 
-                // the payloads for each network must be different, to prevent signature reuse.
+                // the payload for each network is different, to prevent signature reuse.
                 let send_id =
                     keccak256((chain.id(), payload.clone()).abi_encode_packed().as_slice());
+
+                // Skip if same as previous
+                match super::IUccbSender::new(*sender, jsonrpc)
+                    .getSignersHash()
+                    .call()
+                    .await
+                {
+                    Err(err) => {
+                        // TODO: Might be a good idea to force-send in this case
+                        tracing::error!(%err, %send_id, "updateEpoch({chain:?}): error");
+                        continue;
+                    }
+                    Ok(hash)
+                        if hash
+                            == keccak256(
+                                (chain.id(), stakers_hash.clone(), totalstake)
+                                    .abi_encode_packed()
+                                    .as_slice(),
+                            ) =>
+                    {
+                        // unchanged, skip
+                        tracing::debug!(%send_id, "updateEpoch({chain:?}): skipped");
+                        continue;
+                    }
+                    _ => {
+                        tracing::info!(%epoch, %totalstake, %send_id, "updateEpoch({chain:?})");
+                    }
+                }
 
                 let userop =
                     super::new_set_staker_op(send_id, payload.clone().into(), sender, paymaster);

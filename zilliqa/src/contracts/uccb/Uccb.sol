@@ -12,3 +12,16 @@ interface IUccbGateway {
 
     function getFees(uint64 id) external view returns (uint128[6] memory);
 }
+
+interface IUccbSender {
+    /// Sets the internal signers data.
+    function setSigners(
+        bytes[] calldata signers,
+        uint128[] calldata weights,
+        uint128 threshold,
+        uint48 effective
+    ) external;
+
+    /// Returns a Keccak256 hash of the internal signers data; useful for detecting changes
+    function getSignersHash() external view returns (bytes32);
+}
