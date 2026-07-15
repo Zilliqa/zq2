@@ -843,30 +843,12 @@ impl Signer {
 
         // sort by XOR-ing keys
         // this produces a deterministic pseudo-random order.
-        let blk_key = blk_hash
-            .0
-            .chunks_exact(16)
-            .map(|c| u128::from_be_bytes(c.try_into().unwrap()))
-            .fold(0u128, |a, x| a ^ x);
-        let txn_key = txn_hash
-            .0
-            .chunks_exact(16)
-            .map(|c| u128::from_be_bytes(c.try_into().unwrap()))
-            .fold(0u128, |a, x| a ^ x);
-        let sort_key = blk_key ^ txn_key;
+        let sort_key = B256::from_slice(txn_hash.as_bytes());
 
         let mut stakers = state
             .get_stakers(block.header)?
             .into_iter()
-            .map(|k| {
-                (
-                    k,
-                    k.as_bytes()
-                        .chunks_exact(16)
-                        .map(|c| u128::from_be_bytes(c.try_into().unwrap()))
-                        .fold(sort_key, |a, x| a ^ x),
-                )
-            })
+            .map(|k| (k, keccak256(k.as_bytes().as_slice()).bit_xor(sort_key)))
             .collect_vec();
         stakers.sort_by_key(|a| a.1);
 
