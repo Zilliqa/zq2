@@ -823,7 +823,8 @@ impl Signer {
 
     /// Compute the RELAY_SET
     ///
-    /// Uses the given transaction_hash and block_hash to compute a deterministic pseudo-random set of peers.
+    /// Uses the transaction hash to compute a deterministic pseudo-random set of peers
+    /// from the stakers at the given block.
     /// Given N number of peers, only 3 are selected to generate the multi-sig and submit the UserOp to the bundler.
     /// - multiple peers, redundant, to improve delivery.
     /// - sub-set of peers, to mitigate rogue nodes and reduce spam.
@@ -841,38 +842,14 @@ impl Signer {
             .flatten()?;
         let state = state.at_root(block.state_root_hash().into());
 
-        // sort by XOR-ing keys
+        // Sort by XOR-ing each staker key with the transaction hash.
         // this produces a deterministic pseudo-random order.
-        let blk_key = blk_hash
-            .0
-            .as_chunks::<16>()
-            .0
-            .iter()
-            .map(|c| u128::from_be_bytes(*c))
-            .fold(0u128, |a, x| a ^ x);
-        let txn_key = txn_hash
-            .0
-            .as_chunks::<16>()
-            .0
-            .iter()
-            .map(|c| u128::from_be_bytes(*c))
-            .fold(0u128, |a, x| a ^ x);
-        let sort_key = blk_key ^ txn_key;
+        let sort_key = B256::from_slice(txn_hash.as_bytes());
 
         let mut stakers = state
             .get_stakers(block.header)?
             .into_iter()
-            .map(|k| {
-                (
-                    k,
-                    k.as_bytes()
-                        .as_chunks::<16>()
-                        .0
-                        .iter()
-                        .map(|c| u128::from_be_bytes(*c))
-                        .fold(sort_key, |a, x| a ^ x),
-                )
-            })
+            .map(|k| (k, keccak256(k.as_bytes().as_slice()).bit_xor(sort_key)))
             .collect_vec();
         stakers.sort_by_key(|a| a.1);
 

@@ -3187,7 +3187,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a3a7d61bf320a02b7aeac1e82e1c5acac7bf32a7afcd9605773c64ab09d2344a"
 dependencies = [
  "alloy-primitives",
- "thiserror 2.0.18",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
