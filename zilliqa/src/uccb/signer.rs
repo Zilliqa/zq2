@@ -1,4 +1,4 @@
-use std::{num::NonZeroUsize, ops::Mul, sync::Arc, time::Duration};
+use std::{num::NonZeroUsize, sync::Arc, time::Duration};
 
 // use super::AlloyUserOperation;
 use alloy::{
@@ -472,7 +472,7 @@ impl Signer {
                 //
                 // There is a remote possibility that an incoming message can fail if the lifetime of the message crosses an epoch; and
                 // that the set of signers and/or their weights changed during that epoch; or if the node is significantly out-of-sync.
-                let (blk_height, blk_hash) = if dst_chain.id() == self_chain.id() {
+                let (blk_height, blk_hash) = if src_chain.id() != self_chain.id() {
                     match db.get_transactionless_block(BlockFilter::Finalized) {
                         Ok(Some(b)) => (b.number(), b.hash()),
                         Err(err) => {
@@ -648,9 +648,7 @@ impl Signer {
             };
             // we use delay-slots to ensure that the first peer always has the first priority to submit the userop.
             // the two backup peers should only be able to submit it after a delay. the userop is lost if all fail.
-            let delay_slot = dst_chain
-                .average_blocktime_hint()
-                .map_or_else(|| Duration::from_secs(60).mul(i), |d| d.mul(i));
+            let delay_slot = Duration::from_secs(60u64.pow(i)); // 1s, 1m, 1h
 
             sendq.insert((peer, uccb_uop), delay_slot);
         }
