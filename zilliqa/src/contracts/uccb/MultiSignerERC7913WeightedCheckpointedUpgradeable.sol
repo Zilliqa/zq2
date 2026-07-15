@@ -348,22 +348,20 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
         private
         pure
         returns (
-            bytes memory key,
-            uint64 height,
-            bytes32 cosig,
-            bytes memory aggsig,
-            bytes memory sig
+            bytes memory key, // 96
+            uint64 height, // 8
+            bytes32 cosig, // 32
+            bytes memory aggsig // 192
         )
     {
         // Sanity check to prevent out-of-bounds errors
-        require(packedSig.length == 520, "Invalid signature length");
+        require(packedSig.length == 328, "Non signature");
 
         // Slice out each segment and cast manually
         key = bytes(packedSig[0:96]);
         height = uint64(bytes8(packedSig[96:104]));
         cosig = bytes32(packedSig[104:136]);
         aggsig = bytes(packedSig[136:328]);
-        sig = bytes(packedSig[328:520]);
     }
 
     /// @dev Interprets `bitVector` as a set membership mask over the signer
@@ -412,8 +410,7 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
             bytes memory pubkey,
             uint64 height,
             bytes32 cosig,
-            bytes memory aggsig,
-            bytes memory sig
+            bytes memory xsig
         ) = _decodeSignature(signature);
 
         bytes[] memory signers = _getCosignersFromBitVector(cosig, height);
@@ -421,9 +418,14 @@ abstract contract MultiSignerERC7913WeightedCheckpointedUpgradeable is
         return
             // 1. Relayer signature check
             isSigner(pubkey, height) &&
-            _validateSignature(pubkey, signature[0:328], sig) &&
-            // 2. Co-signers multi-signature check
-            _validateSignatures(hash, signers, aggsig) &&
+            // 2. Cross-signature check
+            _validateCrossSignatures(
+                xsig,
+                hash,
+                signers,
+                signature[0:136],
+                pubkey
+            ) &&
             _validateThreshold(signers, height);
     }
 

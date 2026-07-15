@@ -462,6 +462,8 @@ impl Relayer {
     /// Send UserOpHash
     ///
     /// Multi-sign the UserOp; and queues it for sending to the Bundler.
+    /// This uses a cross-message aggregation scheme to reduce the number of pairings from 4 to 3; and
+    /// reduces the signature size from 520 to 328
     pub fn promote_userop(
         &self,
         send_id: B256,
@@ -484,7 +486,30 @@ impl Relayer {
             .into_iter()
             .unzip();
 
-        // 1. Multi-sig it
+        // 2. Count signers
+        let mut cosig = bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE];
+        for (index, k) in stakers.iter().enumerate() {
+            if signers.contains(k) {
+                cosig.set(index, true);
+            }
+        }
+
+        // 3. Sender data
+        // use uncompressed format for EIP-2537 compatibility
+        let pubkey = self.secret_key.as_bls().public_key().0.to_uncompressed();
+        let sender_data = (
+            pubkey.as_slice(),    // PublicKey(96)
+            bop.block_height,     // u64(8)
+            cosig.as_raw_slice(), // Signers(32)
+        )
+            .abi_encode_packed();
+
+        // 4. Compute signatures
+        let sender_sig = self
+            .secret_key
+            .as_bls()
+            .sign(blsful::SignatureSchemes::Basic, sender_data.as_slice())?;
+
         let signatures = signatures
             .into_iter()
             .map(|s| {
@@ -499,47 +524,20 @@ impl Relayer {
                     .expect("previously validated"),
                 )
             })
+            .chain(std::iter::once(sender_sig))
             .collect_vec();
-        let pubkey = self.secret_key.as_bls().public_key().0.to_uncompressed();
 
         // use uncompressed format for EIP-2537 compatibility
-        let mulsig = if signatures.len() == 1 {
-            signatures.first().unwrap().as_raw_value().to_uncompressed()
-        } else {
-            blsful::MultiSignature::from_signatures(signatures)?
-                .as_raw_value()
-                .to_uncompressed()
-        };
-        tracing::trace!(%send_id, "Multi-sig({})", mulsig.to_hex_no_prefix());
-
-        // 2. Count signers
-        let mut cosigner = bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE];
-        for (index, k) in stakers.iter().enumerate() {
-            if signers.contains(k) {
-                cosigner.set(index, true);
-            }
-        }
-
-        let message = (
-            pubkey.as_slice(),       // PublicKey(96)
-            bop.block_height,        // u64(8)
-            cosigner.as_raw_slice(), // Signers(32)
-            mulsig.as_slice(),       // Signature(192)
-        )
-            .abi_encode_packed();
-        let sig = self
-            .secret_key
-            .as_bls()
-            .sign(blsful::SignatureSchemes::Basic, message.as_slice())?
+        let xsig = blsful::MultiSignature::from_signatures(signatures)?
             .as_raw_value()
             .to_uncompressed();
-        tracing::trace!(%send_id, "Signature({})", sig.to_hex());
+        tracing::trace!(%send_id, "Signature({})", xsig.to_hex());
 
         // 3. Construct final UserOp
         let bop = bop.userop.unwrap();
         let final_uop = RelayUserOp::new(
             AlloyUserOperation {
-                signature: (message.as_slice(), sig.as_slice())
+                signature: (sender_data.as_slice(), xsig.as_slice())
                     .abi_encode_packed()
                     .into(), // replace the signature with packed struct
                 ..bop
