@@ -132,4 +132,55 @@ abstract contract BLS12381 {
 
         return BLS.pairing(g1points, g2points);
     }
+
+    /**
+     * Verifies a Cross-Message Multi-Signature
+     *
+     * @param xSig      the (Multi-sig + Sender-sig) cross-message signature.
+     * @param hash      the Message payload
+     * @param signers   the Set of G1 public keys used in Multi-sig
+     * @param payload   the Sender payload
+     * @param signer    the Sender G1 public key used in Sender-sig.
+     */
+    function _validateCrossSignatures(
+        bytes memory xSig, // 192-bytes
+        bytes32 hash, // 32-bytes
+        bytes[] memory signers,
+        bytes memory payload, // 328-bytes
+        bytes memory signer // 96-bytes
+    ) internal view returns (bool valid) {
+        require(signers.length > 0, "no public keys provided");
+
+        // sender public key
+        BLS.G1Point memory senderKey = _g1Decode(signer);
+        // aggregate public keys
+        BLS.G1Point memory aggPubkey;
+        aggPubkey = _g1Decode(signers[0]);
+        for (uint256 i = 1; i < signers.length; i++) {
+            aggPubkey = BLS.add(aggPubkey, _g1Decode(signers[i]));
+        }
+
+        // hash of messages
+        BLS.G2Point memory hdata = BLS.hashToG2(bytes.concat(hash));
+        BLS.G2Point memory hsender = BLS.hashToG2(payload);
+
+        BLS.G1Point[] memory g1Points = new BLS.G1Point[](3);
+        BLS.G2Point[] memory g2Points = new BLS.G2Point[](3);
+
+        // construct e(P1, Q1) * e(P2, Q2) * ... * e(Pk, Qk) == 1; where k = 3.
+        g1Points[0] = senderKey;
+        g1Points[1] = aggPubkey;
+        g1Points[2] = BLS.G1Point(
+            NEG_G1_GEN_X_A,
+            NEG_G1_GEN_X_B,
+            NEG_G1_GEN_Y_A,
+            NEG_G1_GEN_Y_B
+        );
+
+        g2Points[0] = hsender;
+        g2Points[1] = hdata;
+        g2Points[2] = _g2Decode(xSig);
+
+        return BLS.pairing(g1Points, g2Points);
+    }
 }

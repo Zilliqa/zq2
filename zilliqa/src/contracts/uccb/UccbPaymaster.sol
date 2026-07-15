@@ -98,7 +98,7 @@ contract UccbPaymaster is
         bool allowed = hasRole(SPONSORED_CONTRACT, userOp.sender);
 
         // Decode the signature
-        require(userOp.signature.length == 520, "Invalid signature length");
+        require(userOp.signature.length == 328, "Not signature");
 
         // Slice out each segment and cast manually
         bytes memory signer = bytes(userOp.signature[0:96]);
