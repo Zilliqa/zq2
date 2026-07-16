@@ -244,14 +244,9 @@ impl Relayer {
         // So, we just treat it as a String and check for the presence of the userop-hash.
         // https://docs.pimlico.io/references/bundler/endpoints/eth_sendUserOperation#returns
         let result = bundler
-            .raw_request::<_, String>("eth_sendUserOperation".into(), (userop.clone(), entrypoint))
+            .raw_request::<_, Hash>("eth_sendUserOperation".into(), (userop.clone(), entrypoint))
             .await?;
-        anyhow::ensure!(
-            result
-                .to_uppercase()
-                .contains(&userop_hash.to_string().to_uppercase()),
-            "UserOp {userop_hash} mismatch"
-        ); // This should never happen
+        anyhow::ensure!(result == *userop_hash, "UserOp {userop_hash} mismatch"); // This should never happen
         Ok(())
     }
 
