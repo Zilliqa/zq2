@@ -4,7 +4,6 @@ pragma solidity ^0.8.30;
 import {Account} from "@openzeppelin/contracts/account/Account.sol";
 import {ERC4337Utils} from "@openzeppelin/contracts/account/utils/draft-ERC4337Utils.sol";
 import {
-    IAccount,
     IAccountExecute,
     PackedUserOperation
 } from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
@@ -13,8 +12,6 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
-import {ERC165Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/introspection/ERC165Upgradeable.sol";
-import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
 import {MultiSignerERC7913WeightedCheckpointedUpgradeable} from "./MultiSignerERC7913WeightedCheckpointedUpgradeable.sol";
 import {UopTypes, IUccbSender} from "./Uccb.sol";
 
@@ -26,11 +23,9 @@ import {UopTypes, IUccbSender} from "./Uccb.sol";
  */
 contract UccbSender is
     Initializable,
-    ERC165Upgradeable,
     UUPSUpgradeable,
     AccessControlUpgradeable,
     ReentrancyGuardTransient,
-    EIP712Upgradeable,
     MultiSignerERC7913WeightedCheckpointedUpgradeable,
     IAccountExecute,
     Account,
@@ -51,9 +46,7 @@ contract UccbSender is
      *         deploying the proxy.
      */
     function initialize(address admin_) external initializer {
-        __EIP712_init("UccbSender", "1");
         __AccessControl_init();
-        __ERC165_init();
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin_);
         _grantRole(WITHDRAWER_ROLE, admin_);
@@ -249,21 +242,6 @@ contract UccbSender is
         address newImplementation
     ) internal view override onlyRole(DEFAULT_ADMIN_ROLE) {
         newImplementation = newImplementation;
-    }
-
-    function supportsInterface(
-        bytes4 interfaceId
-    )
-        public
-        view
-        virtual
-        override(ERC165Upgradeable, AccessControlUpgradeable)
-        returns (bool)
-    {
-        return
-            interfaceId == type(IAccountExecute).interfaceId ||
-            interfaceId == type(IAccount).interfaceId ||
-            super.supportsInterface(interfaceId);
     }
 
     receive() external payable virtual override {}

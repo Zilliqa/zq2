@@ -1,20 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {
-    IERC7786GatewaySource,
-    IERC7786Recipient
-} from "@openzeppelin/contracts/interfaces/draft-IERC7786.sol";
+import {IERC7786GatewaySource} from "@openzeppelin/contracts/interfaces/draft-IERC7786.sol";
 import {CrosschainLinkedUpgradeable} from "@openzeppelin/contracts-upgradeable/crosschain/CrosschainLinkedUpgradeable.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 import {Bytes} from "@openzeppelin/contracts/utils/Bytes.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
-import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {NoncesKeyedUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/NoncesKeyedUpgradeable.sol";
-import {ERC165Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/introspection/ERC165Upgradeable.sol";
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {IUccbGateway} from "./Uccb.sol";
@@ -40,14 +35,12 @@ import {IUccbGateway} from "./Uccb.sol";
 
 contract UccbGateway is
     Initializable,
-    ERC165Upgradeable,
-    CrosschainLinkedUpgradeable,
     UUPSUpgradeable,
     AccessControlUpgradeable,
     PausableUpgradeable,
     ReentrancyGuardTransient,
     NoncesKeyedUpgradeable,
-    EIP712Upgradeable,
+    CrosschainLinkedUpgradeable,
     IERC7786GatewaySource,
     IUccbGateway
 {
@@ -73,11 +66,9 @@ contract UccbGateway is
         assert(admin_ != address(0));
         CrosschainLinkedUpgradeable.Link[] memory links_;
 
-        __EIP712_init("UccbGateway", "1");
         __AccessControl_init();
         __Pausable_init();
         __CrosschainLinked_init(links_);
-        __ERC165_init();
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin_);
         _grantRole(WITHDRAWER_ROLE, admin_);
@@ -343,20 +334,5 @@ contract UccbGateway is
         address newImplementation
     ) internal view override onlyRole(DEFAULT_ADMIN_ROLE) {
         newImplementation = newImplementation;
-    }
-
-    function supportsInterface(
-        bytes4 interfaceId
-    )
-        public
-        view
-        virtual
-        override(ERC165Upgradeable, AccessControlUpgradeable)
-        returns (bool)
-    {
-        return
-            interfaceId == type(IERC7786GatewaySource).interfaceId ||
-            interfaceId == type(IERC7786Recipient).interfaceId ||
-            super.supportsInterface(interfaceId);
     }
 }
