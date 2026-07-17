@@ -841,14 +841,15 @@ impl Signer {
             .flatten()?;
         let state = state.at_root(block.state_root_hash().into());
 
-        // sort by XOR-ing keys
         // this produces a deterministic pseudo-random order.
-        let sort_key = B256::from_slice(txn_hash.as_bytes());
-
         let mut stakers = state
             .get_stakers(block.header)?
             .into_iter()
-            .map(|k| (k, keccak256(k.as_bytes().as_slice()).bit_xor(sort_key)))
+            .map(|k| {
+                let mut bytes = k.as_bytes();
+                bytes.extend_from_slice(txn_hash.as_bytes());
+                (k, keccak256(bytes.as_slice()))
+            })
             .collect_vec();
         stakers.sort_by_key(|a| a.1);
 
@@ -861,15 +862,4 @@ impl Signer {
 
         Ok(stakers)
     }
-
-    // pub fn default_user_op() -> AlloyUserOperation {
-    //     super::new_call_op(
-    //         B256::ZERO,
-    //         Bytes::new(),
-    //         &Address::ZERO,
-    //         &Address::ZERO,
-    //         &Address::ZERO,
-    //         U256::ZERO,
-    //     )
-    // }
 }
