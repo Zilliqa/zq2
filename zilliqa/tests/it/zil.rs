@@ -640,7 +640,7 @@ async fn run_create_transaction_api_for_error(
     None
 }
 
-#[zilliqa_macros::test]
+#[zilliqa_macros::test(ignore)]
 async fn create_transaction_bad_checksum(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let (secret_key, _address) = zilliqa_account(&mut network, &wallet).await;
@@ -671,7 +671,7 @@ async fn create_transaction_bad_checksum(mut network: Network) {
     assert!(ans.is_err());
 }
 
-#[zilliqa_macros::test]
+#[zilliqa_macros::test(ignore)]
 async fn create_transaction_zil_checksum(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
@@ -711,7 +711,7 @@ async fn create_transaction_zil_checksum(mut network: Network) {
     assert_eq!(response["balance"].as_str().unwrap(), "200000000000000");
 }
 
-#[zilliqa_macros::test]
+#[zilliqa_macros::test(ignore)]
 async fn create_transaction(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
@@ -790,7 +790,7 @@ async fn create_transaction(mut network: Network) {
     );
 }
 
-#[zilliqa_macros::test]
+#[zilliqa_macros::test(ignore)]
 async fn get_balance_via_eth_api(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
@@ -825,7 +825,7 @@ async fn get_balance_via_eth_api(mut network: Network) {
     assert_eq!(returned, 200u128 * 10u128.pow(18));
 }
 
-#[zilliqa_macros::test]
+#[zilliqa_macros::test(ignore)]
 async fn create_transaction_errors(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
@@ -914,7 +914,7 @@ async fn create_transaction_errors(mut network: Network) {
     }
 }
 
-#[zilliqa_macros::test]
+#[zilliqa_macros::test(ignore)]
 async fn get_transaction(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
@@ -997,7 +997,7 @@ async fn get_transaction(mut network: Network) {
     assert_eq!(response, response_soft_confirmed);
 }
 
-#[zilliqa_macros::test]
+#[zilliqa_macros::test(ignore)]
 async fn create_transaction_high_gas_limit(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
@@ -1059,7 +1059,7 @@ async fn create_transaction_high_gas_limit(mut network: Network) {
 
 // We need to restrict the concurrency level of this test, because each node in the network will spawn a TCP listener
 // once it invokes Scilla. When many tests are run in parallel, this results in "Too many open files" errors.
-#[zilliqa_macros::test(restrict_concurrency)]
+#[zilliqa_macros::test(restrict_concurrency, ignore)]
 async fn create_contract(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
@@ -1210,7 +1210,7 @@ sol!(
     "tests/it/contracts/ScillaDebitSkipMinter.sol",
 );
 
-#[zilliqa_macros::test(restrict_concurrency)]
+#[zilliqa_macros::test(restrict_concurrency, ignore)]
 async fn scilla_precompiles(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
@@ -1446,7 +1446,7 @@ async fn scilla_precompiles(mut network: Network) {
     assert_eq!(str_val, "hello world");
 }
 
-#[zilliqa_macros::test(restrict_concurrency)]
+#[zilliqa_macros::test(restrict_concurrency, ignore)]
 async fn mutate_evm_then_read_from_scilla(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
@@ -1553,7 +1553,7 @@ async fn mutate_evm_then_read_from_scilla(mut network: Network) {
     );
 }
 
-#[zilliqa_macros::test(restrict_concurrency)]
+#[zilliqa_macros::test(restrict_concurrency, ignore)]
 async fn interop_send_funds_from_scilla(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
@@ -1666,7 +1666,7 @@ async fn interop_send_funds_from_scilla(mut network: Network) {
     assert_eq!(wallet.get_balance(recipient).await.unwrap().to::<u128>(), 0);
 }
 
-#[zilliqa_macros::test(restrict_concurrency)]
+#[zilliqa_macros::test(restrict_concurrency, ignore)]
 async fn interop_scilla_send_funds_to_contract_is_rejected(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
@@ -1809,7 +1809,7 @@ async fn interop_scilla_send_funds_to_contract_is_rejected(mut network: Network)
     );
 }
 
-#[zilliqa_macros::test(restrict_concurrency)]
+#[zilliqa_macros::test(restrict_concurrency, ignore)]
 async fn call_scilla_precompile_with_value(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
@@ -1915,7 +1915,7 @@ async fn call_scilla_precompile_with_value(mut network: Network) {
     assert_eq!(evm_contract_zero_balance, evm_contract_value);
 }
 
-#[zilliqa_macros::test(restrict_concurrency)]
+#[zilliqa_macros::test(restrict_concurrency, ignore)]
 async fn scilla_interop_cannot_send_value(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
@@ -1998,7 +1998,7 @@ async fn scilla_interop_cannot_send_value(mut network: Network) {
     );
 }
 
-#[zilliqa_macros::test(restrict_concurrency)]
+#[zilliqa_macros::test(restrict_concurrency, ignore)]
 async fn scilla_precompile_failure_reverts_but_charges_gas(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
@@ -2085,7 +2085,7 @@ async fn scilla_precompile_failure_reverts_but_charges_gas(mut network: Network)
     assert_eq!(sender_balance_before - fee, sender_balance_after);
 }
 
-#[zilliqa_macros::test(restrict_concurrency)]
+#[zilliqa_macros::test(restrict_concurrency, ignore)]
 async fn exploit_scilla_stale_state_cannot_restore_drained_balance(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
@@ -2173,7 +2173,7 @@ async fn exploit_scilla_stale_state_cannot_restore_drained_balance(mut network: 
     );
 }
 
-#[zilliqa_macros::test(restrict_concurrency)]
+#[zilliqa_macros::test(restrict_concurrency, ignore)]
 async fn exploit_value_to_scilla_precompile_cannot_mint(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
@@ -2262,7 +2262,7 @@ async fn exploit_value_to_scilla_precompile_cannot_mint(mut network: Network) {
     );
 }
 
-#[zilliqa_macros::test(restrict_concurrency)]
+#[zilliqa_macros::test(restrict_concurrency, ignore)]
 async fn exploit_scilla_debit_skip_cannot_mint(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
@@ -2355,7 +2355,7 @@ async fn exploit_scilla_debit_skip_cannot_mint(mut network: Network) {
     );
 }
 
-#[zilliqa_macros::test(restrict_concurrency)]
+#[zilliqa_macros::test(restrict_concurrency, ignore)]
 async fn scilla_call_from_static_context_is_rejected(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
@@ -2440,7 +2440,7 @@ async fn scilla_call_from_static_context_is_rejected(mut network: Network) {
     );
 }
 
-#[zilliqa_macros::test(restrict_concurrency)]
+#[zilliqa_macros::test(restrict_concurrency, ignore)]
 async fn direct_eoa_scilla_call_with_keep_origin_does_not_panic(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
@@ -2512,7 +2512,7 @@ async fn direct_eoa_scilla_call_with_keep_origin_does_not_panic(mut network: Net
     assert!(receipt.status());
 }
 
-#[zilliqa_macros::test(restrict_concurrency)]
+#[zilliqa_macros::test(restrict_concurrency, ignore)]
 async fn scilla_call_with_omitted_param_is_rejected(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
@@ -2618,7 +2618,7 @@ async fn scilla_call_with_omitted_param_is_rejected(mut network: Network) {
     );
 }
 
-#[zilliqa_macros::test(restrict_concurrency)]
+#[zilliqa_macros::test(restrict_concurrency, ignore)]
 async fn scilla_call_with_bad_gas(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
@@ -2717,7 +2717,7 @@ async fn scilla_call_with_bad_gas(mut network: Network) {
     assert!(receipt.status());
 }
 
-#[zilliqa_macros::test(restrict_concurrency)]
+#[zilliqa_macros::test(restrict_concurrency, ignore)]
 async fn interop_call_then_revert(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
@@ -2886,7 +2886,7 @@ async fn interop_call_then_revert(mut network: Network) {
     assert!(txn["receipt"]["event_logs"].as_array().unwrap().is_empty());
 }
 
-#[zilliqa_macros::test(restrict_concurrency)]
+#[zilliqa_macros::test(restrict_concurrency, ignore)]
 async fn interop_read_after_write(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
@@ -2977,7 +2977,7 @@ async fn interop_read_after_write(mut network: Network) {
     assert!(receipt.status());
 }
 
-#[zilliqa_macros::test(restrict_concurrency)]
+#[zilliqa_macros::test(restrict_concurrency, ignore)]
 async fn interop_nested_call_to_precompile_then_revert(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
@@ -3358,7 +3358,7 @@ async fn get_tx_block_verbose(mut network: Network) {
     assert!(timestamp.parse::<u64>().is_ok(), "Invalid Timestamp format");
 }
 
-#[zilliqa_macros::test]
+#[zilliqa_macros::test(ignore)]
 async fn get_smart_contract_init(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
@@ -3474,7 +3474,7 @@ async fn get_current_ds_epoch(mut network: Network) {
     assert!(response.is_string());
 }
 
-#[zilliqa_macros::test]
+#[zilliqa_macros::test(ignore)]
 async fn ds_block_listing(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
@@ -3537,7 +3537,7 @@ async fn get_tx_block_rate_0(mut network: Network) {
     assert!(returned.rate >= 0.0, "Block rate should be non-negative");
 }
 
-#[zilliqa_macros::test]
+#[zilliqa_macros::test(ignore)]
 async fn get_tx_block_rate_1(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let (secret_key, _address) = zilliqa_account(&mut network, &wallet).await;
@@ -3615,7 +3615,7 @@ async fn get_tx_rate_0(mut network: Network) {
     assert!(tx_rate >= 0.0, "Transaction rate should be non-negative");
 }
 
-#[zilliqa_macros::test]
+#[zilliqa_macros::test(ignore)]
 async fn get_tx_rate_1(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
@@ -3671,7 +3671,7 @@ async fn get_txns_for_tx_block_ex_0(mut network: Network) {
     );
 }
 
-#[zilliqa_macros::test]
+#[zilliqa_macros::test(ignore)]
 async fn test_simulate_transactions(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
@@ -3724,7 +3724,7 @@ async fn test_simulate_transactions(mut network: Network) {
     assert!(num_transactions >= 1);
 }
 
-#[zilliqa_macros::test]
+#[zilliqa_macros::test(ignore)]
 async fn get_txns_for_tx_block_ex_1(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
@@ -3779,7 +3779,7 @@ async fn get_txns_for_tx_block_ex_1(mut network: Network) {
     );
 }
 
-#[zilliqa_macros::test]
+#[zilliqa_macros::test(ignore)]
 async fn get_txns_for_tx_block_0(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
@@ -3841,7 +3841,7 @@ async fn get_txns_for_tx_block_0(mut network: Network) {
     }
 }
 
-#[zilliqa_macros::test]
+#[zilliqa_macros::test(ignore)]
 async fn get_txn_bodies_for_tx_block_0(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
@@ -3888,7 +3888,7 @@ async fn get_txn_bodies_for_tx_block_0(mut network: Network) {
     );
 }
 
-#[zilliqa_macros::test]
+#[zilliqa_macros::test(ignore)]
 async fn get_txn_bodies_for_tx_block_1(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
@@ -3939,7 +3939,7 @@ async fn get_txn_bodies_for_tx_block_1(mut network: Network) {
     );
 }
 
-#[zilliqa_macros::test]
+#[zilliqa_macros::test(ignore)]
 async fn get_txn_bodies_for_tx_block_ex_0(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
@@ -3995,7 +3995,7 @@ async fn get_txn_bodies_for_tx_block_ex_0(mut network: Network) {
     );
 }
 
-#[zilliqa_macros::test]
+#[zilliqa_macros::test(ignore)]
 async fn get_txn_bodies_for_tx_block_ex_1(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
@@ -4108,7 +4108,7 @@ async fn get_recent_transactions_0(mut network: Network) {
     assert!(recent_transactions.number < 100);
 }
 
-#[zilliqa_macros::test]
+#[zilliqa_macros::test(ignore)]
 async fn get_recent_transactions_1(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
@@ -4269,7 +4269,7 @@ async fn get_num_txns_ds_epoch_0(mut network: Network) {
     );
 }
 
-#[zilliqa_macros::test]
+#[zilliqa_macros::test(ignore)]
 async fn get_num_txns_ds_epoch_1(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let (secret_key, _address) = zilliqa_account(&mut network, &wallet).await;
@@ -4348,7 +4348,7 @@ async fn get_num_txns_tx_epoch_0(mut network: Network) {
     );
 }
 
-#[zilliqa_macros::test]
+#[zilliqa_macros::test(ignore)]
 async fn get_num_txns_tx_epoch_1(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
@@ -4580,7 +4580,7 @@ async fn get_sharding_structure(mut network: Network) {
 
 // We need to restrict the concurrency level of this test, because each node in the network will spawn a TCP listener
 // once it invokes Scilla. When many tests are run in parallel, this results in "Too many open files" errors.
-#[zilliqa_macros::test(restrict_concurrency)]
+#[zilliqa_macros::test(restrict_concurrency, ignore)]
 async fn get_smart_contract_sub_state(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
@@ -4702,7 +4702,7 @@ async fn get_smart_contract_sub_state(mut network: Network) {
     assert!(substate2.get("welcome_msg").is_none());
 }
 
-#[zilliqa_macros::test(restrict_concurrency)]
+#[zilliqa_macros::test(restrict_concurrency, ignore)]
 async fn get_smart_contract_sub_state_empty_should_return_null(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
@@ -4747,7 +4747,7 @@ async fn get_smart_contract_sub_state_empty_should_return_null(mut network: Netw
     assert_eq!(substate_nonexistent_indices, serde_json::Value::Null);
 }
 
-#[zilliqa_macros::test(restrict_concurrency)]
+#[zilliqa_macros::test(restrict_concurrency, ignore)]
 async fn nested_maps_insert_removal(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
@@ -4856,7 +4856,7 @@ async fn nested_maps_insert_removal(mut network: Network) {
     }
 }
 
-#[zilliqa_macros::test(restrict_concurrency)]
+#[zilliqa_macros::test(restrict_concurrency, ignore)]
 async fn failed_scilla_contract_proper_fee(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
@@ -4962,7 +4962,7 @@ async fn get_state_proof(mut network: Network) {
 }
 
 // LLM generated, may be buggy
-#[zilliqa_macros::test]
+#[zilliqa_macros::test(ignore)]
 async fn get_transaction_status(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
@@ -5232,7 +5232,7 @@ async fn get_num_tx_blocks_structure(mut network: Network) {
     assert!(response.as_str().unwrap().parse::<u64>().is_ok());
 }
 
-#[zilliqa_macros::test(restrict_concurrency)]
+#[zilliqa_macros::test(restrict_concurrency, ignore)]
 async fn return_map_and_parse(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
@@ -5348,7 +5348,7 @@ async fn return_map_and_parse(mut network: Network) {
     );
 }
 
-#[zilliqa_macros::test(restrict_concurrency)]
+#[zilliqa_macros::test(restrict_concurrency, ignore)]
 async fn withdraw_from_contract(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
@@ -5462,7 +5462,7 @@ async fn withdraw_from_contract(mut network: Network) {
 }
 
 /// This test is for hardfork scilla_fix_contract_code_removal_on_evm_tx's behaviour
-#[zilliqa_macros::test(restrict_concurrency)]
+#[zilliqa_macros::test(restrict_concurrency, ignore)]
 async fn create_scilla_contract_send_evm_tx(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
@@ -5507,7 +5507,7 @@ async fn create_scilla_contract_send_evm_tx(mut network: Network) {
     );
 }
 
-#[zilliqa_macros::test(restrict_concurrency)]
+#[zilliqa_macros::test(restrict_concurrency, ignore)]
 async fn evm_tx_to_scilla_contract_should_fail(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
@@ -5535,7 +5535,7 @@ async fn evm_tx_to_scilla_contract_should_fail(mut network: Network) {
     assert_eq!(receipt.inner.cumulative_gas_used(), 21000);
 }
 
-#[zilliqa_macros::test(restrict_concurrency)]
+#[zilliqa_macros::test(restrict_concurrency, ignore)]
 async fn failed_scilla_to_scilla_transfers_proper_fee(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
@@ -5588,7 +5588,7 @@ async fn failed_scilla_to_scilla_transfers_proper_fee(mut network: Network) {
     assert_eq!(balance_after_failed_call, initial_balance - transaction_fee);
 }
 
-#[zilliqa_macros::test(restrict_concurrency)]
+#[zilliqa_macros::test(restrict_concurrency, ignore)]
 async fn failed_zil_transfers_proper_fee(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;

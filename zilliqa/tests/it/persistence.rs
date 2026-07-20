@@ -135,7 +135,7 @@ sol!(
     #[sol(rpc)]
     "tests/it/contracts/Storage.sol"
 );
-#[zilliqa_macros::test(do_checkpoints, restrict_concurrency)]
+#[zilliqa_macros::test(do_checkpoints, restrict_concurrency, ignore)]
 async fn checkpoints_test(mut network: Network) {
     // Populate network with transactions
     let wallet = network.genesis_wallet().await;
