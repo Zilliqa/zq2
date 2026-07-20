@@ -8,4 +8,4 @@ roles:
   - opsnode
   - private-api
 versions:
-  zq2: v0.21.6
+  zq2: v0.21.7

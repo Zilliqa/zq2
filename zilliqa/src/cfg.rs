@@ -786,6 +786,7 @@ pub struct Fork {
     pub disable_interop_native_zil_transfers_0: bool,
     pub tighten_precompile_rules: bool,
     pub allow_scilla_call_precompile_to_be_called_from_addresses: Vec<Address>,
+    pub disable_zilliqa_txn_execution: bool,
 }
 
 pub enum ForkName {
@@ -953,6 +954,9 @@ pub struct ForkDelta {
     pub tighten_precompile_rules: Option<bool>,
     /// Restricts which caller addresses may invoke the scilla_call precompile
     pub allow_scilla_call_precompile_to_be_called_from_addresses: Option<Vec<Address>>,
+    /// If true, legacy Zilliqa (Scilla) transactions are skipped from execution entirely — as if
+    /// they were never received (lost).
+    pub disable_zilliqa_txn_execution: Option<bool>,
 }
 
 impl Fork {
@@ -1087,6 +1091,9 @@ impl Fork {
                     self.allow_scilla_call_precompile_to_be_called_from_addresses
                         .clone()
                 }),
+            disable_zilliqa_txn_execution: delta
+                .disable_zilliqa_txn_execution
+                .unwrap_or(self.disable_zilliqa_txn_execution),
         }
     }
 }
@@ -1198,6 +1205,7 @@ pub fn genesis_fork_default() -> Fork {
         disable_interop_native_zil_transfers_0: true,
         tighten_precompile_rules: true,
         allow_scilla_call_precompile_to_be_called_from_addresses: vec![],
+        disable_zilliqa_txn_execution: true,
     }
 }
 
@@ -1382,6 +1390,7 @@ mod tests {
                 disable_interop_native_zil_transfers_0: None,
                 tighten_precompile_rules: None,
                 allow_scilla_call_precompile_to_be_called_from_addresses: None,
+                disable_zilliqa_txn_execution: None,
             }],
             ..Default::default()
         };
@@ -1448,6 +1457,7 @@ mod tests {
                     disable_interop_native_zil_transfers_0: None,
                     tighten_precompile_rules: None,
                     allow_scilla_call_precompile_to_be_called_from_addresses: None,
+                    disable_zilliqa_txn_execution: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1494,6 +1504,7 @@ mod tests {
                     disable_interop_native_zil_transfers_0: None,
                     tighten_precompile_rules: None,
                     allow_scilla_call_precompile_to_be_called_from_addresses: None,
+                    disable_zilliqa_txn_execution: None,
                 },
             ],
             ..Default::default()
@@ -1577,6 +1588,7 @@ mod tests {
                     disable_interop_native_zil_transfers_0: None,
                     tighten_precompile_rules: None,
                     allow_scilla_call_precompile_to_be_called_from_addresses: None,
+                    disable_zilliqa_txn_execution: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1623,6 +1635,7 @@ mod tests {
                     disable_interop_native_zil_transfers_0: None,
                     tighten_precompile_rules: None,
                     allow_scilla_call_precompile_to_be_called_from_addresses: None,
+                    disable_zilliqa_txn_execution: None,
                 },
             ],
             ..Default::default()
@@ -1694,6 +1707,7 @@ mod tests {
                 disable_interop_native_zil_transfers_0: true,
                 tighten_precompile_rules: true,
                 allow_scilla_call_precompile_to_be_called_from_addresses: vec![],
+                disable_zilliqa_txn_execution: true,
             },
             forks: vec![],
             ..Default::default()
@@ -1753,6 +1767,7 @@ mod tests {
                     disable_interop_native_zil_transfers_0: None,
                     tighten_precompile_rules: None,
                     allow_scilla_call_precompile_to_be_called_from_addresses: None,
+                    disable_zilliqa_txn_execution: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1799,6 +1814,7 @@ mod tests {
                     disable_interop_native_zil_transfers_0: None,
                     tighten_precompile_rules: None,
                     allow_scilla_call_precompile_to_be_called_from_addresses: None,
+                    disable_zilliqa_txn_execution: None,
                 },
             ],
             ..Default::default()

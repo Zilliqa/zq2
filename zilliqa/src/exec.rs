@@ -848,6 +848,16 @@ impl State {
         let blessed = BLESSED_TRANSACTIONS.iter().any(|elem| elem.hash == hash);
 
         if let Transaction::Zilliqa(txn) = txn {
+            if self
+                .forks
+                .get(current_block.number)
+                .disable_zilliqa_txn_execution
+            {
+                return Err(anyhow!(
+                    "Zilliqa transaction execution is disabled at block {}",
+                    current_block.number
+                ));
+            }
             let (result, state) =
                 self.apply_transaction_scilla(from_addr, txn, current_block, inspector)?;
 

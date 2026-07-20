@@ -206,6 +206,7 @@ impl Chain {
                 "disable_interop_native_zil_transfers_0": false,
                 "tighten_precompile_rules": false,
                 "allow_scilla_call_precompile_to_be_called_from_addresses": [],
+                "disable_zilliqa_txn_execution": false,
             })),
             Chain::Zq2Mainnet => Some(json!({
                 "at_height": 0,
@@ -252,6 +253,7 @@ impl Chain {
                 "disable_interop_native_zil_transfers_0": false,
                 "tighten_precompile_rules": false,
                 "allow_scilla_call_precompile_to_be_called_from_addresses": [],
+                "disable_zilliqa_txn_execution": false,
             })),
             _ => None,
         }
@@ -315,6 +317,7 @@ impl Chain {
                 json!({ "at_height": 34369689, "make_transfers_in_scilla_precompiles_with_journal_api": true}),
                 json!({ "at_height": 34369689, "tighten_precompile_rules": true}),
                 json!({ "at_height": 34369689, "allow_scilla_call_precompile_to_be_called_from_addresses": ["0x453b11386FBd54bC532892c0217BBc316fc7b918"]}),
+                json!({ "at_height": 99999999, "disable_zilliqa_txn_execution": true }),
             ]),
             Chain::Zq2Mainnet => Some(vec![
                 json!({ "at_height": 4770088, "executable_blocks": true }),
@@ -480,6 +483,7 @@ impl Chain {
                         "0xbfDe2156aF75a29d36614bC1F8005DD816Bd9200",
                     ],
                 }),
+                json!({ "at_height": 31759109, "disable_zilliqa_txn_execution": true }),
             ]),
             _ => None,
         }
