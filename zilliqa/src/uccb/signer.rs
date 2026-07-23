@@ -1,4 +1,8 @@
-use std::{num::NonZeroUsize, sync::Arc, time::Duration};
+use std::{
+    num::NonZeroUsize,
+    sync::Arc,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 // use super::AlloyUserOperation;
 use alloy::{
@@ -376,12 +380,26 @@ impl Signer {
         for log in logs {
             let txn_hash = log.transaction_hash.expect("txn_hash != none").into();
 
+            // Check if the message is stale
+            let (stale, not_before, not_after) =
+                log.block_timestamp.map_or((false, 0u64, 0u64), |ts| {
+                    let until = ts.saturating_add(86_400);
+                    let now = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .expect("time travel")
+                        .as_secs();
+                    (now > until, ts, until)
+                });
+            if stale {
+                tracing::debug!("MessageSent({self_chain:?}): stale");
+                continue;
+            }
+
             // 4. Decode the MessageSent event.
             let Ok(MessageSent {
                 sendId,
                 recipient,
                 payload,
-                value,
                 sender,
                 // attributes,
                 ..
@@ -463,8 +481,15 @@ impl Signer {
                 }
 
                 // 7. Construct partial UserOp; send for signing
-                let userop =
-                    super::new_call_op(sendId, payload.into(), sender, paymaster, gateway, value);
+                let userop = super::new_call_op(
+                    sendId,
+                    payload.into(),
+                    sender,
+                    paymaster,
+                    gateway,
+                    not_before,
+                    not_after,
+                );
                 tracing::trace!(send_id=%sendId, ?userop, "UserOp");
 
                 // Outgoing: determines the effective set of signers - using the block that executed the transaction.
