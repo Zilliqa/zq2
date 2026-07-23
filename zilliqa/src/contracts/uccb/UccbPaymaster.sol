@@ -2,11 +2,11 @@
 pragma solidity ^0.8.28;
 
 import {
-    IPaymaster,
+    IEntryPoint,
     PackedUserOperation
-} from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
-import {IEntryPoint} from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
-import {ERC4337Utils} from "@openzeppelin/contracts/account/utils/draft-ERC4337Utils.sol";
+} from "@openzeppelin/contracts/interfaces/IERC4337.sol";
+import {Paymaster} from "@openzeppelin/contracts/account/paymaster/Paymaster.sol";
+import {ERC4337Utils} from "@openzeppelin/contracts/account/utils/ERC4337Utils.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
@@ -24,7 +24,7 @@ contract UccbPaymaster is
     AccessControlUpgradeable,
     PausableUpgradeable,
     ReentrancyGuardTransient,
-    IPaymaster
+    Paymaster
 {
     // using SafeERC20     for IERC20;
     using Address for address payable;
@@ -36,20 +36,7 @@ contract UccbPaymaster is
     );
     bytes32 public constant WITHDRAWER_ROLE = keccak256("WITHDRAWER_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
-
-    /**
-     * @dev Restricts a function to the trusted EntryPoint.
-     *      validatePaymasterUserOp and postOp MUST only be called by it.
-     */
-    modifier onlyEntryPoint() {
-        require(msg.sender == address(entryPoint()), "Entrypoint only");
-        _;
-    }
-
-    /// Use v0.9 entrypoint only
-    function entryPoint() private pure returns (IEntryPoint) {
-        return ERC4337Utils.ENTRYPOINT_V09;
-    }
+    bytes32 public constant UNSTAKER_ROLE = keccak256("UNSTAKER_ROLE");
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -69,6 +56,7 @@ contract UccbPaymaster is
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin_);
         _grantRole(WITHDRAWER_ROLE, admin_);
+        _grantRole(UNSTAKER_ROLE, admin_);
         _grantRole(PAUSER_ROLE, admin_);
     }
 
@@ -76,17 +64,16 @@ contract UccbPaymaster is
      * @notice Called by the EntryPoint during the verification loop.
      *         Must decide whether to sponsor this UserOp and return:
      */
-    function validatePaymasterUserOp(
+    function _validatePaymasterUserOp(
         PackedUserOperation calldata userOp,
-        bytes32, // userOpHash,
-        uint256 // maxCost
+        bytes32 userOpHash,
+        uint256 requiredPreFund
     )
-        external
-        view
+        internal
+        virtual
         override
-        onlyEntryPoint
         whenNotPaused
-        returns (bytes memory, uint256)
+        returns (bytes memory context, uint256 validationData)
     {
         // allow all from SENDER
         bool allowed = hasRole(SPONSORED_CONTRACT, userOp.sender);
@@ -100,10 +87,19 @@ contract UccbPaymaster is
         bytes32 cosig = bytes32(userOp.signature[104:136]);
 
         // extract validUntil/validAfter
+        (
+            address aggregator,
+            uint48 validAfter,
+            uint48 validUntil,
+            ERC4337Utils.ValidationRange range
+        ) = ERC4337Utils.parseValidationData(
+                uint256(bytes32(userOp.paymasterData()[0:32]))
+            );
+
         // context = relayer + signers
         return (
             abi.encodePacked(height, cosig, signer),
-            ERC4337Utils.packValidationData(allowed, 0, 0)
+            ERC4337Utils.packValidationData(allowed, validAfter, validUntil)
         ); // valid for 10-blocks
     }
 
@@ -111,47 +107,49 @@ contract UccbPaymaster is
      * @notice Called by the EntryPoint after the UserOp executes (or after
      *         a failed execution attempt).
      */
-    function postOp(
-        PostOpMode, //mode,
+
+    function _postOp(
+        PostOpMode /* mode */,
         bytes calldata context,
-        uint256, // actualGasCost,
-        uint256 // actualUserOpFeePerGas
-    ) external view override onlyEntryPoint {
+        uint256 /* actualGasCost */,
+        uint256 /* actualUserOpFeePerGas */
+    ) internal override {
         // TODO: record the signer and co-signers
         if (context.length == 0) return;
     }
 
     // ****** DEPOSIT/STAKE MANAGEMENT *******
 
-    function depositTo() external payable nonReentrant {
-        entryPoint().depositTo{value: msg.value}(address(this));
+    function depositTo() external payable virtual {
+        _deposit(msg.value);
     }
 
     function withdrawTo(
-        uint256 amount
+        address payable to,
+        uint256 value
     ) external onlyRole(WITHDRAWER_ROLE) nonReentrant {
-        entryPoint().withdrawTo(payable(address(this)), amount);
-    }
-
-    function balanceOf() external view returns (uint256) {
-        return entryPoint().balanceOf(address(this));
+        _withdraw(to, value);
     }
 
     function addStake(
         uint32 unstakeDelaySec
     ) external payable onlyRole(DEFAULT_ADMIN_ROLE) {
-        entryPoint().addStake{value: msg.value}(unstakeDelaySec);
+        _addStake(msg.value, unstakeDelaySec);
     }
 
-    function unlockStake() external onlyRole(DEFAULT_ADMIN_ROLE) {
-        entryPoint().unlockStake();
+    function unlockStake() external onlyRole(UNSTAKER_ROLE) {
+        _unlockStake();
     }
 
     function withdrawStake(
         address payable to
-    ) external onlyRole(WITHDRAWER_ROLE) nonReentrant {
+    ) external onlyRole(UNSTAKER_ROLE) {
         assert(to != address(0));
-        entryPoint().withdrawStake(to);
+        _withdrawStake(to);
+    }
+
+    function balanceOf() external view returns (uint256) {
+        return entryPoint().balanceOf(address(this));
     }
 
     // ****** BOILER-PLATE ******

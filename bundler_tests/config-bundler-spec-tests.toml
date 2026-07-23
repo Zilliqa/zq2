@@ -47,9 +47,9 @@ remote_chains = [
         bundler_url = "http://127.0.0.1:3545",
         watcher_url = "http://127.0.0.1:8545",
         entrypoint = "0x433709009B8330FDa32311DF1C2AFA402eD8D009",
-        sender = "0xB666B280Ac8a440E0293728FD4Ffb98c89d9C0c3",
-        gateway = "0xf7c337A02CCf847356783Ab47cAF431D3a1E4e44",
-        paymaster  = "0x493a586f64e411561c107CB91777e03bD7e28fDc",
+        paymaster = "0xaA959c69dc7BE665CC34B5575c95Dcbc321a700a",
+        gateway = "0x04cD07c86f0e329C3A50F40d51b736A6Ea4d5522",
+        sender = "0xaC684A1E103A98F8c9a2598B1b0605627C20b1EF",
         allow_loopback = true,
     }
 ]

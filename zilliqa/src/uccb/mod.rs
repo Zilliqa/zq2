@@ -1,7 +1,7 @@
 use std::{str::FromStr as _, sync::Arc, time::Duration};
 
 use alloy::{
-    primitives::{Address, B256, Bytes, ChainId, U256, address},
+    primitives::{Address, B256, Bytes, ChainId, U256, address, aliases::U48},
     providers::{
         Identity, Provider as _, ProviderBuilder, RootProvider,
         fillers::{BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller},
@@ -43,7 +43,7 @@ pub const ENTRYPOINT_V09: Address = address!("0x433709009B8330FDa32311DF1C2AFA40
 #[cfg(not(doctest))]
 sol!(
     #[sol(rpc)]
-    "../vendor/openzeppelin-contracts/contracts/interfaces/draft-IERC4337.sol"
+    "../vendor/openzeppelin-contracts/contracts/interfaces/IERC4337.sol"
 );
 #[cfg(not(doctest))]
 sol!(
@@ -504,7 +504,8 @@ pub fn new_call_op(
     sender: &Address,
     paymaster: &Address,
     gateway: &Address,
-    _value: U256,
+    not_before: u64,
+    not_after: u64,
 ) -> AlloyUserOperation {
     // we can encode some custom things in here
 
@@ -516,6 +517,15 @@ pub fn new_call_op(
         payload,
     )
         .abi_encode_packed();
+
+    let paymaster_data = (
+        U48::from(not_before),
+        U48::from(not_after),
+        Address::ZERO,
+        send_id,
+    )
+        .abi_encode_packed();
+
     AlloyUserOperation {
         sender: *sender,
         nonce: U256::ZERO, // unpopulated nonce/sig
@@ -532,7 +542,7 @@ pub fn new_call_op(
         paymaster: Some(*paymaster),
         paymaster_verification_gas_limit: None, // estimateUserOpGas
         paymaster_post_op_gas_limit: None,      // estimateUserOpGas
-        paymaster_data: Some(send_id.into()),
+        paymaster_data: Some(paymaster_data.into()),
         signature: Bytes::new(), // blank signature
     }
 }
@@ -550,6 +560,9 @@ pub fn new_set_staker_op(
         payload,
     )
         .abi_encode_packed();
+
+    let paymaster_data = (U48::ZERO, U48::ZERO, Address::ZERO, send_id).abi_encode_packed();
+
     AlloyUserOperation {
         sender: *sender,
         nonce: U256::ZERO, // unpopulated nonce/sig
@@ -564,20 +577,7 @@ pub fn new_set_staker_op(
         paymaster: Some(*paymaster),
         paymaster_verification_gas_limit: None, // estimateUserOpGas
         paymaster_post_op_gas_limit: None,      // estimateUserOpGas
-        paymaster_data: Some(send_id.into()),
+        paymaster_data: Some(paymaster_data.into()),
         signature: Bytes::new(), // blank signature
     }
 }
-
-// Represents the gas estimation for a user operation.
-//
-// alloy::UserOperationGasEstimation is v0.6, not v0.7/0.8
-// #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-// #[serde(rename_all = "camelCase")]
-// pub(crate) struct UserOperationGasEstimationV07 {
-//     pub pre_verification_gas: U256,
-//     pub verification_gas: U256,
-//     pub paymaster_verification_gas: U256,
-//     pub call_gas_limit: U256,
-//     pub paymaster_post_op_gas_limit: U256,
-// }
