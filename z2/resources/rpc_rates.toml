@@ -1,11 +1,11 @@
 # RPC Rate Limits Configuration
 # Values represent empirical estimates and derived limits for various RPC endpoints
 [credit_rates]
-CreateTransaction = 80
+CreateTransaction = 4000
 GetContractAddressFromTransactionID = 250
 GetBlockchainInfo = 500
 GetNumTxBlocks = 250
-GetSmartContractState = 1000
+GetSmartContractState = 4000
 GetSmartContractCode = 50
 GetSmartContractInit = 250
 GetTransaction = 150
@@ -34,7 +34,7 @@ GetTotalCoinSupplyAsInt = 5
 GetMinerInfo = 5
 GetPrevDifficulty = 5
 GetPrevDSDifficulty = 5
-GetSmartContractSubState = 80
+GetSmartContractSubState = 4000
 GetTransactionStatus = 250
 
 admin_consensusInfo = 10000
