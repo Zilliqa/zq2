@@ -1,3 +1,6 @@
 @openzeppelin/contracts/=vendor/openzeppelin-contracts/contracts/
 @openzeppelin/lib/=vendor/openzeppelin-contracts/lib/
 @openzeppelin/contracts-upgradeable/=vendor/openzeppelin-contracts-upgradeable/contracts/
+@openzeppelin/foundry-upgrades=vendor/openzeppelin-foundry-upgrades/src
+forge-std=vendor/forge-std/src
+
