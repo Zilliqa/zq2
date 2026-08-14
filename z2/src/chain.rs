@@ -207,6 +207,8 @@ impl Chain {
                 "tighten_precompile_rules": false,
                 "allow_scilla_call_precompile_to_be_called_from_addresses": [],
                 "disable_zilliqa_txn_execution": false,
+                "blocked_recipients_start_height": 0,
+                "blocked_recipients_file": "",
             })),
             Chain::Zq2Mainnet => Some(json!({
                 "at_height": 0,
@@ -254,6 +256,8 @@ impl Chain {
                 "tighten_precompile_rules": false,
                 "allow_scilla_call_precompile_to_be_called_from_addresses": [],
                 "disable_zilliqa_txn_execution": false,
+                "blocked_recipients_start_height": 0,
+                "blocked_recipients_file": "",
             })),
             _ => None,
         }
@@ -565,5 +569,49 @@ impl Chain {
 
     pub fn get_new_view_broadcast_interval(&self) -> Option<Duration> {
         Some(Duration::from_secs(30))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use zilliqa::cfg::{Config, Fork, ForkDelta};
+
+    use super::*;
+
+    const CHAINS: [Chain; 4] = [
+        Chain::Zq2InfraTest,
+        Chain::Zq2Devnet,
+        Chain::Zq2Testnet,
+        Chain::Zq2Mainnet,
+    ];
+
+    /// `Fork` has no per-field serde defaults, so a fork field present in the struct but missing
+    /// from a chain spec is a node that will not boot. The specs and the JSON below are hand-synced
+    /// with `zilliqa::cfg` - this is what catches the drift.
+    #[test]
+    fn every_chain_spec_deserialises() {
+        for chain in &CHAINS {
+            let toml = Chain::get_toml_contents(&chain.to_string()).unwrap();
+            let config: Config = toml::from_str(toml).unwrap_or_else(|e| panic!("{chain}: {e}"));
+            for node in &config.nodes {
+                node.consensus
+                    .get_forks()
+                    .unwrap_or_else(|e| panic!("{chain}: {e}"));
+            }
+        }
+    }
+
+    #[test]
+    fn every_mirrored_fork_definition_deserialises() {
+        for chain in &CHAINS {
+            if let Some(genesis) = chain.genesis_fork() {
+                serde_json::from_value::<Fork>(genesis)
+                    .unwrap_or_else(|e| panic!("{chain} genesis_fork: {e}"));
+            }
+            for delta in chain.get_forks().into_iter().flatten() {
+                serde_json::from_value::<ForkDelta>(delta)
+                    .unwrap_or_else(|e| panic!("{chain} forks: {e}"));
+            }
+        }
     }
 }

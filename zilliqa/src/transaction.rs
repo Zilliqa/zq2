@@ -85,6 +85,8 @@ pub enum ValidationOutcome {
     InvalidAmount,
     /// Gas price too high
     GasPriceTooHigh,
+    /// Legacy Zilliqa transactions are no longer executed on this chain
+    ZilliqaTransactionsDisabled,
 }
 
 impl ValidationOutcome {
@@ -143,6 +145,9 @@ impl ValidationOutcome {
             Self::GasPriceTooLow => "Provided gas price is too low".to_string(),
             Self::GasPriceTooHigh => "Provided gas price is too high".to_string(),
             Self::InvalidAmount => "Invalid amount".to_string(),
+            Self::ZilliqaTransactionsDisabled => {
+                "Zilliqa transactions are no longer accepted".to_string()
+            }
         }
     }
 }

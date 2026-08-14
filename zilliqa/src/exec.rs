@@ -37,6 +37,7 @@ use sha2::{Digest, Sha256};
 use tracing::{debug, info, trace, warn};
 
 use crate::{
+    blocked_recipients::BLOCKED_NONCE_FLOOR,
     cfg::{Fork, ScillaExtLibsPath, ScillaExtLibsPathInScilla, ScillaExtLibsPathInZq2},
     constants, contracts,
     crypto::{Hash, NodePublicKey},
@@ -707,7 +708,15 @@ impl State {
                 fork.only_mutated_accounts_update_state,
             );
 
-        if force_fail || deltas_overlap {
+        // Specially marked accounts cannot be recipients of any transaction
+        let blocked_recipient = fork.blocked_recipients_start_height != 0
+            && extra_opts.exec_type == ExecType::Transact
+            && match to_addr {
+                Some(to) => self.get_account(to)?.nonce == BLOCKED_NONCE_FLOOR,
+                None => false,
+            };
+
+        if force_fail || deltas_overlap || blocked_recipient {
             return exec_failure::failed(
                 self,
                 fork,

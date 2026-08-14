@@ -32,7 +32,9 @@ use tracing::*;
 
 use crate::{
     api::{admin::merge_history, types::eth::SyncingStruct},
-    aux, blockhooks,
+    aux,
+    blocked_recipients::{BLOCKED_NONCE_FLOOR, BlockedRecipients, last_blocked_block},
+    blockhooks,
     cfg::{ConsensusConfig, ForkName, NodeConfig},
     constants::{
         EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, LAG_BEHIND_CURRENT_VIEW, MISSED_VIEW_WINDOW,
@@ -249,6 +251,9 @@ pub struct Consensus {
     in_committee: bool,
     /// Prune interval, if applicable
     prune_period: u64,
+    /// The blocked-recipient lists named by forks, keyed by file name. All of them stay open for
+    /// the life of the process so any schedule block can be (re-)executed.
+    blocked_recipients: HashMap<String, BlockedRecipients>,
 }
 
 impl Consensus {
@@ -399,6 +404,50 @@ impl Consensus {
         let bpe = config.consensus.blocks_per_epoch;
         let prune_period = ((config.db.prune_interval / bpe) * bpe).saturating_add(bpe);
 
+        // Open every blocked-recipient list any fork refers to, before any consensus work
+        // happens. A missing or malformed file is fatal on purpose: processing a different set of
+        // accounts than the rest of the network, or sweeping to different destinations, means
+        // producing a different state root.
+        //
+        // All files are loaded at any height - a list can be baked into the image long before its
+        // activation delta reaches the spec, and must stay available forever after so that a
+        // resync or reorg can re-execute its schedule blocks. Whether a given block does any work
+        // is decided per block, by the fork at that block's height and by `batch` returning empty
+        // outside the schedule.
+        let mut blocked_recipients = HashMap::new();
+        for schedule in forks.blocked_recipient_schedules()? {
+            let dir = config
+                .blocked_recipients_dir
+                .as_ref()
+                .or(config.data_dir.as_ref())
+                .ok_or_else(|| {
+                    anyhow!(
+                        "a fork names {} but neither blocked_recipients_dir nor data_dir is set",
+                        schedule.file,
+                    )
+                })?;
+            let path = PathBuf::from(dir).join(&schedule.file);
+            let list = BlockedRecipients::load(&path)?;
+            // A replacement fork cuts a schedule off; addresses past the cut would silently never
+            // be swept, so refuse the configuration outright.
+            if let Some(replaced_at) = schedule.replaced_at {
+                let last = last_blocked_block(schedule.start_height, list.count());
+                if last >= replaced_at {
+                    return Err(anyhow!(
+                        "{} sweeps until block {last} but is replaced by a fork at {replaced_at}",
+                        schedule.file,
+                    ));
+                }
+            }
+            info!(
+                count = list.count(),
+                start_height = schedule.start_height,
+                path = %path.display(),
+                "opened blocked recipient list"
+            );
+            blocked_recipients.insert(schedule.file, list);
+        }
+
         let mut consensus = Consensus {
             secret_key,
             config,
@@ -424,6 +473,7 @@ impl Consensus {
             force_view: None,
             in_committee: true,
             prune_period,
+            blocked_recipients,
         };
 
         // If we're at genesis, add the genesis block and return
@@ -2150,6 +2200,22 @@ impl Consensus {
         txn: VerifiedTransaction,
         from_broadcast: bool,
     ) -> Result<TxAddResult> {
+        // Refuse legacy Zilliqa transactions at every ingress point - RPC, gossip and injection all
+        // funnel through here - once the fork that stops executing them is active. Without this
+        // they would sit in the pool until proposal time and be dropped one at a time.
+        if matches!(txn.tx, SignedTransaction::Zilliqa { .. })
+            && self
+                .state
+                .forks
+                .get(self.get_highest_canonical_block_number())
+                .disable_zilliqa_txn_execution
+        {
+            debug!("Rejecting Zilliqa transaction {:?}", txn.hash);
+            return Ok(TxAddResult::ValidationFailed(
+                ValidationOutcome::ZilliqaTransactionsDisabled,
+            ));
+        }
+
         if self.db.contains_transaction(&txn.hash)? {
             debug!("Transaction {:?} already in mempool", txn.hash);
             return Ok(TxAddResult::Duplicate(txn.hash));
@@ -3726,6 +3792,38 @@ impl Consensus {
                     a.code = code.clone();
                     Ok(())
                 })?;
+            }
+        }
+
+        // Patch account as blocked recipient and move its funds to give destination address
+        if fork.blocked_recipients_start_height != 0 {
+            let blocked = self
+                .blocked_recipients
+                .get(&fork.blocked_recipients_file)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "blocked recipient list {} was not loaded at startup",
+                        fork.blocked_recipients_file,
+                    )
+                })?;
+            for (address, destination) in
+                blocked.batch(fork.blocked_recipients_start_height, block.header.number)?
+            {
+                let swept = state.mutate_account(address, |account| {
+                    let balance = account.balance;
+                    account.balance = 0;
+                    account.nonce = BLOCKED_NONCE_FLOOR;
+                    Ok(balance)
+                })?;
+
+                if swept != 0 {
+                    state.mutate_account(destination, |account| {
+                        account.balance = account.balance.checked_add(swept).ok_or_else(|| {
+                            anyhow!("balance overflow sweeping {swept} to {destination}")
+                        })?;
+                        Ok(())
+                    })?;
+                }
             }
         }
 
