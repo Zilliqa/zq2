@@ -1,3 +1,4 @@
 @openzeppelin/contracts/=vendor/openzeppelin-contracts/contracts/
 @openzeppelin/lib/=vendor/openzeppelin-contracts/lib/
 @openzeppelin/contracts-upgradeable/=vendor/openzeppelin-contracts-upgradeable/contracts/
+solady/=vendor/solady/
