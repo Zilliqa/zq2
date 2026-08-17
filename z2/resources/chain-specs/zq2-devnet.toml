@@ -9,6 +9,7 @@ bootstrap_address = [
 eth_chain_id = 33469
 allowed_timestamp_skew = { secs = 60, nanos = 0 }
 data_dir = "/data"
+blocked_recipients_dir = "/blocked_recipients"
 consensus.genesis_accounts = [ ["0xe4e8c170f79c8e155e3680fca3ff34a7f9d4001d", "900_000_000_000_000_000_000_000_000" ] ]
 consensus.genesis_deposits = [
   [
@@ -50,5 +51,12 @@ consensus.eth_block_gas_limit = 84000000
 consensus.gas_price = "4_761_904_800_000"
 consensus.contract_upgrades = { deposit_v5 = { height = 0, reinitialise_params = { withdrawal_period = 300 } }, deposit_v6 = { height = 0 }, deposit_v7 = { height = 0 }, deposit_v8 = { height = 0 } }
 consensus.new_view_broadcast_interval = { secs = 30, nanos = 0 }
+
+# No genesis_fork is inlined here, so these layer on `zilliqa::cfg::genesis_fork_default()`.
+# 10800 = 3600 blocks/hour x 3, i.e. ~3 hours after a from-genesis deployment.
+# Mirrors `Chain::Zq2Devnet` in z2/src/chain.rs `get_forks()`.
+consensus.forks = [
+    { at_height = 10800, blocked_recipients_start_height = 10800, blocked_recipients_file = "blocked_recipients_001.bin" },
+]
 
 api_servers = [{ default_quota = { balance = 500, period = 1 }, port = 4201, enabled_apis = [{ namespace = "eth", apis = ["blockNumber"] }] }, { port = 4202, enabled_apis = ["admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] }]

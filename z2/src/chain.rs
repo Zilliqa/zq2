@@ -489,6 +489,11 @@ impl Chain {
                 }),
                 json!({ "at_height": 31759109, "disable_zilliqa_txn_execution": true }),
             ]),
+            Chain::Zq2Devnet => Some(vec![json!({
+                "at_height": 10800,
+                "blocked_recipients_start_height": 10800,
+                "blocked_recipients_file": "blocked_recipients_001.bin",
+            })]),
             _ => None,
         }
     }

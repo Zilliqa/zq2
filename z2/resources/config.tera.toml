@@ -6,6 +6,9 @@ bootstrap_address = {{ bootstrap_address }}
 eth_chain_id = {{ eth_chain_id }}
 allowed_timestamp_skew = { secs = 60, nanos = 0 }
 data_dir = "/data"
+# Baked into the image by the Dockerfile; deliberately not under /data, which the runtime
+# volume mount shadows.
+blocked_recipients_dir = "/blocked_recipients"
 consensus.genesis_accounts = [ ["{{ genesis_address }}", "{{ genesis_amount }}" ] ]
 consensus.genesis_deposits = {{ genesis_deposits }}
 {%- if staker_withdrawal_period %}
