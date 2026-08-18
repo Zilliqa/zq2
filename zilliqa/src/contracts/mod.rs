@@ -2,6 +2,32 @@ use alloy::hex;
 pub use deposit_v8 as deposit;
 use serde_json::Value;
 
+pub mod escrow_init {
+    use ethabi::{Constructor, Function};
+    use once_cell::sync::Lazy;
+
+    use super::{COMPILED_ESCROW, Contract, contract_from};
+
+    static CONTRACT: Lazy<Contract> = Lazy::new(|| {
+        contract_from(
+            COMPILED_ESCROW,
+            "src/contracts/escrow/escrow_v1.sol",
+            "EscrowInit",
+        )
+    });
+    pub static CONSTRUCTOR: Lazy<Constructor> =
+        Lazy::new(|| CONTRACT.abi.constructor().unwrap().clone());
+    pub static INITIALIZE: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("initialize").unwrap().clone());
+    pub static UPGRADE_TO_AND_CALL: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("upgradeToAndCall").unwrap().clone());
+    pub static VERSION: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("version").unwrap().clone());
+    pub static ACCEPT: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("accept").unwrap().clone());
+    pub static BYTECODE: Lazy<Vec<u8>> = Lazy::new(|| CONTRACT.bytecode.clone());
+}
+
 pub mod deposit_init {
     use ethabi::{Constructor, Function};
     use once_cell::sync::Lazy;
@@ -524,6 +550,7 @@ pub mod eip1967_proxy {
 
 const COMPILED: &str = include_str!("compiled_legacy.json");
 const COMPILED_DEPOSIT_V8: &str = include_str!("compiled_deposit_v8.json");
+const COMPILED_ESCROW: &str = include_str!("compiled_escrow.json");
 
 fn contract(src: &str, name: &str) -> Contract {
     contract_from(COMPILED, src, name)
@@ -688,6 +715,29 @@ mod tests {
                 "src/contracts/utils/deque_v2.sol",
             ],
             "compiled_deposit_v8.json",
+        );
+    }
+
+    /// Compiles escrow into compiled_escrow.json. Run with:
+    /// ```sh
+    /// ZQ_COMPILE_CONTRACTS=escrow ZQ_CONTRACT_TEST_BLESS=1 cargo test --features test_contract_bytecode -- contracts::tests::compile_escrow
+    /// ```
+    #[test]
+    #[cfg_attr(not(feature = "test_contract_bytecode"), ignore)]
+    fn compile_escrow() {
+        if !should_compile("escrow") {
+            eprintln!(
+                "Skipping escrow compilation (set ZQ_COMPILE_CONTRACTS=escrow or ZQ_COMPILE_CONTRACTS=all)"
+            );
+            return;
+        }
+
+        compile_and_check(
+            &[
+                "src/contracts/escrow/escrow_v1.sol",
+                "src/contracts/escrow/verifier.sol",
+            ],
+            "compiled_escrow.json",
         );
     }
 }

@@ -171,6 +171,9 @@ impl State {
         let block_header = BlockHeader::genesis(Hash::ZERO);
         state.upgrade_deposit_contract(block_header, deposit_contract, None)?;
 
+        // Check for deploying and upgrades of escrow contracts
+        state.escrow_deploy_and_upgrade(&config.consensus, &block_header)?;
+
         // Check if any contracts are to be upgraded from genesis
         state.contract_upgrade_apply_state_change(&config.consensus, block_header)?;
 
@@ -272,6 +275,36 @@ impl State {
             )?;
         }
         Ok(())
+    }
+
+    /// Deploys/Upgrade the Escrow contract at configured height
+    pub fn escrow_deploy_and_upgrade(
+        &mut self,
+        _config: &ConsensusConfig,
+        _block_header: &BlockHeader,
+    ) -> Result<()> {
+        // FIXME: check config and deploy only at specific height.
+        self.deploy_initial_escrow_contract()?;
+        Ok(())
+    }
+
+    fn deploy_initial_escrow_contract(&mut self) -> Result<Address> {
+        let escrow_impl =
+            self.force_deploy_contract_evm(contracts::escrow_init::BYTECODE.to_vec(), None, 0)?;
+        let eip1967_constructor_data = contracts::eip1967_proxy::CONSTRUCTOR.encode_input(
+            contracts::eip1967_proxy::BYTECODE.to_vec(),
+            &[
+                Token::Address(ethabi::Address::from(escrow_impl.into_array())),
+                Token::Bytes(vec![]),
+            ],
+        )?;
+        let eip1967_addr = self.force_deploy_contract_evm(
+            eip1967_constructor_data,
+            Some(contract_addr::ESCROW_PROXY),
+            0,
+        )?;
+        debug!("Deployed Escrow to {escrow_impl}@{eip1967_addr}",);
+        Ok(escrow_impl)
     }
 
     /// Deploy DepositInit contract (deposit_v1.sol)
@@ -519,6 +552,8 @@ pub mod contract_addr {
     pub const SHARD_REGISTRY: Address = Address::new(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0ZQSHARD");
     /// Address of EIP 1967 proxy for Deposit contract
     pub const DEPOSIT_PROXY: Address = Address::new(*b"\0\0\0\0\0ZILDEPOSITPROXY");
+    /// ADdress of EIP 1967 proxy for Escrow contract
+    pub const ESCROW_PROXY: Address = Address::new(*b"\0\0\0\0\0ZIL1ESCROWPROXY");
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
