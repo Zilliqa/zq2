@@ -158,7 +158,8 @@ fn state_rpc_limit_default() -> usize {
 }
 
 fn max_rpc_response_size_default() -> u32 {
-    10 * 1024 * 1024
+    // jsonrpsee only accepts a u32 for this limit, so u32::MAX is the closest thing to "unlimited".
+    u32::MAX
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
