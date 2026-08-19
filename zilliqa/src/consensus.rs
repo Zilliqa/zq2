@@ -3829,6 +3829,7 @@ impl Consensus {
 
         if self.block_is_first_in_epoch(block.header.number) {
             // Update state with any contract upgrades for this block
+            state.escrow_deploy_and_upgrade(&self.config.consensus, &block.header)?;
             state.contract_upgrade_apply_state_change(&self.config.consensus, block.header)?;
         }
 
