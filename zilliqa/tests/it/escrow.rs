@@ -1,11 +1,15 @@
-use crate::Network;
-use alloy::network::TransactionBuilder;
-use alloy::primitives::{Address, U256, address};
-use alloy::providers::{Provider, WalletProvider};
-use alloy::rpc::types::TransactionRequest;
-use alloy::{hex, sol};
+use alloy::{
+    hex,
+    network::TransactionBuilder,
+    primitives::{Address, U256, address},
+    providers::{Provider, WalletProvider},
+    rpc::types::TransactionRequest,
+    sol,
+};
 use k256::ecdsa::SigningKey;
 use zilliqa::state::contract_addr::ESCROW_PROXY;
+
+use crate::Network;
 
 // Precomputed dummy values
 const PRIVATE_KEY: &str = "0x4b288f64cd9e4f3e6f85b385aad3808821bbf1c8c8f8fa91ae090977e87c359b";

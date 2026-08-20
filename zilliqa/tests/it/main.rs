@@ -33,7 +33,10 @@ use jsonrpsee::types::Request;
 use serde_json::value::{RawValue, Value};
 use tower::Service;
 use zilliqa::{
-    cfg::{ApiLimits, DbConfig, max_missed_view_age_default, new_view_broadcast_interval_default},
+    cfg::{
+        ApiLimits, DbConfig, EscrowUpgrades, EscrowUpgradesConfig, max_missed_view_age_default,
+        new_view_broadcast_interval_default,
+    },
     contracts,
     crypto::NodePublicKey,
     db::BlockFilter,
@@ -436,6 +439,9 @@ impl Network {
                     ..genesis_fork_default()
                 },
                 new_view_broadcast_interval: new_view_broadcast_interval_default(),
+                escrow_upgrades: EscrowUpgrades {
+                    escrow_v1: Some(EscrowUpgradesConfig { height: 0 }),
+                },
             },
             api_servers: vec![ApiServer {
                 port: 4201,
@@ -627,6 +633,9 @@ impl Network {
                     ..genesis_fork_default()
                 },
                 new_view_broadcast_interval: new_view_broadcast_interval_default(),
+                escrow_upgrades: EscrowUpgrades {
+                    escrow_v1: Some(EscrowUpgradesConfig { height: 0 }),
+                },
             },
             block_request_limit: block_request_limit_default(),
             sync: SyncConfig {

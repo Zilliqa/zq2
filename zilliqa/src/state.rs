@@ -280,11 +280,14 @@ impl State {
     /// Deploys/Upgrade the Escrow contract at configured height
     pub fn escrow_deploy_and_upgrade(
         &mut self,
-        _config: &ConsensusConfig,
-        _block_header: &BlockHeader,
+        config: &ConsensusConfig,
+        block_header: &BlockHeader,
     ) -> Result<()> {
-        // FIXME: check config and deploy only at specific height.
-        self.deploy_initial_escrow_contract()?;
+        if let Some(escrow_v1) = &config.escrow_upgrades.escrow_v1
+            && escrow_v1.height == block_header.number
+        {
+            self.deploy_initial_escrow_contract()?;
+        }
         Ok(())
     }
 
@@ -303,7 +306,7 @@ impl State {
             Some(contract_addr::ESCROW_PROXY),
             0,
         )?;
-        debug!("Deployed Escrow to {escrow_impl}@{eip1967_addr}",);
+        info!("Deployed Escrow to {escrow_impl}@{eip1967_addr}",);
         Ok(escrow_impl)
     }
 

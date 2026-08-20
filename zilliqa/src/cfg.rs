@@ -600,6 +600,9 @@ pub struct ConsensusConfig {
     /// Defaut of 0 means never broadcast
     #[serde(default = "new_view_broadcast_interval_default")]
     pub new_view_broadcast_interval: Duration,
+    /// Manages initial deployment and subsequent upgrades for the Escrow migration contract.
+    #[serde(default)]
+    pub escrow_upgrades: EscrowUpgrades,
 }
 
 impl ConsensusConfig {
@@ -652,6 +655,7 @@ impl Default for ConsensusConfig {
             forks: vec![],
             genesis_fork: genesis_fork_default(),
             new_view_broadcast_interval: new_view_broadcast_interval_default(),
+            escrow_upgrades: Default::default(),
         }
     }
 }
@@ -1316,6 +1320,15 @@ impl Default for ReinitialiseParams {
             withdrawal_period: withdrawal_period_default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EscrowUpgrades {
+    pub escrow_v1: Option<EscrowUpgradesConfig>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EscrowUpgradesConfig {
+    pub height: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
