@@ -42,6 +42,7 @@ use zilliqa::{
 mod admin;
 mod consensus;
 mod debug;
+mod escrow;
 mod eth;
 mod ots;
 mod penalty;
