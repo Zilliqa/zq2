@@ -209,6 +209,7 @@ impl Chain {
                 "disable_zilliqa_txn_execution": false,
                 "blocked_recipients_start_height": 0,
                 "blocked_recipients_file": "",
+                "zil_transfers_only_to_escrow": false,
             })),
             Chain::Zq2Mainnet => Some(json!({
                 "at_height": 0,
@@ -258,6 +259,7 @@ impl Chain {
                 "disable_zilliqa_txn_execution": false,
                 "blocked_recipients_start_height": 0,
                 "blocked_recipients_file": "",
+                "zil_transfers_only_to_escrow": false,
             })),
             _ => None,
         }
@@ -489,11 +491,14 @@ impl Chain {
                 }),
                 json!({ "at_height": 31759109, "disable_zilliqa_txn_execution": true }),
             ]),
-            Chain::Zq2Devnet => Some(vec![json!({
-                "at_height": 10800,
-                "blocked_recipients_start_height": 10800,
-                "blocked_recipients_file": "blocked_recipients_001.bin",
-            })]),
+            Chain::Zq2Devnet => Some(vec![
+                json!({
+                    "at_height": 1000,
+                    "blocked_recipients_start_height": 1000,
+                    "blocked_recipients_file": "blocked_recipients_001.bin",
+                }),
+                json!({ "at_height": 1001, "zil_transfers_only_to_escrow": true }),
+            ]),
             _ => None,
         }
     }

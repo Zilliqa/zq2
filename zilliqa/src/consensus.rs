@@ -55,7 +55,7 @@ use crate::{
         PendingOrQueued, TransactionPool, TxAddResult, TxPoolContent, TxPoolContentFrom,
         TxPoolStatus,
     },
-    state::{Code, State},
+    state::{Code, State, contract_addr},
     static_hardfork_data::{
         XSGD_CODE, XSGD_MAINNET_ADDR, build_ignite_wallet_addr_scilla_code_map,
     },
@@ -2203,17 +2203,34 @@ impl Consensus {
         // Refuse legacy Zilliqa transactions at every ingress point - RPC, gossip and injection all
         // funnel through here - once the fork that stops executing them is active. Without this
         // they would sit in the pool until proposal time and be dropped one at a time.
-        if matches!(txn.tx, SignedTransaction::Zilliqa { .. })
-            && self
-                .state
-                .forks
-                .get(self.get_highest_canonical_block_number())
-                .disable_zilliqa_txn_execution
-        {
-            debug!("Rejecting Zilliqa transaction {:?}", txn.hash);
-            return Ok(TxAddResult::ValidationFailed(
-                ValidationOutcome::ZilliqaTransactionsDisabled,
-            ));
+        //
+        // `zil_transfers_only_to_escrow` takes priority over the disable flag: once active,
+        // Zilliqa transactions addressed to the escrow contract still reach block execution.
+        let fork = self
+            .state
+            .forks
+            .get(self.get_highest_canonical_block_number())
+            .clone();
+        if let SignedTransaction::Zilliqa { tx, .. } = &txn.tx {
+            if fork.zil_transfers_only_to_escrow {
+                // A doomed transaction still costs gas once it reaches block execution (see
+                // `State::apply_transaction`), but there is no reason to let it occupy the pool,
+                // gossip bandwidth or a block slot on its way there.
+                if tx.to_addr != contract_addr::ESCROW_PROXY {
+                    debug!(
+                        "Rejecting Zilliqa transaction {:?} not addressed to the escrow contract",
+                        txn.hash
+                    );
+                    return Ok(TxAddResult::ValidationFailed(
+                        ValidationOutcome::ZilliqaTransactionsMustTargetEscrow,
+                    ));
+                }
+            } else if fork.disable_zilliqa_txn_execution {
+                debug!("Rejecting Zilliqa transaction {:?}", txn.hash);
+                return Ok(TxAddResult::ValidationFailed(
+                    ValidationOutcome::ZilliqaTransactionsDisabled,
+                ));
+            }
         }
 
         if self.db.contains_transaction(&txn.hash)? {

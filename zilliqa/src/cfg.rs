@@ -860,11 +860,8 @@ pub struct Fork {
     pub allow_scilla_call_precompile_to_be_called_from_addresses: Vec<Address>,
     pub disable_zilliqa_txn_execution: bool,
     pub blocked_recipients_start_height: u64,
-    /// Name of the file listing the accounts swept from `blocked_recipients_start_height`,
-    /// resolved against the node's `blocked_recipients_dir`. Set together with the height: both
-    /// or neither. The name is part of the fork definition so several independent lists can be
-    /// activated by successive forks, each carrying its own file.
     pub blocked_recipients_file: String,
+    pub zil_transfers_only_to_escrow: bool,
 }
 
 pub enum ForkName {
@@ -1039,6 +1036,9 @@ pub struct ForkDelta {
     pub blocked_recipients_start_height: Option<u64>,
     /// The file holding the blocked recipients swept from that height
     pub blocked_recipients_file: Option<String>,
+    /// If true, legacy Zilliqa transactions are only permitted when addressed to the escrow
+    /// contract; see [`Fork::zil_transfers_only_to_escrow`].
+    pub zil_transfers_only_to_escrow: Option<bool>,
 }
 
 impl Fork {
@@ -1183,6 +1183,9 @@ impl Fork {
                 .blocked_recipients_file
                 .clone()
                 .unwrap_or_else(|| self.blocked_recipients_file.clone()),
+            zil_transfers_only_to_escrow: delta
+                .zil_transfers_only_to_escrow
+                .unwrap_or(self.zil_transfers_only_to_escrow),
         }
     }
 }
@@ -1297,6 +1300,7 @@ pub fn genesis_fork_default() -> Fork {
         disable_zilliqa_txn_execution: true,
         blocked_recipients_start_height: 0,
         blocked_recipients_file: String::new(),
+        zil_transfers_only_to_escrow: false,
     }
 }
 
@@ -1562,6 +1566,7 @@ mod tests {
                 disable_zilliqa_txn_execution: None,
                 blocked_recipients_start_height: None,
                 blocked_recipients_file: None,
+                zil_transfers_only_to_escrow: None,
             }],
             ..Default::default()
         };
@@ -1631,6 +1636,7 @@ mod tests {
                     disable_zilliqa_txn_execution: None,
                     blocked_recipients_start_height: None,
                     blocked_recipients_file: None,
+                    zil_transfers_only_to_escrow: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1680,6 +1686,7 @@ mod tests {
                     disable_zilliqa_txn_execution: None,
                     blocked_recipients_start_height: None,
                     blocked_recipients_file: None,
+                    zil_transfers_only_to_escrow: None,
                 },
             ],
             ..Default::default()
@@ -1766,6 +1773,7 @@ mod tests {
                     disable_zilliqa_txn_execution: None,
                     blocked_recipients_start_height: None,
                     blocked_recipients_file: None,
+                    zil_transfers_only_to_escrow: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1815,6 +1823,7 @@ mod tests {
                     disable_zilliqa_txn_execution: None,
                     blocked_recipients_start_height: None,
                     blocked_recipients_file: None,
+                    zil_transfers_only_to_escrow: None,
                 },
             ],
             ..Default::default()
@@ -1889,6 +1898,7 @@ mod tests {
                 disable_zilliqa_txn_execution: true,
                 blocked_recipients_start_height: 0,
                 blocked_recipients_file: String::new(),
+                zil_transfers_only_to_escrow: false,
             },
             forks: vec![],
             ..Default::default()
@@ -1951,6 +1961,7 @@ mod tests {
                     disable_zilliqa_txn_execution: None,
                     blocked_recipients_start_height: None,
                     blocked_recipients_file: None,
+                    zil_transfers_only_to_escrow: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -2000,6 +2011,7 @@ mod tests {
                     disable_zilliqa_txn_execution: None,
                     blocked_recipients_start_height: None,
                     blocked_recipients_file: None,
+                    zil_transfers_only_to_escrow: None,
                 },
             ],
             ..Default::default()

@@ -24,7 +24,8 @@ use zilliqa::{
         zil::GetTxResponse,
     },
     schnorr,
-    transaction::{EvmGas, ScillaGas},
+    state::contract_addr,
+    transaction::{EVM_GAS_PER_SCILLA_GAS, EvmGas, ScillaGas},
     zq1_proto::{Code, Data, Nonce, ProtoTransactionCoreInfo},
 };
 
@@ -787,6 +788,349 @@ async fn create_transaction(mut network: Network) {
     assert_eq!(
         balance_after,
         initial_balance_zil - gas_price * gas_limit - amount
+    );
+}
+
+/// Once `zil_transfers_only_to_escrow` is active, `CreateTransaction` still works - but only when
+/// addressed to the escrow contract, which redirects the deposit into a `lodge()` call rather than
+/// a plain transfer (the contract has no `receive()`, so a plain transfer would revert). Every
+/// other legacy Zilliqa test in this file submits to an arbitrary address and is `#[ignore]`d for
+/// exactly that reason: once this fork is active, those transactions are rejected. See
+/// `zilliqa::exec::tests` for the block-execution-level coverage of both the escrow-success and
+/// the reject-and-still-charge-gas cases.
+#[zilliqa_macros::test(zil_transfers_only_to_escrow)]
+async fn create_transaction_to_escrow_succeeds(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
+
+    let escrow_addr = contract_addr::ESCROW_PROXY;
+    let amount = 1_000_000_000u128; // raw ZilAmount units (10^-12 ZIL)
+
+    let (_, txn_response) = send_transaction(
+        &mut network,
+        &wallet,
+        &secret_key,
+        1,
+        ToAddr::Address(H160::from_slice(escrow_addr.as_slice())),
+        amount,
+        // The wallet-standard plain-transfer gas limit. `lodge()` really costs more, but it runs
+        // with the whole block gas limit available while the sender is charged a flat
+        // `SCILLA_TRANSFER` fee - so the limit every existing ZQ1 wallet sends must work.
+        50,
+        None,
+        None,
+    )
+    .await;
+
+    // `send_transaction` already asserts the receipt succeeded. Confirm it was actually redirected
+    // into `lodge()` - not just that some call to the proxy succeeded - via the escrow contract's
+    // own `Deposited(address indexed from, uint256 amount)` event: `lodge()` records the deposit
+    // rather than keeping the value as the proxy's own native balance, so that event is the real
+    // signal of success here.
+    let txn_hash: H256 = txn_response["ID"].as_str().unwrap().parse().unwrap();
+    let eth_receipt = map_eth_receipt(&wallet, TxHash::from_slice(txn_hash.as_bytes())).await;
+
+    let deposited_log = eth_receipt
+        .logs
+        .iter()
+        .find(|log| log.address == escrow_addr)
+        .expect("the escrow contract must emit a Deposited log");
+    assert_eq!(
+        Address::from_slice(&deposited_log.topics[1][12..]),
+        address,
+        "Deposited.from must be the signer"
+    );
+    assert_eq!(
+        U256::from_be_slice(&deposited_log.data),
+        U256::from(amount * 10u128.pow(6)),
+        "Deposited.amount must be the transferred value"
+    );
+}
+
+/// The flat fee (in Wei) charged for any legacy Zilliqa transaction under the escrow fork:
+/// `SCILLA_TRANSFER` (50 ScillaGas = 21,000 EVM gas) at the network's minimum gas price
+/// (Qa per ScillaGas), converted the way the node prices it per EVM gas.
+async fn escrow_flat_fee(wallet: &Wallet) -> u128 {
+    let gas_price: String = wallet
+        .client()
+        .request("GetMinimumGasPrice", ())
+        .await
+        .unwrap();
+    let gas_price: u128 = gas_price.parse().unwrap();
+    21_000 * (gas_price * 10u128.pow(6) / EVM_GAS_PER_SCILLA_GAS as u128)
+}
+
+#[zilliqa_macros::test(zil_transfers_only_to_escrow)]
+async fn escrow_deposit_wallet_standard_gas_charges_flat_fee(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
+
+    let escrow_addr = contract_addr::ESCROW_PROXY;
+    let amount = 1_000_000_000u128; // raw ZilAmount units (10^-12 ZIL)
+    let flat_fee = escrow_flat_fee(&wallet).await;
+    let balance_before = wallet.get_balance(address).await.unwrap().to::<u128>();
+
+    // ZQ1 wallets send plain transfers with ScillaGas(50) - exactly 21,000 EVM gas, less than
+    // `lodge()` really uses. The deposit must still lodge, charged at the flat fee.
+    let (_, txn_response) = send_transaction(
+        &mut network,
+        &wallet,
+        &secret_key,
+        1,
+        ToAddr::Address(H160::from_slice(escrow_addr.as_slice())),
+        amount,
+        50,
+        None,
+        None,
+    )
+    .await;
+
+    let txn_hash: H256 = txn_response["ID"].as_str().unwrap().parse().unwrap();
+    let eth_receipt = map_eth_receipt(&wallet, TxHash::from_slice(txn_hash.as_bytes())).await;
+    assert_eq!(
+        eth_receipt.gas_used,
+        EvmGas(21_000),
+        "the receipt must show the flat fee's gas, not the real usage"
+    );
+    assert_eq!(
+        wallet.get_balance(address).await.unwrap().to::<u128>(),
+        balance_before - amount * 10u128.pow(6) - flat_fee,
+        "exactly amount + the flat transfer fee must be charged"
+    );
+    assert_eq!(
+        wallet.get_balance(escrow_addr).await.unwrap().to::<u128>(),
+        amount * 10u128.pow(6),
+        "the deposited value must land on the escrow contract"
+    );
+}
+
+#[zilliqa_macros::test(zil_transfers_only_to_escrow)]
+async fn escrow_deposit_sweeps_entire_balance(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
+
+    let escrow_addr = contract_addr::ESCROW_PROXY;
+    let flat_fee = escrow_flat_fee(&wallet).await;
+    let balance = wallet.get_balance(address).await.unwrap().to::<u128>();
+
+    // The migration case: deposit everything, keeping back only the standard transfer fee. The
+    // amount is expressed in Qa, so up to one Qa of Wei dust may be left over.
+    let amount = (balance - flat_fee) / 10u128.pow(6);
+
+    send_transaction(
+        &mut network,
+        &wallet,
+        &secret_key,
+        1,
+        ToAddr::Address(H160::from_slice(escrow_addr.as_slice())),
+        amount,
+        50,
+        None,
+        None,
+    )
+    .await;
+
+    let remaining = wallet.get_balance(address).await.unwrap().to::<u128>();
+    assert_eq!(remaining, balance - amount * 10u128.pow(6) - flat_fee);
+    assert!(
+        remaining < 10u128.pow(6),
+        "no more than one Qa of dust may stay behind, got {remaining}"
+    );
+    assert_eq!(
+        wallet.get_balance(escrow_addr).await.unwrap().to::<u128>(),
+        amount * 10u128.pow(6)
+    );
+}
+
+#[zilliqa_macros::test(zil_transfers_only_to_escrow)]
+async fn escrow_deposit_nonce_reuse_is_rejected(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
+
+    let escrow_addr = contract_addr::ESCROW_PROXY;
+    let amount = 1_000_000_000u128;
+    let flat_fee = escrow_flat_fee(&wallet).await;
+    let balance_before = wallet.get_balance(address).await.unwrap().to::<u128>();
+
+    send_transaction(
+        &mut network,
+        &wallet,
+        &secret_key,
+        1,
+        ToAddr::Address(H160::from_slice(escrow_addr.as_slice())),
+        amount,
+        50,
+        None,
+        None,
+    )
+    .await;
+
+    // A second deposit reusing the consumed nonce must be rejected outright, whatever it
+    // claims to deposit.
+    let gas_price: String = wallet
+        .client()
+        .request("GetMinimumGasPrice", ())
+        .await
+        .unwrap();
+    let public_key = secret_key.public_key();
+    let replay = issue_create_transaction(
+        &wallet,
+        &public_key,
+        gas_price.parse().unwrap(),
+        &mut network,
+        &secret_key,
+        1,
+        ToAddr::Address(H160::from_slice(escrow_addr.as_slice())),
+        2 * amount,
+        50,
+        None,
+        None,
+    )
+    .await;
+
+    assert!(replay.is_err(), "nonce reuse must be rejected: {replay:?}");
+    assert_eq!(
+        wallet.get_balance(escrow_addr).await.unwrap().to::<u128>(),
+        amount * 10u128.pow(6),
+        "the value must not be lodged twice"
+    );
+    assert_eq!(
+        wallet.get_balance(address).await.unwrap().to::<u128>(),
+        balance_before - amount * 10u128.pow(6) - flat_fee
+    );
+}
+
+#[zilliqa_macros::test(zil_transfers_only_to_escrow)]
+async fn escrow_deposit_with_crafted_data_still_only_lodges(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
+
+    let escrow_addr = contract_addr::ESCROW_PROXY;
+    let amount = 1_000_000_000u128;
+    let flat_fee = escrow_flat_fee(&wallet).await;
+    let balance_before = wallet.get_balance(address).await.unwrap().to::<u128>();
+
+    // A cheater cannot pick the function: whatever `data` claims, the payload is rewritten to
+    // `lodge()` before execution.
+    let (_, txn_response) = send_transaction(
+        &mut network,
+        &wallet,
+        &secret_key,
+        1,
+        ToAddr::Address(H160::from_slice(escrow_addr.as_slice())),
+        amount,
+        50,
+        None,
+        Some(r#"{"_tag": "upgradeToAndCall", "params": []}"#),
+    )
+    .await;
+
+    let txn_hash: H256 = txn_response["ID"].as_str().unwrap().parse().unwrap();
+    let eth_receipt = map_eth_receipt(&wallet, TxHash::from_slice(txn_hash.as_bytes())).await;
+    let deposited_log = eth_receipt
+        .logs
+        .iter()
+        .find(|log| log.address == escrow_addr)
+        .expect("the deposit must be lodged as usual");
+    assert_eq!(
+        U256::from_be_slice(&deposited_log.data),
+        U256::from(amount * 10u128.pow(6))
+    );
+    assert_eq!(
+        wallet.get_balance(address).await.unwrap().to::<u128>(),
+        balance_before - amount * 10u128.pow(6) - flat_fee,
+        "only amount + the flat fee may be charged, exactly as for a plain deposit"
+    );
+}
+
+#[zilliqa_macros::test(zil_transfers_only_to_escrow)]
+async fn escrow_deposit_below_standard_gas_is_rejected(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
+
+    let gas_price: String = wallet
+        .client()
+        .request("GetMinimumGasPrice", ())
+        .await
+        .unwrap();
+    let public_key = secret_key.public_key();
+    let response = issue_create_transaction(
+        &wallet,
+        &public_key,
+        gas_price.parse().unwrap(),
+        &mut network,
+        &secret_key,
+        1,
+        ToAddr::Address(H160::from_slice(contract_addr::ESCROW_PROXY.as_slice())),
+        1_000_000_000u128,
+        49,
+        None,
+        None,
+    )
+    .await;
+
+    assert!(
+        response.is_err(),
+        "a gas limit below the standard transfer's 50 must be rejected: {response:?}"
+    );
+    assert_eq!(
+        wallet.get_balance(address).await.unwrap().to::<u128>(),
+        1000 * 10u128.pow(18),
+        "nothing may be charged for a rejected transaction"
+    );
+}
+
+#[zilliqa_macros::test(zil_transfers_only_to_escrow)]
+async fn escrow_deposit_without_fee_coverage_is_never_mined(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
+
+    let escrow_addr = contract_addr::ESCROW_PROXY;
+    let flat_fee = escrow_flat_fee(&wallet).await;
+    let balance = wallet.get_balance(address).await.unwrap().to::<u128>();
+
+    // One Qa more than the fee leaves room for: admission only requires fee coverage, so the
+    // pool accepts it, but the amount + fee check at execution drops it from every block -
+    // no receipt, nothing charged.
+    let amount = (balance - flat_fee) / 10u128.pow(6) + 1;
+
+    let gas_price: String = wallet
+        .client()
+        .request("GetMinimumGasPrice", ())
+        .await
+        .unwrap();
+    let public_key = secret_key.public_key();
+    let response = issue_create_transaction(
+        &wallet,
+        &public_key,
+        gas_price.parse().unwrap(),
+        &mut network,
+        &secret_key,
+        1,
+        ToAddr::Address(H160::from_slice(escrow_addr.as_slice())),
+        amount,
+        50,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let txn_hash: H256 = response["TranID"].as_str().unwrap().parse().unwrap();
+
+    let current = wallet.get_block_number().await.unwrap();
+    network.run_until_block(&wallet, current + 4, 400).await;
+
+    let mined: Result<GetTxResponse, _> =
+        wallet.client().request("GetTransaction", [txn_hash]).await;
+    assert!(mined.is_err(), "the deposit must never be mined");
+    assert_eq!(
+        wallet.get_balance(address).await.unwrap().to::<u128>(),
+        balance,
+        "nothing may be charged for a dropped transaction"
+    );
+    assert_eq!(
+        wallet.get_balance(escrow_addr).await.unwrap().to::<u128>(),
+        0
     );
 }
 

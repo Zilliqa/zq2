@@ -87,6 +87,8 @@ pub enum ValidationOutcome {
     GasPriceTooHigh,
     /// Legacy Zilliqa transactions are no longer executed on this chain
     ZilliqaTransactionsDisabled,
+    /// Legacy Zilliqa transactions may only be addressed to the escrow contract
+    ZilliqaTransactionsMustTargetEscrow,
 }
 
 impl ValidationOutcome {
@@ -147,6 +149,10 @@ impl ValidationOutcome {
             Self::InvalidAmount => "Invalid amount".to_string(),
             Self::ZilliqaTransactionsDisabled => {
                 "Zilliqa transactions are no longer accepted".to_string()
+            }
+            Self::ZilliqaTransactionsMustTargetEscrow => {
+                "Zilliqa transactions are only accepted when addressed to the escrow contract"
+                    .to_string()
             }
         }
     }

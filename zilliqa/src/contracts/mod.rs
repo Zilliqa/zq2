@@ -25,6 +25,8 @@ pub mod escrow_init {
         Lazy::new(|| CONTRACT.abi.function("version").unwrap().clone());
     pub static ACCEPT: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("accept").unwrap().clone());
+    pub static LODGE: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("lodge").unwrap().clone());
     pub static BYTECODE: Lazy<Vec<u8>> = Lazy::new(|| CONTRACT.bytecode.clone());
 }
 

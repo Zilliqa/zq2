@@ -284,7 +284,16 @@ impl State {
         _block_header: &BlockHeader,
     ) -> Result<()> {
         // FIXME: check config and deploy only at specific height.
-        self.deploy_initial_escrow_contract()?;
+        // Redeploying replaces the proxy account outright - wiping its native balance and the
+        // lodged-deposit bookkeeping - so never deploy over an existing contract.
+        let deployed = self
+            .get_account(contract_addr::ESCROW_PROXY)?
+            .code
+            .evm_code()
+            .is_some_and(|code| !code.is_empty());
+        if !deployed {
+            self.deploy_initial_escrow_contract()?;
+        }
         Ok(())
     }
 

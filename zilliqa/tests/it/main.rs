@@ -285,6 +285,7 @@ struct Network {
     blocks_per_epoch: u64,
     deposit_v3_upgrade_block_height: Option<u64>,
     scilla_server_socket_directory: String,
+    zil_transfers_only_to_escrow: bool,
 }
 
 impl Network {
@@ -302,6 +303,7 @@ impl Network {
         blocks_per_epoch: u64,
         deposit_v3_upgrade_block_height: Option<u64>,
         scilla_server_socket_directory: String,
+        zil_transfers_only_to_escrow: bool,
     ) -> Network {
         Self::new_shard(
             rng,
@@ -316,6 +318,7 @@ impl Network {
             blocks_per_epoch,
             deposit_v3_upgrade_block_height,
             scilla_server_socket_directory,
+            zil_transfers_only_to_escrow,
         )
     }
 
@@ -333,6 +336,7 @@ impl Network {
         blocks_per_epoch: u64,
         deposit_v3_upgrade_block_height: Option<u64>,
         scilla_server_socket_directory: String,
+        zil_transfers_only_to_escrow: bool,
     ) -> Network {
         let mut signing_keys = keys.unwrap_or_else(|| {
             (0..nodes)
@@ -432,6 +436,8 @@ impl Network {
                         // Allow the *third* contract deployed by the genesis key to call `scilla_call` for free.
                         secret_key_to_address(&genesis_key).create(2),
                     ],
+                    zil_transfers_only_to_escrow,
+                    disable_zilliqa_txn_execution: !zil_transfers_only_to_escrow,
                     ..genesis_fork_default()
                 },
                 new_view_broadcast_interval: new_view_broadcast_interval_default(),
@@ -520,6 +526,7 @@ impl Network {
             scilla_stdlib_dir,
             deposit_v3_upgrade_block_height,
             scilla_server_socket_directory,
+            zil_transfers_only_to_escrow,
         }
     }
 
@@ -623,6 +630,8 @@ impl Network {
                         // Allow the *third* contract deployed by the genesis key to call `scilla_call` for free.
                         secret_key_to_address(&self.genesis_key).create(2),
                     ],
+                    zil_transfers_only_to_escrow: self.zil_transfers_only_to_escrow,
+                    disable_zilliqa_txn_execution: !self.zil_transfers_only_to_escrow,
                     ..genesis_fork_default()
                 },
                 new_view_broadcast_interval: new_view_broadcast_interval_default(),
@@ -1073,6 +1082,7 @@ impl Network {
                                     self.blocks_per_epoch,
                                     self.deposit_v3_upgrade_block_height,
                                     self.scilla_server_socket_directory.clone(),
+                                    self.zil_transfers_only_to_escrow,
                                 ),
                             );
                         }
