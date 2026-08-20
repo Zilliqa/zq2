@@ -2676,6 +2676,7 @@ mod tests {
         let mut config = NodeConfig::default();
         config.consensus.genesis_fork = Fork {
             zil_transfers_only_to_escrow: true,
+            deploy_escrow_contract_v1: true,
             disable_zilliqa_txn_execution: false,
             ..genesis_fork_default()
         };

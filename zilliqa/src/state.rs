@@ -18,7 +18,9 @@ use sha3::{Digest, Keccak256};
 use tracing::{debug, info};
 
 use crate::{
-    cfg::{Amount, ConsensusConfig, Forks, NodeConfig, ReinitialiseParams, ScillaExtLibsPath},
+    cfg::{
+        Amount, ConsensusConfig, ForkName, Forks, NodeConfig, ReinitialiseParams, ScillaExtLibsPath,
+    },
     contracts::{self, Contract},
     crypto::{self, Hash},
     db::{BlockFilter, Db},
@@ -277,21 +279,22 @@ impl State {
         Ok(())
     }
 
-    /// Deploys/Upgrade the Escrow contract at configured height
+    /// Deploys the Escrow contract exactly at the activation height of
+    /// `Fork::deploy_escrow_contract_v1`. Never at any other block: deploying again would
+    /// replace the proxy account outright, wiping its native balance and the lodged-deposit
+    /// bookkeeping.
     pub fn escrow_deploy_and_upgrade(
         &mut self,
         _config: &ConsensusConfig,
-        _block_header: &BlockHeader,
+        block_header: &BlockHeader,
     ) -> Result<()> {
-        // FIXME: check config and deploy only at specific height.
-        // Redeploying replaces the proxy account outright - wiping its native balance and the
-        // lodged-deposit bookkeeping - so never deploy over an existing contract.
-        let deployed = self
-            .get_account(contract_addr::ESCROW_PROXY)?
-            .code
-            .evm_code()
-            .is_some_and(|code| !code.is_empty());
-        if !deployed {
+        let Some(activation) = self
+            .forks
+            .find_height_fork_first_activated(ForkName::DeployEscrowContractV1)
+        else {
+            return Ok(());
+        };
+        if block_header.number == activation {
             self.deploy_initial_escrow_contract()?;
         }
         Ok(())

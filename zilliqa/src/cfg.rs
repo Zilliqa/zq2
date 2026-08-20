@@ -804,6 +804,7 @@ impl Forks {
                 ForkName::AllowScillaCallPrecompileToBeCalledFromAddresses => !fork
                     .allow_scilla_call_precompile_to_be_called_from_addresses
                     .is_empty(),
+                ForkName::DeployEscrowContractV1 => fork.deploy_escrow_contract_v1,
             } {
                 return Some(fork.at_height);
             }
@@ -862,6 +863,10 @@ pub struct Fork {
     pub blocked_recipients_start_height: u64,
     pub blocked_recipients_file: String,
     pub zil_transfers_only_to_escrow: bool,
+    /// Deploys the escrow contract (implementation plus its EIP-1967 proxy at
+    /// `contract_addr::ESCROW_PROXY`) exactly at this fork's activation height. Must activate
+    /// before [`Fork::zil_transfers_only_to_escrow`], which needs the contract in place.
+    pub deploy_escrow_contract_v1: bool,
 }
 
 pub enum ForkName {
@@ -894,6 +899,7 @@ pub enum ForkName {
     DisableInteropNativeZilTransfers0,
     TightenPrecompileRules,
     AllowScillaCallPrecompileToBeCalledFromAddresses,
+    DeployEscrowContractV1,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1039,6 +1045,9 @@ pub struct ForkDelta {
     /// If true, legacy Zilliqa transactions are only permitted when addressed to the escrow
     /// contract; see [`Fork::zil_transfers_only_to_escrow`].
     pub zil_transfers_only_to_escrow: Option<bool>,
+    /// Deploys the escrow contract at this fork's activation height; see
+    /// [`Fork::deploy_escrow_contract_v1`].
+    pub deploy_escrow_contract_v1: Option<bool>,
 }
 
 impl Fork {
@@ -1186,6 +1195,9 @@ impl Fork {
             zil_transfers_only_to_escrow: delta
                 .zil_transfers_only_to_escrow
                 .unwrap_or(self.zil_transfers_only_to_escrow),
+            deploy_escrow_contract_v1: delta
+                .deploy_escrow_contract_v1
+                .unwrap_or(self.deploy_escrow_contract_v1),
         }
     }
 }
@@ -1301,6 +1313,7 @@ pub fn genesis_fork_default() -> Fork {
         blocked_recipients_start_height: 0,
         blocked_recipients_file: String::new(),
         zil_transfers_only_to_escrow: false,
+        deploy_escrow_contract_v1: false,
     }
 }
 
@@ -1567,6 +1580,7 @@ mod tests {
                 blocked_recipients_start_height: None,
                 blocked_recipients_file: None,
                 zil_transfers_only_to_escrow: None,
+                deploy_escrow_contract_v1: None,
             }],
             ..Default::default()
         };
@@ -1637,6 +1651,7 @@ mod tests {
                     blocked_recipients_start_height: None,
                     blocked_recipients_file: None,
                     zil_transfers_only_to_escrow: None,
+                    deploy_escrow_contract_v1: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1687,6 +1702,7 @@ mod tests {
                     blocked_recipients_start_height: None,
                     blocked_recipients_file: None,
                     zil_transfers_only_to_escrow: None,
+                    deploy_escrow_contract_v1: None,
                 },
             ],
             ..Default::default()
@@ -1774,6 +1790,7 @@ mod tests {
                     blocked_recipients_start_height: None,
                     blocked_recipients_file: None,
                     zil_transfers_only_to_escrow: None,
+                    deploy_escrow_contract_v1: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1824,6 +1841,7 @@ mod tests {
                     blocked_recipients_start_height: None,
                     blocked_recipients_file: None,
                     zil_transfers_only_to_escrow: None,
+                    deploy_escrow_contract_v1: None,
                 },
             ],
             ..Default::default()
@@ -1899,6 +1917,7 @@ mod tests {
                 blocked_recipients_start_height: 0,
                 blocked_recipients_file: String::new(),
                 zil_transfers_only_to_escrow: false,
+                deploy_escrow_contract_v1: false,
             },
             forks: vec![],
             ..Default::default()
@@ -1962,6 +1981,7 @@ mod tests {
                     blocked_recipients_start_height: None,
                     blocked_recipients_file: None,
                     zil_transfers_only_to_escrow: None,
+                    deploy_escrow_contract_v1: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -2012,6 +2032,7 @@ mod tests {
                     blocked_recipients_start_height: None,
                     blocked_recipients_file: None,
                     zil_transfers_only_to_escrow: None,
+                    deploy_escrow_contract_v1: None,
                 },
             ],
             ..Default::default()

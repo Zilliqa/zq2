@@ -438,6 +438,8 @@ impl Network {
                         secret_key_to_address(&genesis_key).create(2),
                     ],
                     zil_transfers_only_to_escrow,
+                    // Test chains always carry the escrow contract from genesis.
+                    deploy_escrow_contract_v1: true,
                     disable_zilliqa_txn_execution: !zil_transfers_only_to_escrow,
                     ..genesis_fork_default()
                 },
@@ -632,6 +634,8 @@ impl Network {
                         secret_key_to_address(&self.genesis_key).create(2),
                     ],
                     zil_transfers_only_to_escrow: self.zil_transfers_only_to_escrow,
+                    // Test chains always carry the escrow contract from genesis.
+                    deploy_escrow_contract_v1: true,
                     disable_zilliqa_txn_execution: !self.zil_transfers_only_to_escrow,
                     ..genesis_fork_default()
                 },

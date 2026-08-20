@@ -53,10 +53,11 @@ consensus.contract_upgrades = { deposit_v5 = { height = 0, reinitialise_params =
 consensus.new_view_broadcast_interval = { secs = 30, nanos = 0 }
 
 # No genesis_fork is inlined here, so these layer on `zilliqa::cfg::genesis_fork_default()`.
-# 10800 = 3600 blocks/hour x 3, i.e. ~3 hours after a from-genesis deployment.
+# 1000 blocks = ~17 minutes at 3600 blocks/hour after a from-genesis deployment.
 # Mirrors `Chain::Zq2Devnet` in z2/src/chain.rs `get_forks()`.
 consensus.forks = [
-    { at_height = 10800, blocked_recipients_start_height = 10800, blocked_recipients_file = "blocked_recipients_001.bin" },
+    { at_height = 1000, blocked_recipients_start_height = 1000, blocked_recipients_file = "blocked_recipients_001.bin", deploy_escrow_contract_v1 = true },
+    { at_height = 1001, zil_transfers_only_to_escrow = true },
 ]
 
 api_servers = [{ default_quota = { balance = 500, period = 1 }, port = 4201, enabled_apis = [{ namespace = "eth", apis = ["blockNumber"] }] }, { port = 4202, enabled_apis = ["admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] }]
