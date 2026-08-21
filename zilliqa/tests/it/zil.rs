@@ -43,8 +43,17 @@ pub async fn zilliqa_account_with_funds(
     wallet: &Wallet,
     funds: u128,
 ) -> (schnorr::SecretKey, Address) {
-    // Generate a Zilliqa account.
     let secret_key = schnorr::SecretKey::random(network.rng.lock().unwrap().deref_mut());
+    zilliqa_account_with_funds_inner(network, wallet, funds, secret_key).await
+}
+
+pub async fn zilliqa_account_with_funds_inner(
+    network: &mut Network,
+    wallet: &Wallet,
+    funds: u128,
+    secret_key: schnorr::SecretKey,
+) -> (schnorr::SecretKey, Address) {
+    // Generate a Zilliqa account.
     let public_key = secret_key.public_key();
     let hashed = Sha256::digest(public_key.to_encoded_point(true).as_bytes());
     let address = Address::from_slice(&hashed[12..]);
@@ -92,7 +101,7 @@ pub async fn zilliqa_account_with_funds(
     (secret_key, address)
 }
 
-enum ToAddr {
+pub(crate) enum ToAddr {
     Address(H160),
     StringVal(String),
 }
@@ -106,7 +115,7 @@ fn get_random_address(_network: &mut Network) -> Address {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn issue_create_transaction(
+pub(crate) async fn issue_create_transaction(
     wallet: &Wallet,
     public_key: &PublicKey,
     gas_price: u128,

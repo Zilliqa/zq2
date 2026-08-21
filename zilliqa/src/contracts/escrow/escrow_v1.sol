@@ -79,7 +79,7 @@ contract EscrowInit is UUPSUpgradeable, Groth16Verifier {
 
         address srcAddress = address(uint160(pubSignals[0]));
         uint256 amount = $.balances[srcAddress];
-        // require(amount > 0, "No balance lodged");
+        require(amount > 0, "No balance lodged");
 
         // Verify ZKP
         bool verify = verifyProof(pA, pB, pC, pubSignals);
