@@ -301,6 +301,15 @@ fn extract_signer_address(key: &schnorr::PublicKey) -> Address {
 
 // CreateTransaction
 fn create_transaction(params: Params, node: &Arc<Node>) -> Result<CreateTransactionResponse> {
+    let forks = node.config.consensus.get_forks()?;
+    if !forks.get(node.number()).zil_transfers_only_to_escrow {
+        Err(ErrorObject::owned::<String>(
+            RPCErrorCode::RpcMethodDeprecated as i32,
+            "CreateTransaction is disabled".to_string(),
+            None,
+        ))?;
+    }
+
     let transaction: TransactionParams = params.one()?;
 
     let version = transaction.version & 0xffff;

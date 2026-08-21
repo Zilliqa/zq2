@@ -1119,9 +1119,10 @@ impl Node {
         let mut consensus = self.consensus.write();
         trace!("Handling proposal for view {0}", req.block.header.view);
         let block_number = req.block.number();
-        // decrement before - failed processing, will not stop syncing.
-        consensus.sync.mark_received_proposal(block_number)?;
-        let proposal = consensus.receive_block(from, req.block)?;
+        let result = consensus.receive_block(from, req.block);
+        let marked = consensus.sync.mark_received_proposal(block_number);
+        let proposal = result?;
+        marked?;
         if let Some(proposal) = proposal {
             trace!(
                 " ... broadcasting proposal for view {0}",

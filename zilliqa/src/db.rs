@@ -1413,7 +1413,7 @@ impl Db {
                 state_root_hash, transactions_root_hash, receipts_root_hash,
                 timestamp, gas_used, gas_limit, agg, randao_reveal, mix_hash
              FROM blocks
-             WHERE height BETWEEN ?1 AND ?2
+             WHERE height BETWEEN ?1 AND ?2 AND is_canonical = TRUE
              ORDER BY height ASC",
         )?;
 

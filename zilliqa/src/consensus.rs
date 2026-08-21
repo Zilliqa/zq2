@@ -2200,12 +2200,9 @@ impl Consensus {
         txn: VerifiedTransaction,
         from_broadcast: bool,
     ) -> Result<TxAddResult> {
-        // Refuse legacy Zilliqa transactions at every ingress point - RPC, gossip and injection all
-        // funnel through here - once the fork that stops executing them is active. Without this
-        // they would sit in the pool until proposal time and be dropped one at a time.
-        //
-        // `zil_transfers_only_to_escrow` takes priority over the disable flag: once active,
-        // Zilliqa transactions addressed to the escrow contract still reach block execution.
+        // Refuse legacy Zilliqa transactions at every ingress point - RPC, gossip and injection
+        // all funnel through here. Until `zil_transfers_only_to_escrow` activates they are
+        // refused outright; once it is active, only transfers to the escrow contract pass.
         let fork = self
             .state
             .forks
@@ -2225,7 +2222,7 @@ impl Consensus {
                         ValidationOutcome::ZilliqaTransactionsMustTargetEscrow,
                     ));
                 }
-            } else if fork.disable_zilliqa_txn_execution {
+            } else {
                 debug!("Rejecting Zilliqa transaction {:?}", txn.hash);
                 return Ok(TxAddResult::ValidationFailed(
                     ValidationOutcome::ZilliqaTransactionsDisabled,

@@ -863,9 +863,6 @@ pub struct Fork {
     pub blocked_recipients_start_height: u64,
     pub blocked_recipients_file: String,
     pub zil_transfers_only_to_escrow: bool,
-    /// Deploys the escrow contract (implementation plus its EIP-1967 proxy at
-    /// `contract_addr::ESCROW_PROXY`) exactly at this fork's activation height. Must activate
-    /// before [`Fork::zil_transfers_only_to_escrow`], which needs the contract in place.
     pub deploy_escrow_contract_v1: bool,
 }
 
