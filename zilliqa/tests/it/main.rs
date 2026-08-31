@@ -440,6 +440,8 @@ impl Network {
                     zil_transfers_only_to_escrow,
                     // Test chains always carry the escrow contract from genesis.
                     deploy_escrow_contract_v1: true,
+                    deploy_escrow_mintable_contract_v1: true,
+                    escrow_mintable_admin: secret_key_to_address(&genesis_key),
                     disable_zilliqa_txn_execution: !zil_transfers_only_to_escrow,
                     ..genesis_fork_default()
                 },
@@ -454,6 +456,7 @@ impl Network {
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             data_dir: None,
             blocked_recipients_dir: None,
+            escrow_raw_lists_dir: None,
             state_cache_size: state_cache_size_default(),
             load_checkpoint: None,
             do_checkpoints,
@@ -604,6 +607,7 @@ impl Network {
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             data_dir: None,
             blocked_recipients_dir: None,
+            escrow_raw_lists_dir: None,
             state_cache_size: state_cache_size_default(),
             load_checkpoint: options.checkpoint.clone(),
             do_checkpoints: self.do_checkpoints,
@@ -636,6 +640,8 @@ impl Network {
                     zil_transfers_only_to_escrow: self.zil_transfers_only_to_escrow,
                     // Test chains always carry the escrow contract from genesis.
                     deploy_escrow_contract_v1: true,
+                    deploy_escrow_mintable_contract_v1: true,
+                    escrow_mintable_admin: secret_key_to_address(&self.genesis_key),
                     disable_zilliqa_txn_execution: !self.zil_transfers_only_to_escrow,
                     ..genesis_fork_default()
                 },

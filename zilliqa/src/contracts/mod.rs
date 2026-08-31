@@ -27,6 +27,54 @@ pub mod escrow_init {
         Lazy::new(|| CONTRACT.abi.function("accept").unwrap().clone());
     pub static LODGE: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("lodge").unwrap().clone());
+    pub static CLAIM: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("claim").unwrap().clone());
+    pub static BYTECODE: Lazy<Vec<u8>> = Lazy::new(|| CONTRACT.bytecode.clone());
+}
+
+pub mod escrow_mintable_init {
+    use ethabi::{Constructor, Event, Function};
+    use once_cell::sync::Lazy;
+
+    use super::{COMPILED_ESCROW_MINTABLE, Contract, contract_from};
+
+    static CONTRACT: Lazy<Contract> = Lazy::new(|| {
+        contract_from(
+            COMPILED_ESCROW_MINTABLE,
+            "src/contracts/escrow/escrow_mintable_v1.sol",
+            "EscrowMintableInit",
+        )
+    });
+    pub static CONSTRUCTOR: Lazy<Constructor> =
+        Lazy::new(|| CONTRACT.abi.constructor().unwrap().clone());
+    pub static INITIALIZE: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("initialize").unwrap().clone());
+    pub static UPGRADE_TO_AND_CALL: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("upgradeToAndCall").unwrap().clone());
+    pub static DEPLOY: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("deploy").unwrap().clone());
+    pub static LODGE: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("lodge").unwrap().clone());
+    pub static REGISTER: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("register").unwrap().clone());
+    pub static SET_ADMIN: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("setAdmin").unwrap().clone());
+    pub static ADMIN: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("admin").unwrap().clone());
+    pub static IS_DEPLOYED: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("isDeployed").unwrap().clone());
+    pub static BALANCE_OF: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("balanceOf").unwrap().clone());
+    pub static IS_REGISTERED: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("isRegistered").unwrap().clone());
+    pub static TOKENS: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("tokens").unwrap().clone());
+    pub static CLAIM: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("claim").unwrap().clone());
+    pub static CLAIM_ALL: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("claimAll").unwrap().clone());
+    pub static TOKEN_DEPLOYED_EVT: Lazy<Event> =
+        Lazy::new(|| CONTRACT.abi.event("TokenDeployed").unwrap().clone());
     pub static BYTECODE: Lazy<Vec<u8>> = Lazy::new(|| CONTRACT.bytecode.clone());
 }
 
@@ -553,6 +601,7 @@ pub mod eip1967_proxy {
 const COMPILED: &str = include_str!("compiled_legacy.json");
 const COMPILED_DEPOSIT_V8: &str = include_str!("compiled_deposit_v8.json");
 const COMPILED_ESCROW: &str = include_str!("compiled_escrow.json");
+const COMPILED_ESCROW_MINTABLE: &str = include_str!("compiled_escrow_mintable.json");
 
 fn contract(src: &str, name: &str) -> Contract {
     contract_from(COMPILED, src, name)
@@ -740,6 +789,29 @@ mod tests {
                 "src/contracts/escrow/verifier.sol",
             ],
             "compiled_escrow.json",
+        );
+    }
+
+    /// Compiles the mintable escrow into compiled_escrow_mintable.json. Run with:
+    /// ```sh
+    /// ZQ_COMPILE_CONTRACTS=escrow_mintable ZQ_CONTRACT_TEST_BLESS=1 cargo test --features test_contract_bytecode -- contracts::tests::compile_escrow_mintable
+    /// ```
+    #[test]
+    #[cfg_attr(not(feature = "test_contract_bytecode"), ignore)]
+    fn compile_escrow_mintable() {
+        if !should_compile("escrow_mintable") {
+            eprintln!(
+                "Skipping escrow_mintable compilation (set ZQ_COMPILE_CONTRACTS=escrow_mintable or ZQ_COMPILE_CONTRACTS=all)"
+            );
+            return;
+        }
+
+        compile_and_check(
+            &[
+                "src/contracts/escrow/escrow_mintable_v1.sol",
+                "src/contracts/escrow/verifier.sol",
+            ],
+            "compiled_escrow_mintable.json",
         );
     }
 }

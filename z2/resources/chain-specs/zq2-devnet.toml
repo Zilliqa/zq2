@@ -10,6 +10,7 @@ eth_chain_id = 33469
 allowed_timestamp_skew = { secs = 60, nanos = 0 }
 data_dir = "/data"
 blocked_recipients_dir = "/blocked_recipients"
+escrow_raw_lists_dir = "/escrow_raw_lists"
 consensus.genesis_accounts = [ ["0xe4e8c170f79c8e155e3680fca3ff34a7f9d4001d", "900_000_000_000_000_000_000_000_000" ] ]
 consensus.genesis_deposits = [
   [
@@ -56,8 +57,8 @@ consensus.new_view_broadcast_interval = { secs = 30, nanos = 0 }
 # 1000 blocks = ~17 minutes at 3600 blocks/hour after a from-genesis deployment.
 # Mirrors `Chain::Zq2Devnet` in z2/src/chain.rs `get_forks()`.
 consensus.forks = [
-    { at_height = 1000, blocked_recipients_start_height = 1000, blocked_recipients_file = "blocked_recipients_001.bin", deploy_escrow_contract_v1 = true },
-    { at_height = 1001, zil_transfers_only_to_escrow = true },
+    { at_height = 1000, blocked_recipients_start_height = 1000, blocked_recipients_file = "blocked_recipients_001.bin", deploy_escrow_contract_v1 = true, deploy_escrow_mintable_contract_v1 = true, escrow_mintable_admin = "0xe4e8c170f79c8e155e3680fca3ff34a7f9d4001d" },
+    { at_height = 1001, zil_transfers_only_to_escrow = true, disable_scilla_interop = true },
 ]
 
 api_servers = [{ default_quota = { balance = 500, period = 1 }, port = 4201, enabled_apis = [{ namespace = "eth", apis = ["blockNumber"] }] }, { port = 4202, enabled_apis = ["admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] }]

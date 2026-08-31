@@ -137,6 +137,8 @@ pub enum CustomPrecompile {
     Penalty(Penalty),
 }
 
+pub(crate) const SCILLA_READ_ADDRESS: Address =
+    address!("0x000000000000000000000000000000005a494c92");
 pub(crate) const SCILLA_CALL_ADDRESS: Address =
     address!("0x000000000000000000000000000000005a494c53");
 pub(crate) const PENALTY_ADDRESS: Address = address!("0x000000000000000000000000000000005a494c82");
@@ -154,7 +156,7 @@ pub const CUSTOM_PRECOMPILES: [(Address, CustomPrecompile); 5] = [
     ),
     (
         //Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x92"),
-        address!("0x000000000000000000000000000000005a494c92"),
+        SCILLA_READ_ADDRESS,
         CustomPrecompile::ScillaRead(ScillaRead),
     ),
     (

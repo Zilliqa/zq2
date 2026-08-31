@@ -15,7 +15,7 @@ use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::{
     cfg::{
@@ -25,6 +25,7 @@ use crate::{
     crypto::{self, Hash},
     db::{BlockFilter, Db},
     error::ensure_success,
+    escrow_raw_input::ENTRIES_PER_BLOCK,
     message::{Block, BlockHeader, MAX_COMMITTEE_SIZE},
     node::ChainId,
     precompiles::ViewHistory,
@@ -279,25 +280,143 @@ impl State {
         Ok(())
     }
 
-    /// Deploys the Escrow contract exactly at the activation height of
-    /// `Fork::deploy_escrow_contract_v1`. Never at any other block: deploying again would
-    /// replace the proxy account outright, wiping its native balance and the lodged-deposit
-    /// bookkeeping.
+    /// Deploys each escrow contract exactly at the activation height of its fork
+    /// (`deploy_escrow_contract_v1`, `deploy_escrow_mintable_contract_v1`). Never at any other
+    /// block: deploying again would replace the proxy account outright, wiping its native
+    /// balance and the lodged-deposit bookkeeping.
     pub fn escrow_deploy_and_upgrade(
         &mut self,
         _config: &ConsensusConfig,
         block_header: &BlockHeader,
     ) -> Result<()> {
-        let Some(activation) = self
+        let height = Some(block_header.number);
+        if self
             .forks
             .find_height_fork_first_activated(ForkName::DeployEscrowContractV1)
-        else {
-            return Ok(());
-        };
-        if block_header.number == activation {
+            == height
+        {
             self.deploy_initial_escrow_contract()?;
         }
+        if self
+            .forks
+            .find_height_fork_first_activated(ForkName::DeployEscrowMintableContractV1)
+            == height
+        {
+            let admin = self.forks.escrow_mintable_admin_at(block_header.number);
+            self.deploy_initial_escrow_mintable_contract(admin)?;
+        }
+        // A later fork that changes `escrow_mintable_admin` overrides it in the contract; the
+        // deploying fork's own value went in through `initialize`.
+        let deployed_earlier = self
+            .forks
+            .find_height_fork_first_activated(ForkName::DeployEscrowMintableContractV1)
+            .is_some_and(|deploy_height| deploy_height < block_header.number);
+        if deployed_earlier {
+            if let Some(admin) = self
+                .forks
+                .escrow_mintable_admin_change_at(block_header.number)
+            {
+                self.escrow_set_admin(admin, *block_header)?;
+            }
+        }
         Ok(())
+    }
+
+    /// One system call to `setAdmin(admin)` on the mintable escrow; a failure fails the block.
+    pub fn escrow_set_admin(&mut self, admin: Address, current_block: BlockHeader) -> Result<()> {
+        let data = contracts::escrow_mintable_init::SET_ADMIN
+            .encode_input(&[Token::Address(ethabi::Address::from(admin.into_array()))])?;
+        let result = self.call_contract_apply(
+            Address::ZERO,
+            Some(contract_addr::ESCROW_MINTABLE_PROXY),
+            data,
+            0,
+            current_block,
+        )?;
+        ensure_success(result)
+            .map(|_| ())
+            .map_err(|e| anyhow!("escrow setAdmin({admin}) failed: {e}"))
+    }
+
+    /// `admin` is the only account the contract lets register tokens; zero means nobody can
+    /// until a later fork sets one, so warn rather than fail the block.
+    fn deploy_initial_escrow_mintable_contract(&mut self, admin: Address) -> Result<Address> {
+        if admin.is_zero() {
+            warn!("escrow_mintable_admin is unset; the mintable escrow token registry is closed");
+        }
+        let escrow_impl = self.force_deploy_contract_evm(
+            contracts::escrow_mintable_init::BYTECODE.to_vec(),
+            None,
+            0,
+        )?;
+        let eip1967_constructor_data =
+            contracts::eip1967_proxy::CONSTRUCTOR.encode_input(
+                contracts::eip1967_proxy::BYTECODE.to_vec(),
+                &[
+                    Token::Address(ethabi::Address::from(escrow_impl.into_array())),
+                    Token::Bytes(contracts::escrow_mintable_init::INITIALIZE.encode_input(&[
+                        Token::Address(ethabi::Address::from(admin.into_array())),
+                    ])?),
+                ],
+            )?;
+        let eip1967_addr = self.force_deploy_contract_evm(
+            eip1967_constructor_data,
+            Some(contract_addr::ESCROW_MINTABLE_PROXY),
+            0,
+        )?;
+        debug!("Deployed mintable Escrow to {escrow_impl}@{eip1967_addr}",);
+        Ok(escrow_impl)
+    }
+
+    /// System calls to `lodge(token, users, amounts)` on the mintable escrow, at most
+    /// [`ENTRIES_PER_BLOCK`] entries per call whatever the caller hands in, so no single EVM
+    /// call can outgrow the block gas limit. The contract rejects unknown tokens, and a failed
+    /// call here fails the block.
+    pub fn escrow_lodge(
+        &mut self,
+        token: Address,
+        entries: &[(Address, u128)],
+        current_block: BlockHeader,
+    ) -> Result<()> {
+        for chunk in entries.chunks(ENTRIES_PER_BLOCK as usize) {
+            self.escrow_lodge_call(token, chunk, current_block)?;
+        }
+        Ok(())
+    }
+
+    fn escrow_lodge_call(
+        &mut self,
+        token: Address,
+        entries: &[(Address, u128)],
+        current_block: BlockHeader,
+    ) -> Result<()> {
+        let (users, amounts): (Vec<Token>, Vec<Token>) = entries
+            .iter()
+            .map(|(user, amount)| {
+                (
+                    Token::Address(ethabi::Address::from(user.into_array())),
+                    Token::Uint((*amount).into()),
+                )
+            })
+            .unzip();
+        let data = contracts::escrow_mintable_init::LODGE.encode_input(&[
+            Token::Address(ethabi::Address::from(token.into_array())),
+            Token::Array(users),
+            Token::Array(amounts),
+        ])?;
+        let result = self.call_contract_apply(
+            Address::ZERO,
+            Some(contract_addr::ESCROW_MINTABLE_PROXY),
+            data,
+            0,
+            current_block,
+        )?;
+        ensure_success(result).map(|_| ()).map_err(|e| {
+            anyhow!(
+                "escrow lodge of {} entries into {token} failed: {e}",
+                entries.len()
+            )
+        })
     }
 
     fn deploy_initial_escrow_contract(&mut self) -> Result<Address> {
@@ -566,6 +685,8 @@ pub mod contract_addr {
     pub const DEPOSIT_PROXY: Address = Address::new(*b"\0\0\0\0\0ZILDEPOSITPROXY");
     /// ADdress of EIP 1967 proxy for Escrow contract
     pub const ESCROW_PROXY: Address = Address::new(*b"\0\0\0\0\0ZIL1ESCROWPROXY");
+    /// Address of EIP 1967 proxy for the mintable (ERC20) Escrow contract
+    pub const ESCROW_MINTABLE_PROXY: Address = Address::new(*b"\0\0ZIL1ESCROWMINTABLE");
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

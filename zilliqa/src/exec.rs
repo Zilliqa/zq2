@@ -2656,13 +2656,15 @@ pub const BLESSED_TRANSACTIONS: [BlessedTransaction; 2] = [
 mod tests {
     use std::{path::PathBuf, sync::Arc};
 
+    use alloy::primitives::B256;
     use k256::elliptic_curve::sec1::ToEncodedPoint;
     use sha2::{Digest, Sha256};
 
     use super::*;
     use crate::{
-        cfg::{DbConfig, Fork, NodeConfig, genesis_fork_default},
+        cfg::{DbConfig, Fork, ForkDelta, NodeConfig, genesis_fork_default},
         db::Db,
+        precompiles::SCILLA_READ_ADDRESS,
         schnorr::{self, SecretKey},
         transaction::{ScillaGas, SignedTransaction, TxZilliqa, ZilAmount},
     };
@@ -2806,5 +2808,540 @@ mod tests {
             1,
             "the signer's nonce must still be consumed on a rejected destination"
         );
+    }
+
+    // ---- mintable escrow ---------------------------------------------------------------------
+
+    /// `claim` calldata for escrow v1, proving `CLAIM_OLD` -> `CLAIM_NEW` on chain id
+    /// `eth_chain_id_default()`; shared with `tests/it/escrow.rs`. `CLAIM_FAIL` flips the last
+    /// public signal so the proof no longer verifies.
+    const CLAIM_PASS: &str = "0xcf1c94612899d74d7a5c25b134356691b8819fc728d4b00a10186d4f9623fb610006817f2687b2f4acb690eb7eed368a40398cf0d1b3c993a652baa5482185fc757a8a91179ee9ea9333a002f5becd4be59aca66e6200339aa17b524b4f54e1dd937f19f1b916262a768b4253ceb90d29a6ec673537a2cb7e4cb16596e65979e39bd010917ec8bc7af642d2ffee406d31c1a8830a9d80e3fe34217b3b45163143f69bcca099cab798be1d26380f51961bf62f27f253b888b6ddce561d186a61bf85c5c6629c91ba363a58f7b196f18af106398e2b99ba1ea66c8ee09f30638dff72a507623e37e4b0d414e47f88f519dee0bcab11d773bde66ed3651504c53b387260294000000000000000000000000680ffaeb3f8d74072d1a202d57ac8df8fada5fdf0000000000000000000000004513f06070bc8751ff9016e0d616fa67c39fd46e00000000000000000000000000000000000000000000000000000000000082bc0000000000000000000000000000000000000000000000000000000000000001";
+    const CLAIM_FAIL: &str = "0xcf1c94612899d74d7a5c25b134356691b8819fc728d4b00a10186d4f9623fb610006817f2687b2f4acb690eb7eed368a40398cf0d1b3c993a652baa5482185fc757a8a91179ee9ea9333a002f5becd4be59aca66e6200339aa17b524b4f54e1dd937f19f1b916262a768b4253ceb90d29a6ec673537a2cb7e4cb16596e65979e39bd010917ec8bc7af642d2ffee406d31c1a8830a9d80e3fe34217b3b45163143f69bcca099cab798be1d26380f51961bf62f27f253b888b6ddce561d186a61bf85c5c6629c91ba363a58f7b196f18af106398e2b99ba1ea66c8ee09f30638dff72a507623e37e4b0d414e47f88f519dee0bcab11d773bde66ed3651504c53b387260294000000000000000000000000680ffaeb3f8d74072d1a202d57ac8df8fada5fdf0000000000000000000000004513f06070bc8751ff9016e0d616fa67c39fd46e00000000000000000000000000000000000000000000000000000000000082bc0000000000000000000000000000000000000000000000000000000000000000";
+    const CLAIM_OLD: Address = address!("0x680ffaeb3f8d74072d1a202d57ac8df8fada5fdf");
+    const CLAIM_NEW: Address = address!("0x4513F06070Bc8751fF9016e0d616Fa67C39Fd46e");
+
+    const ESCROW: Address = contract_addr::ESCROW_MINTABLE_PROXY;
+
+    fn header() -> BlockHeader {
+        BlockHeader::genesis(Hash::ZERO)
+    }
+
+    /// A `State` with the mintable escrow deployed at genesis, plus an arbitrary EOA that is
+    /// its admin and acts as token deployer and claimant. No funding: `call_contract_apply`
+    /// charges no gas.
+    fn state_with_mintable_escrow(fork: Fork) -> (State, Address) {
+        let admin = Address::repeat_byte(0x11);
+        let db = Arc::new(Db::new::<PathBuf>(None, 0, None, DbConfig::default()).unwrap());
+        let mut config = NodeConfig::default();
+        config.consensus.genesis_fork = Fork {
+            deploy_escrow_mintable_contract_v1: true,
+            escrow_mintable_admin: admin,
+            ..fork
+        };
+        let mut state = State::new(db.state_trie().unwrap(), &config, db).unwrap();
+        state
+            .escrow_deploy_and_upgrade(&config.consensus, &header())
+            .unwrap();
+        (state, admin)
+    }
+
+    fn compile_test_token() -> (ethabi::Contract, Vec<u8>) {
+        use foundry_compilers::{
+            artifacts::{EvmVersion, SolcInput, Source},
+            solc::{Solc, SolcLanguage},
+        };
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/it/contracts/EscrowMintableToken.sol");
+        let input = SolcInput::new(
+            SolcLanguage::Solidity,
+            Source::read_all_files(vec![path.clone()]).unwrap(),
+            Default::default(),
+        )
+        .evm_version(EvmVersion::Shanghai);
+        let solc = Solc::find_or_install(&semver::Version::new(0, 8, 28)).unwrap();
+        let output = solc.compile_exact(&input).unwrap();
+        assert!(!output.has_error(), "{:?}", output.errors);
+        let contract = output.get(&path, "EscrowMintableToken").unwrap();
+        let abi =
+            serde_json::from_value(serde_json::to_value(contract.abi.unwrap()).unwrap()).unwrap();
+        let bytecode: Bytes =
+            serde_json::from_value(serde_json::to_value(contract.bytecode().unwrap()).unwrap())
+                .unwrap();
+        (abi, bytecode.to_vec())
+    }
+
+    fn call(state: &mut State, from: Address, to: Address, data: Vec<u8>) -> Result<Bytes> {
+        let result = state.call_contract_apply(from, Some(to), data, 0, header())?;
+        Ok(ensure_success(result)?)
+    }
+
+    fn token_of(token: Address) -> Token {
+        Token::Address(ethabi::Address::from(token.into_array()))
+    }
+
+    fn uint_output(function: &ethabi::Function, output: &[u8]) -> u128 {
+        function.decode_output(output).unwrap()[0]
+            .clone()
+            .into_uint()
+            .unwrap()
+            .as_u128()
+    }
+
+    /// Deploys the test token through the escrow's CREATE2 from `deployer` and checks the
+    /// address is the one derivable off-chain. Not registered.
+    fn deploy_token_unregistered(
+        state: &mut State,
+        deployer: Address,
+        salt: u8,
+    ) -> (Address, ethabi::Contract) {
+        let (abi, bytecode) = compile_test_token();
+        let mut init_code = bytecode;
+        init_code.extend(ethabi::encode(&[token_of(ESCROW)]));
+        let data = contracts::escrow_mintable_init::DEPLOY
+            .encode_input(&[
+                Token::FixedBytes(vec![salt; 32]),
+                Token::Bytes(init_code.clone()),
+            ])
+            .unwrap();
+        let output = call(state, deployer, ESCROW, data).unwrap();
+        let token = contracts::escrow_mintable_init::DEPLOY
+            .decode_output(&output)
+            .unwrap()[0]
+            .clone()
+            .into_address()
+            .unwrap();
+        let token = Address::from(token.0);
+        assert_eq!(
+            token,
+            ESCROW.create2_from_code(B256::from([salt; 32]), &init_code),
+            "token must live at the CREATE2 address"
+        );
+        (token, abi)
+    }
+
+    fn register_token(state: &mut State, from: Address, token: Address) -> Result<Bytes> {
+        let data = contracts::escrow_mintable_init::REGISTER
+            .encode_input(&[token_of(token)])
+            .unwrap();
+        call(state, from, ESCROW, data)
+    }
+
+    /// Deploys and registers a token, both as `admin`.
+    fn deploy_token(state: &mut State, admin: Address, salt: u8) -> (Address, ethabi::Contract) {
+        let (token, abi) = deploy_token_unregistered(state, admin, salt);
+        register_token(state, admin, token).unwrap();
+        (token, abi)
+    }
+
+    fn bool_call(state: &mut State, function: &ethabi::Function, args: &[Token]) -> bool {
+        let data = function.encode_input(args).unwrap();
+        let output = call(state, Address::ZERO, ESCROW, data).unwrap();
+        function.decode_output(&output).unwrap()[0]
+            .clone()
+            .into_bool()
+            .unwrap()
+    }
+
+    fn registered_tokens(state: &mut State) -> Vec<Token> {
+        let data = contracts::escrow_mintable_init::TOKENS
+            .encode_input(&[])
+            .unwrap();
+        let output = call(state, Address::ZERO, ESCROW, data).unwrap();
+        contracts::escrow_mintable_init::TOKENS
+            .decode_output(&output)
+            .unwrap()[0]
+            .clone()
+            .into_array()
+            .unwrap()
+    }
+
+    fn escrow_admin(state: &mut State) -> Address {
+        let data = contracts::escrow_mintable_init::ADMIN
+            .encode_input(&[])
+            .unwrap();
+        let output = call(state, Address::ZERO, ESCROW, data).unwrap();
+        let admin = contracts::escrow_mintable_init::ADMIN
+            .decode_output(&output)
+            .unwrap()[0]
+            .clone()
+            .into_address()
+            .unwrap();
+        Address::from(admin.0)
+    }
+
+    fn escrow_balance(state: &mut State, token: Address, user: Address) -> u128 {
+        let data = contracts::escrow_mintable_init::BALANCE_OF
+            .encode_input(&[token_of(token), token_of(user)])
+            .unwrap();
+        let output = call(state, Address::ZERO, ESCROW, data).unwrap();
+        uint_output(&contracts::escrow_mintable_init::BALANCE_OF, &output)
+    }
+
+    fn token_balance(
+        state: &mut State,
+        abi: &ethabi::Contract,
+        token: Address,
+        user: Address,
+    ) -> u128 {
+        let balance_of = abi.function("balanceOf").unwrap();
+        let data = balance_of.encode_input(&[token_of(user)]).unwrap();
+        let output = call(state, Address::ZERO, token, data).unwrap();
+        uint_output(balance_of, &output)
+    }
+
+    /// Re-targets the v1 proof calldata at the mintable escrow: `claim(.., token)` for `Some`,
+    /// `claimAll(..)` for `None`.
+    fn claim_calldata(proof: &str, token: Option<Address>) -> Vec<u8> {
+        let calldata = hex::decode(proof).unwrap();
+        let mut args = contracts::escrow_init::CLAIM
+            .decode_input(&calldata[4..])
+            .unwrap();
+        match token {
+            Some(token) => {
+                args.push(token_of(token));
+                contracts::escrow_mintable_init::CLAIM
+                    .encode_input(&args)
+                    .unwrap()
+            }
+            None => contracts::escrow_mintable_init::CLAIM_ALL
+                .encode_input(&args)
+                .unwrap(),
+        }
+    }
+
+    #[test]
+    fn mintable_escrow_deploy_registers_the_token_and_rejects_salt_reuse() {
+        let (mut state, user) = state_with_mintable_escrow(genesis_fork_default());
+        let (token, _) = deploy_token(&mut state, user, 1);
+
+        let data = contracts::escrow_mintable_init::IS_REGISTERED
+            .encode_input(&[token_of(token)])
+            .unwrap();
+        let output = call(&mut state, user, ESCROW, data).unwrap();
+        assert!(
+            contracts::escrow_mintable_init::IS_REGISTERED
+                .decode_output(&output)
+                .unwrap()[0]
+                .clone()
+                .into_bool()
+                .unwrap()
+        );
+
+        let data = contracts::escrow_mintable_init::TOKENS
+            .encode_input(&[])
+            .unwrap();
+        let output = call(&mut state, user, ESCROW, data).unwrap();
+        let tokens = contracts::escrow_mintable_init::TOKENS
+            .decode_output(&output)
+            .unwrap()[0]
+            .clone()
+            .into_array()
+            .unwrap();
+        assert_eq!(tokens, vec![token_of(token)]);
+
+        // Same salt and init code again: CREATE2 returns zero and the call reverts.
+        let (_, bytecode) = compile_test_token();
+        let mut init_code = bytecode;
+        init_code.extend(ethabi::encode(&[token_of(ESCROW)]));
+        let data = contracts::escrow_mintable_init::DEPLOY
+            .encode_input(&[Token::FixedBytes(vec![1; 32]), Token::Bytes(init_code)])
+            .unwrap();
+        assert!(call(&mut state, user, ESCROW, data).is_err());
+    }
+
+    #[test]
+    fn mintable_escrow_anyone_deploys_but_only_the_admin_registers() {
+        use contracts::escrow_mintable_init::{IS_DEPLOYED, IS_REGISTERED};
+
+        let (mut state, admin) = state_with_mintable_escrow(genesis_fork_default());
+        assert_eq!(escrow_admin(&mut state), admin);
+
+        // A stranger may deploy; the token is known but not lodgeable.
+        let stranger = Address::repeat_byte(0x22);
+        let (token, _) = deploy_token_unregistered(&mut state, stranger, 1);
+        assert!(bool_call(&mut state, &IS_DEPLOYED, &[token_of(token)]));
+        assert!(!bool_call(&mut state, &IS_REGISTERED, &[token_of(token)]));
+        assert!(registered_tokens(&mut state).is_empty());
+        assert!(
+            state
+                .escrow_lodge(token, &[(CLAIM_OLD, 1)], header())
+                .is_err(),
+            "unregistered tokens cannot be lodged"
+        );
+
+        // Only the admin registers, and only what came out of `deploy`.
+        assert!(register_token(&mut state, stranger, token).is_err());
+        assert!(register_token(&mut state, admin, Address::repeat_byte(0x33)).is_err());
+        register_token(&mut state, admin, token).unwrap();
+        assert!(bool_call(&mut state, &IS_REGISTERED, &[token_of(token)]));
+        assert_eq!(registered_tokens(&mut state), vec![token_of(token)]);
+        assert!(
+            register_token(&mut state, admin, token).is_err(),
+            "registering twice would duplicate the registry entry"
+        );
+        state
+            .escrow_lodge(token, &[(CLAIM_OLD, 1)], header())
+            .unwrap();
+    }
+
+    #[test]
+    fn mintable_escrow_admin_is_replaced_by_the_system_when_a_fork_changes_it() {
+        let (mut state, admin) = state_with_mintable_escrow(genesis_fork_default());
+        let successor = Address::repeat_byte(0x44);
+
+        // Not the system, not even the admin: rejected.
+        let data = contracts::escrow_mintable_init::SET_ADMIN
+            .encode_input(&[token_of(successor)])
+            .unwrap();
+        assert!(call(&mut state, admin, ESCROW, data).is_err());
+        assert_eq!(escrow_admin(&mut state), admin);
+
+        // A fork at height 5 carrying a new admin changes it at that block and no other.
+        state.forks = {
+            let mut config = NodeConfig::default();
+            config.consensus.genesis_fork = state.forks.get(0).clone();
+            config.consensus.forks = vec![ForkDelta {
+                at_height: 5,
+                escrow_mintable_admin: Some(successor),
+                ..Default::default()
+            }];
+            config.consensus.get_forks().unwrap()
+        };
+        let at = |number| BlockHeader { number, ..header() };
+        let consensus = NodeConfig::default().consensus;
+        state.escrow_deploy_and_upgrade(&consensus, &at(4)).unwrap();
+        assert_eq!(escrow_admin(&mut state), admin);
+        state.escrow_deploy_and_upgrade(&consensus, &at(5)).unwrap();
+        assert_eq!(escrow_admin(&mut state), successor);
+        state.escrow_deploy_and_upgrade(&consensus, &at(6)).unwrap();
+        assert_eq!(escrow_admin(&mut state), successor);
+
+        // The old admin is out, the new one is in.
+        let (token, _) = deploy_token_unregistered(&mut state, admin, 1);
+        assert!(register_token(&mut state, admin, token).is_err());
+        register_token(&mut state, successor, token).unwrap();
+    }
+
+    #[test]
+    fn mintable_escrow_lodge_is_system_only_and_assigns_per_registered_token() {
+        let (mut state, user) = state_with_mintable_escrow(genesis_fork_default());
+        let (token, abi) = deploy_token(&mut state, user, 1);
+
+        // Not from the system: rejected.
+        let data = contracts::escrow_mintable_init::LODGE
+            .encode_input(&[
+                token_of(token),
+                Token::Array(vec![token_of(CLAIM_OLD)]),
+                Token::Array(vec![Token::Uint(500.into())]),
+            ])
+            .unwrap();
+        assert!(call(&mut state, user, ESCROW, data).is_err());
+        assert_eq!(escrow_balance(&mut state, token, CLAIM_OLD), 0);
+
+        // A token that did not come through `deploy`: rejected.
+        let stranger = Address::repeat_byte(0x22);
+        assert!(
+            state
+                .escrow_lodge(stranger, &[(CLAIM_OLD, 500)], header())
+                .is_err()
+        );
+
+        state
+            .escrow_lodge(token, &[(CLAIM_OLD, 500), (user, 7)], header())
+            .unwrap();
+        assert_eq!(escrow_balance(&mut state, token, CLAIM_OLD), 500);
+        assert_eq!(escrow_balance(&mut state, token, user), 7);
+
+        // Lodging again assigns rather than accumulates.
+        state
+            .escrow_lodge(token, &[(CLAIM_OLD, 300)], header())
+            .unwrap();
+        assert_eq!(escrow_balance(&mut state, token, CLAIM_OLD), 300);
+
+        // Only the escrow may mint.
+        let data = abi
+            .function("mint")
+            .unwrap()
+            .encode_input(&[token_of(user), Token::Uint(1.into())])
+            .unwrap();
+        assert!(call(&mut state, user, token, data).is_err());
+        assert_eq!(token_balance(&mut state, &abi, token, user), 0);
+    }
+
+    // Passes against the verifier.sol preceding 5be888d5; `CLAIM_PASS` must be regenerated for
+    // the new VK (as must `tests/it/escrow.rs`) before this can run.
+    #[test]
+    #[ignore = "CLAIM_PASS predates the Groth16 VK update in 5be888d5"]
+    fn mintable_escrow_claim_mints_the_lodged_balance_once() {
+        let (mut state, user) = state_with_mintable_escrow(genesis_fork_default());
+        let (token, abi) = deploy_token(&mut state, user, 1);
+        state
+            .escrow_lodge(token, &[(CLAIM_OLD, 500)], header())
+            .unwrap();
+
+        // A proof that does not verify releases nothing.
+        let data = claim_calldata(CLAIM_FAIL, Some(token));
+        assert!(call(&mut state, user, ESCROW, data).is_err());
+        assert_eq!(escrow_balance(&mut state, token, CLAIM_OLD), 500);
+
+        let data = claim_calldata(CLAIM_PASS, Some(token));
+        call(&mut state, user, ESCROW, data.clone()).unwrap();
+        assert_eq!(token_balance(&mut state, &abi, token, CLAIM_NEW), 500);
+        assert_eq!(escrow_balance(&mut state, token, CLAIM_OLD), 0);
+
+        // Nothing left to claim.
+        assert!(call(&mut state, user, ESCROW, data).is_err());
+        assert_eq!(token_balance(&mut state, &abi, token, CLAIM_NEW), 500);
+    }
+
+    // Passes against the verifier.sol preceding 5be888d5; `CLAIM_PASS` must be regenerated for
+    // the new VK (as must `tests/it/escrow.rs`) before this can run.
+    #[test]
+    #[ignore = "CLAIM_PASS predates the Groth16 VK update in 5be888d5"]
+    fn mintable_escrow_claim_all_covers_every_token_with_a_balance() {
+        let (mut state, user) = state_with_mintable_escrow(genesis_fork_default());
+        let (token_a, abi) = deploy_token(&mut state, user, 1);
+        let (token_b, _) = deploy_token(&mut state, user, 2);
+        let (token_c, _) = deploy_token(&mut state, user, 3);
+        state
+            .escrow_lodge(token_a, &[(CLAIM_OLD, 5)], header())
+            .unwrap();
+        state
+            .escrow_lodge(token_c, &[(CLAIM_OLD, 7)], header())
+            .unwrap();
+
+        let data = claim_calldata(CLAIM_PASS, None);
+        call(&mut state, user, ESCROW, data.clone()).unwrap();
+        assert_eq!(token_balance(&mut state, &abi, token_a, CLAIM_NEW), 5);
+        assert_eq!(token_balance(&mut state, &abi, token_b, CLAIM_NEW), 0);
+        assert_eq!(token_balance(&mut state, &abi, token_c, CLAIM_NEW), 7);
+
+        // Every balance is now zero: nothing to release.
+        assert!(call(&mut state, user, ESCROW, data).is_err());
+    }
+
+    /// Holds `lodge` to the per-entry gas bound the startup check relies on, at a full block's
+    /// batch of fresh (user, token) slots (the most expensive case: every SSTORE is zero->nonzero).
+    #[test]
+    fn escrow_lodge_full_batch_fits_the_gas_bound() {
+        use crate::escrow_raw_input::{ENTRIES_PER_BLOCK, LODGE_GAS_PER_ENTRY};
+
+        let (mut state, user) = state_with_mintable_escrow(genesis_fork_default());
+        let (token, _) = deploy_token(&mut state, user, 1);
+        let (users, amounts): (Vec<Token>, Vec<Token>) = (1..=ENTRIES_PER_BLOCK)
+            .map(|i| {
+                (
+                    token_of(Address::repeat_byte(i as u8)),
+                    Token::Uint(u128::MAX.into()),
+                )
+            })
+            .unzip();
+        let data = contracts::escrow_mintable_init::LODGE
+            .encode_input(&[token_of(token), Token::Array(users), Token::Array(amounts)])
+            .unwrap();
+        let result = state
+            .call_contract_apply(Address::ZERO, Some(ESCROW), data, 0, header())
+            .unwrap();
+        assert!(result.is_success(), "{result:?}");
+        let per_entry = result.gas_used() / ENTRIES_PER_BLOCK;
+        println!(
+            "lodge: {} gas for {ENTRIES_PER_BLOCK} entries, {per_entry}/entry",
+            result.gas_used()
+        );
+        assert!(
+            per_entry * 2 <= LODGE_GAS_PER_ENTRY,
+            "lodge costs {per_entry} gas per entry; LODGE_GAS_PER_ENTRY = {LODGE_GAS_PER_ENTRY} no longer leaves 2x headroom"
+        );
+    }
+
+    /// `escrow_lodge` never issues one EVM call larger than a block's batch, whatever it is given.
+    #[test]
+    fn escrow_lodge_splits_oversized_input_into_bounded_calls() {
+        use crate::escrow_raw_input::ENTRIES_PER_BLOCK;
+
+        let (mut state, user) = state_with_mintable_escrow(genesis_fork_default());
+        let (token, _) = deploy_token(&mut state, user, 1);
+        let entries: Vec<(Address, u128)> = (1..=(ENTRIES_PER_BLOCK * 3 + 1))
+            .map(|i| (Address::from_word(B256::from(U256::from(i))), i as u128))
+            .collect();
+        state.escrow_lodge(token, &entries, header()).unwrap();
+        for (user, amount) in [
+            entries[0],
+            entries[ENTRIES_PER_BLOCK as usize],
+            *entries.last().unwrap(),
+        ] {
+            assert_eq!(escrow_balance(&mut state, token, user), amount);
+        }
+    }
+
+    /// The consensus path: a lodge file batched per block into system calls.
+    #[test]
+    fn escrow_lodge_schedule_feeds_the_contract_block_by_block() {
+        use crate::escrow_raw_input::{
+            ENTRIES_PER_BLOCK, EscrowRawInput, encode, last_lodge_block,
+        };
+
+        let (mut state, user) = state_with_mintable_escrow(genesis_fork_default());
+        let (token_a, _) = deploy_token(&mut state, user, 1);
+        let (token_b, _) = deploy_token(&mut state, user, 2);
+
+        let entries: Vec<(Address, u128)> = (1..=(ENTRIES_PER_BLOCK + 50))
+            .map(|i| (Address::repeat_byte(i as u8), 1_000 + i as u128))
+            .collect();
+        let regions = [(0, token_a), (ENTRIES_PER_BLOCK + 20, token_b)];
+        let path = std::env::temp_dir().join("exec_escrow_lodge.bin");
+        std::fs::write(&path, encode(&regions, &entries)).unwrap();
+        let lodge = EscrowRawInput::load(&path).unwrap();
+
+        let start = 10;
+        for block in start..=last_lodge_block(start, lodge.count()) {
+            for (token, batch) in lodge.batch_by_token(start, block).unwrap() {
+                state.escrow_lodge(token, &batch, header()).unwrap();
+            }
+        }
+
+        // First region, first block.
+        assert_eq!(
+            escrow_balance(&mut state, token_a, entries[0].0),
+            entries[0].1
+        );
+        // First region, second block.
+        let i = ENTRIES_PER_BLOCK as usize + 5;
+        assert_eq!(
+            escrow_balance(&mut state, token_a, entries[i].0),
+            entries[i].1
+        );
+        assert_eq!(escrow_balance(&mut state, token_b, entries[i].0), 0);
+        // Second region.
+        let i = ENTRIES_PER_BLOCK as usize + 30;
+        assert_eq!(
+            escrow_balance(&mut state, token_b, entries[i].0),
+            entries[i].1
+        );
+        assert_eq!(escrow_balance(&mut state, token_a, entries[i].0), 0);
+    }
+
+    #[test]
+    fn scilla_precompiles_are_refused_when_interop_is_disabled() {
+        let (mut state, user) = state_with_mintable_escrow(Fork {
+            disable_scilla_interop: true,
+            ..genesis_fork_default()
+        });
+        state
+            .mutate_account(user, |a| {
+                a.balance = 10u128.pow(24);
+                Ok(())
+            })
+            .unwrap();
+
+        for precompile in [SCILLA_CALL_ADDRESS, SCILLA_READ_ADDRESS] {
+            let result = state
+                .call_contract_apply(user, Some(precompile), vec![0u8; 64], 0, header())
+                .unwrap();
+            assert!(
+                !result.is_success(),
+                "{precompile} must fail outright once interop is disabled"
+            );
+        }
     }
 }

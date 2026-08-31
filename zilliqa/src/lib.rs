@@ -12,6 +12,7 @@ pub mod crypto;
 mod data_access;
 pub mod db;
 mod error;
+pub mod escrow_raw_input;
 mod evm;
 pub mod exec;
 mod exec_failure;
