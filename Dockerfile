@@ -41,5 +41,7 @@ COPY --from=asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/sc
 # Blocked-recipient lists, named by forks in the chain specs and read from blocked_recipients_dir.
 # Baked into the image rather than /data, which is shadowed by the data volume mount at runtime.
 COPY ./blocked_recipients /blocked_recipients
+# Escrow lodge lists, likewise named by forks and read from escrow_raw_lists_dir.
+COPY ./escrow_raw_lists /escrow_raw_lists
 
 ENTRYPOINT [ "/run.sh" ]

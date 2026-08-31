@@ -258,6 +258,20 @@ fn fatal<T>(message: &'static str) -> Result<T, PrecompileErrors> {
 const BASE_COST: u64 = 15;
 const PER_BYTE_COST: u64 = 3;
 
+/// Once `disable_scilla_interop` is active, both Scilla precompiles are refused for every caller
+/// and the whole transaction fails, so no EVM code can reach Scilla state in either direction.
+fn refuse_if_interop_disabled(ctx: &mut ZQ2EvmContext, gas: Gas) -> Option<InterpreterResult> {
+    if !ctx.chain.fork.disable_scilla_interop {
+        return None;
+    }
+    ctx.chain.enforce_transaction_failure = true;
+    Some(InterpreterResult {
+        result: InstructionResult::PrecompileError,
+        gas,
+        output: Bytes::new(),
+    })
+}
+
 pub struct ScillaRead;
 
 impl ContextPrecompile for ScillaRead {
@@ -270,6 +284,10 @@ impl ContextPrecompile for ScillaRead {
         gas_limit: u64,
     ) -> std::result::Result<Option<InterpreterResult>, String> {
         let gas = Gas::new(gas_limit);
+
+        if let Some(refused) = refuse_if_interop_disabled(ctx, gas) {
+            return Ok(Some(refused));
+        }
 
         let outcome = scilla_read(input, gas.limit(), ctx);
 
@@ -454,6 +472,10 @@ impl ContextPrecompile for ScillaCall {
 
         // Record access of scilla precompile
         ctx.chain.has_called_scilla_precompile = true;
+
+        if let Some(refused) = refuse_if_interop_disabled(ctx, gas) {
+            return Ok(Some(refused));
+        }
 
         // The `scilla_call` precompile mutates Scilla state, so it must not be invoked from a static
         // context (STATICCALL). Under the tightened rules, reject it and fail the whole transaction.
