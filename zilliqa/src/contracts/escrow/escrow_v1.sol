@@ -75,11 +75,14 @@ contract EscrowInit is UUPSUpgradeable, Groth16Verifier {
         uint256[4] calldata pubSignals
     ) public {
         require(pubSignals[2] == block.chainid, "Invalid domain");
-        ClaimVaultStorage storage $ = _getClaimVaultStorage();
-
+        address dstAddress = address(uint160(pubSignals[1]));
+        require(dstAddress != address(0), "Invalid destination");
         address srcAddress = address(uint160(pubSignals[0]));
+        require(srcAddress != address(0), "Invalid source");
+
+        ClaimVaultStorage storage $ = _getClaimVaultStorage();
         uint256 amount = $.balances[srcAddress];
-        // require(amount > 0, "No balance lodged");
+        require(amount > 0, "No balance lodged");
 
         // Verify ZKP
         bool verify = verifyProof(pA, pB, pC, pubSignals);
@@ -87,7 +90,6 @@ contract EscrowInit is UUPSUpgradeable, Groth16Verifier {
 
         // Effects before interaction (reentrancy guard pattern)
         $.balances[srcAddress] = 0;
-        address dstAddress = address(uint160(pubSignals[1]));
         (bool sent, ) = payable(dstAddress).call{value: amount}("");
         require(sent, "Transfer failed");
 

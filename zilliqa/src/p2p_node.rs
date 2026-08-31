@@ -14,7 +14,10 @@ use itertools::Itertools;
 use libp2p::{
     PeerId, StreamProtocol, Swarm, autonat,
     futures::StreamExt,
-    gossipsub::{self, IdentTopic, MessageAcceptance, MessageAuthenticity, TopicHash},
+    gossipsub::{
+        self, CallbackSubscriptionFilter, IdentTopic, IdentityTransform,
+        MaxCountSubscriptionFilter, MessageAcceptance, MessageAuthenticity, TopicHash,
+    },
     identify,
     kad::{self, store::MemoryStore},
     multiaddr::{Multiaddr, Protocol},
@@ -49,13 +52,36 @@ use crate::{
 /// - Re-sending of NewView is sent to the Validator-only topic
 static VALIDATOR_TOPIC_SUFFIX: &str = "-validator";
 
+/// A gossipsub topic we recognise.
+enum ShardTopic {
+    Shard(u64),
+    Validator(u64),
+}
+
+impl ShardTopic {
+    fn shard_id(&self) -> u64 {
+        match self {
+            Self::Shard(id) | Self::Validator(id) => *id,
+        }
+    }
+}
+
+/// Bounds the topics a single peer can make us track. Two topics per shard are legitimate, so this
+/// only ever bites on a peer announcing junk.
+const MAX_TOPICS_PER_PEER: usize = 64;
+
+/// Rejects topics we would not recognise before gossipsub stores them, so a peer cannot grow our
+/// state with arbitrary topic strings.
+type SubscriptionFilter =
+    MaxCountSubscriptionFilter<CallbackSubscriptionFilter<fn(&TopicHash) -> bool>>;
+
 /// Messages are a tuple of the destination shard ID and the actual message.
 type DirectMessage = (u64, ExternalMessage);
 
 #[derive(NetworkBehaviour)]
 struct Behaviour {
     request_response: request_response::cbor::Behaviour<DirectMessage, ExternalMessage>,
-    gossipsub: gossipsub::Behaviour,
+    gossipsub: gossipsub::Behaviour<IdentityTransform, SubscriptionFilter>,
     autonat_client: autonat::v2::client::Behaviour,
     autonat_server: autonat::v2::server::Behaviour,
     identify: identify::Behaviour,
@@ -139,7 +165,7 @@ impl P2pNode {
                             // This is a temporary patch to prevent long-running Scilla executions causing nodes to Timeout - https://github.com/Zilliqa/zq2/issues/2667
                             .with_request_timeout(Duration::from_secs(60)),
                     ),
-                    gossipsub: gossipsub::Behaviour::new(
+                    gossipsub: gossipsub::Behaviour::new_with_subscription_filter(
                         MessageAuthenticity::Signed(key_pair.clone()),
                         gossipsub::ConfigBuilder::default()
                             // 2MB is sufficient to accommodate proposal with 4000 simple transfers (block gas limit)
@@ -154,6 +180,14 @@ impl P2pNode {
                             .validate_messages() // manual forwarding is required
                             .build()
                             .map_err(|e| anyhow!(e))?,
+                        MaxCountSubscriptionFilter {
+                            filter: CallbackSubscriptionFilter(
+                                (|topic| Self::parse_topic(topic).is_some())
+                                    as fn(&TopicHash) -> bool,
+                            ),
+                            max_subscribed_topics: MAX_TOPICS_PER_PEER,
+                            max_subscriptions_per_request: MAX_TOPICS_PER_PEER,
+                        },
                     )
                     .map_err(|e| anyhow!(e))?,
                     autonat_client: autonat::v2::client::Behaviour::default(),
@@ -209,13 +243,14 @@ impl P2pNode {
         }
     }
 
-    pub fn shard_id_from_topic_hash(topic_hash: &TopicHash) -> Result<u64> {
-        Ok(topic_hash
-            .clone()
-            .into_string()
-            .split("-")
-            .collect::<Vec<_>>()[0]
-            .parse::<u64>()?)
+    /// Any connected peer can announce a subscription to an arbitrary topic string, so an
+    /// unrecognised topic must be ignored rather than raised as an error.
+    fn parse_topic(topic_hash: &TopicHash) -> Option<ShardTopic> {
+        let topic = topic_hash.as_str();
+        Some(match topic.strip_suffix(VALIDATOR_TOPIC_SUFFIX) {
+            Some(shard_id) => ShardTopic::Validator(shard_id.parse().ok()?),
+            None => ShardTopic::Shard(topic.parse().ok()?),
+        })
     }
 
     pub fn validator_topic(shard_id: u64) -> IdentTopic {
@@ -277,9 +312,8 @@ impl P2pNode {
         topic_hash: &TopicHash,
         sender: impl FnOnce(&NodeInputChannels) -> Result<(), SendError<T>>,
     ) -> Result<()> {
-        let Some(channels) = self
-            .shard_nodes
-            .get(&Self::shard_id_from_topic_hash(topic_hash)?)
+        let Some(channels) =
+            Self::parse_topic(topic_hash).and_then(|topic| self.shard_nodes.get(&topic.shard_id()))
         else {
             warn!(?topic_hash, "message received for unknown shard or topic");
             return Ok(());
@@ -354,12 +388,16 @@ impl P2pNode {
                         }
                         // Add/Remove peers to/from the shard peer list used in syncing.
                         SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id, topic })) => {
-                            if let Some(peers) = self.shard_peers.get(&Self::shard_id_from_topic_hash(&topic)?) {
+                            if let Some(ShardTopic::Shard(shard_id)) = Self::parse_topic(&topic)
+                                && let Some(peers) = self.shard_peers.get(&shard_id)
+                            {
                                 peers.add_peer(peer_id);
                             }
                         }
                         SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Unsubscribed { peer_id, topic })) => {
-                            if let Some(peers) = self.shard_peers.get(&Self::shard_id_from_topic_hash(&topic)?) {
+                            if let Some(ShardTopic::Shard(shard_id)) = Self::parse_topic(&topic)
+                                && let Some(peers) = self.shard_peers.get(&shard_id)
+                            {
                                 peers.remove_peer(peer_id);
                             }
                         }
@@ -429,7 +467,7 @@ impl P2pNode {
                                     if let Some((shard_id, _)) = self.pending_requests.remove(&request_id) {
                                         self.send_to(&Self::shard_id_to_topic(shard_id, None).hash(), |c| c.responses.send((_source, response)))?;
                                     } else {
-                                        return Err(anyhow!("response to request with no id"));
+                                        warn!(%request_id, "response to request with no id");
                                     }
                                 }
                             }
@@ -446,7 +484,7 @@ impl P2pNode {
                                 let error = OutgoingMessageFailure { peer, request_id, error };
                                 self.send_to(&Self::shard_id_to_topic(shard_id, None).hash(), |c| c.request_failures.send((peer, error)))?;
                             } else {
-                                return Err(anyhow!("request without id failed"));
+                                warn!(%request_id, "request without id failed");
                             }
                         }
                         _ => {},
@@ -533,17 +571,21 @@ impl P2pNode {
                     }
                 },
                 Some(res) = self.task_threads.join_next() => {
-                    if let Err(e) = res {
-                        // One-shot task (i.e. checkpoint export) failed. Log it and carry on.
-                        error!(%e);
+                    // One-shot task (i.e. checkpoint export) failed. Log it and carry on.
+                    match res {
+                        Err(e) => error!(%e, "task thread panicked"),
+                        Ok(Err(e)) => error!(%e, "task failed"),
+                        Ok(Ok(())) => {}
                     }
                 }
                 Some(res) = self.shard_threads.join_next() => {
-                    if let Err(e) = res {
-                        // Currently, abort everything should a single shard fail.
-                        error!(%e);
-                        break;
+                    // Currently, abort everything should a single shard fail.
+                    match res {
+                        Err(e) => error!(%e, "shard thread panicked"),
+                        Ok(Err(e)) => error!(%e, "shard node exited with error"),
+                        Ok(Ok(())) => info!("shard node exited"),
                     }
+                    break;
                 }
                 _ = terminate.recv() => {
                     info!(shards=%self.shard_threads.len(), tasks=%self.task_threads.len(), "SIGTERM. Shutting down.");
