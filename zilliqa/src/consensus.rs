@@ -3810,36 +3810,18 @@ impl Consensus {
         }
 
         // Patch account as blocked recipient and move its funds to give destination address
-        if fork.blocked_recipients_start_height != 0 {
-            let blocked = self
-                .blocked_recipients
-                .get(&fork.blocked_recipients_file)
-                .ok_or_else(|| {
-                    anyhow!(
-                        "blocked recipient list {} was not loaded at startup",
-                        fork.blocked_recipients_file,
-                    )
-                })?;
-            for (address, destination) in
-                blocked.batch(fork.blocked_recipients_start_height, block.header.number)?
-            {
-                let swept = state.mutate_account(address, |account| {
-                    let balance = account.balance;
-                    account.balance = 0;
-                    account.nonce = BLOCKED_NONCE_FLOOR;
-                    Ok(balance)
-                })?;
-
-                if swept != 0 {
-                    state.mutate_account(destination, |account| {
-                        account.balance = account.balance.checked_add(swept).ok_or_else(|| {
-                            anyhow!("balance overflow sweeping {swept} to {destination}")
-                        })?;
-                        Ok(())
-                    })?;
-                }
-            }
-        }
+        self.sweep_blocked_recipients(
+            state,
+            &fork.blocked_recipients_file,
+            fork.blocked_recipients_start_height,
+            block.header.number,
+        )?;
+        self.sweep_blocked_recipients(
+            state,
+            &fork.blocked_recipients_file_v2,
+            fork.blocked_recipients_start_height_v2,
+            block.header.number,
+        )?;
 
         // Deploys exactly at its fork's activation height, which need not be epoch-aligned.
         state.escrow_deploy_and_upgrade(&self.config.consensus, &block.header)?;
@@ -3849,6 +3831,40 @@ impl Consensus {
             state.contract_upgrade_apply_state_change(&self.config.consensus, block.header)?;
         }
 
+        Ok(())
+    }
+
+    fn sweep_blocked_recipients(
+        &self,
+        state: &mut State,
+        file: &str,
+        start_height: u64,
+        block_number: u64,
+    ) -> Result<()> {
+        if start_height == 0 {
+            return Ok(());
+        }
+        let blocked = self
+            .blocked_recipients
+            .get(file)
+            .ok_or_else(|| anyhow!("blocked recipient list {file} was not loaded at startup"))?;
+        for (address, destination) in blocked.batch(start_height, block_number)? {
+            let swept = state.mutate_account(address, |account| {
+                let balance = account.balance;
+                account.balance = 0;
+                account.nonce = BLOCKED_NONCE_FLOOR;
+                Ok(balance)
+            })?;
+
+            if swept != 0 {
+                state.mutate_account(destination, |account| {
+                    account.balance = account.balance.checked_add(swept).ok_or_else(|| {
+                        anyhow!("balance overflow sweeping {swept} to {destination}")
+                    })?;
+                    Ok(())
+                })?;
+            }
+        }
         Ok(())
     }
 

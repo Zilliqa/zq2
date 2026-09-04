@@ -694,24 +694,56 @@ impl Forks {
     ///   schedule by index arithmetic, but execute under the previous fork)
     /// - a file reused with a different start height (its index arithmetic only fits one start)
     pub fn blocked_recipient_schedules(&self) -> Result<Vec<BlockedRecipientsSchedule>> {
-        let mut schedules: Vec<BlockedRecipientsSchedule> = Vec::new();
+        let mut schedules = Vec::new();
+        self.collect_blocked_recipient_schedules(
+            ("blocked_recipients_file", "blocked_recipients_start_height"),
+            |fork| {
+                (
+                    fork.blocked_recipients_file.as_str(),
+                    fork.blocked_recipients_start_height,
+                )
+            },
+            &mut schedules,
+        )?;
+        self.collect_blocked_recipient_schedules(
+            (
+                "blocked_recipients_file_v2",
+                "blocked_recipients_start_height_v2",
+            ),
+            |fork| {
+                (
+                    fork.blocked_recipients_file_v2.as_str(),
+                    fork.blocked_recipients_start_height_v2,
+                )
+            },
+            &mut schedules,
+        )?;
+        Ok(schedules)
+    }
+
+    fn collect_blocked_recipient_schedules<'a>(
+        &'a self,
+        field_names: (&str, &str),
+        pair_of: impl Fn(&'a Fork) -> (&'a str, u64),
+        schedules: &mut Vec<BlockedRecipientsSchedule>,
+    ) -> Result<()> {
         let mut previous: (&str, u64) = ("", 0);
+        let mut open: Option<usize> = None;
         for fork in &self.0 {
-            let pair = (
-                fork.blocked_recipients_file.as_str(),
-                fork.blocked_recipients_start_height,
-            );
+            let pair = pair_of(fork);
             if pair.0.is_empty() != (pair.1 == 0) {
                 return Err(anyhow!(
-                    "fork at height {}: blocked_recipients_file and blocked_recipients_start_height must be set together",
+                    "fork at height {}: {} and {} must be set together",
                     fork.at_height,
+                    field_names.0,
+                    field_names.1,
                 ));
             }
             if pair == previous {
                 continue;
             }
-            if let Some(open) = schedules.last_mut().filter(|s| s.replaced_at.is_none()) {
-                open.replaced_at = Some(fork.at_height);
+            if let Some(index) = open.take() {
+                schedules[index].replaced_at = Some(fork.at_height);
             }
             if !pair.0.is_empty() {
                 if pair.1 < fork.at_height {
@@ -732,10 +764,11 @@ impl Forks {
                     start_height: pair.1,
                     replaced_at: None,
                 });
+                open = Some(schedules.len() - 1);
             }
             previous = pair;
         }
-        Ok(schedules)
+        Ok(())
     }
 
     pub fn find_height_fork_first_activated(&self, fork_name: ForkName) -> Option<u64> {
@@ -862,6 +895,8 @@ pub struct Fork {
     pub disable_zilliqa_txn_execution: bool,
     pub blocked_recipients_start_height: u64,
     pub blocked_recipients_file: String,
+    pub blocked_recipients_start_height_v2: u64,
+    pub blocked_recipients_file_v2: String,
     pub zil_transfers_only_to_escrow: bool,
     pub deploy_escrow_contract_v1: bool,
 }
@@ -1039,6 +1074,8 @@ pub struct ForkDelta {
     pub blocked_recipients_start_height: Option<u64>,
     /// The file holding the blocked recipients swept from that height
     pub blocked_recipients_file: Option<String>,
+    pub blocked_recipients_start_height_v2: Option<u64>,
+    pub blocked_recipients_file_v2: Option<String>,
     /// If true, legacy Zilliqa transactions are only permitted when addressed to the escrow
     /// contract; see [`Fork::zil_transfers_only_to_escrow`].
     pub zil_transfers_only_to_escrow: Option<bool>,
@@ -1189,6 +1226,13 @@ impl Fork {
                 .blocked_recipients_file
                 .clone()
                 .unwrap_or_else(|| self.blocked_recipients_file.clone()),
+            blocked_recipients_start_height_v2: delta
+                .blocked_recipients_start_height_v2
+                .unwrap_or(self.blocked_recipients_start_height_v2),
+            blocked_recipients_file_v2: delta
+                .blocked_recipients_file_v2
+                .clone()
+                .unwrap_or_else(|| self.blocked_recipients_file_v2.clone()),
             zil_transfers_only_to_escrow: delta
                 .zil_transfers_only_to_escrow
                 .unwrap_or(self.zil_transfers_only_to_escrow),
@@ -1309,6 +1353,8 @@ pub fn genesis_fork_default() -> Fork {
         disable_zilliqa_txn_execution: true,
         blocked_recipients_start_height: 0,
         blocked_recipients_file: String::new(),
+        blocked_recipients_start_height_v2: 0,
+        blocked_recipients_file_v2: String::new(),
         zil_transfers_only_to_escrow: false,
         deploy_escrow_contract_v1: false,
     }
@@ -1476,6 +1522,64 @@ mod tests {
     }
 
     #[test]
+    fn v2_schedules_run_alongside_v1_and_share_the_file_namespace() {
+        let v2 = |at_height, start, file: &str| Fork {
+            at_height,
+            blocked_recipients_start_height_v2: start,
+            blocked_recipients_file_v2: file.to_owned(),
+            ..Default::default()
+        };
+        let forks = Forks(vec![
+            schedule_fork(0, 0, ""),
+            schedule_fork(100, 100, "one.bin"),
+            Fork {
+                blocked_recipients_start_height: 100,
+                blocked_recipients_file: "one.bin".to_owned(),
+                ..v2(200, 200, "two.bin")
+            },
+            Fork {
+                blocked_recipients_start_height: 300,
+                blocked_recipients_file: "three.bin".to_owned(),
+                ..v2(300, 200, "two.bin")
+            },
+        ]);
+        assert_eq!(
+            forks.blocked_recipient_schedules().unwrap(),
+            vec![
+                BlockedRecipientsSchedule {
+                    file: "one.bin".into(),
+                    start_height: 100,
+                    replaced_at: Some(300),
+                },
+                BlockedRecipientsSchedule {
+                    file: "three.bin".into(),
+                    start_height: 300,
+                    replaced_at: None,
+                },
+                BlockedRecipientsSchedule {
+                    file: "two.bin".into(),
+                    start_height: 200,
+                    replaced_at: None,
+                },
+            ]
+        );
+        assert_eq!(forks.get(250).blocked_recipients_file, "one.bin");
+        assert_eq!(forks.get(250).blocked_recipients_file_v2, "two.bin");
+
+        let forks = Forks(vec![schedule_fork(0, 0, ""), v2(10, 0, "two.bin")]);
+        let error = forks.blocked_recipient_schedules().unwrap_err().to_string();
+        assert!(error.contains("blocked_recipients_file_v2"), "{error}");
+
+        let forks = Forks(vec![
+            schedule_fork(0, 0, ""),
+            schedule_fork(10, 10, "one.bin"),
+            v2(20, 20, "one.bin"),
+        ]);
+        let error = forks.blocked_recipient_schedules().unwrap_err().to_string();
+        assert!(error.contains("two schedules"), "{error}");
+    }
+
+    #[test]
     fn no_schedules_without_configuration() {
         let forks = Forks(vec![schedule_fork(0, 0, "")]);
         assert_eq!(forks.blocked_recipient_schedules().unwrap(), vec![]);
@@ -1576,6 +1680,8 @@ mod tests {
                 disable_zilliqa_txn_execution: None,
                 blocked_recipients_start_height: None,
                 blocked_recipients_file: None,
+                blocked_recipients_start_height_v2: None,
+                blocked_recipients_file_v2: None,
                 zil_transfers_only_to_escrow: None,
                 deploy_escrow_contract_v1: None,
             }],
@@ -1647,6 +1753,8 @@ mod tests {
                     disable_zilliqa_txn_execution: None,
                     blocked_recipients_start_height: None,
                     blocked_recipients_file: None,
+                    blocked_recipients_start_height_v2: None,
+                    blocked_recipients_file_v2: None,
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                 },
@@ -1698,6 +1806,8 @@ mod tests {
                     disable_zilliqa_txn_execution: None,
                     blocked_recipients_start_height: None,
                     blocked_recipients_file: None,
+                    blocked_recipients_start_height_v2: None,
+                    blocked_recipients_file_v2: None,
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                 },
@@ -1786,6 +1896,8 @@ mod tests {
                     disable_zilliqa_txn_execution: None,
                     blocked_recipients_start_height: None,
                     blocked_recipients_file: None,
+                    blocked_recipients_start_height_v2: None,
+                    blocked_recipients_file_v2: None,
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                 },
@@ -1837,6 +1949,8 @@ mod tests {
                     disable_zilliqa_txn_execution: None,
                     blocked_recipients_start_height: None,
                     blocked_recipients_file: None,
+                    blocked_recipients_start_height_v2: None,
+                    blocked_recipients_file_v2: None,
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                 },
@@ -1913,6 +2027,8 @@ mod tests {
                 disable_zilliqa_txn_execution: true,
                 blocked_recipients_start_height: 0,
                 blocked_recipients_file: String::new(),
+                blocked_recipients_start_height_v2: 0,
+                blocked_recipients_file_v2: String::new(),
                 zil_transfers_only_to_escrow: false,
                 deploy_escrow_contract_v1: false,
             },
@@ -1977,6 +2093,8 @@ mod tests {
                     disable_zilliqa_txn_execution: None,
                     blocked_recipients_start_height: None,
                     blocked_recipients_file: None,
+                    blocked_recipients_start_height_v2: None,
+                    blocked_recipients_file_v2: None,
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                 },
@@ -2028,6 +2146,8 @@ mod tests {
                     disable_zilliqa_txn_execution: None,
                     blocked_recipients_start_height: None,
                     blocked_recipients_file: None,
+                    blocked_recipients_start_height_v2: None,
+                    blocked_recipients_file_v2: None,
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                 },

@@ -714,7 +714,8 @@ impl State {
             );
 
         // Specially marked accounts cannot be recipients of any transaction
-        let blocked_recipient = fork.blocked_recipients_start_height != 0
+        let blocked_recipient = (fork.blocked_recipients_start_height != 0
+            || fork.blocked_recipients_start_height_v2 != 0)
             && extra_opts.exec_type == ExecType::Transact
             && match to_addr {
                 Some(to) => self.get_account(to)?.nonce == BLOCKED_NONCE_FLOOR,
