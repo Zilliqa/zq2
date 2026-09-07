@@ -41,8 +41,8 @@ contract EscrowInit is UUPSUpgradeable, Groth16Verifier {
         __UUPSUpgradeable_init();
     }
 
-    /// @notice Anyone can send funds here; recorded against msg.sender.
-    /// We do not implement a receive() to prevent accidental transfers.
+    /// @notice Anyone can send funds here from the legacy side; recorded against sender.
+    /// We do not implement a receive() to prevent accidental transfers from the EVM side.
     function lodge() external payable {
         ClaimVaultStorage storage $ = _getClaimVaultStorage();
         $.balances[msg.sender] += msg.value;
