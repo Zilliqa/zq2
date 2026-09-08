@@ -331,9 +331,9 @@ impl Chain {
                 json!({ "at_height": 34369689, "allow_scilla_call_precompile_to_be_called_from_addresses": ["0x453b11386FBd54bC532892c0217BBc316fc7b918"]}),
                 json!({ "at_height": 39985504, "blocked_recipients_start_height": 39985504, "blocked_recipients_file": "blocked_recipients_001.bin" }),
                 json!({ "at_height": 39985504, "disable_zilliqa_txn_execution": true }),
-                json!({ "at_height": 99999999, "blocked_recipients_start_height_v2": 99999999, "blocked_recipients_file_v2": "blocked_recipients_002.bin" }),
-                json!({ "at_height": 99999999, "deploy_escrow_contract_v1": true }),
-                json!({ "at_height": 99999999, "zil_transfers_only_to_escrow": true }),
+                json!({ "at_height": 40599771, "blocked_recipients_start_height_v2": 40599771, "blocked_recipients_file_v2": "blocked_recipients_002.bin" }),
+                json!({ "at_height": 40599771, "deploy_escrow_contract_v1": true }),
+                json!({ "at_height": 40599772, "zil_transfers_only_to_escrow": true }),
             ]),
             Chain::Zq2Mainnet => Some(vec![
                 json!({ "at_height": 4770088, "executable_blocks": true }),
@@ -501,9 +501,9 @@ impl Chain {
                 }),
                 json!({ "at_height": 31759109, "disable_zilliqa_txn_execution": true }),
                 json!({ "at_height": 34844968, "blocked_recipients_start_height": 34844968, "blocked_recipients_file": "blocked_recipients_001.bin" }),
-                json!({ "at_height": 99999999, "blocked_recipients_start_height_v2": 99999999, "blocked_recipients_file_v2": "blocked_recipients_002.bin" }),
-                json!({ "at_height": 99999999, "deploy_escrow_contract_v1": true }),
-                json!({ "at_height": 99999999, "zil_transfers_only_to_escrow": true }),
+                json!({ "at_height": 36383378, "blocked_recipients_start_height_v2": 36383378, "blocked_recipients_file_v2": "blocked_recipients_002.bin" }),
+                json!({ "at_height": 36383378, "deploy_escrow_contract_v1": true }),
+                json!({ "at_height": 36383379, "zil_transfers_only_to_escrow": true }),
             ]),
             Chain::Zq2Devnet => Some(vec![
                 json!({
