@@ -579,7 +579,7 @@ async fn validators_can_unstake(mut network: Network) {
         .unwrap();
 }
 
-/// Regression test for the F-1 control-address hijack (fixed in deposit_v9).
+/// Regression test for the control-address hijack fixed in deposit_v9.
 ///
 /// After a full unstake, the staker's `_stakersMap` entry — including its pending withdrawal
 /// queue and `controlAddress` — persists even though the key has left the committee. Before
