@@ -271,6 +271,16 @@ impl State {
                 deposit_v8_reinitialise_data_opt,
             )?;
         }
+
+        if let Some(deposit_v9_deploy_config) = &config.contract_upgrades.deposit_v9
+            && deposit_v9_deploy_config.height == block_header.number
+        {
+            // deposit_v9 adds no new storage fields, so no reinitialise params are needed;
+            // passing `None` falls back to the no-arg `reinitialize()` (reinitializer(9)),
+            // which just advances the contract's initialised-version marker to 9.
+            let deposit_v9_contract = Lazy::<Contract>::force(&contracts::deposit_v9::CONTRACT);
+            self.upgrade_deposit_contract(block_header, deposit_v9_contract, None)?;
+        }
         Ok(())
     }
 

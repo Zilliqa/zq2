@@ -105,6 +105,10 @@ impl Chain {
                     height: 0,
                     reinitialise_params: None,
                 }),
+                deposit_v9: Some(ContractUpgradeConfig {
+                    height: 0,
+                    reinitialise_params: None,
+                }),
             },
             Self::Zq2Testnet => ContractUpgrades {
                 deposit_v3: None,
@@ -129,6 +133,9 @@ impl Chain {
                         withdrawal_period: 461680,
                     }),
                 }),
+                // TODO: set the fork height when the v9 hardfork is scheduled by governance.
+                // Leaving this `None` means the v9 upgrade is not yet activated on testnet.
+                deposit_v9: None,
             },
             Self::Zq2Mainnet => ContractUpgrades {
                 deposit_v3: None,
@@ -153,6 +160,9 @@ impl Chain {
                         withdrawal_period: 461680,
                     }),
                 }),
+                // TODO: set the fork height when the v9 hardfork is scheduled by governance.
+                // Leaving this `None` means the v9 upgrade is not yet activated on mainnet.
+                deposit_v9: None,
             },
             _ => ContractUpgrades::default(),
         }

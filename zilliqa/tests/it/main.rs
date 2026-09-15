@@ -396,6 +396,7 @@ impl Network {
                         reinitialise_params: Some(ReinitialiseParams::default()),
                     }),
                     Some(ContractUpgradeConfig::from_height(0)),
+                    Some(ContractUpgradeConfig::from_height(0)),
                 )
             } else {
                 ContractUpgrades::new(
@@ -410,6 +411,7 @@ impl Network {
                         height: 0,
                         reinitialise_params: Some(ReinitialiseParams::default()),
                     }),
+                    Some(ContractUpgradeConfig::from_height(0)),
                     Some(ContractUpgradeConfig::from_height(0)),
                 )
             }
@@ -579,6 +581,9 @@ impl Network {
                         height: deposit_v3_upgrade_block_height,
                         reinitialise_params: Some(ReinitialiseParams::default()),
                     }),
+                    Some(ContractUpgradeConfig::from_height(
+                        deposit_v3_upgrade_block_height,
+                    )),
                 )
             } else {
                 ContractUpgrades::new(
@@ -597,6 +602,7 @@ impl Network {
                         height: 0,
                         reinitialise_params: Some(ReinitialiseParams::default()),
                     }),
+                    Some(ContractUpgradeConfig::from_height(0)),
                 )
             };
         let config = NodeConfig {
