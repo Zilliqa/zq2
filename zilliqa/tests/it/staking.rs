@@ -669,7 +669,11 @@ async fn redeposit_after_full_unstake_cannot_hijack_control_address(mut network:
         .value(U256::from(min_stake))
         .gas_limit(5_000_000)
         .input(TransactionInput::both(data.into()));
-    let hash = *attacker_wallet.send_transaction(tx).await.unwrap().tx_hash();
+    let hash = *attacker_wallet
+        .send_transaction(tx)
+        .await
+        .unwrap()
+        .tx_hash();
     let receipt = network.run_until_receipt(attacker_wallet, &hash, 200).await;
 
     // The hijack must revert, and the control address must be unchanged.
@@ -685,8 +689,7 @@ async fn redeposit_after_full_unstake_cannot_hijack_control_address(mut network:
 
     // The legitimate control address can still re-deposit under the same key.
     let control_address = control_wallet.default_signer_address();
-    let control_signature =
-        validator_key.deposit_auth_signature(network.shard_id, control_address);
+    let control_signature = validator_key.deposit_auth_signature(network.shard_id, control_address);
     let data = contracts::deposit::DEPOSIT
         .encode_input(&[
             Token::Bytes(validator_blskey.as_bytes()),
