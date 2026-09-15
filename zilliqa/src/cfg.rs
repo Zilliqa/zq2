@@ -1355,6 +1355,8 @@ impl Default for ContractUpgrades {
             }),
             deposit_v9: Some(ContractUpgradeConfig {
                 height: 0,
+                // v9 is a logic-only security patch; preserve the existing unbonding period
+                // (no-arg reinitialize) rather than resetting it as v7/v8 do.
                 reinitialise_params: None,
             }),
         }
