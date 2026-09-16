@@ -389,6 +389,7 @@ impl Network {
                         reinitialise_params: Some(ReinitialiseParams::default()),
                     }),
                     Some(ContractUpgradeConfig::from_height(0)),
+                    Some(ContractUpgradeConfig::from_height(0)),
                 )
             } else {
                 ContractUpgrades::new(
@@ -403,6 +404,7 @@ impl Network {
                         height: 0,
                         reinitialise_params: Some(ReinitialiseParams::default()),
                     }),
+                    Some(ContractUpgradeConfig::from_height(0)),
                     Some(ContractUpgradeConfig::from_height(0)),
                 )
             }
@@ -555,47 +557,52 @@ impl Network {
     }
 
     pub fn add_node_with_options(&mut self, options: NewNodeOptions) -> usize {
-        let contract_upgrades = if self.deposit_v3_upgrade_block_height.is_some() {
-            ContractUpgrades::new(
-                Some(ContractUpgradeConfig::from_height(
-                    self.deposit_v3_upgrade_block_height.unwrap(),
-                )),
-                None,
-                Some(ContractUpgradeConfig {
-                    height: self.deposit_v3_upgrade_block_height.unwrap(),
-                    reinitialise_params: Some(ReinitialiseParams::default()),
-                }),
-                Some(ContractUpgradeConfig::from_height(
-                    self.deposit_v3_upgrade_block_height.unwrap(),
-                )),
-                Some(ContractUpgradeConfig {
-                    height: self.deposit_v3_upgrade_block_height.unwrap(),
-                    reinitialise_params: Some(ReinitialiseParams::default()),
-                }),
-                Some(ContractUpgradeConfig {
-                    height: self.deposit_v3_upgrade_block_height.unwrap(),
-                    reinitialise_params: Some(ReinitialiseParams::default()),
-                }),
-            )
-        } else {
-            ContractUpgrades::new(
-                None,
-                None,
-                Some(ContractUpgradeConfig {
-                    height: 0,
-                    reinitialise_params: Some(ReinitialiseParams::default()),
-                }),
-                Some(ContractUpgradeConfig::from_height(0)),
-                Some(ContractUpgradeConfig {
-                    height: 0,
-                    reinitialise_params: Some(ReinitialiseParams::default()),
-                }),
-                Some(ContractUpgradeConfig {
-                    height: 0,
-                    reinitialise_params: Some(ReinitialiseParams::default()),
-                }),
-            )
-        };
+        let contract_upgrades =
+            if let Some(deposit_v3_upgrade_block_height) = self.deposit_v3_upgrade_block_height {
+                ContractUpgrades::new(
+                    Some(ContractUpgradeConfig::from_height(
+                        deposit_v3_upgrade_block_height,
+                    )),
+                    None,
+                    Some(ContractUpgradeConfig {
+                        height: deposit_v3_upgrade_block_height,
+                        reinitialise_params: Some(ReinitialiseParams::default()),
+                    }),
+                    Some(ContractUpgradeConfig::from_height(
+                        deposit_v3_upgrade_block_height,
+                    )),
+                    Some(ContractUpgradeConfig {
+                        height: deposit_v3_upgrade_block_height,
+                        reinitialise_params: Some(ReinitialiseParams::default()),
+                    }),
+                    Some(ContractUpgradeConfig {
+                        height: deposit_v3_upgrade_block_height,
+                        reinitialise_params: Some(ReinitialiseParams::default()),
+                    }),
+                    Some(ContractUpgradeConfig::from_height(
+                        deposit_v3_upgrade_block_height,
+                    )),
+                )
+            } else {
+                ContractUpgrades::new(
+                    None,
+                    None,
+                    Some(ContractUpgradeConfig {
+                        height: 0,
+                        reinitialise_params: Some(ReinitialiseParams::default()),
+                    }),
+                    Some(ContractUpgradeConfig::from_height(0)),
+                    Some(ContractUpgradeConfig {
+                        height: 0,
+                        reinitialise_params: Some(ReinitialiseParams::default()),
+                    }),
+                    Some(ContractUpgradeConfig {
+                        height: 0,
+                        reinitialise_params: Some(ReinitialiseParams::default()),
+                    }),
+                    Some(ContractUpgradeConfig::from_height(0)),
+                )
+            };
         let config = NodeConfig {
             eth_chain_id: self.shard_id,
             api_servers: vec![ApiServer {

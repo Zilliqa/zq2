@@ -1,5 +1,5 @@
 use alloy::hex;
-pub use deposit_v8 as deposit;
+pub use deposit_v9 as deposit;
 use serde_json::Value;
 
 pub mod escrow_init {
@@ -522,6 +522,109 @@ pub mod deposit_v8 {
         Lazy::new(|| CONTRACT.abi.function("withdrawalPeriod").unwrap().clone());
 }
 
+pub mod deposit_v9 {
+    use ethabi::{Constructor, Function, ParamType};
+    use once_cell::sync::Lazy;
+
+    use super::{COMPILED_DEPOSIT_V9, Contract, contract_from};
+
+    pub static CONTRACT: Lazy<Contract> = Lazy::new(|| {
+        contract_from(
+            COMPILED_DEPOSIT_V9,
+            "src/contracts/deposit_v9.sol",
+            "Deposit",
+        )
+    });
+    pub static CONSTRUCTOR: Lazy<Constructor> =
+        Lazy::new(|| CONTRACT.abi.constructor().unwrap().clone());
+    pub static REINITIALIZE: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.functions_by_name("reinitialize").unwrap()[0].clone());
+    pub static REINITIALIZE_2: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.functions_by_name("reinitialize").unwrap()[1].clone());
+    pub static UPGRADE_TO_AND_CALL: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("upgradeToAndCall").unwrap().clone());
+    pub static VERSION: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("version").unwrap().clone());
+
+    pub static BYTECODE: Lazy<Vec<u8>> = Lazy::new(|| CONTRACT.bytecode.clone());
+    pub static LEADER_AT_VIEW: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("leaderAtView").unwrap().clone());
+
+    pub static LEADER_AT_VIEW_WITH_RANDAO: Lazy<Function> = Lazy::new(|| {
+        CONTRACT
+            .abi
+            .function("leaderAtViewWithRandao")
+            .unwrap()
+            .clone()
+    });
+    pub static DEPOSIT: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("deposit").unwrap().clone());
+    pub static DEPOSIT_TOPUP: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("depositTopup").unwrap().clone());
+    pub static UNSTAKE: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("unstake").unwrap().clone());
+    // `withdraw` is overloaded: `withdraw(bytes)` drains all available unstaked
+    // funds, `withdraw(bytes,uint256)` drains up to `count` entries. Resolve each
+    // by exact signature so the selector cannot drift if more overloads are added.
+    pub static WITHDRAW: Lazy<Function> = Lazy::new(|| {
+        CONTRACT
+            .abi
+            .functions_by_name("withdraw")
+            .unwrap()
+            .iter()
+            .find(|f| matches!(f.inputs.as_slice(), [p] if p.kind == ParamType::Bytes))
+            .expect("withdraw(bytes) overload missing from deposit_v9 ABI")
+            .clone()
+    });
+    pub static WITHDRAW_COUNT: Lazy<Function> = Lazy::new(|| {
+        CONTRACT
+            .abi
+            .functions_by_name("withdraw")
+            .unwrap()
+            .iter()
+            .find(|f| {
+                matches!(
+                    f.inputs.as_slice(),
+                    [p1, p2] if p1.kind == ParamType::Bytes && p2.kind == ParamType::Uint(256)
+                )
+            })
+            .expect("withdraw(bytes,uint256) overload missing from deposit_v9 ABI")
+            .clone()
+    });
+    pub static CURRENT_EPOCH: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("currentEpoch").unwrap().clone());
+    pub static GET_STAKE: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("getStake").unwrap().clone());
+    pub static GET_FUTURE_STAKE: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("getFutureStake").unwrap().clone());
+    pub static GET_REWARD_ADDRESS: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("getRewardAddress").unwrap().clone());
+    pub static GET_SIGNING_ADDRESS: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("getSigningAddress").unwrap().clone());
+    pub static GET_CONTROL_ADDRESS: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("getControlAddress").unwrap().clone());
+    pub static SET_SIGNING_ADDRESS: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("setSigningAddress").unwrap().clone());
+    pub static SET_CONTROL_ADDRESS: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("setControlAddress").unwrap().clone());
+    pub static GET_PEER_ID: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("getPeerId").unwrap().clone());
+    pub static GET_STAKERS: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("getStakers").unwrap().clone());
+    pub static GET_TOTAL_STAKE: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("getTotalStake").unwrap().clone());
+    pub static COMMITTEE: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("committee").unwrap().clone());
+    pub static MIN_DEPOSIT: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("minimumStake").unwrap().clone());
+    pub static MAX_STAKERS: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("maximumStakers").unwrap().clone());
+    pub static BLOCKS_PER_EPOCH: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("blocksPerEpoch").unwrap().clone());
+    pub static WITHDRAWAL_PERIOD: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("withdrawalPeriod").unwrap().clone());
+}
+
 pub mod shard {
     use ethabi::Constructor;
     use once_cell::sync::Lazy;
@@ -600,6 +703,7 @@ pub mod eip1967_proxy {
 
 const COMPILED: &str = include_str!("compiled_legacy.json");
 const COMPILED_DEPOSIT_V8: &str = include_str!("compiled_deposit_v8.json");
+const COMPILED_DEPOSIT_V9: &str = include_str!("compiled_deposit_v9.json");
 const COMPILED_ESCROW: &str = include_str!("compiled_escrow.json");
 const COMPILED_ESCROW_MINTABLE: &str = include_str!("compiled_escrow_mintable.json");
 
@@ -766,6 +870,29 @@ mod tests {
                 "src/contracts/utils/deque_v2.sol",
             ],
             "compiled_deposit_v8.json",
+        );
+    }
+
+    /// Compiles deposit_v9 into compiled_deposit_v9.json. Run with:
+    /// ```sh
+    /// ZQ_COMPILE_CONTRACTS=deposit_v9 ZQ_CONTRACT_TEST_BLESS=1 cargo test --features test_contract_bytecode -- contracts::tests::compile_deposit_v9
+    /// ```
+    #[test]
+    #[cfg_attr(not(feature = "test_contract_bytecode"), ignore)]
+    fn compile_deposit_v9() {
+        if !should_compile("deposit_v9") {
+            eprintln!(
+                "Skipping deposit_v9 compilation (set ZQ_COMPILE_CONTRACTS=deposit_v9 or ZQ_COMPILE_CONTRACTS=all)"
+            );
+            return;
+        }
+
+        compile_and_check(
+            &[
+                "src/contracts/deposit_v9.sol",
+                "src/contracts/utils/deque_v2.sol",
+            ],
+            "compiled_deposit_v9.json",
         );
     }
 

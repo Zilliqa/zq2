@@ -1444,9 +1444,11 @@ pub struct ContractUpgrades {
     pub deposit_v6: Option<ContractUpgradeConfig>,
     pub deposit_v7: Option<ContractUpgradeConfig>,
     pub deposit_v8: Option<ContractUpgradeConfig>,
+    pub deposit_v9: Option<ContractUpgradeConfig>,
 }
 
 impl ContractUpgrades {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         deposit_v3: Option<ContractUpgradeConfig>,
         deposit_v4: Option<ContractUpgradeConfig>,
@@ -1454,6 +1456,7 @@ impl ContractUpgrades {
         deposit_v6: Option<ContractUpgradeConfig>,
         deposit_v7: Option<ContractUpgradeConfig>,
         deposit_v8: Option<ContractUpgradeConfig>,
+        deposit_v9: Option<ContractUpgradeConfig>,
     ) -> ContractUpgrades {
         Self {
             deposit_v3,
@@ -1462,6 +1465,7 @@ impl ContractUpgrades {
             deposit_v6,
             deposit_v7,
             deposit_v8,
+            deposit_v9,
         }
     }
     pub fn to_toml(&self) -> toml::Value {
@@ -1513,6 +1517,12 @@ impl Default for ContractUpgrades {
             deposit_v8: Some(ContractUpgradeConfig {
                 height: 0,
                 reinitialise_params: Some(ReinitialiseParams::default()),
+            }),
+            deposit_v9: Some(ContractUpgradeConfig {
+                height: 0,
+                // v9 is a logic-only security patch; preserve the existing unbonding period
+                // (no-arg reinitialize) rather than resetting it as v7/v8 do.
+                reinitialise_params: None,
             }),
         }
     }

@@ -575,6 +575,139 @@ async fn validators_can_unstake(mut network: Network) {
         .unwrap();
 }
 
+/// Regression test for the control-address hijack fixed in deposit_v9.
+///
+/// After a full unstake, the staker's `_stakersMap` entry — including its pending withdrawal
+/// queue and `controlAddress` — persists even though the key has left the committee. Before
+/// the fix, anyone able to produce the BLS proof-of-possession (a holder of the validator's
+/// hot signing key, but NOT the cold control key) could call `deposit()` again for the same
+/// key, silently overwrite `controlAddress`, and later drain the lingering withdrawals. The
+/// v9 guard rejects a re-deposit under a known key from any caller other than the existing
+/// control address.
+#[zilliqa_macros::test(blocks_per_epoch = 2)]
+async fn redeposit_after_full_unstake_cannot_hijack_control_address(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    // randomise the current epoch state and current leader
+    let start_at = network.rng.lock().unwrap().gen_range(1..6);
+    network
+        .run_until_block_finalized(start_at, 400)
+        .await
+        .unwrap();
+
+    let validator_idx = network.random_index();
+    let validator_key = network.get_node_raw(validator_idx).secret_key;
+    let validator_blskey = validator_key.node_public_key();
+    let control_wallet = network
+        .wallet_from_key(network.get_node_raw(validator_idx).onchain_key.clone())
+        .await;
+    fund_wallet(&mut network, &wallet, &control_wallet).await;
+
+    let original_control_address = get_control_address(&wallet, &validator_blskey).await;
+
+    // Fully unstake the validator so it leaves the committee but keeps its withdrawal queue.
+    let stake = get_stake(&wallet, &validator_blskey).await;
+    let (_unstake_hash, unstake_block) =
+        unstake_amount(&mut network, &validator_blskey, &control_wallet, stake).await;
+    network
+        .run_until_block_finalized(unstake_block, 100)
+        .await
+        .unwrap();
+
+    // Wait until the key has actually left the committee (two epochs after the unstake).
+    let unstake_epoch = current_epoch(&wallet, Some(unstake_block)).await;
+    network
+        .run_until_async(
+            || async {
+                if current_epoch(&wallet, None).await < unstake_epoch + 2 {
+                    return false;
+                }
+                let stakers = get_stakers(&wallet).await;
+                assert!(!stakers.contains(&validator_blskey));
+                true
+            },
+            400,
+        )
+        .await
+        .unwrap();
+
+    let min_stake = get_minimum_deposit(&wallet).await;
+    let peer_id = validator_key
+        .to_libp2p_keypair()
+        .public()
+        .to_peer_id()
+        .to_bytes();
+
+    // The attacker controls the validator's hot BLS key (so it can forge the PoP) but is a
+    // *different* EVM account than the cold control address. It sends >= minimumStake so the
+    // transaction reaches (and is rejected by) the control-address guard rather than the
+    // stake-amount check.
+    let attacker_wallet = &wallet;
+    let attacker_address = attacker_wallet.default_signer_address();
+    assert_ne!(
+        H160::from(attacker_address.0.0),
+        original_control_address,
+        "attacker must be a different account than the control address"
+    );
+    let attacker_signature =
+        validator_key.deposit_auth_signature(network.shard_id, attacker_address);
+    let data = contracts::deposit::DEPOSIT
+        .encode_input(&[
+            Token::Bytes(validator_blskey.as_bytes()),
+            Token::Bytes(peer_id.clone()),
+            Token::Bytes(attacker_signature.to_bytes()),
+            Token::Address(Address::random().0.0.into()),
+            Token::Address(Address::random().0.0.into()),
+        ])
+        .unwrap();
+    let tx = TransactionRequest::default()
+        .to(contract_addr::DEPOSIT_PROXY)
+        .value(U256::from(min_stake))
+        .gas_limit(5_000_000)
+        .input(TransactionInput::both(data.into()));
+    let hash = *attacker_wallet
+        .send_transaction(tx)
+        .await
+        .unwrap()
+        .tx_hash();
+    let receipt = network.run_until_receipt(attacker_wallet, &hash, 200).await;
+
+    // The hijack must revert, and the control address must be unchanged.
+    assert!(
+        !receipt.status(),
+        "attacker re-deposit should have reverted (Unauthorised)"
+    );
+    assert_eq!(
+        get_control_address(&wallet, &validator_blskey).await,
+        original_control_address,
+        "control address must not change after a failed hijack"
+    );
+
+    // The legitimate control address can still re-deposit under the same key.
+    let control_address = control_wallet.default_signer_address();
+    let control_signature = validator_key.deposit_auth_signature(network.shard_id, control_address);
+    let data = contracts::deposit::DEPOSIT
+        .encode_input(&[
+            Token::Bytes(validator_blskey.as_bytes()),
+            Token::Bytes(peer_id),
+            Token::Bytes(control_signature.to_bytes()),
+            Token::Address(Address::random().0.0.into()),
+            Token::Address(Address::random().0.0.into()),
+        ])
+        .unwrap();
+    let tx = TransactionRequest::default()
+        .to(contract_addr::DEPOSIT_PROXY)
+        .value(U256::from(min_stake))
+        .gas_limit(5_000_000)
+        .input(TransactionInput::both(data.into()));
+    let hash = *control_wallet.send_transaction(tx).await.unwrap().tx_hash();
+    let receipt = network.run_until_receipt(&control_wallet, &hash, 200).await;
+    assert!(
+        receipt.status(),
+        "legitimate control-address re-deposit should succeed"
+    );
+}
+
 // TODO: Tests for:
 // * partial unstaking staying above the minimum
 // * partial unstaking under the minimum (should fail)

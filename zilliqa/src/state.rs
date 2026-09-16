@@ -277,6 +277,31 @@ impl State {
                 deposit_v8_reinitialise_data_opt,
             )?;
         }
+
+        if let Some(deposit_v9_deploy_config) = &config.contract_upgrades.deposit_v9
+            && deposit_v9_deploy_config.height == block_header.number
+        {
+            let deposit_v9_contract = Lazy::<Contract>::force(&contracts::deposit_v9::CONTRACT);
+            // v9 adds no new storage fields, so it normally needs no reinitialise params: `None`
+            // falls back to the no-arg `reinitialize()` (reinitializer(9)), which just advances
+            // the initialised-version marker to 9 and preserves `withdrawalPeriod`. We still
+            // honour `reinitialise_params` if a network sets it (mirroring v8), so the config
+            // field is never silently ignored.
+            let deposit_v9_reinitialise_data_opt =
+                match deposit_v9_deploy_config.reinitialise_params.clone() {
+                    Some(reinitialise_params) => Some(
+                        contracts::deposit_v9::REINITIALIZE_2.encode_input(&[Token::Uint(
+                            reinitialise_params.withdrawal_period.into(),
+                        )])?,
+                    ),
+                    None => None,
+                };
+            self.upgrade_deposit_contract(
+                block_header,
+                deposit_v9_contract,
+                deposit_v9_reinitialise_data_opt,
+            )?;
+        }
         Ok(())
     }
 

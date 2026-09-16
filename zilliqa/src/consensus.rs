@@ -3135,7 +3135,16 @@ impl Consensus {
         let mut public_keys = Vec::new();
         for (index, bit) in agg.cosigned.iter().enumerate() {
             if *bit {
-                public_keys.push(*committee.get(index).unwrap());
+                // `cosigned` is a fixed-size 256-bit field, so a byzantine proposer can set
+                // bits at indices beyond the actual committee size. Reject the block instead
+                // of panicking (which would crash every node that validates the proposal).
+                let public_key = committee.get(index).ok_or_else(|| {
+                    anyhow!(
+                        "aggregate QC cosigned bit {index} set beyond committee size {}",
+                        committee.len()
+                    )
+                })?;
+                public_keys.push(*public_key);
             }
         }
 
@@ -3209,22 +3218,24 @@ impl Consensus {
     ) -> Result<()> {
         let parent_state = self.state.at_root(parent_state_hash.into());
 
-        let cosigned_sum: u128 = signers
-            .iter()
-            .enumerate()
-            .map(|(i, bit)| {
-                if *bit {
-                    let public_key = committee.get(i).unwrap();
-                    let stake = parent_state
-                        .get_stake(*public_key, block.header)
-                        .unwrap()
-                        .unwrap();
-                    stake.get()
-                } else {
-                    0
-                }
-            })
-            .sum();
+        let mut cosigned_sum: u128 = 0;
+        for (i, bit) in signers.iter().enumerate() {
+            if *bit {
+                // `signers` is a fixed-size 256-bit field, so a byzantine proposer can set
+                // bits at indices beyond the actual committee size. Reject the block instead
+                // of panicking (which would crash every node that validates the proposal).
+                let public_key = committee.get(i).ok_or_else(|| {
+                    anyhow!(
+                        "aggregate QC signer bit {i} set beyond committee size {}",
+                        committee.len()
+                    )
+                })?;
+                let stake = parent_state
+                    .get_stake(*public_key, block.header)?
+                    .ok_or_else(|| anyhow!("cosigner {public_key} is not a staker"))?;
+                cosigned_sum += stake.get();
+            }
+        }
 
         if cosigned_sum * 3 <= self.total_weight(committee, block.header) * 2 {
             return Err(anyhow!("no quorum"));
