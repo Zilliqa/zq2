@@ -8,7 +8,7 @@ use ethabi::{ParamType, Token, decode, encode, short_signature};
 use revm::interpreter::{Gas, InputsImpl, InstructionResult, InterpreterResult};
 use revm_precompile::{PrecompileError, PrecompileOutput};
 use serde::{Deserialize, Serialize};
-use tracing::debug;
+use tracing::{debug, error};
 
 use crate::{
     constants::{LAG_BEHIND_CURRENT_VIEW, MISSED_VIEW_THRESHOLD, MISSED_VIEW_WINDOW},
@@ -243,16 +243,14 @@ fn call_penalty(
     if view.as_u64() > LAG_BEHIND_CURRENT_VIEW
         && view.as_u64() - LAG_BEHIND_CURRENT_VIEW >= ctx.chain.finalized_view
     {
-        debug!(
+        error!(
             ?view,
             finalized = ctx.chain.finalized_view,
             "~~~~~~~~~~> required missed view history not finalized"
         );
-        // Leader selection must remain live while the jailing window is still
-        // being finalized. A leader cannot be jailed until that history is
-        // available, so conservatively report that it is not jailed.
-        let output = encode(&[Token::Bool(false)]);
-        return Ok(PrecompileOutput::new(REQUIRED_GAS, output.into()));
+        return Err(PrecompileErrors::Error(PrecompileError::Other(
+            "Required missed view history not finalized".into(),
+        )));
     }
     let min_view = ctx.chain.view_history.read().min_view;
     // fail if the missed view history does not reach back far enough in the past or
