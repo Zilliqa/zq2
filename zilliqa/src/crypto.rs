@@ -173,6 +173,10 @@ impl NodePublicKey {
         self.0.0.to_compressed().to_vec()
     }
 
+    pub fn as_uncompressed(&self) -> Vec<u8> {
+        self.0.0.to_uncompressed().to_vec()
+    }
+
     pub fn verify(&self, message: &[u8], signature: BlsSignature) -> Result<()> {
         if signature.0.verify(&self.0, message).is_err() {
             return Err(anyhow!("invalid signature"));
