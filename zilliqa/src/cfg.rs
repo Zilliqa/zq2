@@ -718,6 +718,19 @@ impl Forks {
             },
             &mut schedules,
         )?;
+        self.collect_blocked_recipient_schedules(
+            (
+                "blocked_recipients_file_v3",
+                "blocked_recipients_start_height_v3",
+            ),
+            |fork| {
+                (
+                    fork.blocked_recipients_file_v3.as_str(),
+                    fork.blocked_recipients_start_height_v3,
+                )
+            },
+            &mut schedules,
+        )?;
         Ok(schedules)
     }
 
@@ -897,6 +910,8 @@ pub struct Fork {
     pub blocked_recipients_file: String,
     pub blocked_recipients_start_height_v2: u64,
     pub blocked_recipients_file_v2: String,
+    pub blocked_recipients_start_height_v3: u64,
+    pub blocked_recipients_file_v3: String,
     pub zil_transfers_only_to_escrow: bool,
     pub deploy_escrow_contract_v1: bool,
 }
@@ -1076,6 +1091,8 @@ pub struct ForkDelta {
     pub blocked_recipients_file: Option<String>,
     pub blocked_recipients_start_height_v2: Option<u64>,
     pub blocked_recipients_file_v2: Option<String>,
+    pub blocked_recipients_start_height_v3: Option<u64>,
+    pub blocked_recipients_file_v3: Option<String>,
     /// If true, legacy Zilliqa transactions are only permitted when addressed to the escrow
     /// contract; see [`Fork::zil_transfers_only_to_escrow`].
     pub zil_transfers_only_to_escrow: Option<bool>,
@@ -1233,6 +1250,13 @@ impl Fork {
                 .blocked_recipients_file_v2
                 .clone()
                 .unwrap_or_else(|| self.blocked_recipients_file_v2.clone()),
+            blocked_recipients_start_height_v3: delta
+                .blocked_recipients_start_height_v3
+                .unwrap_or(self.blocked_recipients_start_height_v3),
+            blocked_recipients_file_v3: delta
+                .blocked_recipients_file_v3
+                .clone()
+                .unwrap_or_else(|| self.blocked_recipients_file_v3.clone()),
             zil_transfers_only_to_escrow: delta
                 .zil_transfers_only_to_escrow
                 .unwrap_or(self.zil_transfers_only_to_escrow),
@@ -1355,6 +1379,8 @@ pub fn genesis_fork_default() -> Fork {
         blocked_recipients_file: String::new(),
         blocked_recipients_start_height_v2: 0,
         blocked_recipients_file_v2: String::new(),
+        blocked_recipients_start_height_v3: 0,
+        blocked_recipients_file_v3: String::new(),
         zil_transfers_only_to_escrow: false,
         deploy_escrow_contract_v1: false,
     }
@@ -1590,6 +1616,60 @@ mod tests {
     }
 
     #[test]
+    fn v3_schedules_run_alongside_v1_and_v2_and_share_the_file_namespace() {
+        let v3 = |at_height, start, file: &str| Fork {
+            at_height,
+            blocked_recipients_start_height_v3: start,
+            blocked_recipients_file_v3: file.to_owned(),
+            ..Default::default()
+        };
+        let forks = Forks(vec![
+            schedule_fork(0, 0, ""),
+            schedule_fork(100, 100, "one.bin"),
+            Fork {
+                blocked_recipients_start_height: 100,
+                blocked_recipients_file: "one.bin".to_owned(),
+                blocked_recipients_start_height_v2: 200,
+                blocked_recipients_file_v2: "two.bin".to_owned(),
+                ..v3(200, 250, "three.bin")
+            },
+        ]);
+        assert_eq!(
+            forks.blocked_recipient_schedules().unwrap(),
+            vec![
+                BlockedRecipientsSchedule {
+                    file: "one.bin".into(),
+                    start_height: 100,
+                    replaced_at: None,
+                },
+                BlockedRecipientsSchedule {
+                    file: "two.bin".into(),
+                    start_height: 200,
+                    replaced_at: None,
+                },
+                BlockedRecipientsSchedule {
+                    file: "three.bin".into(),
+                    start_height: 250,
+                    replaced_at: None,
+                },
+            ]
+        );
+        assert_eq!(forks.get(250).blocked_recipients_file_v3, "three.bin");
+
+        let forks = Forks(vec![schedule_fork(0, 0, ""), v3(10, 0, "three.bin")]);
+        let error = forks.blocked_recipient_schedules().unwrap_err().to_string();
+        assert!(error.contains("blocked_recipients_file_v3"), "{error}");
+
+        let forks = Forks(vec![
+            schedule_fork(0, 0, ""),
+            schedule_fork(10, 10, "one.bin"),
+            v3(20, 20, "one.bin"),
+        ]);
+        let error = forks.blocked_recipient_schedules().unwrap_err().to_string();
+        assert!(error.contains("two schedules"), "{error}");
+    }
+
+    #[test]
     fn no_schedules_without_configuration() {
         let forks = Forks(vec![schedule_fork(0, 0, "")]);
         assert_eq!(forks.blocked_recipient_schedules().unwrap(), vec![]);
@@ -1692,6 +1772,8 @@ mod tests {
                 blocked_recipients_file: None,
                 blocked_recipients_start_height_v2: None,
                 blocked_recipients_file_v2: None,
+                blocked_recipients_start_height_v3: None,
+                blocked_recipients_file_v3: None,
                 zil_transfers_only_to_escrow: None,
                 deploy_escrow_contract_v1: None,
             }],
@@ -1765,6 +1847,8 @@ mod tests {
                     blocked_recipients_file: None,
                     blocked_recipients_start_height_v2: None,
                     blocked_recipients_file_v2: None,
+                    blocked_recipients_start_height_v3: None,
+                    blocked_recipients_file_v3: None,
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                 },
@@ -1818,6 +1902,8 @@ mod tests {
                     blocked_recipients_file: None,
                     blocked_recipients_start_height_v2: None,
                     blocked_recipients_file_v2: None,
+                    blocked_recipients_start_height_v3: None,
+                    blocked_recipients_file_v3: None,
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                 },
@@ -1908,6 +1994,8 @@ mod tests {
                     blocked_recipients_file: None,
                     blocked_recipients_start_height_v2: None,
                     blocked_recipients_file_v2: None,
+                    blocked_recipients_start_height_v3: None,
+                    blocked_recipients_file_v3: None,
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                 },
@@ -1961,6 +2049,8 @@ mod tests {
                     blocked_recipients_file: None,
                     blocked_recipients_start_height_v2: None,
                     blocked_recipients_file_v2: None,
+                    blocked_recipients_start_height_v3: None,
+                    blocked_recipients_file_v3: None,
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                 },
@@ -2039,6 +2129,8 @@ mod tests {
                 blocked_recipients_file: String::new(),
                 blocked_recipients_start_height_v2: 0,
                 blocked_recipients_file_v2: String::new(),
+                blocked_recipients_start_height_v3: 0,
+                blocked_recipients_file_v3: String::new(),
                 zil_transfers_only_to_escrow: false,
                 deploy_escrow_contract_v1: false,
             },
@@ -2105,6 +2197,8 @@ mod tests {
                     blocked_recipients_file: None,
                     blocked_recipients_start_height_v2: None,
                     blocked_recipients_file_v2: None,
+                    blocked_recipients_start_height_v3: None,
+                    blocked_recipients_file_v3: None,
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                 },
@@ -2158,6 +2252,8 @@ mod tests {
                     blocked_recipients_file: None,
                     blocked_recipients_start_height_v2: None,
                     blocked_recipients_file_v2: None,
+                    blocked_recipients_start_height_v3: None,
+                    blocked_recipients_file_v3: None,
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                 },

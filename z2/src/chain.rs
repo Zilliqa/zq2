@@ -221,6 +221,8 @@ impl Chain {
                 "blocked_recipients_file": "",
                 "blocked_recipients_start_height_v2": 0,
                 "blocked_recipients_file_v2": "",
+                "blocked_recipients_start_height_v3": 0,
+                "blocked_recipients_file_v3": "",
                 "zil_transfers_only_to_escrow": false,
                 "deploy_escrow_contract_v1": false,
             })),
@@ -274,6 +276,8 @@ impl Chain {
                 "blocked_recipients_file": "",
                 "blocked_recipients_start_height_v2": 0,
                 "blocked_recipients_file_v2": "",
+                "blocked_recipients_start_height_v3": 0,
+                "blocked_recipients_file_v3": "",
                 "zil_transfers_only_to_escrow": false,
                 "deploy_escrow_contract_v1": false,
             })),
@@ -344,6 +348,7 @@ impl Chain {
                 json!({ "at_height": 40408000, "blocked_recipients_start_height_v2": 40408000, "blocked_recipients_file_v2": "blocked_recipients_002.bin" }),
                 json!({ "at_height": 40408500, "deploy_escrow_contract_v1": true }),
                 json!({ "at_height": 40409000, "zil_transfers_only_to_escrow": true }),
+                json!({ "at_height": 99999999, "blocked_recipients_start_height_v3": 99999999, "blocked_recipients_file_v3": "blocked_recipients_003.bin" }),
             ]),
             Chain::Zq2Mainnet => Some(vec![
                 json!({ "at_height": 4770088, "executable_blocks": true }),
@@ -514,6 +519,7 @@ impl Chain {
                 json!({ "at_height": 36383378, "blocked_recipients_start_height_v2": 36383378, "blocked_recipients_file_v2": "blocked_recipients_002.bin" }),
                 json!({ "at_height": 36383378, "deploy_escrow_contract_v1": true }),
                 json!({ "at_height": 36383379, "zil_transfers_only_to_escrow": true }),
+                json!({ "at_height": 99999999, "blocked_recipients_start_height_v3": 99999999, "blocked_recipients_file_v3": "blocked_recipients_003.bin" }),
             ]),
             Chain::Zq2Devnet => Some(vec![
                 json!({
@@ -524,6 +530,7 @@ impl Chain {
                 }),
                 json!({ "at_height": 1001, "zil_transfers_only_to_escrow": true }),
                 json!({ "at_height": 37000, "blocked_recipients_start_height_v2": 37000, "blocked_recipients_file_v2": "blocked_recipients_002.bin" }),
+                json!({ "at_height": 57000, "blocked_recipients_start_height_v3": 57000, "blocked_recipients_file_v3": "blocked_recipients_003.bin" }),
             ]),
             _ => None,
         }

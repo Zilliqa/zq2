@@ -3821,18 +3821,22 @@ impl Consensus {
         }
 
         // Patch account as blocked recipient and move its funds to give destination address
-        self.sweep_blocked_recipients(
-            state,
-            &fork.blocked_recipients_file,
-            fork.blocked_recipients_start_height,
-            block.header.number,
-        )?;
-        self.sweep_blocked_recipients(
-            state,
-            &fork.blocked_recipients_file_v2,
-            fork.blocked_recipients_start_height_v2,
-            block.header.number,
-        )?;
+        for (file, start_height) in [
+            (
+                &fork.blocked_recipients_file,
+                fork.blocked_recipients_start_height,
+            ),
+            (
+                &fork.blocked_recipients_file_v2,
+                fork.blocked_recipients_start_height_v2,
+            ),
+            (
+                &fork.blocked_recipients_file_v3,
+                fork.blocked_recipients_start_height_v3,
+            ),
+        ] {
+            self.sweep_blocked_recipients(state, file, start_height, block.header.number)?;
+        }
 
         // Deploys exactly at its fork's activation height, which need not be epoch-aligned.
         state.escrow_deploy_and_upgrade(&self.config.consensus, &block.header)?;
