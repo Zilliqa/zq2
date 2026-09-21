@@ -525,7 +525,6 @@ impl Setup {
                 allowed_timestamp_skew: allowed_timestamp_skew_default(),
                 data_dir: None,
                 blocked_recipients_dir: None,
-                escrow_raw_lists_dir: None,
                 state_cache_size: state_cache_size_default(),
                 load_checkpoint: None,
                 do_checkpoints: false,
