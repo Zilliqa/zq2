@@ -19,7 +19,7 @@ consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
 # Gas parameters
 consensus.eth_block_gas_limit = 84000000
 consensus.gas_price = "4_761_904_800_000"
-consensus.contract_upgrades = { deposit_v5 = { height = 0, reinitialise_params = { withdrawal_period = 1209600 } }, deposit_v6 = { height = 13514400 }, deposit_v7 = { height = 13514400, reinitialise_params = { withdrawal_period = 461680 } }, deposit_v8 = { height = 25902000, reinitialise_params = { withdrawal_period = 461680 } } }
+consensus.contract_upgrades = { deposit_v5 = { height = 0, reinitialise_params = { withdrawal_period = 1209600 } }, deposit_v6 = { height = 13514400 }, deposit_v7 = { height = 13514400, reinitialise_params = { withdrawal_period = 461680 } }, deposit_v8 = { height = 25902000, reinitialise_params = { withdrawal_period = 461680 } }, deposit_v9 = { height = 37411200 } }
 consensus.new_view_broadcast_interval = { secs = 30, nanos = 0 }
 
 blocked_recipients_dir = "/blocked_recipients"
@@ -52,5 +52,5 @@ consensus.forks = [
     { at_height = 36383378, blocked_recipients_start_height_v2 = 36383378, blocked_recipients_file_v2 = "blocked_recipients_002.bin" },
     { at_height = 36383378, deploy_escrow_contract_v1 = true },
     { at_height = 36383379, zil_transfers_only_to_escrow = true },
-    { at_height = 99999999, blocked_recipients_start_height_v3 = 99999999, blocked_recipients_file_v3 = "blocked_recipients_003.bin" },
+    { at_height = 37410000, blocked_recipients_start_height_v3 = 37410000, blocked_recipients_file_v3 = "blocked_recipients_003.bin" },
 ]

@@ -133,9 +133,10 @@ impl Chain {
                         withdrawal_period: 461680,
                     }),
                 }),
-                // TODO: set the fork height when the v9 hardfork is scheduled by governance.
-                // Leaving this `None` means the v9 upgrade is not yet activated on testnet.
-                deposit_v9: None,
+                deposit_v9: Some(ContractUpgradeConfig {
+                    height: 41151600,
+                    reinitialise_params: None,
+                }),
             },
             Self::Zq2Mainnet => ContractUpgrades {
                 deposit_v3: None,
@@ -160,9 +161,10 @@ impl Chain {
                         withdrawal_period: 461680,
                     }),
                 }),
-                // TODO: set the fork height when the v9 hardfork is scheduled by governance.
-                // Leaving this `None` means the v9 upgrade is not yet activated on mainnet.
-                deposit_v9: None,
+                deposit_v9: Some(ContractUpgradeConfig {
+                    height: 37411200,
+                    reinitialise_params: None,
+                }),
             },
             _ => ContractUpgrades::default(),
         }
@@ -348,7 +350,7 @@ impl Chain {
                 json!({ "at_height": 40408000, "blocked_recipients_start_height_v2": 40408000, "blocked_recipients_file_v2": "blocked_recipients_002.bin" }),
                 json!({ "at_height": 40408500, "deploy_escrow_contract_v1": true }),
                 json!({ "at_height": 40409000, "zil_transfers_only_to_escrow": true }),
-                json!({ "at_height": 99999999, "blocked_recipients_start_height_v3": 99999999, "blocked_recipients_file_v3": "blocked_recipients_003.bin" }),
+                json!({ "at_height": 41152000, "blocked_recipients_start_height_v3": 41152000, "blocked_recipients_file_v3": "blocked_recipients_003.bin" }),
             ]),
             Chain::Zq2Mainnet => Some(vec![
                 json!({ "at_height": 4770088, "executable_blocks": true }),
@@ -519,7 +521,7 @@ impl Chain {
                 json!({ "at_height": 36383378, "blocked_recipients_start_height_v2": 36383378, "blocked_recipients_file_v2": "blocked_recipients_002.bin" }),
                 json!({ "at_height": 36383378, "deploy_escrow_contract_v1": true }),
                 json!({ "at_height": 36383379, "zil_transfers_only_to_escrow": true }),
-                json!({ "at_height": 99999999, "blocked_recipients_start_height_v3": 99999999, "blocked_recipients_file_v3": "blocked_recipients_003.bin" }),
+                json!({ "at_height": 37410000, "blocked_recipients_start_height_v3": 37410000, "blocked_recipients_file_v3": "blocked_recipients_003.bin" }),
             ]),
             Chain::Zq2Devnet => Some(vec![
                 json!({
@@ -529,8 +531,8 @@ impl Chain {
                     "deploy_escrow_contract_v1": true,
                 }),
                 json!({ "at_height": 1001, "zil_transfers_only_to_escrow": true }),
-                json!({ "at_height": 37000, "blocked_recipients_start_height_v2": 37000, "blocked_recipients_file_v2": "blocked_recipients_002.bin" }),
-                json!({ "at_height": 57000, "blocked_recipients_start_height_v3": 57000, "blocked_recipients_file_v3": "blocked_recipients_003.bin" }),
+                json!({ "at_height": 3600, "blocked_recipients_start_height_v2": 3600, "blocked_recipients_file_v2": "blocked_recipients_002.bin" }),
+                json!({ "at_height": 33000, "blocked_recipients_start_height_v3": 33000, "blocked_recipients_file_v3": "blocked_recipients_003.bin" }),
             ]),
             _ => None,
         }
