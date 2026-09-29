@@ -291,6 +291,11 @@ pub struct NodeConfig {
     /// The location of persistence data. If not set, uses a temporary path.
     #[serde(default)]
     pub data_dir: Option<String>,
+    /// The directory holding the blocked-recipients files named by forks. Node-local: only the
+    /// files' contents are consensus-critical, not where they live. Defaults to `data_dir`; in
+    /// the Docker image the files are baked into `/blocked_recipients`, outside the data volume.
+    #[serde(default)]
+    pub blocked_recipients_dir: Option<String>,
     /// Size of the in-memory state trie cache, in bytes. Defaults to 256 MiB.
     #[serde(default = "state_cache_size_default")]
     pub state_cache_size: usize,
@@ -339,6 +344,7 @@ impl Default for NodeConfig {
             consensus: ConsensusConfig::default(),
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             data_dir: None,
+            blocked_recipients_dir: None,
             state_cache_size: state_cache_size_default(),
             load_checkpoint: None,
             do_checkpoints: false,
@@ -676,6 +682,16 @@ impl Default for ConsensusConfig {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Forks(Vec<Fork>);
 
+/// One staged blocked-recipients sweep: `file` (resolved against the node's
+/// `blocked_recipients_dir`) provides the accounts, swept from `start_height` until either the
+/// list is exhausted or a later fork replaces the pair at `replaced_at`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlockedRecipientsSchedule {
+    pub file: String,
+    pub start_height: u64,
+    pub replaced_at: Option<u64>,
+}
+
 impl Forks {
     pub fn get(&self, height: u64) -> &Fork {
         // Binary search to find the fork at the specified height. If an entry was not found at exactly the specified
@@ -687,6 +703,108 @@ impl Forks {
             .binary_search_by_key(&height, |f| f.at_height)
             .unwrap_or_else(|i| i - 1);
         &self.0[index]
+    }
+
+    /// Every blocked-recipients schedule any fork refers to, in activation order, so startup can
+    /// open each file long before (or long after) its schedule runs. A schedule is the
+    /// `(blocked_recipients_file, blocked_recipients_start_height)` pair carried by a run of
+    /// consecutive forks; `replaced_at` is the height of the first fork that carries a different
+    /// pair, after which this schedule's file is never consulted again.
+    ///
+    /// Fails on configurations that would silently skip sweeps:
+    /// - a fork naming a file without a start height, or a start height without a file
+    /// - a start height below the fork that introduces it (blocks in between would belong to the
+    ///   schedule by index arithmetic, but execute under the previous fork)
+    /// - a file reused with a different start height (its index arithmetic only fits one start)
+    pub fn blocked_recipient_schedules(&self) -> Result<Vec<BlockedRecipientsSchedule>> {
+        let mut schedules = Vec::new();
+        self.collect_blocked_recipient_schedules(
+            ("blocked_recipients_file", "blocked_recipients_start_height"),
+            |fork| {
+                (
+                    fork.blocked_recipients_file.as_str(),
+                    fork.blocked_recipients_start_height,
+                )
+            },
+            &mut schedules,
+        )?;
+        self.collect_blocked_recipient_schedules(
+            (
+                "blocked_recipients_file_v2",
+                "blocked_recipients_start_height_v2",
+            ),
+            |fork| {
+                (
+                    fork.blocked_recipients_file_v2.as_str(),
+                    fork.blocked_recipients_start_height_v2,
+                )
+            },
+            &mut schedules,
+        )?;
+        self.collect_blocked_recipient_schedules(
+            (
+                "blocked_recipients_file_v3",
+                "blocked_recipients_start_height_v3",
+            ),
+            |fork| {
+                (
+                    fork.blocked_recipients_file_v3.as_str(),
+                    fork.blocked_recipients_start_height_v3,
+                )
+            },
+            &mut schedules,
+        )?;
+        Ok(schedules)
+    }
+
+    fn collect_blocked_recipient_schedules<'a>(
+        &'a self,
+        field_names: (&str, &str),
+        pair_of: impl Fn(&'a Fork) -> (&'a str, u64),
+        schedules: &mut Vec<BlockedRecipientsSchedule>,
+    ) -> Result<()> {
+        let mut previous: (&str, u64) = ("", 0);
+        let mut open: Option<usize> = None;
+        for fork in &self.0 {
+            let pair = pair_of(fork);
+            if pair.0.is_empty() != (pair.1 == 0) {
+                return Err(anyhow!(
+                    "fork at height {}: {} and {} must be set together",
+                    fork.at_height,
+                    field_names.0,
+                    field_names.1,
+                ));
+            }
+            if pair == previous {
+                continue;
+            }
+            if let Some(index) = open.take() {
+                schedules[index].replaced_at = Some(fork.at_height);
+            }
+            if !pair.0.is_empty() {
+                if pair.1 < fork.at_height {
+                    return Err(anyhow!(
+                        "fork at height {} starts blocked recipients at {}, before its own activation",
+                        fork.at_height,
+                        pair.1,
+                    ));
+                }
+                if schedules.iter().any(|s| s.file == pair.0) {
+                    return Err(anyhow!(
+                        "blocked recipients file {} is referenced by two schedules",
+                        pair.0,
+                    ));
+                }
+                schedules.push(BlockedRecipientsSchedule {
+                    file: pair.0.to_owned(),
+                    start_height: pair.1,
+                    replaced_at: None,
+                });
+                open = Some(schedules.len() - 1);
+            }
+            previous = pair;
+        }
+        Ok(())
     }
 
     pub fn find_height_fork_first_activated(&self, fork_name: ForkName) -> Option<u64> {
@@ -756,6 +874,7 @@ impl Forks {
                     .allow_scilla_call_precompile_to_be_called_from_addresses
                     .is_empty(),
                 ForkName::DistributeRewardsEveryEpoch => fork.distribute_rewards_every_epoch,
+                ForkName::DeployEscrowContractV1 => fork.deploy_escrow_contract_v1,
             } {
                 return Some(fork.at_height);
             }
@@ -812,6 +931,15 @@ pub struct Fork {
     pub allow_scilla_call_precompile_to_be_called_from_addresses: Vec<Address>,
     pub distribute_rewards_every_epoch: bool,
     pub pectra_active: bool,
+    pub disable_zilliqa_txn_execution: bool,
+    pub blocked_recipients_start_height: u64,
+    pub blocked_recipients_file: String,
+    pub blocked_recipients_start_height_v2: u64,
+    pub blocked_recipients_file_v2: String,
+    pub blocked_recipients_start_height_v3: u64,
+    pub blocked_recipients_file_v3: String,
+    pub zil_transfers_only_to_escrow: bool,
+    pub deploy_escrow_contract_v1: bool,
 }
 
 pub enum ForkName {
@@ -845,6 +973,7 @@ pub enum ForkName {
     TightenPrecompileRules,
     AllowScillaCallPrecompileToBeCalledFromAddresses,
     DistributeRewardsEveryEpoch,
+    DeployEscrowContractV1,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -984,6 +1113,23 @@ pub struct ForkDelta {
     pub distribute_rewards_every_epoch: Option<bool>,
     /// if true, pectra is activated in evm
     pub pectra_active: Option<bool>,
+    /// If true, legacy Zilliqa (Scilla) transactions are skipped from execution entirely — as if
+    /// they were never received (lost).
+    pub disable_zilliqa_txn_execution: Option<bool>,
+    /// Blocked recipients are activated at this height
+    pub blocked_recipients_start_height: Option<u64>,
+    /// The file holding the blocked recipients swept from that height
+    pub blocked_recipients_file: Option<String>,
+    pub blocked_recipients_start_height_v2: Option<u64>,
+    pub blocked_recipients_file_v2: Option<String>,
+    pub blocked_recipients_start_height_v3: Option<u64>,
+    pub blocked_recipients_file_v3: Option<String>,
+    /// If true, legacy Zilliqa transactions are only permitted when addressed to the escrow
+    /// contract; see [`Fork::zil_transfers_only_to_escrow`].
+    pub zil_transfers_only_to_escrow: Option<bool>,
+    /// Deploys the escrow contract at this fork's activation height; see
+    /// [`Fork::deploy_escrow_contract_v1`].
+    pub deploy_escrow_contract_v1: Option<bool>,
 }
 
 impl Fork {
@@ -1122,6 +1268,36 @@ impl Fork {
                 .distribute_rewards_every_epoch
                 .unwrap_or(self.distribute_rewards_every_epoch),
             pectra_active: delta.pectra_active.unwrap_or(self.pectra_active),
+            disable_zilliqa_txn_execution: delta
+                .disable_zilliqa_txn_execution
+                .unwrap_or(self.disable_zilliqa_txn_execution),
+            blocked_recipients_start_height: delta
+                .blocked_recipients_start_height
+                .unwrap_or(self.blocked_recipients_start_height),
+            blocked_recipients_file: delta
+                .blocked_recipients_file
+                .clone()
+                .unwrap_or_else(|| self.blocked_recipients_file.clone()),
+            blocked_recipients_start_height_v2: delta
+                .blocked_recipients_start_height_v2
+                .unwrap_or(self.blocked_recipients_start_height_v2),
+            blocked_recipients_file_v2: delta
+                .blocked_recipients_file_v2
+                .clone()
+                .unwrap_or_else(|| self.blocked_recipients_file_v2.clone()),
+            blocked_recipients_start_height_v3: delta
+                .blocked_recipients_start_height_v3
+                .unwrap_or(self.blocked_recipients_start_height_v3),
+            blocked_recipients_file_v3: delta
+                .blocked_recipients_file_v3
+                .clone()
+                .unwrap_or_else(|| self.blocked_recipients_file_v3.clone()),
+            zil_transfers_only_to_escrow: delta
+                .zil_transfers_only_to_escrow
+                .unwrap_or(self.zil_transfers_only_to_escrow),
+            deploy_escrow_contract_v1: delta
+                .deploy_escrow_contract_v1
+                .unwrap_or(self.deploy_escrow_contract_v1),
         }
     }
 }
@@ -1235,6 +1411,15 @@ pub fn genesis_fork_default() -> Fork {
         allow_scilla_call_precompile_to_be_called_from_addresses: vec![],
         distribute_rewards_every_epoch: true,
         pectra_active: true,
+        disable_zilliqa_txn_execution: true,
+        blocked_recipients_start_height: 0,
+        blocked_recipients_file: String::new(),
+        blocked_recipients_start_height_v2: 0,
+        blocked_recipients_file_v2: String::new(),
+        blocked_recipients_start_height_v3: 0,
+        blocked_recipients_file_v3: String::new(),
+        zil_transfers_only_to_escrow: false,
+        deploy_escrow_contract_v1: false,
     }
 }
 
@@ -1367,6 +1552,196 @@ impl Default for ContractUpgrades {
 mod tests {
     use super::*;
 
+    fn schedule_fork(at_height: u64, start: u64, file: &str) -> Fork {
+        Fork {
+            at_height,
+            blocked_recipients_start_height: start,
+            blocked_recipients_file: file.to_owned(),
+            ..Default::default()
+        }
+    }
+
+    /// Startup opens every file any fork names - schedules millions of blocks away included -
+    /// while the per-block gate stays closed until `forks.get(height)` carries the pair.
+    #[test]
+    fn schedules_are_collected_across_all_forks() {
+        let forks = Forks(vec![
+            schedule_fork(0, 0, ""),
+            schedule_fork(5_000_000, 5_000_100, "one.bin"),
+            // Same pair carried forward: still the same schedule.
+            schedule_fork(5_500_000, 5_000_100, "one.bin"),
+            // A new pair replaces it; "one.bin" is never consulted from here on.
+            schedule_fork(6_000_000, 6_000_000, "two.bin"),
+        ]);
+
+        assert_eq!(
+            forks.blocked_recipient_schedules().unwrap(),
+            vec![
+                BlockedRecipientsSchedule {
+                    file: "one.bin".into(),
+                    start_height: 5_000_100,
+                    replaced_at: Some(6_000_000),
+                },
+                BlockedRecipientsSchedule {
+                    file: "two.bin".into(),
+                    start_height: 6_000_000,
+                    replaced_at: None,
+                },
+            ]
+        );
+        // Executing a block below the activation still sees no schedule.
+        assert_eq!(forks.get(100).blocked_recipients_start_height, 0);
+        assert_eq!(forks.get(5_000_000).blocked_recipients_file, "one.bin");
+    }
+
+    #[test]
+    fn v2_schedules_run_alongside_v1_and_share_the_file_namespace() {
+        let v2 = |at_height, start, file: &str| Fork {
+            at_height,
+            blocked_recipients_start_height_v2: start,
+            blocked_recipients_file_v2: file.to_owned(),
+            ..Default::default()
+        };
+        let forks = Forks(vec![
+            schedule_fork(0, 0, ""),
+            schedule_fork(100, 100, "one.bin"),
+            Fork {
+                blocked_recipients_start_height: 100,
+                blocked_recipients_file: "one.bin".to_owned(),
+                ..v2(200, 200, "two.bin")
+            },
+            Fork {
+                blocked_recipients_start_height: 300,
+                blocked_recipients_file: "three.bin".to_owned(),
+                ..v2(300, 200, "two.bin")
+            },
+        ]);
+        assert_eq!(
+            forks.blocked_recipient_schedules().unwrap(),
+            vec![
+                BlockedRecipientsSchedule {
+                    file: "one.bin".into(),
+                    start_height: 100,
+                    replaced_at: Some(300),
+                },
+                BlockedRecipientsSchedule {
+                    file: "three.bin".into(),
+                    start_height: 300,
+                    replaced_at: None,
+                },
+                BlockedRecipientsSchedule {
+                    file: "two.bin".into(),
+                    start_height: 200,
+                    replaced_at: None,
+                },
+            ]
+        );
+        assert_eq!(forks.get(250).blocked_recipients_file, "one.bin");
+        assert_eq!(forks.get(250).blocked_recipients_file_v2, "two.bin");
+
+        let forks = Forks(vec![schedule_fork(0, 0, ""), v2(10, 0, "two.bin")]);
+        let error = forks.blocked_recipient_schedules().unwrap_err().to_string();
+        assert!(error.contains("blocked_recipients_file_v2"), "{error}");
+
+        let forks = Forks(vec![
+            schedule_fork(0, 0, ""),
+            schedule_fork(10, 10, "one.bin"),
+            v2(20, 20, "one.bin"),
+        ]);
+        let error = forks.blocked_recipient_schedules().unwrap_err().to_string();
+        assert!(error.contains("two schedules"), "{error}");
+    }
+
+    #[test]
+    fn v3_schedules_run_alongside_v1_and_v2_and_share_the_file_namespace() {
+        let v3 = |at_height, start, file: &str| Fork {
+            at_height,
+            blocked_recipients_start_height_v3: start,
+            blocked_recipients_file_v3: file.to_owned(),
+            ..Default::default()
+        };
+        let forks = Forks(vec![
+            schedule_fork(0, 0, ""),
+            schedule_fork(100, 100, "one.bin"),
+            Fork {
+                blocked_recipients_start_height: 100,
+                blocked_recipients_file: "one.bin".to_owned(),
+                blocked_recipients_start_height_v2: 200,
+                blocked_recipients_file_v2: "two.bin".to_owned(),
+                ..v3(200, 250, "three.bin")
+            },
+        ]);
+        assert_eq!(
+            forks.blocked_recipient_schedules().unwrap(),
+            vec![
+                BlockedRecipientsSchedule {
+                    file: "one.bin".into(),
+                    start_height: 100,
+                    replaced_at: None,
+                },
+                BlockedRecipientsSchedule {
+                    file: "two.bin".into(),
+                    start_height: 200,
+                    replaced_at: None,
+                },
+                BlockedRecipientsSchedule {
+                    file: "three.bin".into(),
+                    start_height: 250,
+                    replaced_at: None,
+                },
+            ]
+        );
+        assert_eq!(forks.get(250).blocked_recipients_file_v3, "three.bin");
+
+        let forks = Forks(vec![schedule_fork(0, 0, ""), v3(10, 0, "three.bin")]);
+        let error = forks.blocked_recipient_schedules().unwrap_err().to_string();
+        assert!(error.contains("blocked_recipients_file_v3"), "{error}");
+
+        let forks = Forks(vec![
+            schedule_fork(0, 0, ""),
+            schedule_fork(10, 10, "one.bin"),
+            v3(20, 20, "one.bin"),
+        ]);
+        let error = forks.blocked_recipient_schedules().unwrap_err().to_string();
+        assert!(error.contains("two schedules"), "{error}");
+    }
+
+    #[test]
+    fn no_schedules_without_configuration() {
+        let forks = Forks(vec![schedule_fork(0, 0, "")]);
+        assert_eq!(forks.blocked_recipient_schedules().unwrap(), vec![]);
+    }
+
+    #[test]
+    fn schedule_validation_rejects_silent_sweep_skips() {
+        // File and height must come together.
+        for (start, file) in [(0, "one.bin"), (10, "")] {
+            let forks = Forks(vec![schedule_fork(0, 0, ""), schedule_fork(5, start, file)]);
+            assert!(
+                forks.blocked_recipient_schedules().is_err(),
+                "{start} {file:?}"
+            );
+        }
+
+        // A start below the introducing fork would skip that many batches of addresses.
+        let forks = Forks(vec![
+            schedule_fork(0, 0, ""),
+            schedule_fork(100, 50, "one.bin"),
+        ]);
+        let error = forks.blocked_recipient_schedules().unwrap_err().to_string();
+        assert!(error.contains("before its own activation"), "{error}");
+
+        // A file cannot serve two schedules: its batch index only fits one start height.
+        let forks = Forks(vec![
+            schedule_fork(0, 0, ""),
+            schedule_fork(10, 10, "one.bin"),
+            schedule_fork(20, 20, "two.bin"),
+            schedule_fork(30, 30, "one.bin"),
+        ]);
+        let error = forks.blocked_recipient_schedules().unwrap_err().to_string();
+        assert!(error.contains("two schedules"), "{error}");
+    }
+
     #[test]
     fn test_get_forks_with_no_forks() {
         let config = ConsensusConfig {
@@ -1431,6 +1806,15 @@ mod tests {
                 allow_scilla_call_precompile_to_be_called_from_addresses: None,
                 distribute_rewards_every_epoch: None,
                 pectra_active: None,
+                disable_zilliqa_txn_execution: None,
+                blocked_recipients_start_height: None,
+                blocked_recipients_file: None,
+                blocked_recipients_start_height_v2: None,
+                blocked_recipients_file_v2: None,
+                blocked_recipients_start_height_v3: None,
+                blocked_recipients_file_v3: None,
+                zil_transfers_only_to_escrow: None,
+                deploy_escrow_contract_v1: None,
             }],
             ..Default::default()
         };
@@ -1499,6 +1883,15 @@ mod tests {
                     allow_scilla_call_precompile_to_be_called_from_addresses: None,
                     distribute_rewards_every_epoch: None,
                     pectra_active: Some(false),
+                    disable_zilliqa_txn_execution: None,
+                    blocked_recipients_start_height: None,
+                    blocked_recipients_file: None,
+                    blocked_recipients_start_height_v2: None,
+                    blocked_recipients_file_v2: None,
+                    blocked_recipients_start_height_v3: None,
+                    blocked_recipients_file_v3: None,
+                    zil_transfers_only_to_escrow: None,
+                    deploy_escrow_contract_v1: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1547,6 +1940,15 @@ mod tests {
                     allow_scilla_call_precompile_to_be_called_from_addresses: None,
                     distribute_rewards_every_epoch: None,
                     pectra_active: None,
+                    disable_zilliqa_txn_execution: None,
+                    blocked_recipients_start_height: None,
+                    blocked_recipients_file: None,
+                    blocked_recipients_start_height_v2: None,
+                    blocked_recipients_file_v2: None,
+                    blocked_recipients_start_height_v3: None,
+                    blocked_recipients_file_v3: None,
+                    zil_transfers_only_to_escrow: None,
+                    deploy_escrow_contract_v1: None,
                 },
             ],
             ..Default::default()
@@ -1632,6 +2034,15 @@ mod tests {
                     allow_scilla_call_precompile_to_be_called_from_addresses: None,
                     distribute_rewards_every_epoch: None,
                     pectra_active: None,
+                    disable_zilliqa_txn_execution: None,
+                    blocked_recipients_start_height: None,
+                    blocked_recipients_file: None,
+                    blocked_recipients_start_height_v2: None,
+                    blocked_recipients_file_v2: None,
+                    blocked_recipients_start_height_v3: None,
+                    blocked_recipients_file_v3: None,
+                    zil_transfers_only_to_escrow: None,
+                    deploy_escrow_contract_v1: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1680,6 +2091,15 @@ mod tests {
                     allow_scilla_call_precompile_to_be_called_from_addresses: None,
                     distribute_rewards_every_epoch: None,
                     pectra_active: None,
+                    disable_zilliqa_txn_execution: None,
+                    blocked_recipients_start_height: None,
+                    blocked_recipients_file: None,
+                    blocked_recipients_start_height_v2: None,
+                    blocked_recipients_file_v2: None,
+                    blocked_recipients_start_height_v3: None,
+                    blocked_recipients_file_v3: None,
+                    zil_transfers_only_to_escrow: None,
+                    deploy_escrow_contract_v1: None,
                 },
             ],
             ..Default::default()
@@ -1753,6 +2173,15 @@ mod tests {
                 allow_scilla_call_precompile_to_be_called_from_addresses: vec![],
                 distribute_rewards_every_epoch: true,
                 pectra_active: true,
+                disable_zilliqa_txn_execution: true,
+                blocked_recipients_start_height: 0,
+                blocked_recipients_file: String::new(),
+                blocked_recipients_start_height_v2: 0,
+                blocked_recipients_file_v2: String::new(),
+                blocked_recipients_start_height_v3: 0,
+                blocked_recipients_file_v3: String::new(),
+                zil_transfers_only_to_escrow: false,
+                deploy_escrow_contract_v1: false,
             },
             forks: vec![],
             ..Default::default()
@@ -1814,6 +2243,15 @@ mod tests {
                     allow_scilla_call_precompile_to_be_called_from_addresses: None,
                     distribute_rewards_every_epoch: None,
                     pectra_active: None,
+                    disable_zilliqa_txn_execution: None,
+                    blocked_recipients_start_height: None,
+                    blocked_recipients_file: None,
+                    blocked_recipients_start_height_v2: None,
+                    blocked_recipients_file_v2: None,
+                    blocked_recipients_start_height_v3: None,
+                    blocked_recipients_file_v3: None,
+                    zil_transfers_only_to_escrow: None,
+                    deploy_escrow_contract_v1: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1862,6 +2300,15 @@ mod tests {
                     allow_scilla_call_precompile_to_be_called_from_addresses: None,
                     distribute_rewards_every_epoch: None,
                     pectra_active: None,
+                    disable_zilliqa_txn_execution: None,
+                    blocked_recipients_start_height: None,
+                    blocked_recipients_file: None,
+                    blocked_recipients_start_height_v2: None,
+                    blocked_recipients_file_v2: None,
+                    blocked_recipients_start_height_v3: None,
+                    blocked_recipients_file_v3: None,
+                    zil_transfers_only_to_escrow: None,
+                    deploy_escrow_contract_v1: None,
                 },
             ],
             ..Default::default()

@@ -133,9 +133,10 @@ impl Chain {
                         withdrawal_period: 461680,
                     }),
                 }),
-                // TODO: set the fork height when the v9 hardfork is scheduled by governance.
-                // Leaving this `None` means the v9 upgrade is not yet activated on testnet.
-                deposit_v9: None,
+                deposit_v9: Some(ContractUpgradeConfig {
+                    height: 41151600,
+                    reinitialise_params: None,
+                }),
             },
             Self::Zq2Mainnet => ContractUpgrades {
                 deposit_v3: None,
@@ -160,9 +161,10 @@ impl Chain {
                         withdrawal_period: 461680,
                     }),
                 }),
-                // TODO: set the fork height when the v9 hardfork is scheduled by governance.
-                // Leaving this `None` means the v9 upgrade is not yet activated on mainnet.
-                deposit_v9: None,
+                deposit_v9: Some(ContractUpgradeConfig {
+                    height: 37411200,
+                    reinitialise_params: None,
+                }),
             },
             _ => ContractUpgrades::default(),
         }
@@ -218,6 +220,15 @@ impl Chain {
                 "allow_scilla_call_precompile_to_be_called_from_addresses": [],
                 "distribute_rewards_every_epoch": false,
                 "pectra_active": false,
+                "disable_zilliqa_txn_execution": false,
+                "blocked_recipients_start_height": 0,
+                "blocked_recipients_file": "",
+                "blocked_recipients_start_height_v2": 0,
+                "blocked_recipients_file_v2": "",
+                "blocked_recipients_start_height_v3": 0,
+                "blocked_recipients_file_v3": "",
+                "zil_transfers_only_to_escrow": false,
+                "deploy_escrow_contract_v1": false,
             })),
             Chain::Zq2Mainnet => Some(json!({
                 "at_height": 0,
@@ -266,6 +277,15 @@ impl Chain {
                 "allow_scilla_call_precompile_to_be_called_from_addresses": [],
                 "distribute_rewards_every_epoch": false,
                 "pectra_active": false,
+                "disable_zilliqa_txn_execution": false,
+                "blocked_recipients_start_height": 0,
+                "blocked_recipients_file": "",
+                "blocked_recipients_start_height_v2": 0,
+                "blocked_recipients_file_v2": "",
+                "blocked_recipients_start_height_v3": 0,
+                "blocked_recipients_file_v3": "",
+                "zil_transfers_only_to_escrow": false,
+                "deploy_escrow_contract_v1": false,
             })),
             _ => None,
         }
@@ -329,6 +349,12 @@ impl Chain {
                 json!({ "at_height": 34369689, "make_transfers_in_scilla_precompiles_with_journal_api": true}),
                 json!({ "at_height": 34369689, "tighten_precompile_rules": true}),
                 json!({ "at_height": 34369689, "allow_scilla_call_precompile_to_be_called_from_addresses": ["0x453b11386FBd54bC532892c0217BBc316fc7b918"]}),
+                json!({ "at_height": 39985504, "blocked_recipients_start_height": 39985504, "blocked_recipients_file": "blocked_recipients_001.bin" }),
+                json!({ "at_height": 39985504, "disable_zilliqa_txn_execution": true }),
+                json!({ "at_height": 40408000, "blocked_recipients_start_height_v2": 40408000, "blocked_recipients_file_v2": "blocked_recipients_002.bin" }),
+                json!({ "at_height": 40408500, "deploy_escrow_contract_v1": true }),
+                json!({ "at_height": 40409000, "zil_transfers_only_to_escrow": true }),
+                json!({ "at_height": 41152000, "blocked_recipients_start_height_v3": 41152000, "blocked_recipients_file_v3": "blocked_recipients_003.bin" }),
                 json!({ "at_height": 999999999, "distribute_rewards_every_epoch": true}),
                 json!({ "at_height": 999999999, "pectra_active": true}),
             ]),
@@ -496,8 +522,25 @@ impl Chain {
                         "0xbfDe2156aF75a29d36614bC1F8005DD816Bd9200",
                     ],
                 }),
+                json!({ "at_height": 31759109, "disable_zilliqa_txn_execution": true }),
+                json!({ "at_height": 34844968, "blocked_recipients_start_height": 34844968, "blocked_recipients_file": "blocked_recipients_001.bin" }),
+                json!({ "at_height": 36383378, "blocked_recipients_start_height_v2": 36383378, "blocked_recipients_file_v2": "blocked_recipients_002.bin" }),
+                json!({ "at_height": 36383378, "deploy_escrow_contract_v1": true }),
+                json!({ "at_height": 36383379, "zil_transfers_only_to_escrow": true }),
+                json!({ "at_height": 37410000, "blocked_recipients_start_height_v3": 37410000, "blocked_recipients_file_v3": "blocked_recipients_003.bin" }),
                 json!({ "at_height": 999999999, "distribute_rewards_every_epoch": true}),
                 json!({ "at_height": 999999999, "pectra_active": true}),
+            ]),
+            Chain::Zq2Devnet => Some(vec![
+                json!({
+                    "at_height": 1000,
+                    "blocked_recipients_start_height": 1000,
+                    "blocked_recipients_file": "blocked_recipients_001.bin",
+                    "deploy_escrow_contract_v1": true,
+                }),
+                json!({ "at_height": 1001, "zil_transfers_only_to_escrow": true }),
+                json!({ "at_height": 3600, "blocked_recipients_start_height_v2": 3600, "blocked_recipients_file_v2": "blocked_recipients_002.bin" }),
+                json!({ "at_height": 33000, "blocked_recipients_start_height_v3": 33000, "blocked_recipients_file_v3": "blocked_recipients_003.bin" }),
             ]),
             _ => None,
         }
@@ -579,5 +622,49 @@ impl Chain {
 
     pub fn get_new_view_broadcast_interval(&self) -> Option<Duration> {
         Some(Duration::from_secs(30))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use zilliqa::cfg::{Config, Fork, ForkDelta};
+
+    use super::*;
+
+    const CHAINS: [Chain; 4] = [
+        Chain::Zq2InfraTest,
+        Chain::Zq2Devnet,
+        Chain::Zq2Testnet,
+        Chain::Zq2Mainnet,
+    ];
+
+    /// `Fork` has no per-field serde defaults, so a fork field present in the struct but missing
+    /// from a chain spec is a node that will not boot. The specs and the JSON below are hand-synced
+    /// with `zilliqa::cfg` - this is what catches the drift.
+    #[test]
+    fn every_chain_spec_deserialises() {
+        for chain in &CHAINS {
+            let toml = Chain::get_toml_contents(&chain.to_string()).unwrap();
+            let config: Config = toml::from_str(toml).unwrap_or_else(|e| panic!("{chain}: {e}"));
+            for node in &config.nodes {
+                node.consensus
+                    .get_forks()
+                    .unwrap_or_else(|e| panic!("{chain}: {e}"));
+            }
+        }
+    }
+
+    #[test]
+    fn every_mirrored_fork_definition_deserialises() {
+        for chain in &CHAINS {
+            if let Some(genesis) = chain.genesis_fork() {
+                serde_json::from_value::<Fork>(genesis)
+                    .unwrap_or_else(|e| panic!("{chain} genesis_fork: {e}"));
+            }
+            for delta in chain.get_forks().into_iter().flatten() {
+                serde_json::from_value::<ForkDelta>(delta)
+                    .unwrap_or_else(|e| panic!("{chain} forks: {e}"));
+            }
+        }
     }
 }

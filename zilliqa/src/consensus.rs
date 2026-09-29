@@ -27,7 +27,9 @@ use tracing::*;
 
 use crate::{
     api::{admin::merge_history, types::eth::SyncingStruct},
-    aux, blockhooks,
+    aux,
+    blocked_recipients::{BLOCKED_NONCE_FLOOR, BlockedRecipients, last_blocked_block},
+    blockhooks,
     cfg::{ForkName, NodeConfig},
     constants::{
         EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, LAG_BEHIND_CURRENT_VIEW, MISSED_VIEW_WINDOW,
@@ -49,7 +51,7 @@ use crate::{
         TxPoolStatus,
     },
     rewards::{self, Rewards},
-    state::{Code, State},
+    state::{Code, State, contract_addr},
     static_hardfork_data::{
         XSGD_CODE, XSGD_MAINNET_ADDR, build_ignite_wallet_addr_scilla_code_map,
     },
@@ -253,6 +255,9 @@ pub struct Consensus {
     /// proposal/vote methods that reach this cache are `&self` (they rely on
     /// interior mutability for their other caches too).
     pub(crate) rewards: Mutex<Rewards>,
+    /// The blocked-recipient lists named by forks, keyed by file name. All of them stay open for
+    /// the life of the process so any schedule block can be (re-)executed.
+    blocked_recipients: HashMap<String, BlockedRecipients>,
 }
 
 impl Consensus {
@@ -397,6 +402,50 @@ impl Consensus {
         let bpe = config.consensus.blocks_per_epoch;
         let prune_period = ((config.db.prune_interval / bpe) * bpe).saturating_add(bpe);
 
+        // Open every blocked-recipient list any fork refers to, before any consensus work
+        // happens. A missing or malformed file is fatal on purpose: processing a different set of
+        // accounts than the rest of the network, or sweeping to different destinations, means
+        // producing a different state root.
+        //
+        // All files are loaded at any height - a list can be baked into the image long before its
+        // activation delta reaches the spec, and must stay available forever after so that a
+        // resync or reorg can re-execute its schedule blocks. Whether a given block does any work
+        // is decided per block, by the fork at that block's height and by `batch` returning empty
+        // outside the schedule.
+        let mut blocked_recipients = HashMap::new();
+        for schedule in forks.blocked_recipient_schedules()? {
+            let dir = config
+                .blocked_recipients_dir
+                .as_ref()
+                .or(config.data_dir.as_ref())
+                .ok_or_else(|| {
+                    anyhow!(
+                        "a fork names {} but neither blocked_recipients_dir nor data_dir is set",
+                        schedule.file,
+                    )
+                })?;
+            let path = PathBuf::from(dir).join(&schedule.file);
+            let list = BlockedRecipients::load(&path)?;
+            // A replacement fork cuts a schedule off; addresses past the cut would silently never
+            // be swept, so refuse the configuration outright.
+            if let Some(replaced_at) = schedule.replaced_at {
+                let last = last_blocked_block(schedule.start_height, list.count());
+                if last >= replaced_at {
+                    return Err(anyhow!(
+                        "{} sweeps until block {last} but is replaced by a fork at {replaced_at}",
+                        schedule.file,
+                    ));
+                }
+            }
+            info!(
+                count = list.count(),
+                start_height = schedule.start_height,
+                path = %path.display(),
+                "opened blocked recipient list"
+            );
+            blocked_recipients.insert(schedule.file, list);
+        }
+
         let mut consensus = Consensus {
             secret_key,
             config,
@@ -423,6 +472,7 @@ impl Consensus {
             in_committee: true,
             prune_period,
             rewards: Mutex::new(Rewards::new()),
+            blocked_recipients,
         };
 
         // If we're at genesis, add the genesis block and return
@@ -2066,6 +2116,36 @@ impl Consensus {
         txn: VerifiedTransaction,
         from_broadcast: bool,
     ) -> Result<TxAddResult> {
+        // Refuse legacy Zilliqa transactions at every ingress point - RPC, gossip and injection
+        // all funnel through here. Until `zil_transfers_only_to_escrow` activates they are
+        // refused outright; once it is active, only transfers to the escrow contract pass.
+        let fork = self
+            .state
+            .forks
+            .get(self.get_highest_canonical_block_number())
+            .clone();
+        if let SignedTransaction::Zilliqa { tx, .. } = &txn.tx {
+            if fork.zil_transfers_only_to_escrow {
+                // A doomed transaction still costs gas once it reaches block execution (see
+                // `State::apply_transaction`), but there is no reason to let it occupy the pool,
+                // gossip bandwidth or a block slot on its way there.
+                if tx.to_addr != contract_addr::ESCROW_PROXY {
+                    debug!(
+                        "Rejecting Zilliqa transaction {:?} not addressed to the escrow contract",
+                        txn.hash
+                    );
+                    return Ok(TxAddResult::ValidationFailed(
+                        ValidationOutcome::ZilliqaTransactionsMustTargetEscrow,
+                    ));
+                }
+            } else {
+                debug!("Rejecting Zilliqa transaction {:?}", txn.hash);
+                return Ok(TxAddResult::ValidationFailed(
+                    ValidationOutcome::ZilliqaTransactionsDisabled,
+                ));
+            }
+        }
+
         if self.db.contains_transaction(&txn.hash)? {
             debug!("Transaction {:?} already in mempool", txn.hash);
             return Ok(TxAddResult::Duplicate(txn.hash));
@@ -3708,11 +3788,66 @@ impl Consensus {
             }
         }
 
+        // Patch account as blocked recipient and move its funds to give destination address
+        for (file, start_height) in [
+            (
+                &fork.blocked_recipients_file,
+                fork.blocked_recipients_start_height,
+            ),
+            (
+                &fork.blocked_recipients_file_v2,
+                fork.blocked_recipients_start_height_v2,
+            ),
+            (
+                &fork.blocked_recipients_file_v3,
+                fork.blocked_recipients_start_height_v3,
+            ),
+        ] {
+            self.sweep_blocked_recipients(state, file, start_height, block.header.number)?;
+        }
+
+        // Deploys exactly at its fork's activation height, which need not be epoch-aligned.
+        state.escrow_deploy_and_upgrade(&self.config.consensus, &block.header)?;
+
         if self.block_is_first_in_epoch(block.header.number) {
             // Update state with any contract upgrades for this block
             state.contract_upgrade_apply_state_change(&self.config.consensus, block.header)?;
         }
 
+        Ok(())
+    }
+
+    fn sweep_blocked_recipients(
+        &self,
+        state: &mut State,
+        file: &str,
+        start_height: u64,
+        block_number: u64,
+    ) -> Result<()> {
+        if start_height == 0 {
+            return Ok(());
+        }
+        let blocked = self
+            .blocked_recipients
+            .get(file)
+            .ok_or_else(|| anyhow!("blocked recipient list {file} was not loaded at startup"))?;
+        for (address, destination) in blocked.batch(start_height, block_number)? {
+            let swept = state.mutate_account(address, |account| {
+                let balance = account.balance;
+                account.balance = 0;
+                account.nonce = BLOCKED_NONCE_FLOOR;
+                Ok(balance)
+            })?;
+
+            if swept != 0 {
+                state.mutate_account(destination, |account| {
+                    account.balance = account.balance.checked_add(swept).ok_or_else(|| {
+                        anyhow!("balance overflow sweeping {swept} to {destination}")
+                    })?;
+                    Ok(())
+                })?;
+            }
+        }
         Ok(())
     }
 
