@@ -202,7 +202,7 @@ impl<'de> Deserialize<'de> for NodePublicKey {
         D: serde::Deserializer<'de>,
     {
         let s = <String>::deserialize(deserializer)?;
-        let bytes = hex::decode(s).unwrap();
+        let bytes = hex::decode(s).map_err(de::Error::custom)?;
         NodePublicKey::from_bytes(&bytes)
             .map_err(|_| de::Error::invalid_value(Unexpected::Bytes(&bytes), &"a public key"))
     }

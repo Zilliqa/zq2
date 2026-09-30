@@ -102,15 +102,16 @@ pub mod vec_param_value {
             pub ty: String,
         }
 
-        let values = <Vec<ParamValueEncoded>>::deserialize(deserializer)?
+        <Vec<ParamValueEncoded>>::deserialize(deserializer)?
             .into_iter()
-            .map(|value| ParamValue {
-                name: value.name,
-                value: serde_json::from_str(&value.value).unwrap(),
-                ty: value.ty,
+            .map(|value| {
+                Ok(ParamValue {
+                    name: value.name,
+                    value: serde_json::from_str(&value.value)
+                        .map_err(<D::Error as serde::de::Error>::custom)?,
+                    ty: value.ty,
+                })
             })
-            .collect();
-
-        Ok(values)
+            .collect()
     }
 }
