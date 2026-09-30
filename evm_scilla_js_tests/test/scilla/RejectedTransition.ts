@@ -9,6 +9,10 @@ describe("Scilla RejectedTransition #parallel", function () {
   let signer: Account;
 
   before(async function () {
+    if (!hre.isZilliqaNetworkSelected() || !hre.isScillaTestingEnabled()) {
+      this.skip();
+    }
+
     signer = hre.allocateZilSigner();
     contract = await hre.deployScillaContractWithSigner("RejectedTransition", signer);
   });

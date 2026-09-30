@@ -5,7 +5,11 @@ import hre from "hardhat";
 describe("Ecdsa contract #parallel", () => {
   let contract: ScillaContract;
 
-  before(async () => {
+  before(async function () {
+    if (!hre.isZilliqaNetworkSelected() || !hre.isScillaTestingEnabled()) {
+      this.skip();
+    }
+
     contract = await hre.deployScillaContract2("Ecdsa");
   });
 

@@ -6,7 +6,11 @@ import {Account} from "@zilliqa-js/zilliqa";
 describe("BlockNumber contract #parallel", () => {
   let contract: ScillaContract;
 
-  before(async () => {
+  before(async function () {
+    if (!hre.isZilliqaNetworkSelected() || !hre.isScillaTestingEnabled()) {
+      this.skip();
+    }
+
     contract = await hre.deployScillaContract2("BlockNumber");
   });
 

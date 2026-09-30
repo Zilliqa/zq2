@@ -8,6 +8,10 @@ describe("Scilla ByStr Functionality #parallel", function () {
   let BYSTR6_VALUE = "0x223344556677";
 
   before(async function () {
+    if (!hre.isZilliqaNetworkSelected() || !hre.isScillaTestingEnabled()) {
+      this.skip();
+    }
+
     contract = await hre.deployScillaContract2("ByStrFunctionality");
   });
 
