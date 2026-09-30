@@ -7,6 +7,8 @@ use syn::{ItemFn, parse::Parser};
 pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
     let mut restrict_concurrency = false;
     let mut do_checkpoints = false;
+    let mut ignore = false;
+    let mut zil_transfers_only_to_escrow = false;
     let mut blocks_per_epoch = 10;
     // Code below reads 0 to be "do not deploy deposit_v3"
     let mut deposit_v3_upgrade_block_height = 0;
@@ -32,6 +34,12 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
                     "restrict_concurrency" => restrict_concurrency = true,
                     "do_checkpoints" => do_checkpoints = true,
                     "bundler_rpc" => bundler_rpc = true,
+                    // Skip this test (expands to `#[ignore]` on the generated test function).
+                    "ignore" => ignore = true,
+                    // Activate the `zil_transfers_only_to_escrow` fork from genesis, and clear
+                    // `disable_zilliqa_txn_execution` so legacy Zilliqa transactions actually reach
+                    // it instead of being rejected outright.
+                    "zil_transfers_only_to_escrow" => zil_transfers_only_to_escrow = true,
                     _ => {
                         return token_stream_with_error(
                             args,
@@ -116,7 +124,17 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
     let inner_name = Ident::new("inner", Span::call_site());
     input.sig.ident = inner_name.clone();
 
+    // When `ignore` is passed, emit `#[ignore]` on the generated test function so the
+    // test harness skips it. (A plain `#[ignore]` on the source function would land on
+    // the renamed `inner` function and have no effect.)
+    let ignore_attr = if ignore {
+        quote! { #[ignore = "disabled"] }
+    } else {
+        quote! {}
+    };
+
     quote! {
+        #ignore_attr
         #[tokio::test(flavor = "multi_thread")]
         async fn #test_name() {
             // The original test function
@@ -199,6 +217,7 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
                                 #bundler_rpc,
                                 deposit_v3_upgrade_block_height_option,
                                 format!("{temp_dir}/scilla-sockets"),
+                                #zil_transfers_only_to_escrow,
                             );
 
                             // Call the original test function, wrapped in `catch_unwind` so we can detect the panic.

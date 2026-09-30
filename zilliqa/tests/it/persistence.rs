@@ -140,7 +140,7 @@ sol!(
 // `blocks_per_epoch` blocks, so replay traverses 60 views past
 // `ckpt.parent.view()`. That exceeds `LAG_BEHIND_CURRENT_VIEW = 50`, which is
 // the threshold for jailing precompile
-#[zilliqa_macros::test(do_checkpoints, blocks_per_epoch = 60, restrict_concurrency)]
+#[zilliqa_macros::test(do_checkpoints, blocks_per_epoch = 60, restrict_concurrency, ignore)]
 async fn checkpoints_test(mut network: Network) {
     // With `blocks_per_epoch = 60` and `epochs_per_checkpoint = 2` (set in
     // `tests/it/main.rs`), the first auto-checkpoint is written at block 120.

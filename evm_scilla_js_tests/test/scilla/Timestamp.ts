@@ -5,6 +5,10 @@ import hre, {ethers} from "hardhat";
 describe("Scilla timestamp #parallel", () => {
   let contract: ScillaContract;
   before(async function () {
+    if (!hre.isZilliqaNetworkSelected() || !hre.isScillaTestingEnabled()) {
+      this.skip();
+    }
+
     contract = await hre.deployScillaContract2("Timestamp");
   });
 

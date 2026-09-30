@@ -23,7 +23,11 @@ describe("Already funded contract address", () => {
   let signer: Account;
   const AMOUNT = ethers.utils.parseUnits("1", "gwei");
 
-  before(async () => {
+  before(async function () {
+    if (!hre.isZilliqaNetworkSelected() || !hre.isScillaTestingEnabled()) {
+      this.skip();
+    }
+
     signer = hre.allocateZilSigner();
     const contractAddress = getContractAddress(signer.address, await getNonce(signer.address));
     const funder = hre.allocateEthSigner();

@@ -1,5 +1,6 @@
 pub mod api;
 mod aux;
+pub mod blocked_recipients;
 mod blockhooks;
 pub mod cfg;
 pub mod checkpoint;

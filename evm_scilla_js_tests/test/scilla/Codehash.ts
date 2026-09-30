@@ -6,7 +6,11 @@ import { createHash } from "crypto";
 describe("Codehash contract #parallel", () => {
   let expectedCodeHash: string;
   let contract: ScillaContract;
-  before(async () => {
+  before(async function () {
+    if (!hre.isZilliqaNetworkSelected() || !hre.isScillaTestingEnabled()) {
+      this.skip();
+    }
+
     contract = await hre.deployScillaContract2("Codehash");
   });
 
