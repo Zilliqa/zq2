@@ -1,7 +1,7 @@
 use alloy::primitives::Address;
 use anyhow::Result;
 use ethabi::{Event, Log, RawLog, Token};
-use tracing::warn;
+use tracing::{error, warn};
 
 use crate::{
     contracts,
@@ -58,13 +58,11 @@ pub fn get_launch_shard_messages(receipts: &[TransactionReceipt]) -> Result<Vec<
                 .into_iter()
                 .find(|param| param.name == "id")
                 .and_then(|param| param.value.into_uint())
-                .map_or_else(
-                    || {
-                        warn!("ShardAdded event does not contain an id!");
-                        None
-                    },
-                    |uint| Some(uint.as_u64()),
-                )
+                .or_else(|| {
+                    warn!("ShardAdded event does not contain an id!");
+                    None
+                })
+                .and_then(|id| u64::try_from(id).ok())
         })
         .collect())
 }
@@ -80,23 +78,55 @@ pub fn get_link_creation_messages(receipts: &[TransactionReceipt]) -> Result<Vec
     Ok(link_logs
         .into_iter()
         .filter_map(|log| {
-            let (names, values): (Vec<_>, Vec<_>) = log
-                .params
-                .into_iter()
-                .map(|param| (param.name, param.value))
-                .unzip();
-            if names != ["from", "to"] {
+            let Some([from, to]) = <[_; 2]>::try_from(log.params)
+                .ok()
+                .filter(|[from, to]| from.name == "from" && to.name == "to")
+            else {
                 warn!("LinkAdded event does not contain expected (from, to) values!");
-                None
-            } else {
-                let mut values = values.into_iter();
-                Some((
-                    values.next().unwrap().into_uint().unwrap().as_u64(),
-                    values.next().unwrap().into_uint().unwrap().as_u64(),
-                ))
-            }
+                return None;
+            };
+            let (Some(from), Some(to)) = (
+                u64::try_from(from.value.into_uint()?).ok(),
+                u64::try_from(to.value.into_uint()?).ok(),
+            ) else {
+                warn!("LinkAdded event from/to is not a uint that fits in a u64!");
+                return None;
+            };
+            Some((from, to))
         })
         .collect())
+}
+
+#[inline]
+fn parse_intershard_call(values: Vec<Token>) -> Option<(u64, IntershardCall)> {
+    let [
+        destination_shard,
+        source_address,
+        no_target,
+        target_address,
+        source_chain_id,
+        bridge_nonce,
+        calldata,
+        gas_limit,
+        gas_price,
+    ] = <[Token; 9]>::try_from(values).ok()?;
+
+    Some((
+        u64::try_from(destination_shard.into_uint()?).ok()?,
+        IntershardCall {
+            source_address: Address::new(source_address.into_address()?.0),
+            target_address: if no_target.into_bool()? {
+                None
+            } else {
+                Some(Address::new(target_address.into_address()?.0))
+            },
+            source_chain_id: u64::try_from(source_chain_id.into_uint()?).ok()?,
+            bridge_nonce: u64::try_from(bridge_nonce.into_uint()?).ok()?,
+            calldata: calldata.into_bytes()?,
+            gas_limit: EvmGas(u64::try_from(gas_limit.into_uint()?).ok()?),
+            gas_price: u128::try_from(gas_price.into_uint()?).ok()?,
+        },
+    ))
 }
 
 pub fn get_cross_shard_messages(
@@ -128,29 +158,12 @@ pub fn get_cross_shard_messages(
                 return None;
             }
             // Now that they are all known to match expected values, we can make liberal
-            // use of `unwrap()`.
             // Note that ordering is also important here.
-            let mut values = values.into_iter();
-            let destination_shard = values.next().unwrap().into_uint().unwrap().as_u64();
-            Some((
-                destination_shard,
-                IntershardCall {
-                    source_address: Address::new(values.next().unwrap().into_address().unwrap().0),
-                    target_address: if values.next().unwrap().into_bool().unwrap() {
-                        values.next();
-                        None
-                    } else {
-                        Some(Address::new(
-                            values.next().unwrap().into_address().unwrap().0,
-                        ))
-                    },
-                    source_chain_id: values.next().unwrap().into_uint().unwrap().as_u64(),
-                    bridge_nonce: values.next().unwrap().into_uint().unwrap().as_u64(),
-                    calldata: values.next().unwrap().into_bytes().unwrap(),
-                    gas_limit: EvmGas(values.next().unwrap().into_uint().unwrap().as_u64()),
-                    gas_price: values.next().unwrap().into_uint().unwrap().as_u128(),
-                },
-            ))
+            let Some(call) = parse_intershard_call(values) else {
+                error!("IntershardCall event has unexpected or out-of-range values!");
+                return None;
+            };
+            Some(call)
         })
         .collect())
 }

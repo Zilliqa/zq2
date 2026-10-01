@@ -136,7 +136,7 @@ impl TrieStorage {
 
         let mut batch = WriteBatch::default();
         let mut cache = self.cache.write();
-        for (key_prefix, value) in keys.into_iter().zip(values.into_iter()) {
+        for (key_prefix, value) in keys.into_iter().zip(values) {
             // tag keys; lexicographically sorted
             let mut tag_key = key_prefix.clone();
             tag_key.extend_from_slice(tag.as_slice()); // suffix big-endian tags

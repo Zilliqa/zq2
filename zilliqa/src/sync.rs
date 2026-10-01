@@ -670,12 +670,13 @@ impl Sync {
             return Ok(ExternalMessage::PassiveSyncResponse(vec![]));
         };
 
+        let batch_size: usize = Self::MAX_BATCH_SIZE.min(request.count); // mitigate DOS by limiting the number of blocks we return
         let started_at = Instant::now();
         let mut metas = Vec::new();
         let mut hash = request.hash;
         let mut size = 0;
         // return as much as possible within idle time
-        while started_at.elapsed() < self.max_idle_duration {
+        while started_at.elapsed() < self.max_idle_duration && metas.len() < batch_size {
             let Some(brt) = self
                 .db
                 .get_block_and_receipts_and_transactions(hash.into())?
@@ -729,9 +730,6 @@ impl Sync {
 
             // add to the response
             metas.push(response);
-            if metas.len() >= request.count {
-                break; // we have enough
-            }
         }
 
         let message = ExternalMessage::PassiveSyncResponse(metas);
@@ -929,7 +927,7 @@ impl Sync {
         let batch_size: usize = Self::MAX_BATCH_SIZE.min(request.len()); // mitigate DOS by limiting the number of blocks we return
         let mut proposals = Vec::with_capacity(batch_size);
         let mut cbor_size = 0;
-        for hash in request {
+        for hash in request.into_iter().take(batch_size) {
             if cbor_size > Self::RESPONSE_SIZE_THRESHOLD {
                 break; // response size limit reached
             }
