@@ -940,6 +940,7 @@ pub struct Fork {
     pub blocked_recipients_file_v3: String,
     pub zil_transfers_only_to_escrow: bool,
     pub deploy_escrow_contract_v1: bool,
+    pub evm_gas_fee_credited_once_to_zero_account: bool,
 }
 
 pub enum ForkName {
@@ -1130,6 +1131,7 @@ pub struct ForkDelta {
     /// Deploys the escrow contract at this fork's activation height; see
     /// [`Fork::deploy_escrow_contract_v1`].
     pub deploy_escrow_contract_v1: Option<bool>,
+    pub evm_gas_fee_credited_once_to_zero_account: Option<bool>,
 }
 
 impl Fork {
@@ -1298,6 +1300,9 @@ impl Fork {
             deploy_escrow_contract_v1: delta
                 .deploy_escrow_contract_v1
                 .unwrap_or(self.deploy_escrow_contract_v1),
+            evm_gas_fee_credited_once_to_zero_account: delta
+                .evm_gas_fee_credited_once_to_zero_account
+                .unwrap_or(self.evm_gas_fee_credited_once_to_zero_account),
         }
     }
 }
@@ -1420,6 +1425,7 @@ pub fn genesis_fork_default() -> Fork {
         blocked_recipients_file_v3: String::new(),
         zil_transfers_only_to_escrow: false,
         deploy_escrow_contract_v1: false,
+        evm_gas_fee_credited_once_to_zero_account: true,
     }
 }
 
@@ -1815,6 +1821,7 @@ mod tests {
                 blocked_recipients_file_v3: None,
                 zil_transfers_only_to_escrow: None,
                 deploy_escrow_contract_v1: None,
+                evm_gas_fee_credited_once_to_zero_account: None,
             }],
             ..Default::default()
         };
@@ -1892,6 +1899,7 @@ mod tests {
                     blocked_recipients_file_v3: None,
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
+                    evm_gas_fee_credited_once_to_zero_account: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1949,6 +1957,7 @@ mod tests {
                     blocked_recipients_file_v3: None,
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
+                    evm_gas_fee_credited_once_to_zero_account: None,
                 },
             ],
             ..Default::default()
@@ -2043,6 +2052,7 @@ mod tests {
                     blocked_recipients_file_v3: None,
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
+                    evm_gas_fee_credited_once_to_zero_account: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -2100,6 +2110,7 @@ mod tests {
                     blocked_recipients_file_v3: None,
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
+                    evm_gas_fee_credited_once_to_zero_account: None,
                 },
             ],
             ..Default::default()
@@ -2182,6 +2193,7 @@ mod tests {
                 blocked_recipients_file_v3: String::new(),
                 zil_transfers_only_to_escrow: false,
                 deploy_escrow_contract_v1: false,
+                evm_gas_fee_credited_once_to_zero_account: false,
             },
             forks: vec![],
             ..Default::default()
@@ -2252,6 +2264,7 @@ mod tests {
                     blocked_recipients_file_v3: None,
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
+                    evm_gas_fee_credited_once_to_zero_account: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -2309,6 +2322,7 @@ mod tests {
                     blocked_recipients_file_v3: None,
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
+                    evm_gas_fee_credited_once_to_zero_account: None,
                 },
             ],
             ..Default::default()

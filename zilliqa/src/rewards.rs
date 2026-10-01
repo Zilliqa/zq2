@@ -241,7 +241,10 @@ pub fn compute_reward_at(
 }
 
 /// Sum the gas fees paid by a single block's receipts.
-pub fn compute_block_gas_fees(data: &db::BlockAndReceiptsAndTransactions) -> Result<u128> {
+pub fn compute_block_gas_fees(
+    state: &State,
+    data: &db::BlockAndReceiptsAndTransactions,
+) -> Result<u128> {
     let tx_map: HashMap<Hash, &SignedTransaction> = data
         .transactions
         .iter()
@@ -252,7 +255,8 @@ pub fn compute_block_gas_fees(data: &db::BlockAndReceiptsAndTransactions) -> Res
         let tx = tx_map
             .get(&receipt.tx_hash)
             .ok_or_else(|| anyhow!("missing tx for receipt in gas fee computation"))?;
-        let gas_fee = receipt.gas_used.0 as u128 * tx.gas_price_per_evm_gas();
+        let gas_fee =
+            Consensus::zero_account_gas_fee(state, &data.block.header, tx, receipt.gas_used);
         acc.checked_add(gas_fee)
             .ok_or_else(|| anyhow!("Overflow in gas fee computation"))
     })
@@ -299,7 +303,7 @@ pub fn reward_from_db(
         )
     })?;
 
-    let gas_fee = compute_block_gas_fees(&data)?;
+    let gas_fee = compute_block_gas_fees(state, &data)?;
     compute_reward_at(
         &parent_state,
         config,

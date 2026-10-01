@@ -229,6 +229,7 @@ impl Chain {
                 "blocked_recipients_file_v3": "",
                 "zil_transfers_only_to_escrow": false,
                 "deploy_escrow_contract_v1": false,
+                "evm_gas_fee_credited_once_to_zero_account": false,
             })),
             Chain::Zq2Mainnet => Some(json!({
                 "at_height": 0,
@@ -286,6 +287,7 @@ impl Chain {
                 "blocked_recipients_file_v3": "",
                 "zil_transfers_only_to_escrow": false,
                 "deploy_escrow_contract_v1": false,
+                "evm_gas_fee_credited_once_to_zero_account": false,
             })),
             _ => None,
         }
@@ -357,6 +359,7 @@ impl Chain {
                 json!({ "at_height": 41152000, "blocked_recipients_start_height_v3": 41152000, "blocked_recipients_file_v3": "blocked_recipients_003.bin" }),
                 json!({ "at_height": 999999999, "distribute_rewards_every_epoch": true}),
                 json!({ "at_height": 999999999, "pectra_active": true}),
+                json!({ "at_height": 999999999, "evm_gas_fee_credited_once_to_zero_account": true }),
             ]),
             Chain::Zq2Mainnet => Some(vec![
                 json!({ "at_height": 4770088, "executable_blocks": true }),
@@ -530,6 +533,7 @@ impl Chain {
                 json!({ "at_height": 37410000, "blocked_recipients_start_height_v3": 37410000, "blocked_recipients_file_v3": "blocked_recipients_003.bin" }),
                 json!({ "at_height": 999999999, "distribute_rewards_every_epoch": true}),
                 json!({ "at_height": 999999999, "pectra_active": true}),
+                json!({ "at_height": 999999999, "evm_gas_fee_credited_once_to_zero_account": true }),
             ]),
             Chain::Zq2Devnet => Some(vec![
                 json!({
