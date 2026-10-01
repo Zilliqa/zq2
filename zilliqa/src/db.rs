@@ -933,7 +933,7 @@ impl Db {
 
     pub fn set_finalized_view_with_db_tx(&self, sqlite_tx: &Connection, view: u64) -> Result<()> {
         sqlite_tx
-            .prepare_cached("INSERT INTO tip_info (finalized_view) VALUES (?1) ON CONFLICT DO UPDATE SET finalized_view = ?1")?
+            .prepare_cached("INSERT INTO tip_info (finalized_view) VALUES (?1) ON CONFLICT DO UPDATE SET finalized_view = ?1 WHERE tip_info.finalized_view IS NULL OR tip_info.finalized_view < ?1")?
             .execute([view])?;
         Ok(())
     }

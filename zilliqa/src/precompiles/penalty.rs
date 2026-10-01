@@ -230,6 +230,7 @@ fn call_penalty(
         .ok_or(PrecompileErrors::Error(PrecompileHalt::other(
             "Can't decode view".to_string(),
         )))?;
+    let view = u64::try_from(view).unwrap_or(u64::MAX);
     // if the current block is beyond the jailing fork activation height when calling the precompile
     // jailing will be applied regardless of whether the view was before or after the fork activation
     if !ctx.chain.fork.validator_jailing {
@@ -237,8 +238,7 @@ fn call_penalty(
 
         return Ok(PrecompileOutput::new(REQUIRED_GAS, output.into(), 0));
     }
-    if view.as_u64() > LAG_BEHIND_CURRENT_VIEW
-        && view.as_u64() - LAG_BEHIND_CURRENT_VIEW >= ctx.chain.finalized_view
+    if view > LAG_BEHIND_CURRENT_VIEW && view - LAG_BEHIND_CURRENT_VIEW >= ctx.chain.finalized_view
     {
         error!(
             ?view,
@@ -252,9 +252,8 @@ fn call_penalty(
     let min_view = ctx.chain.view_history.read().min_view;
     // fail if the missed view history does not reach back far enough in the past or
     // the queried view is too far in the future based on the currently finalized view
-    if min_view > 1
-        && view.as_u64().saturating_sub(LAG_BEHIND_CURRENT_VIEW) < min_view + MISSED_VIEW_WINDOW
-        || view.as_u64() > ctx.chain.finalized_view + LAG_BEHIND_CURRENT_VIEW + 1
+    if min_view > 1 && view.saturating_sub(LAG_BEHIND_CURRENT_VIEW) < min_view + MISSED_VIEW_WINDOW
+        || view > ctx.chain.finalized_view + LAG_BEHIND_CURRENT_VIEW + 1
     {
         debug!(
             ?view,
@@ -272,7 +271,7 @@ fn call_penalty(
     let search_slice = |slice: &[(u64, NodePublicKey)], target: u64| {
         slice.binary_search_by_key(&target, |&(key, _)| key)
     };
-    let to = view.as_u64().saturating_sub(LAG_BEHIND_CURRENT_VIEW);
+    let to = view.saturating_sub(LAG_BEHIND_CURRENT_VIEW);
     let from = to.saturating_sub(MISSED_VIEW_WINDOW);
     let (first_start_idx, first_end_idx) = (
         search_slice(first_slice, from).unwrap_or_else(|i| i),

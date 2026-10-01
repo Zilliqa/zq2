@@ -2403,8 +2403,11 @@ impl Consensus {
             block.number()
         );
 
-        let mut current = block.clone();
         let finalized_view = self.get_finalized_view()?;
+        if block.view() <= finalized_view {
+            return Ok(());
+        }
+        let mut current = block.clone();
         let mut new_missed_views = VecDeque::new();
         while current.view() > finalized_view {
             let parent = self.get_block(&current.parent_hash())?.ok_or_else(|| {
