@@ -874,20 +874,18 @@ impl Consensus {
                     .is_multiple_of(self.config.consensus.new_view_broadcast_interval.as_secs()))
             {
                 match self.network_message_cache.clone() {
-                    Some((_, ExternalMessage::NewView(new_view))) => {
+                    Some((_, ExternalMessage::NewView(new_view)))
                         // If new_view message is not for this view then it must be outdated
-                        if new_view.view == self.get_view()? {
+                        if new_view.view == self.get_view()? => {
                             // When re-sending new view messages we broadcast them, rather than only sending them to the
                             // view leader. This speeds up network recovery when many nodes have different high QCs.
                             self.new_view(self.peer_id(), *new_view.clone())?;
                             return Ok(Some((None, ExternalMessage::NewView(new_view))));
                         }
-                    }
-                    Some((peer, ExternalMessage::Vote(vote))) => {
-                        if vote.view + 1 == self.get_view()? {
+                    Some((peer, ExternalMessage::Vote(vote)))
+                        if vote.view + 1 == self.get_view()? => {
                             return Ok(Some((peer, ExternalMessage::Vote(vote))));
                         }
-                    }
                     _ => {}
                 }
             }
@@ -2412,7 +2410,7 @@ impl Consensus {
         let mut new_missed_views = VecDeque::new();
         while current.view() > finalized_view {
             let parent = self.get_block(&current.parent_hash())?.ok_or_else(|| {
-                anyhow!(format!("missing block parent {}", &current.parent_hash()))
+                anyhow!(format!("missing block parent {}", current.parent_hash()))
             })?;
             let state_at = self.state.at_root(parent.state_root_hash().into());
             let block_header = BlockHeader {

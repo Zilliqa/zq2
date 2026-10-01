@@ -256,12 +256,9 @@ impl Scilla {
                 .build(format!("{address}/run"))
                 .unwrap();
 
-            loop {
-                let Ok((method, params)) = request_rx.recv() else {
-                    break;
-                };
+            while let Ok((method, params)) = request_rx.recv() {
                 let response = runtime.block_on(client.request(method, params));
-                let Ok(()) = response_tx.send(response) else {
+                if response_tx.send(response).is_err() {
                     break;
                 };
             }
