@@ -34,3 +34,4 @@ config.toml
 # Solidity Compiler files
 cache/
 out/
+node_modules

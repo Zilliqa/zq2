@@ -379,8 +379,9 @@ impl NodeLauncher {
                         &attributes,
                     );
                 }
-                _message = self.local_messages.next() => {
-                    todo!("Local messages will need to be handled once cross-shard messaging is implemented");
+                message = self.local_messages.next() => {
+                    let (shard_id, message) = message.expect("message stream should be infinite");
+                    warn!(%shard_id, ?message, "Dropped local message for shard");
                 }
                 () = &mut consensus_sleep => {
                     let attributes = vec![

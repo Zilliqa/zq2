@@ -430,7 +430,7 @@ impl Signer {
         tracing::trace!(%send_id, ?uop_hash, "relaySet({:?})", relay_set);
 
         let signature = BlsSignature::from_bytes(userop.signature.iter().as_slice())?;
-        for (i, peer) in (0u32..).zip(relay_set.into_iter()) {
+        for (i, peer) in (0u32..).zip(relay_set) {
             let uccb_uop = UccbUserOp {
                 chain: *dst_chain,
                 userop_hash: uop_hash.context("uop_hash exists")?,
