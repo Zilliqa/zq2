@@ -1170,6 +1170,26 @@ impl Consensus {
         Ok(None)
     }
 
+    pub(crate) fn zero_account_gas_fee(
+        state: &State,
+        header: &BlockHeader,
+        txn: &SignedTransaction,
+        gas_used: EvmGas,
+    ) -> u128 {
+        let gas_price = txn.gas_price_per_evm_gas();
+        let gas_price = if state
+            .forks
+            .get(header.number)
+            .evm_gas_fee_credited_once_to_zero_account
+            && !matches!(txn, SignedTransaction::Zilliqa { .. })
+        {
+            gas_price.min(state.gas_price)
+        } else {
+            gas_price
+        };
+        gas_used.0 as u128 * gas_price
+    }
+
     /// For a given State apply the given transaction
     pub fn apply_transaction_at<I: Inspector<ZQ2EvmContext> + ScillaInspector>(
         state: &mut State,
@@ -1690,7 +1710,8 @@ impl Consensus {
                 .checked_sub(result.gas_used())
                 .ok_or_else(|| anyhow!("gas_used > gas_limit"))?;
 
-            let gas_fee = result.gas_used().0 as u128 * tx.tx.gas_price_per_evm_gas();
+            let gas_fee =
+                Self::zero_account_gas_fee(&state, &proposal.header, &tx.tx, result.gas_used());
 
             // Grab and update early_proposal data in own scope to avoid multiple mutable references to self
             {
@@ -3570,7 +3591,7 @@ impl Consensus {
                 ));
             }
 
-            let gas_fee = gas_used.0 as u128 * txn.tx.gas_price_per_evm_gas();
+            let gas_fee = Self::zero_account_gas_fee(&self.state, &block.header, &txn.tx, gas_used);
             cumulative_gas_fee = cumulative_gas_fee
                 .checked_add(gas_fee)
                 .ok_or_else(|| anyhow!("Overflow occurred in cumulative gas fee calculation"))?;
