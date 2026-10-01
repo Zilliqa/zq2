@@ -704,6 +704,11 @@ impl Consensus {
     }
 
     fn build_new_view(&mut self) -> Result<NetworkMessage> {
+        // on each new-view, clear stale flags, reset early proposal
+        self.create_next_block_on_timeout
+            .store(false, Ordering::SeqCst);
+        self.early_proposal_clear()?;
+
         let view = self.get_view()?;
         let block = self.get_block(&self.high_qc.block_hash)?.ok_or_else(|| {
             anyhow!("missing block corresponding to our high qc - this should never happen")
@@ -1826,13 +1831,14 @@ impl Consensus {
             for tx in opaque_transactions {
                 let account = self.state.get_account(tx.signer)?;
                 pool.update_with_account(&tx.signer, &account);
-                pool.insert_transaction(tx, &account, true);
+                let added = pool.insert_transaction(tx, &account, true);
+                assert!(added.was_added())
             }
         }
 
         // finalise the proposal
-        let Some(final_block) =
-            self.early_proposal_finish_at(pending_block, cumulative_gas_fee, votes)?
+        let Ok(Some(final_block)) =
+            self.early_proposal_finish_at(pending_block, cumulative_gas_fee, votes)
         else {
             // Do not Propose.
             // Recover the proposed transactions into the pool.
@@ -1882,11 +1888,6 @@ impl Consensus {
 
     /// Provides a (cached) preview of the early proposal.
     pub fn get_pending_block(&self) -> Result<Option<Block>> {
-        if let Some(early_proposal) = self.early_proposal.read().as_ref()
-            && early_proposal.0.view() == self.get_view()?
-        {
-            return Ok(Some(early_proposal.0.clone()));
-        }
         self.early_proposal_assemble_at(None)?;
         Ok(Some(self.early_proposal.read().as_ref().unwrap().0.clone()))
     }
@@ -3698,9 +3699,13 @@ impl Consensus {
                 .flatten()
                 .and_then(|block| block.header.mix_hash);
 
-            let proposer = self
-                .leader_at_block(parent, grandparent_mix_hash, block.view())
-                .unwrap();
+            let Some(proposer) = self.leader_at_block(parent, grandparent_mix_hash, block.view())
+            else {
+                return Err(anyhow!(
+                    "Unable to find proposer for block {}",
+                    parent.hash()
+                ));
+            };
             rewards::apply_for_single_block(
                 parent,
                 state,
