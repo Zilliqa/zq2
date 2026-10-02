@@ -14,7 +14,7 @@ use std::{
 use alloy::{hex, primitives::Address};
 use anyhow::{Context, Result, anyhow};
 use bitvec::{bitarr, order::Msb0};
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 use eth_trie::{EthTrie, MemoryDB, Trie};
 use itertools::Itertools;
 use k256::pkcs8::der::DateTime;
@@ -220,7 +220,8 @@ pub struct Consensus {
     pub votes: DashMap<Hash, BlockVotes>,
     /// Votes for a block we don't have stored. They are retained in case we receive the block later.
     // TODO(#719): Consider how to limit the size of this.
-    pub buffered_votes: DashMap<Hash, Vec<(PeerId, Vote)>>,
+    pub buffered_votes: BTreeMap<u64, Vec<(PeerId, Vote)>>,
+    buffered_peers: DashSet<NodePublicKey>,
     pub new_views: DashMap<u64, NewViewVote>,
     network_message_cache: Option<NetworkMessage>,
     pub high_qc: QuorumCertificate,
@@ -264,7 +265,7 @@ impl Consensus {
     // determined empirically
     const PROP_SIZE_THRESHOLD: usize = crate::constants::PROPOSAL_THRESHOLD;
     // view buffer size limit
-    const VIEW_BUFFER_THRESHOLD: usize = 1000;
+    const VIEW_BUFFER_VIEW_LIMIT: usize = 300; // total items = MAX_COMMITTEE_SIZE * VIEW_BUFFER_VIEW_LIMIT
 
     pub fn new(
         secret_key: SecretKey,
@@ -453,7 +454,8 @@ impl Consensus {
             message_sender: message_sender.clone(),
             reset_timeout,
             votes: DashMap::new(),
-            buffered_votes: DashMap::new(),
+            buffered_votes: BTreeMap::new(),
+            buffered_peers: DashSet::new(),
             new_views: DashMap::new(),
             network_message_cache: None,
             high_qc,
@@ -1097,7 +1099,7 @@ impl Consensus {
                 debug!("*** setting view to proposal view... view is now {}", view);
             }
 
-            if let Some((_, buffered_votes)) = self.buffered_votes.remove(&block.hash()) {
+            if let Some((_, buffered_votes)) = self.buffered_votes.remove_entry(&block.view()) {
                 // If we've buffered votes for this block, process them now.
                 let count = buffered_votes.len();
                 for (i, (from, vote)) in buffered_votes.into_iter().enumerate() {
@@ -1280,7 +1282,7 @@ impl Consensus {
     }
 
     /// Process a Vote message
-    pub fn vote(&self, peer_id: PeerId, vote: Vote) -> Result<Option<NetworkMessage>> {
+    pub fn vote(&mut self, peer_id: PeerId, vote: Vote) -> Result<Option<NetworkMessage>> {
         let block_hash = vote.block_hash;
         let block_view = vote.view;
         let current_view = self.get_view()?;
@@ -1290,8 +1292,8 @@ impl Consensus {
         if block_view + 1 < current_view {
             trace!("vote is too old");
             return Ok(None);
-        } else if block_view > current_view + 500 {
-            // when stuck in exponential backoff, +500 is effectively forever;
+        } else if block_view > current_view + Self::VIEW_BUFFER_VIEW_LIMIT as u64 {
+            // when stuck in exponential backoff, +300 is effectively forever;
             // when active syncing at ~30 blk/s, means that we're > 3 views behind.
             // in either case, that vote is quite meaningless at this point and can be ignored.
             trace!("vote is too early");
@@ -1305,26 +1307,24 @@ impl Consensus {
         vote.verify()?;
 
         // Retrieve the actual block this vote is for.
-        let Some(block) = self.get_block(&block_hash)? else {
-            // We try to limit the size of the buffered votes to prevent memory exhaustion.
-            // If the buffered votes exceed the threshold, we purge as many stale votes as possible.
-            // While this is not guaranteed to reduce the size of the buffered votes, it is a best-effort attempt.
-            if self.buffered_votes.len() > Self::VIEW_BUFFER_THRESHOLD {
-                self.buffered_votes.retain(|_hash, votes| {
-                    // purge stale votes
-                    votes.first().map(|(_p, v)| v.view + 1).unwrap_or_default() >= current_view
-                });
-            }
+        let Some(block) = self
+            .db
+            .get_transactionless_block(BlockFilter::Hash(block_hash))?
+        else {
             // If we don't have the block yet, we buffer the vote in case we recieve the block later. Note that we
             // don't know the leader of this view without the block, so we may be storing this unnecessarily, however
             // non-malicious nodes should only have sent us this vote if they thought we were the leader.
-            let mut buf = self.buffered_votes.entry(block_hash).or_default();
-            if buf.len() < MAX_COMMITTEE_SIZE {
-                // we only ever need 2/3 of the committee, so it should not exceed this number.
+
+            // evict the votes for the oldest view(s) from the buffer to make room for this new vote.
+            while self.buffered_votes.len() >= Self::VIEW_BUFFER_VIEW_LIMIT {
+                self.buffered_votes.pop_first().unwrap();
+            }
+            // buffer the vote.
+            let buf = self.buffered_votes.entry(vote.view).or_default();
+            // limit the buffered size, but allow known validator votes to pass.
+            if self.buffered_peers.contains(&vote.public_key) || buf.len() < MAX_COMMITTEE_SIZE {
                 trace!("vote for unknown block, buffering");
                 buf.push((peer_id, vote));
-            } else {
-                error!(%peer_id, view=%block_view, "vote for unknown block, dropping");
             }
             return Ok(None);
         };
@@ -1350,10 +1350,14 @@ impl Consensus {
             ..Default::default()
         };
 
+        // record known committee
         let committee = self
             .state
             .at_root(block.state_root_hash().into())
             .get_stakers(executed_block)?;
+        for validator in &committee {
+            self.buffered_peers.insert(*validator);
+        }
 
         // verify the sender's signature on block_hash
         let Some((index, _)) = committee
@@ -1386,7 +1390,7 @@ impl Consensus {
             };
             votes.cosigned_weight += weight.get();
 
-            let total_weight = self.total_weight(&committee, executed_block);
+            let total_weight = self.total_weight(&committee, executed_block, &state);
             votes.supermajority_reached = votes.cosigned_weight * 3 > total_weight * 2;
 
             trace!(
@@ -1942,7 +1946,10 @@ impl Consensus {
     }
 
     fn committee_for_hash(&self, parent_hash: Hash) -> Result<Vec<NodePublicKey>> {
-        let Ok(Some(parent)) = self.get_block(&parent_hash) else {
+        let Ok(Some(parent)) = self
+            .db
+            .get_transactionless_block(BlockFilter::Hash(parent_hash))
+        else {
             tracing::error!("parent block not found: {:?}", parent_hash);
             return Ok(Vec::new()); // return an empty vector instead of Err for graceful app-level error-handling
         };
@@ -1992,9 +1999,18 @@ impl Consensus {
 
         new_view.verify(*public_key)?;
 
-        if self
-            .verify_qc_signature(&new_view.qc, committee.clone())
-            .is_err()
+        if new_view.qc.view != parent.view()
+            || self
+                .verify_qc_signature(&new_view.qc, committee.clone())
+                .is_err()
+            || self
+                .check_quorum_in_bits(
+                    &new_view.qc.cosigned,
+                    &committee,
+                    parent.state_root_hash(),
+                    &parent,
+                )
+                .is_err()
         {
             // verify_qc_signature already logs the offending QC.
             return Ok(None);
@@ -2073,7 +2089,7 @@ impl Consensus {
             new_view_vote.qcs.insert(index, new_view.qc);
 
             supermajority = new_view_vote.cosigned_weight * 3
-                > self.total_weight(&committee, executed_block) * 2;
+                > 2 * self.total_weight(&committee, executed_block, &self.state);
 
             let num_signers = new_view_vote.signatures.len();
 
@@ -2360,11 +2376,11 @@ impl Consensus {
                     );
                     return Ok(false);
                 };
-                if proposal.view() == 0 || proposal.view() == qc_block.view() + 1 {
+                if proposal.view() == 0 || proposal.view() > qc_block.view() {
                     Ok(true)
                 } else {
                     trace!(
-                        "block does not extend from parent, {} != {} + 1",
+                        "block does not extend from parent, {} < {}",
                         proposal.view(),
                         qc_block.view()
                     );
@@ -2748,6 +2764,10 @@ impl Consensus {
         // was signed over.
         self.verify_qc_signature(&block.header.qc, committee.clone())?;
         if let Some(agg) = &block.agg {
+            anyhow::ensure!(
+                agg.view == block.view(),
+                "aggQC view does not match block view"
+            );
             // Check if the signers of the block's aggregate QC represent the supermajority
             self.check_quorum_in_indices(
                 &agg.cosigned,
@@ -3018,11 +3038,26 @@ impl Consensus {
     }
 
     fn get_highest_from_agg(&self, agg: &AggregateQc) -> Result<QuorumCertificate> {
-        agg.qcs
+        for qc in &agg.qcs {
+            let qc_block = self
+                .db
+                .get_transactionless_block(BlockFilter::Hash(qc.block_hash))?
+                .ok_or_else(|| MissingBlockError::from(qc.block_hash))?;
+            anyhow::ensure!(
+                qc.view == qc_block.view(),
+                "QC view {} does not match block view {} for {}",
+                qc.view,
+                qc_block.view(),
+                qc.block_hash
+            );
+        }
+        let highest = agg
+            .qcs
             .iter()
             .max_by_key(|qc| qc.view)
             .copied()
-            .ok_or_else(|| anyhow!("no qcs in agg"))
+            .context("no qcs in agg")?;
+        Ok(highest)
     }
 
     pub fn replay_proposal(
@@ -3034,10 +3069,10 @@ impl Consensus {
         let prev_root_hash = self.state.root_hash()?;
         self.state.set_to_root(parent_state.into());
         let stakers = self.state.get_stakers(block.header)?;
-        self.execute_block(None, &block, transactions, stakers.as_slice(), true)?;
-        // restore previous state
+        let result = self.execute_block(None, &block, transactions, stakers.as_slice(), true);
+        // restore previous state, either way
         self.state.set_to_root(prev_root_hash.into());
-        Ok(())
+        result
     }
 
     fn verify_qc_signature(
@@ -3063,7 +3098,12 @@ impl Consensus {
         agg: &AggregateQc,
         committee: &[NodePublicKey],
     ) -> Result<()> {
-        let mut public_keys = Vec::new();
+        anyhow::ensure!(
+            agg.cosigned.count_ones() <= committee.len(),
+            "aggregate QC cosigned bits do not match committee size"
+        );
+
+        let mut public_keys = Vec::with_capacity(agg.qcs.len());
         for (index, bit) in agg.cosigned.iter().enumerate() {
             if *bit {
                 // `cosigned` is a fixed-size 256-bit field, so a byzantine proposer can set
@@ -3078,6 +3118,13 @@ impl Consensus {
                 public_keys.push(*public_key);
             }
         }
+
+        anyhow::ensure!(
+            public_keys.len() == agg.qcs.len(),
+            "aggregate QC has {} signatures but {} cosigned bits",
+            agg.qcs.len(),
+            public_keys.len()
+        );
 
         let messages: Vec<_> = agg
             .qcs
@@ -3168,7 +3215,7 @@ impl Consensus {
             }
         }
 
-        if cosigned_sum * 3 <= self.total_weight(committee, block.header) * 2 {
+        if cosigned_sum * 3 <= 2 * self.total_weight(committee, block.header, &parent_state) {
             return Err(anyhow!("no quorum"));
         }
 
@@ -3215,16 +3262,21 @@ impl Consensus {
         })
     }
 
-    fn total_weight(&self, committee: &[NodePublicKey], executed_block: BlockHeader) -> u128 {
+    #[inline]
+    fn total_weight(
+        &self,
+        committee: &[NodePublicKey],
+        executed_block: BlockHeader,
+        state: &State,
+    ) -> u128 {
         committee
             .iter()
             .map(|&pub_key| {
-                let stake = self
-                    .state
+                state
                     .get_stake(pub_key, executed_block)
                     .unwrap()
-                    .unwrap();
-                stake.get()
+                    .unwrap()
+                    .get()
             })
             .sum()
     }
