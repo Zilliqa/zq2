@@ -112,6 +112,13 @@ pub fn verify_messages(
     messages: &[&[u8]],
     public_keys: &[NodePublicKey],
 ) -> Result<()> {
+    anyhow::ensure!(
+        messages.len() == public_keys.len(),
+        "number of messages ({}) does not match number of public keys ({})",
+        messages.len(),
+        public_keys.len()
+    );
+
     let data = public_keys
         .iter()
         .zip(messages.iter())
