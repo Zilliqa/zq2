@@ -639,13 +639,17 @@ impl Signer {
         // this produces a deterministic pseudo-random order.
         let blk_key = blk_hash
             .0
-            .chunks_exact(16)
-            .map(|c| u128::from_be_bytes(c.try_into().unwrap()))
+            .as_chunks::<16>()
+            .0
+            .iter()
+            .map(|c| u128::from_be_bytes(*c))
             .fold(0u128, |a, x| a ^ x);
         let txn_key = txn_hash
             .0
-            .chunks_exact(16)
-            .map(|c| u128::from_be_bytes(c.try_into().unwrap()))
+            .as_chunks::<16>()
+            .0
+            .iter()
+            .map(|c| u128::from_be_bytes(*c))
             .fold(0u128, |a, x| a ^ x);
         let sort_key = blk_key ^ txn_key;
 
@@ -656,8 +660,10 @@ impl Signer {
                 (
                     k,
                     k.as_bytes()
-                        .chunks_exact(16)
-                        .map(|c| u128::from_be_bytes(c.try_into().unwrap()))
+                        .as_chunks::<16>()
+                        .0
+                        .iter()
+                        .map(|c| u128::from_be_bytes(*c))
                         .fold(sort_key, |a, x| a ^ x),
                 )
             })
