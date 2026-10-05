@@ -832,7 +832,8 @@ impl ChainNode {
             .get_validator_control_address()
             .unwrap_or(&genesis_account_address);
 
-        let genesis_deposits_amount = &self.chain()?.get_genesis_deposits_amount()?;
+        let chain = self.chain()?;
+        let genesis_deposits_amount = &chain.get_genesis_deposits_amount()?;
         let genesis_deposits = serde_json::to_value(
             validator_addresses
                 .iter()
@@ -841,7 +842,9 @@ impl ChainNode {
                         v.0.clone(),
                         v.1.clone(),
                         &genesis_deposits_amount,
-                        "0x0000000000000000000000000000000000000000",
+                        chain
+                            .get_validator_reward_address(&v.0)
+                            .unwrap_or("0x0000000000000000000000000000000000000000"),
                         &validator_control_address,
                     )
                 })
