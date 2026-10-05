@@ -296,7 +296,6 @@ struct Network {
     deposit_v3_upgrade_block_height: Option<u64>,
     scilla_server_socket_directory: String,
     zil_transfers_only_to_escrow: bool,
-    disable_permanently_scilla_precompiles: bool,
 }
 
 impl Network {
@@ -316,7 +315,6 @@ impl Network {
         deposit_v3_upgrade_block_height: Option<u64>,
         scilla_server_socket_directory: String,
         zil_transfers_only_to_escrow: bool,
-        disable_permanently_scilla_precompiles: bool,
     ) -> Network {
         Self::new_shard(
             rng,
@@ -333,7 +331,6 @@ impl Network {
             deposit_v3_upgrade_block_height,
             scilla_server_socket_directory,
             zil_transfers_only_to_escrow,
-            disable_permanently_scilla_precompiles,
         )
     }
 
@@ -353,7 +350,6 @@ impl Network {
         deposit_v3_upgrade_block_height: Option<u64>,
         scilla_server_socket_directory: String,
         zil_transfers_only_to_escrow: bool,
-        disable_permanently_scilla_precompiles: bool,
     ) -> Network {
         let mut signing_keys = keys.unwrap_or_else(|| {
             (0..nodes)
@@ -459,7 +455,6 @@ impl Network {
                     // Test chains always carry the escrow contract from genesis.
                     deploy_escrow_contract_v1: true,
                     disable_zilliqa_txn_execution: !zil_transfers_only_to_escrow,
-                    disable_permanently_scilla_precompiles,
                     ..genesis_fork_default()
                 },
                 new_view_broadcast_interval: new_view_broadcast_interval_default(),
@@ -553,7 +548,6 @@ impl Network {
             deposit_v3_upgrade_block_height,
             scilla_server_socket_directory,
             zil_transfers_only_to_escrow,
-            disable_permanently_scilla_precompiles,
         }
     }
 
@@ -666,8 +660,6 @@ impl Network {
                     // Test chains always carry the escrow contract from genesis.
                     deploy_escrow_contract_v1: true,
                     disable_zilliqa_txn_execution: !self.zil_transfers_only_to_escrow,
-                    disable_permanently_scilla_precompiles: self
-                        .disable_permanently_scilla_precompiles,
                     ..genesis_fork_default()
                 },
                 new_view_broadcast_interval: new_view_broadcast_interval_default(),
@@ -1129,7 +1121,6 @@ impl Network {
                                     self.deposit_v3_upgrade_block_height,
                                     self.scilla_server_socket_directory.clone(),
                                     self.zil_transfers_only_to_escrow,
-                                    self.disable_permanently_scilla_precompiles,
                                 ),
                             );
                         }

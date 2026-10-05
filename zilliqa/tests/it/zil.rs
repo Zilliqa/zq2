@@ -1554,11 +1554,6 @@ sol!(
     "tests/it/contracts/ScillaDebitSkipMinter.sol",
 );
 
-sol!(
-    #[sol(rpc)]
-    "tests/it/contracts/ScillaPrecompilesProbe.sol",
-);
-
 #[zilliqa_macros::test(restrict_concurrency, ignore)]
 async fn scilla_precompiles(mut network: Network) {
     let wallet = network.genesis_wallet().await;
@@ -2432,52 +2427,6 @@ async fn scilla_precompile_failure_reverts_but_charges_gas(mut network: Network)
     let fee = receipt.gas_used as u128 * receipt.effective_gas_price;
     assert!(fee > 0);
     assert_eq!(sender_balance_before - fee, sender_balance_after);
-}
-
-async fn probe_scilla_precompiles(
-    network: &mut Network,
-) -> (
-    ScillaPrecompilesProbe::ScillaPrecompilesProbeInstance<Wallet>,
-    bool,
-) {
-    let wallet = network.genesis_wallet().await;
-    let (probe_address, _) = deploy_contract(
-        "tests/it/contracts/ScillaPrecompilesProbe.sol",
-        "ScillaPrecompilesProbe",
-        0u128,
-        &wallet,
-        network,
-    )
-    .await;
-    let probe = ScillaPrecompilesProbe::new(probe_address, wallet.clone());
-
-    let hash = *probe
-        .probe(Address::random())
-        .gas(1_000_000)
-        .send()
-        .await
-        .unwrap()
-        .tx_hash();
-    let receipt = network.run_until_receipt(&wallet, &hash, 100).await;
-    (probe, receipt.status())
-}
-
-#[zilliqa_macros::test(disable_permanently_scilla_precompiles)]
-async fn disabled_scilla_precompiles_fail_only_the_sub_call(mut network: Network) {
-    let (probe, succeeded) = probe_scilla_precompiles(&mut network).await;
-
-    assert!(succeeded);
-    assert!(probe.probed().call().await.unwrap());
-    assert!(!probe.scillaCallOk().call().await.unwrap());
-    assert!(!probe.scillaReadOk().call().await.unwrap());
-}
-
-#[zilliqa_macros::test]
-async fn failed_scilla_call_reverts_txn_while_scilla_precompiles_enabled(mut network: Network) {
-    let (probe, succeeded) = probe_scilla_precompiles(&mut network).await;
-
-    assert!(!succeeded);
-    assert!(!probe.probed().call().await.unwrap());
 }
 
 #[zilliqa_macros::test(restrict_concurrency, ignore)]

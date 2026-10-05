@@ -267,6 +267,7 @@ impl ContextPrecompile for ScillaRead {
         let gas = Gas::new(inputs.gas_limit);
 
         if ctx.chain.fork.disable_permanently_scilla_precompiles {
+            ctx.chain.enforce_transaction_failure = true;
             return Ok(Some(InterpreterResult {
                 result: InstructionResult::PrecompileError,
                 gas,
@@ -453,6 +454,7 @@ impl ContextPrecompile for ScillaCall {
         let gas = Gas::new(inputs.gas_limit);
 
         if ctx.chain.fork.disable_permanently_scilla_precompiles {
+            ctx.chain.enforce_transaction_failure = true;
             return Ok(Some(InterpreterResult {
                 result: InstructionResult::PrecompileError,
                 gas,
