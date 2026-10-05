@@ -4060,7 +4060,7 @@ async fn test_simulate_transactions(mut network: Network) {
     while let Some(b) = node.get_block(i).unwrap() {
         for tx in b.transactions.iter() {
             num_transactions += 1;
-            println!("Block {:?}, transaction {:?}", &b, &tx);
+            println!("Block {:?}, transaction {:?}", b, tx);
         }
         i += 1;
     }

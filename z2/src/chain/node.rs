@@ -137,7 +137,7 @@ pub struct Machine {
 
 impl Machine {
     async fn copy(&self, file_from: &[&str], file_to: &str) -> Result<()> {
-        let tgt_spec = format!("{0}:{file_to}", &self.name);
+        let tgt_spec = format!("{0}:{file_to}", self.name);
         let args = [
             &[
                 "compute",
@@ -572,7 +572,7 @@ impl ChainNode {
         if self.role == NodeRole::Apps {
             return Err(anyhow!(
                 "Node {} has role 'apps' and does not own a private key",
-                &self.machine.name
+                self.machine.name
             ));
         }
 
@@ -660,7 +660,7 @@ impl ChainNode {
         if bootstrap_nodes.is_empty() {
             return Err(anyhow!(
                 "No bootstrap instances found in the network {}",
-                &self.chain.name()
+                self.chain.name()
             ));
         };
 

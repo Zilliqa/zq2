@@ -1401,17 +1401,19 @@ impl State {
             gas = gas.min(requested_gas_limit);
         }
 
-        if gas_price != 0 {
-            let balance = self.get_account(caller)?.balance;
-            // Calculate how much the caller has left to pay for gas after the transaction value is subtracted.
-            let balance = balance.checked_sub(tx_value).ok_or_else(|| {
-                anyhow!("caller has insufficient funds - has: {balance}, needs: {tx_value}")
-            })?;
-            // Calculate the gas the caller could pay for at this gas price.
-            let max_gas = EvmGas((balance / gas_price) as u64);
-            gas = gas.min(max_gas);
+        if gas_price == 0 {
+            return Ok(gas);
         }
 
+        let balance = self.get_account(caller)?.balance;
+        // Calculate how much the caller has left to pay for gas after the transaction value is subtracted.
+        let balance = balance.checked_sub(tx_value).ok_or_else(|| {
+            anyhow!("caller has insufficient funds - has: {balance}, needs: {tx_value}")
+        })?;
+        let balance = balance.checked_div(gas_price).context("gas_price != 0")?;
+        // Calculate the gas the caller could pay for at this gas price.
+        let max_gas = EvmGas(balance.try_into()?);
+        gas = gas.min(max_gas);
         Ok(gas)
     }
 

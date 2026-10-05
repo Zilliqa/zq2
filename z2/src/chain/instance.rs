@@ -181,7 +181,7 @@ impl ChainInstance {
     pub fn genesis_private_key(&self) -> Result<String> {
         let filter = format!(
             "labels.zq2-network={} AND labels.role=genesis",
-            &self.config.name
+            self.config.name
         );
         let private_keys = Secret::get_secrets(self.chain()?.get_project_id()?, filter.as_str())?;
 
@@ -204,7 +204,7 @@ impl ChainInstance {
         } else {
             Err(anyhow!(
                 "No secrets with role genesis found in the network {}",
-                &self.name()
+                self.name()
             ))
         }
     }

@@ -29,7 +29,7 @@ use libp2p::{
 use tokio::{
     select,
     signal::{self, unix::SignalKind},
-    sync::mpsc::{self, UnboundedSender, error::SendError},
+    sync::mpsc::{self, UnboundedSender},
     task::JoinSet,
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -309,10 +309,10 @@ impl P2pNode {
         Ok(())
     }
 
-    fn send_to<T: Send + Sync + 'static>(
+    fn send_to(
         &self,
         topic_hash: &TopicHash,
-        sender: impl FnOnce(&NodeInputChannels) -> Result<(), SendError<T>>,
+        sender: impl FnOnce(&NodeInputChannels) -> Result<()>,
     ) -> Result<()> {
         let Some(channels) =
             Self::parse_topic(topic_hash).and_then(|topic| self.shard_nodes.get(&topic.shard_id()))
@@ -320,7 +320,7 @@ impl P2pNode {
             warn!(?topic_hash, "message received for unknown shard or topic");
             return Ok(());
         };
-        Ok(sender(channels)?)
+        sender(channels)
     }
 
     pub async fn start(&mut self) -> Result<()> {
@@ -426,12 +426,12 @@ impl P2pNode {
                             match external_message {
                                 ExternalMessage::BatchedTransactions(_) | ExternalMessage::NewView(_) => {
                                     self.swarm.behaviour_mut().gossipsub.report_message_validation_result(&msg_id, &source, MessageAcceptance::Accept); // forward
-                                    self.send_to(&topic_hash, |c| c.broadcasts.send((source, external_message, ResponseChannel::Local)))?;
+                                    self.send_to(&topic_hash, |c| c.broadcasts.send((source, external_message, ResponseChannel::Local)).map_err(anyhow::Error::from))?;
                                 },
                                 // Route broadcasts to speed-up Proposal processing, with faux request-id
                                 ExternalMessage::Proposal(_) => {
                                     self.swarm.behaviour_mut().gossipsub.report_message_validation_result(&msg_id, &source, MessageAcceptance::Accept); // forward
-                                    self.send_to(&topic_hash, |c| c.requests.send((source, msg_id.to_string(), external_message, ResponseChannel::Local)))?;
+                                    self.send_to(&topic_hash, |c| c.requests.send((source, msg_id.to_string(), external_message, ResponseChannel::Local)).map_err(anyhow::Error::from))?;
                                 },
                                 // Drop invalid libp2p gossips
                                 _ => {
@@ -455,10 +455,10 @@ impl P2pNode {
                                                 | ExternalMessage::MultiBlockRequest(_)
                                                 | ExternalMessage::BlockRequest(_)
                                                 | ExternalMessage::PassiveSyncRequest(_) => self
-                                                    .send_to(&_topic.hash(), |c| c.broadcasts.send((_source, _external_message, ResponseChannel::Remote(_channel))))?,
+                                                    .send_to(&_topic.hash(), |c| c.broadcasts.send((_source, _external_message, ResponseChannel::Remote(_channel))).map_err(anyhow::Error::from))?,
                                                 ExternalMessage::UccbUserOp(_)
                                                 | ExternalMessage::Vote(_)
-                                                | ExternalMessage::NewView(_) => self.send_to(&_topic.hash(), |c| c.requests.send((_source, _id, _external_message, ResponseChannel::Remote(_channel))))?,
+                                                | ExternalMessage::NewView(_) => self.send_to(&_topic.hash(), |c| c.requests.send((_source, _id, _external_message, ResponseChannel::Remote(_channel))).map_err(anyhow::Error::from))?,
                                                 _ => error!(source = %_source, %to, external_message = %_external_message, request_id = %_request_id, "unhandled libp2p request"),
                                             }
                                         } else {
@@ -468,7 +468,7 @@ impl P2pNode {
                                 }
                                 request_response::Message::Response { request_id, response } => {
                                     if let Some((shard_id, _)) = self.pending_requests.remove(&request_id) {
-                                        self.send_to(&Self::shard_id_to_topic(shard_id, None).hash(), |c| c.responses.send((_source, response)))?;
+                                        self.send_to(&Self::shard_id_to_topic(shard_id, None).hash(), |c| c.responses.send((_source, response)).map_err(anyhow::Error::from))?;
                                     } else {
                                         warn!(%request_id, "response to request with no id");
                                     }
@@ -485,7 +485,7 @@ impl P2pNode {
 
                             if let Some((shard_id, request_id)) = self.pending_requests.remove(&request_id) {
                                 let error = OutgoingMessageFailure { peer, request_id, error };
-                                self.send_to(&Self::shard_id_to_topic(shard_id, None).hash(), |c| c.request_failures.send((peer, error)))?;
+                                self.send_to(&Self::shard_id_to_topic(shard_id, None).hash(), |c| c.request_failures.send((peer, error)).map_err(anyhow::Error::from))?;
                             } else {
                                 warn!(%request_id, "request without id failed");
                             }
@@ -506,7 +506,7 @@ impl P2pNode {
                             self.add_shard_node(shard_config.clone()).await?;
                         },
                         InternalMessage::LaunchLink(_) | InternalMessage::IntershardCall(_) => {
-                            self.send_to(&Self::shard_id_to_topic(destination, None).hash(), |c| c.local_messages.send((source, message)))?;
+                            self.send_to(&Self::shard_id_to_topic(destination, None).hash(), |c| c.local_messages.send((source, message)).map_err(anyhow::Error::from))?;
                         }
                         InternalMessage::ExportBlockCheckpoint(export) => {
                             self.task_threads.spawn(async move {
@@ -559,7 +559,7 @@ impl P2pNode {
                             debug!(%from, %dest, %message, ?request_id, "sending direct message");
                             let id = format!("{request_id:?}");
                             if from == dest {
-                                self.send_to(&topic.hash(), |c| c.requests.send((from, id, message, ResponseChannel::Local)))?;
+                                self.send_to(&topic.hash(), |c| c.requests.send((from, id, message, ResponseChannel::Local)).map_err(anyhow::Error::from))?;
                             } else {
                                 let libp2p_request_id = self.swarm.behaviour_mut().request_response.send_request(&dest, (shard_id, message));
                                 self.pending_requests.insert(libp2p_request_id, (shard_id, request_id));
