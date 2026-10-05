@@ -266,6 +266,14 @@ impl ContextPrecompile for ScillaRead {
     ) -> std::result::Result<Option<InterpreterResult>, String> {
         let gas = Gas::new(inputs.gas_limit);
 
+        if ctx.chain.fork.disable_permanently_scilla_precompiles {
+            return Ok(Some(InterpreterResult {
+                result: InstructionResult::PrecompileError,
+                gas,
+                output: Bytes::new(),
+            }));
+        }
+
         let outcome = scilla_read(inputs, gas.limit(), ctx);
 
         let mut result = InterpreterResult {
@@ -443,6 +451,14 @@ impl ContextPrecompile for ScillaCall {
         inputs: &CallInputs,
     ) -> Result<Option<InterpreterResult>, String> {
         let gas = Gas::new(inputs.gas_limit);
+
+        if ctx.chain.fork.disable_permanently_scilla_precompiles {
+            return Ok(Some(InterpreterResult {
+                result: InstructionResult::PrecompileError,
+                gas,
+                output: Bytes::new(),
+            }));
+        }
 
         // Record access of scilla precompile
         ctx.chain.has_called_scilla_precompile = true;

@@ -230,6 +230,7 @@ impl Chain {
                 "zil_transfers_only_to_escrow": false,
                 "deploy_escrow_contract_v1": false,
                 "evm_gas_fee_credited_once_to_zero_account": false,
+                "disable_permanently_scilla_precompiles": false,
             })),
             Chain::Zq2Mainnet => Some(json!({
                 "at_height": 0,
@@ -288,6 +289,7 @@ impl Chain {
                 "zil_transfers_only_to_escrow": false,
                 "deploy_escrow_contract_v1": false,
                 "evm_gas_fee_credited_once_to_zero_account": false,
+                "disable_permanently_scilla_precompiles": false,
             })),
             _ => None,
         }
@@ -357,6 +359,7 @@ impl Chain {
                 json!({ "at_height": 40408500, "deploy_escrow_contract_v1": true }),
                 json!({ "at_height": 40409000, "zil_transfers_only_to_escrow": true }),
                 json!({ "at_height": 41152000, "blocked_recipients_start_height_v3": 41152000, "blocked_recipients_file_v3": "blocked_recipients_003.bin" }),
+                json!({ "at_height": 99999999, "disable_permanently_scilla_precompiles": true }),
                 json!({ "at_height": 999999999, "distribute_rewards_every_epoch": true}),
                 json!({ "at_height": 999999999, "pectra_active": true}),
                 json!({ "at_height": 999999999, "evm_gas_fee_credited_once_to_zero_account": true }),
@@ -531,6 +534,7 @@ impl Chain {
                 json!({ "at_height": 36383378, "deploy_escrow_contract_v1": true }),
                 json!({ "at_height": 36383379, "zil_transfers_only_to_escrow": true }),
                 json!({ "at_height": 37410000, "blocked_recipients_start_height_v3": 37410000, "blocked_recipients_file_v3": "blocked_recipients_003.bin" }),
+                json!({ "at_height": 99999999, "disable_permanently_scilla_precompiles": true }),
                 json!({ "at_height": 999999999, "distribute_rewards_every_epoch": true}),
                 json!({ "at_height": 999999999, "pectra_active": true}),
                 json!({ "at_height": 999999999, "evm_gas_fee_credited_once_to_zero_account": true }),

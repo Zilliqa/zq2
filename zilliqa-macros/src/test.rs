@@ -9,6 +9,7 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
     let mut do_checkpoints = false;
     let mut ignore = false;
     let mut zil_transfers_only_to_escrow = false;
+    let mut disable_permanently_scilla_precompiles = false;
     let mut blocks_per_epoch = 10;
     // Code below reads 0 to be "do not deploy deposit_v3"
     let mut deposit_v3_upgrade_block_height = 0;
@@ -40,6 +41,9 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
                     // `disable_zilliqa_txn_execution` so legacy Zilliqa transactions actually reach
                     // it instead of being rejected outright.
                     "zil_transfers_only_to_escrow" => zil_transfers_only_to_escrow = true,
+                    "disable_permanently_scilla_precompiles" => {
+                        disable_permanently_scilla_precompiles = true
+                    }
                     _ => {
                         return token_stream_with_error(
                             args,
@@ -218,6 +222,7 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
                                 deposit_v3_upgrade_block_height_option,
                                 format!("{temp_dir}/scilla-sockets"),
                                 #zil_transfers_only_to_escrow,
+                                #disable_permanently_scilla_precompiles,
                             );
 
                             // Call the original test function, wrapped in `catch_unwind` so we can detect the panic.
