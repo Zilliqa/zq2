@@ -328,7 +328,7 @@ pub async fn run_deployer_monitor(
 pub async fn print_depends(_base_dir: &str) -> Result<()> {
     for p in Component::all().iter() {
         let req = setup::Setup::describe_component(p).await?;
-        println!("{0} requires:\n {1}", &p, req)
+        println!("{0} requires:\n {1}", p, req)
     }
     Ok(())
 }
@@ -342,9 +342,9 @@ pub async fn update_depends(base_dir: &str, with_ssh: bool) -> Result<()> {
             let mut dest_dir = PathBuf::from(base_dir);
             dest_dir.push(&repo);
             let repo_base = if with_ssh {
-                format!("git@github.com:zilliqa/{0}", &repo)
+                format!("git@github.com:zilliqa/{0}", repo)
             } else {
-                format!("https://github.com/zilliqa/{0}", &repo)
+                format!("https://github.com/zilliqa/{0}", repo)
             };
             if !dest_dir.exists() {
                 println!("🌱 Cloning {repo_base} for {p} in {base_dir}/{repo} .. ");
@@ -422,21 +422,21 @@ pub async fn generate_docs(
             docgen::PageStatus::NotYetDocumented => {
                 println!(
                     "{0}",
-                    format!("🎲 not documented : {0:?}", &api.method).yellow()
+                    format!("🎲 not documented : {0:?}", api.method).yellow()
                 );
                 ok = false;
             }
             docgen::PageStatus::NotYetImplemented => {
                 println!(
                     "{0}",
-                    format!("🎄 not implemented: {0:?}", &api.method).red()
+                    format!("🎄 not implemented: {0:?}", api.method).red()
                 );
                 ok = false;
             }
             docgen::PageStatus::PartiallyImplemented => {
                 println!(
                     "{0}",
-                    format!("🍄 partially implemented: {0:?}", &api.method).red()
+                    format!("🍄 partially implemented: {0:?}", api.method).red()
                 );
                 ok = false;
             }

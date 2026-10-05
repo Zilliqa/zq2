@@ -148,7 +148,9 @@ impl BlockedRecipients {
             .read_exact_at(&mut bytes, self.body_offset + index * ADDRESS_BYTES as u64)?;
 
         Ok(bytes
-            .chunks_exact(ADDRESS_BYTES)
+            .as_chunks::<ADDRESS_BYTES>()
+            .0
+            .iter()
             .enumerate()
             .map(|(i, address)| {
                 (
@@ -168,7 +170,9 @@ fn destination_of(regions: &[Region], index: u64) -> Address {
 
 fn parse_regions(bytes: &[u8], count: u64) -> Result<Vec<Region>> {
     let regions: Vec<Region> = bytes
-        .chunks_exact(REGION_BYTES as usize)
+        .as_chunks::<{ REGION_BYTES as usize }>()
+        .0
+        .iter()
         .map(|chunk| {
             Ok(Region {
                 first_index: u64::from_le_bytes(chunk[..8].try_into()?),

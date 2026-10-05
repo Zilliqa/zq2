@@ -41,20 +41,17 @@ impl Runner {
     pub async fn write_config_files(config_dir: &str) -> Result<()> {
         // Just writes a couple of files.
         let docker_compose = include_str!("../resources/otel-compose.yaml");
-        fs::write(
-            format!("{0}/otel-compose.yaml", &config_dir),
-            docker_compose,
-        )
-        .await
-        .context(format!("Cannot write {0}/otel-compose.yaml", &config_dir))?;
+        fs::write(format!("{0}/otel-compose.yaml", config_dir), docker_compose)
+            .await
+            .context(format!("Cannot write {0}/otel-compose.yaml", config_dir))?;
         let otel_config = include_str!("../resources/otel-collector-config.yaml");
-        fs::write(format!("{0}/otel-config.yaml", &config_dir), otel_config)
+        fs::write(format!("{0}/otel-config.yaml", config_dir), otel_config)
             .await
-            .context(format!("Cannot write {0}/otel-config.yaml", &config_dir))?;
+            .context(format!("Cannot write {0}/otel-config.yaml", config_dir))?;
         let mimir_config = include_str!("../resources/mimir-config.yaml");
-        fs::write(format!("{0}/mimir-config.yaml", &config_dir), mimir_config)
+        fs::write(format!("{0}/mimir-config.yaml", config_dir), mimir_config)
             .await
-            .context(format!("Cannot write {0}/minir-config.yaml", &config_dir))?;
+            .context(format!("Cannot write {0}/minir-config.yaml", config_dir))?;
         Ok(())
     }
 

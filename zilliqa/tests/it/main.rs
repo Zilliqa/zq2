@@ -1816,7 +1816,7 @@ impl FauxBackend {
                 }
                 _ = &mut polling => {
                     polling.set(tokio::time::sleep(Duration::from_millis(100)));
-                    for (_id, rx) in self.subscriptions.lock().unwrap().iter_mut() {
+                    for rx in self.subscriptions.lock().unwrap().values_mut() {
                         if let Ok(item) = rx.try_recv() {
                             println!("NOT: {}", item.get());
                             let item: PubSubItem = serde_json::de::from_str(item.get()).unwrap();

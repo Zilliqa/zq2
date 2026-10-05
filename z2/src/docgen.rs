@@ -728,7 +728,7 @@ impl Docs {
         if !parsed.rest.is_empty() {
             return Err(anyhow!(
                 "{src:?} contains text outside a section: '{0}' - please fix!",
-                &parsed.rest
+                parsed.rest
             ));
         }
         // otherwise, each section gets Tera-substituted with the library. We can do this all at once ..

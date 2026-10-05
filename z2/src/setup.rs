@@ -378,7 +378,7 @@ impl Setup {
                 result.push(ZQ2_CONFIG_FILE_NAME);
             }
             Some(ref v) => {
-                result.push(format!("{0}.toml", &v.get_name()));
+                result.push(format!("{0}.toml", v.get_name()));
             }
         }
         Ok(result)
@@ -473,7 +473,7 @@ impl Setup {
             let mut signer_path = PathBuf::from(&self.config_dir);
             signer_path.push("test.signers");
             let signer_path_str = utils::string_from_path(&signer_path)?;
-            println!("🎷 Writing JSON test signers to {0}", &signer_path_str);
+            println!("🎷 Writing JSON test signers to {0}", signer_path_str);
             // Write the signers file
             fs::write(signer_path, &serde_json::to_string(&signer_private_keys)?).await?;
 
@@ -500,9 +500,9 @@ impl Setup {
         println!(
             "Writing {0} config files to {1}",
             self.config.shape.nodes.len(),
-            &self.config_dir
+            self.config_dir
         );
-        for (node_index, _node_desc) in self.config.shape.nodes.iter() {
+        for node_index in self.config.shape.nodes.keys() {
             println!("🎱 Generating configuration for node {node_index}...");
             let mut cfg = zilliqa::cfg::Config {
                 otlp_collector_endpoint: Some("http://localhost:4317".to_string()),
