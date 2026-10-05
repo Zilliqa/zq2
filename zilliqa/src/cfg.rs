@@ -875,6 +875,9 @@ impl Forks {
                     .is_empty(),
                 ForkName::DistributeRewardsEveryEpoch => fork.distribute_rewards_every_epoch,
                 ForkName::DeployEscrowContractV1 => fork.deploy_escrow_contract_v1,
+                ForkName::DisablePermanentlyScillaPrecompiles => {
+                    fork.disable_permanently_scilla_precompiles
+                }
             } {
                 return Some(fork.at_height);
             }
@@ -941,6 +944,7 @@ pub struct Fork {
     pub zil_transfers_only_to_escrow: bool,
     pub deploy_escrow_contract_v1: bool,
     pub evm_gas_fee_credited_once_to_zero_account: bool,
+    pub disable_permanently_scilla_precompiles: bool,
 }
 
 pub enum ForkName {
@@ -975,6 +979,7 @@ pub enum ForkName {
     AllowScillaCallPrecompileToBeCalledFromAddresses,
     DistributeRewardsEveryEpoch,
     DeployEscrowContractV1,
+    DisablePermanentlyScillaPrecompiles,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1132,6 +1137,7 @@ pub struct ForkDelta {
     /// [`Fork::deploy_escrow_contract_v1`].
     pub deploy_escrow_contract_v1: Option<bool>,
     pub evm_gas_fee_credited_once_to_zero_account: Option<bool>,
+    pub disable_permanently_scilla_precompiles: Option<bool>,
 }
 
 impl Fork {
@@ -1303,6 +1309,9 @@ impl Fork {
             evm_gas_fee_credited_once_to_zero_account: delta
                 .evm_gas_fee_credited_once_to_zero_account
                 .unwrap_or(self.evm_gas_fee_credited_once_to_zero_account),
+            disable_permanently_scilla_precompiles: delta
+                .disable_permanently_scilla_precompiles
+                .unwrap_or(self.disable_permanently_scilla_precompiles),
         }
     }
 }
@@ -1426,6 +1435,7 @@ pub fn genesis_fork_default() -> Fork {
         zil_transfers_only_to_escrow: false,
         deploy_escrow_contract_v1: false,
         evm_gas_fee_credited_once_to_zero_account: true,
+        disable_permanently_scilla_precompiles: false,
     }
 }
 
@@ -1822,6 +1832,7 @@ mod tests {
                 zil_transfers_only_to_escrow: None,
                 deploy_escrow_contract_v1: None,
                 evm_gas_fee_credited_once_to_zero_account: None,
+                disable_permanently_scilla_precompiles: None,
             }],
             ..Default::default()
         };
@@ -1900,6 +1911,7 @@ mod tests {
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                     evm_gas_fee_credited_once_to_zero_account: None,
+                    disable_permanently_scilla_precompiles: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1958,6 +1970,7 @@ mod tests {
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                     evm_gas_fee_credited_once_to_zero_account: None,
+                    disable_permanently_scilla_precompiles: None,
                 },
             ],
             ..Default::default()
@@ -2053,6 +2066,7 @@ mod tests {
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                     evm_gas_fee_credited_once_to_zero_account: None,
+                    disable_permanently_scilla_precompiles: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -2111,6 +2125,7 @@ mod tests {
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                     evm_gas_fee_credited_once_to_zero_account: None,
+                    disable_permanently_scilla_precompiles: None,
                 },
             ],
             ..Default::default()
@@ -2194,6 +2209,7 @@ mod tests {
                 zil_transfers_only_to_escrow: false,
                 deploy_escrow_contract_v1: false,
                 evm_gas_fee_credited_once_to_zero_account: false,
+                disable_permanently_scilla_precompiles: false,
             },
             forks: vec![],
             ..Default::default()
@@ -2265,6 +2281,7 @@ mod tests {
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                     evm_gas_fee_credited_once_to_zero_account: None,
+                    disable_permanently_scilla_precompiles: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -2323,6 +2340,7 @@ mod tests {
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                     evm_gas_fee_credited_once_to_zero_account: None,
+                    disable_permanently_scilla_precompiles: None,
                 },
             ],
             ..Default::default()
