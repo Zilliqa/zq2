@@ -109,7 +109,7 @@ zip = { version = "8.6.0", default-features = false, features = ["zstd"] }
 eth_trie = { git = "https://github.com/Zilliqa/eth-trie.rs.git", branch = "zilliqa-revm" }
 arc-swap = "1.9.1"
 redis = { version = "0.32.7", features = ["keep-alive", "r2d2", "tcp_nodelay"], default-features = false }
-alloy = { version = "2.0.4", default-features = false, features = ["consensus", "contract", "dyn-abi", "eips", "hyper", "json-abi", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types"] }
+alloy = { version = "2.0.4", default-features = false, features = ["consensus", "contract", "dyn-abi", "eips", "hyper", "json-abi", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "signer-local", "signers", "sol-types"] }
 crossbeam = "0.8.4"
 lru = "0.18.0"
 tokio-util = { version = "0.7.18", default-features = false, features = ["time"] }
@@ -119,7 +119,7 @@ revm-inspectors = { version = "0.39.0", features = ["js-tracer"] }
 revm-precompile = "34.0.0"
 revm-inspector = "19.0.0"
 revm-context = "16.0.1"
-tap-caip = "0.7.0"
+ensip25 = "0.4.4"
 
 [dev-dependencies]
 alloy = { version = "2.0.4", default-features = false, features = ["consensus", "dyn-abi", "eips", "json-abi", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types", "pubsub", "json-rpc", "contract", "signer-local", "providers", "provider-debug-api"] }
