@@ -291,6 +291,65 @@ impl Chain {
                 "evm_gas_fee_credited_once_to_zero_account": false,
                 "disable_permanently_scilla_precompiles": false,
             })),
+            Chain::Zq2Devnet => Some(json!({
+                "at_height": 0,
+                "executable_blocks": true,
+                "call_mode_1_sets_caller_to_parent_caller": true,
+                "failed_scilla_call_from_gas_exempt_caller_causes_revert": true,
+                "scilla_messages_can_call_evm_contracts": true,
+                "scilla_contract_creation_increments_account_balance": true,
+                "scilla_json_preserve_order": true,
+                "scilla_call_respects_evm_state_changes": true,
+                "only_mutated_accounts_update_state": true,
+                "scilla_call_gas_exempt_addrs": [],
+                "scilla_block_number_returns_current_block": true,
+                "scilla_maps_are_encoded_correctly": true,
+                "transfer_gas_fee_to_zero_account": true,
+                "apply_state_changes_only_if_transaction_succeeds": true,
+                "apply_scilla_delta_when_evm_succeeded": true,
+                "scilla_deduct_funds_from_actual_sender": true,
+                "fund_accounts_from_zero_account": [],
+                "scilla_delta_maps_are_applied_correctly": true,
+                "scilla_server_unlimited_response_size": true,
+                "scilla_failed_txn_correct_balance_deduction": true,
+                "scilla_transition_proper_order": true,
+                "evm_to_scilla_value_transfer_zero": true,
+                "restore_xsgd_contract": true,
+                "evm_exec_failure_causes_scilla_precompile_to_fail": true,
+                "revert_restore_xsgd_contract": true,
+                "scilla_fix_contract_code_removal_on_evm_tx": true,
+                "restore_ignite_wallet_contracts": true,
+                "prevent_zil_transfer_from_evm_to_scilla_contract": true,
+                "scilla_failed_txn_correct_gas_fee_charged": true,
+                "check_minimum_gas_price": true,
+                "inject_access_list": true,
+                "use_max_gas_priority_fee": true,
+                "failed_zil_transfers_to_eoa_proper_fee_deduction": true,
+                "validator_jailing": true,
+                "scilla_empty_maps_are_encoded_correctly": true,
+                "cancun_active": true,
+                "scilla_call_gas_exempt_addrs_v2": [],
+                "randao_support": true,
+                "evm_to_scilla_strings_encoded_properly": true,
+                "dont_overwrite_evm_accounts_from_stale_scilla_state": true,
+                "make_transfers_in_scilla_precompiles_with_journal_api": true,
+                "disable_interop_native_zil_transfers_0": true,
+                "tighten_precompile_rules": true,
+                "allow_scilla_call_precompile_to_be_called_from_addresses": [],
+                "distribute_rewards_every_epoch": false,
+                "pectra_active": false,
+                "disable_zilliqa_txn_execution": true,
+                "blocked_recipients_start_height": 0,
+                "blocked_recipients_file": "",
+                "blocked_recipients_start_height_v2": 0,
+                "blocked_recipients_file_v2": "",
+                "blocked_recipients_start_height_v3": 0,
+                "blocked_recipients_file_v3": "",
+                "zil_transfers_only_to_escrow": false,
+                "deploy_escrow_contract_v1": false,
+                "evm_gas_fee_credited_once_to_zero_account": false,
+                "disable_permanently_scilla_precompiles": false,
+            })),
             _ => None,
         }
     }
@@ -549,6 +608,9 @@ impl Chain {
                 json!({ "at_height": 1001, "zil_transfers_only_to_escrow": true }),
                 json!({ "at_height": 3600, "blocked_recipients_start_height_v2": 3600, "blocked_recipients_file_v2": "blocked_recipients_002.bin" }),
                 json!({ "at_height": 33000, "blocked_recipients_start_height_v3": 33000, "blocked_recipients_file_v3": "blocked_recipients_003.bin" }),
+                json!({ "at_height": 43200, "distribute_rewards_every_epoch": true}),
+                json!({ "at_height": 43200, "pectra_active": true}),
+                json!({ "at_height": 43200, "evm_gas_fee_credited_once_to_zero_account": true }),
             ]),
             _ => None,
         }
@@ -626,6 +688,28 @@ impl Chain {
 
     pub fn get_validator_control_address(&self) -> Option<&'static str> {
         self.get_str("validator_control_address")
+    }
+
+    pub fn get_validator_reward_address(&self, bls_public_key: &str) -> Option<&'static str> {
+        match (self, bls_public_key) {
+            (
+                Chain::Zq2Devnet,
+                "97cb791639a2a441fb62c2dbecc7349f9f6cbba1add3ebd43467aefc21492cfe425f1194ee6ce92cd5ed425f4c400875",
+            ) => Some("0x653B6DF7b1A150FD015aE9B81F5c3b6c9e521274"),
+            (
+                Chain::Zq2Devnet,
+                "adbfec62c8bbf2536f0ac6edcd4b6753c9f90c4345761b0ac48f1420b79f59ae78c94ccd0c0b03d12e131c1033e18367",
+            ) => Some("0xb9235697168D1F1AF559A89B78Be5C00F3274296"),
+            (
+                Chain::Zq2Devnet,
+                "8c3dc1e5ba40ed321d5e9a852b5bf39dbc6de318afd52e8913616cd7e675775afca6456d1b27b31fa6b49b3fcd43416e",
+            ) => Some("0x5ad3DC5E6FC34e5BFf7024b059644A6De224af99"),
+            (
+                Chain::Zq2Devnet,
+                "805bf04b8b442f19ae5a20e09b9ada17fcf9a3d2329b3a6b214dfbda17d071ff056e30491267261e27651e2f95ca1e97",
+            ) => Some("0xF12476Db80081E3180FCc447aC91618277Ea137D"),
+            _ => None,
+        }
     }
 
     pub fn get_new_view_broadcast_interval(&self) -> Option<Duration> {
