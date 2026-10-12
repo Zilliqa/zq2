@@ -2,13 +2,14 @@ use alloy::{
     hex,
     network::TransactionBuilder,
     primitives::{Address, U256, address},
-    providers::Provider,
+    providers::{Provider, WalletProvider},
     rpc::types::TransactionRequest,
     sol,
+    sol_types::SolValue,
 };
-use zilliqa::state::contract_addr::ESCROW_PROXY;
+use zilliqa::state::contract_addr::{ESCROW_MINTABLE_PROXY, ESCROW_PROXY};
 
-use crate::Network;
+use crate::{Network, compile_contract};
 
 // Real production-ceremony proof (final.zkey sha256 87191dc2…), generated from the PUBLIC all-zero
 // BIP-39 test vector ("abandon…about") on the hardened Ledger path m/44'/313'/0'/0'/0'.
@@ -81,4 +82,106 @@ async fn claim_escrow(mut network: Network) {
     // Check the new balance
     let transfer = wallet.get_balance(NEW_ACCOUNT).await.unwrap();
     assert_eq!(lodgement, transfer);
+}
+
+sol! {
+    #[sol(rpc)]
+    contract EscrowMintable {
+        function lodge(address source, address[] calldata users, uint256[] calldata amounts) external;
+        function balanceOf(address source, address user) public view returns (uint256);
+        function whitelist(address source, address target) external;
+        function setAdmin(address newAdmin) external;
+        function targetOf(address source) public view returns (address);
+        function sources() public view returns (address[] memory);
+        function admin() public view returns (address);
+    }
+}
+
+sol!(
+    #[sol(rpc)]
+    "tests/it/contracts/EscrowMintableToken.sol",
+);
+
+#[zilliqa_macros::test]
+async fn mintable_escrow_whitelists_externally_deployed_tokens(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let escrow = EscrowMintable::new(ESCROW_MINTABLE_PROXY, &wallet);
+    assert_eq!(
+        escrow.admin().call().await.unwrap(),
+        wallet.default_signer_address()
+    );
+
+    let (_, bytecode, _) = compile_contract(
+        "tests/it/contracts/EscrowMintableToken.sol",
+        "EscrowMintableToken",
+    );
+    let mut init_code = bytecode.to_vec();
+    init_code.extend(ESCROW_MINTABLE_PROXY.abi_encode());
+    let tx = TransactionRequest::default().with_deploy_code(init_code);
+    let tx_hash = *wallet.send_transaction(tx).await.unwrap().tx_hash();
+    let receipt = network.run_until_receipt(&wallet, &tx_hash, 100).await;
+    assert!(receipt.status());
+    let target = receipt.contract_address.unwrap();
+    let source = Address::repeat_byte(0x5a);
+
+    let stranger = network.random_wallet().await;
+    let tx = TransactionRequest::default()
+        .with_to(stranger.default_signer_address())
+        .with_value(U256::from(1_000_000_000_000_000_000_000u128));
+    let tx_hash = *wallet.send_transaction(tx).await.unwrap().tx_hash();
+    network.run_until_receipt(&stranger, &tx_hash, 100).await;
+    let stranger_escrow = EscrowMintable::new(ESCROW_MINTABLE_PROXY, &stranger);
+    assert!(
+        stranger_escrow
+            .whitelist(source, target)
+            .send()
+            .await
+            .is_err(),
+        "whitelist is admin-only"
+    );
+
+    let tx_hash = *escrow
+        .whitelist(source, target)
+        .send()
+        .await
+        .unwrap()
+        .tx_hash();
+    let receipt = network.run_until_receipt(&wallet, &tx_hash, 100).await;
+    assert!(receipt.status());
+    assert_eq!(escrow.targetOf(source).call().await.unwrap(), target);
+    assert_eq!(escrow.sources().call().await.unwrap(), vec![source]);
+    assert!(
+        escrow.whitelist(source, target).send().await.is_err(),
+        "pairs are write-once"
+    );
+
+    assert!(
+        escrow
+            .setAdmin(stranger.default_signer_address())
+            .send()
+            .await
+            .is_err(),
+        "setAdmin is system-only"
+    );
+    let token = EscrowMintableToken::new(target, &wallet);
+    assert_eq!(token.escrow().call().await.unwrap(), ESCROW_MINTABLE_PROXY);
+
+    let me = wallet.default_signer_address();
+    assert!(
+        escrow
+            .lodge(source, vec![me], vec![U256::from(1)])
+            .send()
+            .await
+            .is_err(),
+        "lodge is system-only"
+    );
+    assert!(
+        token.mint(me, U256::from(1)).send().await.is_err(),
+        "only the escrow may mint"
+    );
+    assert_eq!(
+        escrow.balanceOf(source, me).call().await.unwrap(),
+        U256::ZERO
+    );
+    assert_eq!(token.balanceOf(me).call().await.unwrap(), U256::ZERO);
 }
