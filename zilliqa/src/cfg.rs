@@ -296,6 +296,8 @@ pub struct NodeConfig {
     /// the Docker image the files are baked into `/blocked_recipients`, outside the data volume.
     #[serde(default)]
     pub blocked_recipients_dir: Option<String>,
+    #[serde(default)]
+    pub escrow_raw_lists_dir: Option<String>,
     /// Size of the in-memory state trie cache, in bytes. Defaults to 256 MiB.
     #[serde(default = "state_cache_size_default")]
     pub state_cache_size: usize,
@@ -345,6 +347,7 @@ impl Default for NodeConfig {
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             data_dir: None,
             blocked_recipients_dir: None,
+            escrow_raw_lists_dir: None,
             state_cache_size: state_cache_size_default(),
             load_checkpoint: None,
             do_checkpoints: false,
@@ -682,11 +685,13 @@ impl Default for ConsensusConfig {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Forks(Vec<Fork>);
 
-/// One staged blocked-recipients sweep: `file` (resolved against the node's
-/// `blocked_recipients_dir`) provides the accounts, swept from `start_height` until either the
-/// list is exhausted or a later fork replaces the pair at `replaced_at`.
+/// One staged account-list schedule (blocked-recipients sweep or escrow lodge): `file`
+/// (resolved against the node's `blocked_recipients_dir` / `escrow_raw_lists_dir`) provides the
+/// entries, processed from
+/// `start_height` until either the list is exhausted or a later fork replaces the pair at
+/// `replaced_at`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BlockedRecipientsSchedule {
+pub struct StagedSchedule {
     pub file: String,
     pub start_height: u64,
     pub replaced_at: Option<u64>,
@@ -705,20 +710,37 @@ impl Forks {
         &self.0[index]
     }
 
-    /// Every blocked-recipients schedule any fork refers to, in activation order, so startup can
-    /// open each file long before (or long after) its schedule runs. A schedule is the
-    /// `(blocked_recipients_file, blocked_recipients_start_height)` pair carried by a run of
-    /// consecutive forks; `replaced_at` is the height of the first fork that carries a different
-    /// pair, after which this schedule's file is never consulted again.
-    ///
-    /// Fails on configurations that would silently skip sweeps:
-    /// - a fork naming a file without a start height, or a start height without a file
-    /// - a start height below the fork that introduces it (blocks in between would belong to the
-    ///   schedule by index arithmetic, but execute under the previous fork)
-    /// - a file reused with a different start height (its index arithmetic only fits one start)
-    pub fn blocked_recipient_schedules(&self) -> Result<Vec<BlockedRecipientsSchedule>> {
+    pub fn escrow_mintable_admin_at(&self, height: u64) -> Address {
+        self.0
+            .iter()
+            .rfind(|fork| fork.at_height <= height)
+            .map(|fork| fork.escrow_mintable_admin)
+            .unwrap_or_default()
+    }
+
+    pub fn zq1_staking_contract_invalidated_at(&self, height: u64) -> Option<Address> {
+        let in_force = |height: u64| {
+            self.0
+                .iter()
+                .rfind(|fork| fork.at_height <= height)
+                .map(|fork| fork.invalidate_zq1_staking_contract)
+                .unwrap_or_default()
+        };
+        let now = in_force(height);
+        (!now.is_zero() && now != in_force(height.checked_sub(1)?)).then_some(now)
+    }
+
+    pub fn escrow_mintable_admin_change_at(&self, height: u64) -> Option<Address> {
+        let before = self.escrow_mintable_admin_at(height.checked_sub(1)?);
+        let now = self.escrow_mintable_admin_at(height);
+        (now != before).then_some(now)
+    }
+
+    /// Every blocked-recipients schedule any fork refers to; see [`Self::staged_schedules`].
+    pub fn blocked_recipient_schedules(&self) -> Result<Vec<StagedSchedule>> {
         let mut schedules = Vec::new();
-        self.collect_blocked_recipient_schedules(
+        self.staged_schedules(
+            "blocked_recipients",
             ("blocked_recipients_file", "blocked_recipients_start_height"),
             |fork| {
                 (
@@ -728,7 +750,8 @@ impl Forks {
             },
             &mut schedules,
         )?;
-        self.collect_blocked_recipient_schedules(
+        self.staged_schedules(
+            "blocked_recipients_v2",
             (
                 "blocked_recipients_file_v2",
                 "blocked_recipients_start_height_v2",
@@ -741,7 +764,8 @@ impl Forks {
             },
             &mut schedules,
         )?;
-        self.collect_blocked_recipient_schedules(
+        self.staged_schedules(
+            "blocked_recipients_v3",
             (
                 "blocked_recipients_file_v3",
                 "blocked_recipients_start_height_v3",
@@ -757,11 +781,39 @@ impl Forks {
         Ok(schedules)
     }
 
-    fn collect_blocked_recipient_schedules<'a>(
+    pub fn escrow_lodge_schedules(&self) -> Result<Vec<StagedSchedule>> {
+        let mut schedules = Vec::new();
+        self.staged_schedules(
+            "escrow_lodge",
+            ("escrow_lodge_file", "escrow_lodge_start_height"),
+            |fork| {
+                (
+                    fork.escrow_lodge_file.as_str(),
+                    fork.escrow_lodge_start_height,
+                )
+            },
+            &mut schedules,
+        )?;
+        Ok(schedules)
+    }
+
+    /// Every schedule any fork refers to, in activation order, so startup can open each file
+    /// long before (or long after) its schedule runs. A schedule is the `(<what>_file,
+    /// <what>_start_height)` pair carried by a run of consecutive forks; `replaced_at` is the
+    /// height of the first fork that carries a different pair, after which this schedule's file
+    /// is never consulted again.
+    ///
+    /// Fails on configurations that would silently skip entries:
+    /// - a fork naming a file without a start height, or a start height without a file
+    /// - a start height below the fork that introduces it (blocks in between would belong to the
+    ///   schedule by index arithmetic, but execute under the previous fork)
+    /// - a file reused with a different start height (its index arithmetic only fits one start)
+    fn staged_schedules<'a>(
         &'a self,
+        what: &str,
         field_names: (&str, &str),
         pair_of: impl Fn(&'a Fork) -> (&'a str, u64),
-        schedules: &mut Vec<BlockedRecipientsSchedule>,
+        schedules: &mut Vec<StagedSchedule>,
     ) -> Result<()> {
         let mut previous: (&str, u64) = ("", 0);
         let mut open: Option<usize> = None;
@@ -784,18 +836,18 @@ impl Forks {
             if !pair.0.is_empty() {
                 if pair.1 < fork.at_height {
                     return Err(anyhow!(
-                        "fork at height {} starts blocked recipients at {}, before its own activation",
+                        "fork at height {} starts {what} at {}, before its own activation",
                         fork.at_height,
                         pair.1,
                     ));
                 }
                 if schedules.iter().any(|s| s.file == pair.0) {
                     return Err(anyhow!(
-                        "blocked recipients file {} is referenced by two schedules",
+                        "{what} file {} is referenced by two schedules",
                         pair.0,
                     ));
                 }
-                schedules.push(BlockedRecipientsSchedule {
+                schedules.push(StagedSchedule {
                     file: pair.0.to_owned(),
                     start_height: pair.1,
                     replaced_at: None,
@@ -878,6 +930,7 @@ impl Forks {
                 ForkName::DisablePermanentlyScillaPrecompiles => {
                     fork.disable_permanently_scilla_precompiles
                 }
+                ForkName::DeployEscrowMintableContractV1 => fork.deploy_escrow_mintable_contract_v1,
             } {
                 return Some(fork.at_height);
             }
@@ -945,6 +998,11 @@ pub struct Fork {
     pub deploy_escrow_contract_v1: bool,
     pub evm_gas_fee_credited_once_to_zero_account: bool,
     pub disable_permanently_scilla_precompiles: bool,
+    pub deploy_escrow_mintable_contract_v1: bool,
+    pub escrow_mintable_admin: Address,
+    pub escrow_lodge_start_height: u64,
+    pub escrow_lodge_file: String,
+    pub invalidate_zq1_staking_contract: Address,
 }
 
 pub enum ForkName {
@@ -980,9 +1038,10 @@ pub enum ForkName {
     DistributeRewardsEveryEpoch,
     DeployEscrowContractV1,
     DisablePermanentlyScillaPrecompiles,
+    DeployEscrowMintableContractV1,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ForkDelta {
     pub at_height: u64,
     /// If true then transactions can be executed against blocks.
@@ -1138,6 +1197,11 @@ pub struct ForkDelta {
     pub deploy_escrow_contract_v1: Option<bool>,
     pub evm_gas_fee_credited_once_to_zero_account: Option<bool>,
     pub disable_permanently_scilla_precompiles: Option<bool>,
+    pub deploy_escrow_mintable_contract_v1: Option<bool>,
+    pub escrow_mintable_admin: Option<Address>,
+    pub escrow_lodge_start_height: Option<u64>,
+    pub escrow_lodge_file: Option<String>,
+    pub invalidate_zq1_staking_contract: Option<Address>,
 }
 
 impl Fork {
@@ -1312,6 +1376,22 @@ impl Fork {
             disable_permanently_scilla_precompiles: delta
                 .disable_permanently_scilla_precompiles
                 .unwrap_or(self.disable_permanently_scilla_precompiles),
+            deploy_escrow_mintable_contract_v1: delta
+                .deploy_escrow_mintable_contract_v1
+                .unwrap_or(self.deploy_escrow_mintable_contract_v1),
+            escrow_mintable_admin: delta
+                .escrow_mintable_admin
+                .unwrap_or(self.escrow_mintable_admin),
+            escrow_lodge_start_height: delta
+                .escrow_lodge_start_height
+                .unwrap_or(self.escrow_lodge_start_height),
+            escrow_lodge_file: delta
+                .escrow_lodge_file
+                .clone()
+                .unwrap_or_else(|| self.escrow_lodge_file.clone()),
+            invalidate_zq1_staking_contract: delta
+                .invalidate_zq1_staking_contract
+                .unwrap_or(self.invalidate_zq1_staking_contract),
         }
     }
 }
@@ -1436,6 +1516,11 @@ pub fn genesis_fork_default() -> Fork {
         deploy_escrow_contract_v1: false,
         evm_gas_fee_credited_once_to_zero_account: true,
         disable_permanently_scilla_precompiles: false,
+        deploy_escrow_mintable_contract_v1: false,
+        escrow_mintable_admin: Address::ZERO,
+        escrow_lodge_start_height: 0,
+        escrow_lodge_file: String::new(),
+        invalidate_zq1_staking_contract: Address::ZERO,
     }
 }
 
@@ -1593,12 +1678,12 @@ mod tests {
         assert_eq!(
             forks.blocked_recipient_schedules().unwrap(),
             vec![
-                BlockedRecipientsSchedule {
+                StagedSchedule {
                     file: "one.bin".into(),
                     start_height: 5_000_100,
                     replaced_at: Some(6_000_000),
                 },
-                BlockedRecipientsSchedule {
+                StagedSchedule {
                     file: "two.bin".into(),
                     start_height: 6_000_000,
                     replaced_at: None,
@@ -1635,17 +1720,17 @@ mod tests {
         assert_eq!(
             forks.blocked_recipient_schedules().unwrap(),
             vec![
-                BlockedRecipientsSchedule {
+                StagedSchedule {
                     file: "one.bin".into(),
                     start_height: 100,
                     replaced_at: Some(300),
                 },
-                BlockedRecipientsSchedule {
+                StagedSchedule {
                     file: "three.bin".into(),
                     start_height: 300,
                     replaced_at: None,
                 },
-                BlockedRecipientsSchedule {
+                StagedSchedule {
                     file: "two.bin".into(),
                     start_height: 200,
                     replaced_at: None,
@@ -1690,17 +1775,17 @@ mod tests {
         assert_eq!(
             forks.blocked_recipient_schedules().unwrap(),
             vec![
-                BlockedRecipientsSchedule {
+                StagedSchedule {
                     file: "one.bin".into(),
                     start_height: 100,
                     replaced_at: None,
                 },
-                BlockedRecipientsSchedule {
+                StagedSchedule {
                     file: "two.bin".into(),
                     start_height: 200,
                     replaced_at: None,
                 },
-                BlockedRecipientsSchedule {
+                StagedSchedule {
                     file: "three.bin".into(),
                     start_height: 250,
                     replaced_at: None,
@@ -1833,6 +1918,11 @@ mod tests {
                 deploy_escrow_contract_v1: None,
                 evm_gas_fee_credited_once_to_zero_account: None,
                 disable_permanently_scilla_precompiles: None,
+                deploy_escrow_mintable_contract_v1: None,
+                escrow_mintable_admin: None,
+                escrow_lodge_start_height: None,
+                escrow_lodge_file: None,
+                invalidate_zq1_staking_contract: None,
             }],
             ..Default::default()
         };
@@ -1912,6 +2002,11 @@ mod tests {
                     deploy_escrow_contract_v1: None,
                     evm_gas_fee_credited_once_to_zero_account: None,
                     disable_permanently_scilla_precompiles: None,
+                    deploy_escrow_mintable_contract_v1: None,
+                    escrow_mintable_admin: None,
+                    escrow_lodge_start_height: None,
+                    escrow_lodge_file: None,
+                    invalidate_zq1_staking_contract: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1971,6 +2066,11 @@ mod tests {
                     deploy_escrow_contract_v1: None,
                     evm_gas_fee_credited_once_to_zero_account: None,
                     disable_permanently_scilla_precompiles: None,
+                    deploy_escrow_mintable_contract_v1: None,
+                    escrow_mintable_admin: None,
+                    escrow_lodge_start_height: None,
+                    escrow_lodge_file: None,
+                    invalidate_zq1_staking_contract: None,
                 },
             ],
             ..Default::default()
@@ -2067,6 +2167,11 @@ mod tests {
                     deploy_escrow_contract_v1: None,
                     evm_gas_fee_credited_once_to_zero_account: None,
                     disable_permanently_scilla_precompiles: None,
+                    deploy_escrow_mintable_contract_v1: None,
+                    escrow_mintable_admin: None,
+                    escrow_lodge_start_height: None,
+                    escrow_lodge_file: None,
+                    invalidate_zq1_staking_contract: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -2126,6 +2231,11 @@ mod tests {
                     deploy_escrow_contract_v1: None,
                     evm_gas_fee_credited_once_to_zero_account: None,
                     disable_permanently_scilla_precompiles: None,
+                    deploy_escrow_mintable_contract_v1: None,
+                    escrow_mintable_admin: None,
+                    escrow_lodge_start_height: None,
+                    escrow_lodge_file: None,
+                    invalidate_zq1_staking_contract: None,
                 },
             ],
             ..Default::default()
@@ -2210,6 +2320,11 @@ mod tests {
                 deploy_escrow_contract_v1: false,
                 evm_gas_fee_credited_once_to_zero_account: false,
                 disable_permanently_scilla_precompiles: false,
+                deploy_escrow_mintable_contract_v1: false,
+                escrow_mintable_admin: Address::ZERO,
+                escrow_lodge_start_height: 0,
+                escrow_lodge_file: String::new(),
+                invalidate_zq1_staking_contract: Address::ZERO,
             },
             forks: vec![],
             ..Default::default()
@@ -2282,6 +2397,11 @@ mod tests {
                     deploy_escrow_contract_v1: None,
                     evm_gas_fee_credited_once_to_zero_account: None,
                     disable_permanently_scilla_precompiles: None,
+                    deploy_escrow_mintable_contract_v1: None,
+                    escrow_mintable_admin: None,
+                    escrow_lodge_start_height: None,
+                    escrow_lodge_file: None,
+                    invalidate_zq1_staking_contract: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -2341,6 +2461,11 @@ mod tests {
                     deploy_escrow_contract_v1: None,
                     evm_gas_fee_credited_once_to_zero_account: None,
                     disable_permanently_scilla_precompiles: None,
+                    deploy_escrow_mintable_contract_v1: None,
+                    escrow_mintable_admin: None,
+                    escrow_lodge_start_height: None,
+                    escrow_lodge_file: None,
+                    invalidate_zq1_staking_contract: None,
                 },
             ],
             ..Default::default()

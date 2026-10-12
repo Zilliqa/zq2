@@ -231,6 +231,11 @@ impl Chain {
                 "deploy_escrow_contract_v1": false,
                 "evm_gas_fee_credited_once_to_zero_account": false,
                 "disable_permanently_scilla_precompiles": false,
+                "deploy_escrow_mintable_contract_v1": false,
+                "escrow_mintable_admin": "0x0000000000000000000000000000000000000000",
+                "escrow_lodge_start_height": 0,
+                "escrow_lodge_file": "",
+                "invalidate_zq1_staking_contract": "0x0000000000000000000000000000000000000000",
             })),
             Chain::Zq2Mainnet => Some(json!({
                 "at_height": 0,
@@ -290,6 +295,11 @@ impl Chain {
                 "deploy_escrow_contract_v1": false,
                 "evm_gas_fee_credited_once_to_zero_account": false,
                 "disable_permanently_scilla_precompiles": false,
+                "deploy_escrow_mintable_contract_v1": false,
+                "escrow_mintable_admin": "0x0000000000000000000000000000000000000000",
+                "escrow_lodge_start_height": 0,
+                "escrow_lodge_file": "",
+                "invalidate_zq1_staking_contract": "0x0000000000000000000000000000000000000000",
             })),
             Chain::Zq2Devnet => Some(json!({
                 "at_height": 0,
@@ -349,6 +359,11 @@ impl Chain {
                 "deploy_escrow_contract_v1": false,
                 "evm_gas_fee_credited_once_to_zero_account": false,
                 "disable_permanently_scilla_precompiles": false,
+                "deploy_escrow_mintable_contract_v1": false,
+                "escrow_mintable_admin": "0x0000000000000000000000000000000000000000",
+                "escrow_lodge_start_height": 0,
+                "escrow_lodge_file": "",
+                "invalidate_zq1_staking_contract": "0x0000000000000000000000000000000000000000",
             })),
             _ => None,
         }
@@ -422,6 +437,8 @@ impl Chain {
                 json!({ "at_height": 999999999, "distribute_rewards_every_epoch": true}),
                 json!({ "at_height": 999999999, "pectra_active": true}),
                 json!({ "at_height": 999999999, "evm_gas_fee_credited_once_to_zero_account": true }),
+                json!({ "at_height": 999999999, "deploy_escrow_mintable_contract_v1": true }),
+                json!({ "at_height": 999999999, "invalidate_zq1_staking_contract": "0x0000000000000000000000000000000000000000" }),
             ]),
             Chain::Zq2Mainnet => Some(vec![
                 json!({ "at_height": 4770088, "executable_blocks": true }),
@@ -597,6 +614,8 @@ impl Chain {
                 json!({ "at_height": 999999999, "distribute_rewards_every_epoch": true}),
                 json!({ "at_height": 999999999, "pectra_active": true}),
                 json!({ "at_height": 999999999, "evm_gas_fee_credited_once_to_zero_account": true }),
+                json!({ "at_height": 999999999, "deploy_escrow_mintable_contract_v1": true }),
+                json!({ "at_height": 999999999, "invalidate_zq1_staking_contract": "0x0000000000000000000000000000000000000000" }),
             ]),
             Chain::Zq2Devnet => Some(vec![
                 json!({
@@ -604,6 +623,8 @@ impl Chain {
                     "blocked_recipients_start_height": 1000,
                     "blocked_recipients_file": "blocked_recipients_001.bin",
                     "deploy_escrow_contract_v1": true,
+                    "deploy_escrow_mintable_contract_v1": true,
+                    "escrow_mintable_admin": "0xe4e8c170f79c8e155e3680fca3ff34a7f9d4001d",
                 }),
                 json!({ "at_height": 1001, "zil_transfers_only_to_escrow": true }),
                 json!({ "at_height": 3600, "blocked_recipients_start_height_v2": 3600, "blocked_recipients_file_v2": "blocked_recipients_002.bin" }),
@@ -611,6 +632,7 @@ impl Chain {
                 json!({ "at_height": 43200, "distribute_rewards_every_epoch": true}),
                 json!({ "at_height": 43200, "pectra_active": true}),
                 json!({ "at_height": 43200, "evm_gas_fee_credited_once_to_zero_account": true }),
+                json!({ "at_height": 999999999, "invalidate_zq1_staking_contract": "0x0000000000000000000000000000000000000000" }),
             ]),
             _ => None,
         }

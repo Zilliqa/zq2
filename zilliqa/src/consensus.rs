@@ -37,6 +37,7 @@ use crate::{
     },
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey, verify_messages},
     db::{self, BlockFilter, Db},
+    escrow_raw_input::{ENTRIES_PER_BLOCK, EscrowRawInput, LODGE_GAS_PER_ENTRY, last_lodge_block},
     evm::ZQ2EvmContext,
     exec::TransactionApplyResult,
     inspector::{ScillaInspector, TouchedAddressInspector},
@@ -259,6 +260,7 @@ pub struct Consensus {
     /// The blocked-recipient lists named by forks, keyed by file name. All of them stay open for
     /// the life of the process so any schedule block can be (re-)executed.
     blocked_recipients: HashMap<String, BlockedRecipients>,
+    escrow_raw_input: HashMap<String, EscrowRawInput>,
 }
 
 impl Consensus {
@@ -447,6 +449,47 @@ impl Consensus {
             blocked_recipients.insert(schedule.file, list);
         }
 
+        let mut escrow_raw_input = HashMap::new();
+        for schedule in forks.escrow_lodge_schedules()? {
+            let batch_gas = ENTRIES_PER_BLOCK * LODGE_GAS_PER_ENTRY;
+            if batch_gas > config.consensus.eth_block_gas_limit.0 {
+                return Err(anyhow!(
+                    "{} lodges {ENTRIES_PER_BLOCK} entries per block, needing up to {batch_gas} gas, \
+                     but eth_block_gas_limit is {}",
+                    schedule.file,
+                    config.consensus.eth_block_gas_limit.0,
+                ));
+            }
+            let dir = config
+                .escrow_raw_lists_dir
+                .as_ref()
+                .or(config.data_dir.as_ref())
+                .ok_or_else(|| {
+                    anyhow!(
+                        "a fork names {} but neither escrow_raw_lists_dir nor data_dir is set",
+                        schedule.file,
+                    )
+                })?;
+            let path = PathBuf::from(dir).join(&schedule.file);
+            let list = EscrowRawInput::load(&path)?;
+            if let Some(replaced_at) = schedule.replaced_at {
+                let last = last_lodge_block(schedule.start_height, list.count());
+                if last >= replaced_at {
+                    return Err(anyhow!(
+                        "{} lodges until block {last} but is replaced by a fork at {replaced_at}",
+                        schedule.file,
+                    ));
+                }
+            }
+            info!(
+                count = list.count(),
+                start_height = schedule.start_height,
+                path = %path.display(),
+                "opened escrow lodge list"
+            );
+            escrow_raw_input.insert(schedule.file, list);
+        }
+
         let mut consensus = Consensus {
             secret_key,
             config,
@@ -475,6 +518,7 @@ impl Consensus {
             prune_period,
             rewards: Mutex::new(Rewards::new()),
             blocked_recipients,
+            escrow_raw_input,
         };
 
         // If we're at genesis, add the genesis block and return
@@ -3867,6 +3911,14 @@ impl Consensus {
             }
         }
 
+        if let Some(address) = self
+            .state
+            .forks
+            .zq1_staking_contract_invalidated_at(block.header.number)
+        {
+            state.empty_scilla_contract(address)?;
+        }
+
         // Patch account as blocked recipient and move its funds to give destination address
         for (file, start_height) in [
             (
@@ -3887,6 +3939,23 @@ impl Consensus {
 
         // Deploys exactly at its fork's activation height, which need not be epoch-aligned.
         state.escrow_deploy_and_upgrade(&self.config.consensus, &block.header)?;
+
+        if fork.escrow_lodge_start_height != 0 {
+            let lodge = self
+                .escrow_raw_input
+                .get(&fork.escrow_lodge_file)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "escrow lodge list {} was not loaded at startup",
+                        fork.escrow_lodge_file,
+                    )
+                })?;
+            for (token, entries) in
+                lodge.batch_by_token(fork.escrow_lodge_start_height, block.header.number)?
+            {
+                state.escrow_lodge(token, &entries, block.header)?;
+            }
+        }
 
         if self.block_is_first_in_epoch(block.header.number) {
             // Update state with any contract upgrades for this block
