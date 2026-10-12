@@ -718,16 +718,8 @@ impl Forks {
             .unwrap_or_default()
     }
 
-    pub fn zq1_staking_contract_invalidated_at(&self, height: u64) -> Option<Address> {
-        let in_force = |height: u64| {
-            self.0
-                .iter()
-                .rfind(|fork| fork.at_height <= height)
-                .map(|fork| fork.invalidate_zq1_staking_contract)
-                .unwrap_or_default()
-        };
-        let now = in_force(height);
-        (!now.is_zero() && now != in_force(height.checked_sub(1)?)).then_some(now)
+    pub fn iter(&self) -> impl Iterator<Item = &Fork> {
+        self.0.iter()
     }
 
     pub fn escrow_mintable_admin_change_at(&self, height: u64) -> Option<Address> {
@@ -1003,6 +995,7 @@ pub struct Fork {
     pub escrow_lodge_start_height: u64,
     pub escrow_lodge_file: String,
     pub invalidate_zq1_staking_contract: Address,
+    pub staked_zils_file: String,
 }
 
 pub enum ForkName {
@@ -1202,6 +1195,7 @@ pub struct ForkDelta {
     pub escrow_lodge_start_height: Option<u64>,
     pub escrow_lodge_file: Option<String>,
     pub invalidate_zq1_staking_contract: Option<Address>,
+    pub staked_zils_file: Option<String>,
 }
 
 impl Fork {
@@ -1392,6 +1386,10 @@ impl Fork {
             invalidate_zq1_staking_contract: delta
                 .invalidate_zq1_staking_contract
                 .unwrap_or(self.invalidate_zq1_staking_contract),
+            staked_zils_file: delta
+                .staked_zils_file
+                .clone()
+                .unwrap_or_else(|| self.staked_zils_file.clone()),
         }
     }
 }
@@ -1521,6 +1519,7 @@ pub fn genesis_fork_default() -> Fork {
         escrow_lodge_start_height: 0,
         escrow_lodge_file: String::new(),
         invalidate_zq1_staking_contract: Address::ZERO,
+        staked_zils_file: String::new(),
     }
 }
 
@@ -1923,6 +1922,7 @@ mod tests {
                 escrow_lodge_start_height: None,
                 escrow_lodge_file: None,
                 invalidate_zq1_staking_contract: None,
+                staked_zils_file: None,
             }],
             ..Default::default()
         };
@@ -2007,6 +2007,7 @@ mod tests {
                     escrow_lodge_start_height: None,
                     escrow_lodge_file: None,
                     invalidate_zq1_staking_contract: None,
+                    staked_zils_file: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -2071,6 +2072,7 @@ mod tests {
                     escrow_lodge_start_height: None,
                     escrow_lodge_file: None,
                     invalidate_zq1_staking_contract: None,
+                    staked_zils_file: None,
                 },
             ],
             ..Default::default()
@@ -2172,6 +2174,7 @@ mod tests {
                     escrow_lodge_start_height: None,
                     escrow_lodge_file: None,
                     invalidate_zq1_staking_contract: None,
+                    staked_zils_file: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -2236,6 +2239,7 @@ mod tests {
                     escrow_lodge_start_height: None,
                     escrow_lodge_file: None,
                     invalidate_zq1_staking_contract: None,
+                    staked_zils_file: None,
                 },
             ],
             ..Default::default()
@@ -2325,6 +2329,7 @@ mod tests {
                 escrow_lodge_start_height: 0,
                 escrow_lodge_file: String::new(),
                 invalidate_zq1_staking_contract: Address::ZERO,
+                staked_zils_file: String::new(),
             },
             forks: vec![],
             ..Default::default()
@@ -2402,6 +2407,7 @@ mod tests {
                     escrow_lodge_start_height: None,
                     escrow_lodge_file: None,
                     invalidate_zq1_staking_contract: None,
+                    staked_zils_file: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -2466,6 +2472,7 @@ mod tests {
                     escrow_lodge_start_height: None,
                     escrow_lodge_file: None,
                     invalidate_zq1_staking_contract: None,
+                    staked_zils_file: None,
                 },
             ],
             ..Default::default()

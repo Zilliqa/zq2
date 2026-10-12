@@ -40,6 +40,7 @@ pub mod transaction;
 pub mod trie_storage;
 pub mod uccb;
 pub mod zq1_proto;
+pub mod zq1_staking;
 
 pub fn available_threads() -> usize {
     std::thread::available_parallelism().unwrap().get().max(1) // minimum 1 thread
