@@ -15,7 +15,7 @@ use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::{
     cfg::{Amount, ConsensusConfig, Forks, NodeConfig, ReinitialiseParams, ScillaExtLibsPath},
@@ -299,21 +299,6 @@ impl State {
                 deposit_v9_reinitialise_data_opt,
             )?;
         }
-        Ok(())
-    }
-
-    pub fn empty_scilla_contract(&mut self, address: Address) -> Result<()> {
-        if !self.get_account(address)?.code.is_scilla() {
-            warn!(%address, "invalidate_zq1_staking_contract names an account that is not a Scilla contract; left untouched");
-            return Ok(());
-        }
-        let burned = self.mutate_account(address, |account| {
-            let balance = account.balance;
-            account.balance = 0;
-            account.storage_root = EMPTY_ROOT_HASH;
-            Ok(balance)
-        })?;
-        info!(%address, burned, "emptied Scilla contract");
         Ok(())
     }
 

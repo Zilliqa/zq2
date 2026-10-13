@@ -61,6 +61,7 @@ use crate::{
     transaction::{
         EvmGas, SignedTransaction, TransactionReceipt, ValidationOutcome, VerifiedTransaction,
     },
+    zq1_staking::Zq1Staking,
 };
 
 #[derive(Clone, Debug, Serialize)]
@@ -261,6 +262,7 @@ pub struct Consensus {
     /// the life of the process so any schedule block can be (re-)executed.
     blocked_recipients: HashMap<String, BlockedRecipients>,
     escrow_raw_input: HashMap<String, EscrowRawInput>,
+    zq1_staking: Zq1Staking,
 }
 
 impl Consensus {
@@ -449,6 +451,8 @@ impl Consensus {
             blocked_recipients.insert(schedule.file, list);
         }
 
+        let zq1_staking = Zq1Staking::load(&config, &forks)?;
+
         let mut escrow_raw_input = HashMap::new();
         for schedule in forks.escrow_lodge_schedules()? {
             let batch_gas = ENTRIES_PER_BLOCK * LODGE_GAS_PER_ENTRY;
@@ -519,6 +523,7 @@ impl Consensus {
             rewards: Mutex::new(Rewards::new()),
             blocked_recipients,
             escrow_raw_input,
+            zq1_staking,
         };
 
         // If we're at genesis, add the genesis block and return
@@ -3911,14 +3916,6 @@ impl Consensus {
             }
         }
 
-        if let Some(address) = self
-            .state
-            .forks
-            .zq1_staking_contract_invalidated_at(block.header.number)
-        {
-            state.empty_scilla_contract(address)?;
-        }
-
         // Patch account as blocked recipient and move its funds to give destination address
         for (file, start_height) in [
             (
@@ -3956,6 +3953,8 @@ impl Consensus {
                 state.escrow_lodge(token, &entries, block.header)?;
             }
         }
+
+        self.zq1_staking.apply(state, block.header)?;
 
         if self.block_is_first_in_epoch(block.header.number) {
             // Update state with any contract upgrades for this block
