@@ -256,6 +256,24 @@ fn fatal<T>(message: &'static str) -> Result<T, PrecompileErrors> {
 const BASE_COST: u64 = 15;
 const PER_BYTE_COST: u64 = 3;
 
+fn interop_disabled_for_target(ctx: &mut ZQ2EvmContext, inputs: &CallInputs) -> bool {
+    if ctx
+        .chain
+        .fork
+        .disable_permanently_scilla_precompiles_v1
+        .is_empty()
+    {
+        return false;
+    }
+    let input = inputs.input.bytes(ctx);
+    input.len() >= 32
+        && ctx
+            .chain
+            .fork
+            .disable_permanently_scilla_precompiles_v1
+            .contains(&Address::from_slice(&input[12..32]))
+}
+
 pub struct ScillaRead;
 
 impl ContextPrecompile for ScillaRead {
@@ -266,7 +284,7 @@ impl ContextPrecompile for ScillaRead {
     ) -> std::result::Result<Option<InterpreterResult>, String> {
         let gas = Gas::new(inputs.gas_limit);
 
-        if ctx.chain.fork.disable_permanently_scilla_precompiles {
+        if interop_disabled_for_target(ctx, inputs) {
             ctx.chain.enforce_transaction_failure = true;
             return Ok(Some(InterpreterResult {
                 result: InstructionResult::PrecompileError,
@@ -453,7 +471,7 @@ impl ContextPrecompile for ScillaCall {
     ) -> Result<Option<InterpreterResult>, String> {
         let gas = Gas::new(inputs.gas_limit);
 
-        if ctx.chain.fork.disable_permanently_scilla_precompiles {
+        if interop_disabled_for_target(ctx, inputs) {
             ctx.chain.enforce_transaction_failure = true;
             return Ok(Some(InterpreterResult {
                 result: InstructionResult::PrecompileError,

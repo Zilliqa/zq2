@@ -67,6 +67,8 @@ pub mod escrow_mintable_init {
         Lazy::new(|| CONTRACT.abi.function("sources").unwrap().clone());
     pub static CLAIM: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("claim").unwrap().clone());
+    pub static MIGRATE: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("migrate").unwrap().clone());
     pub static BYTECODE: Lazy<Vec<u8>> = Lazy::new(|| CONTRACT.bytecode.clone());
 }
 

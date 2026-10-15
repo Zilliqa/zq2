@@ -163,6 +163,14 @@ contract EscrowMintableInit is UUPSUpgradeable, Groth16Verifier {
             pC,
             pubSignals
         );
+        _releaseAll(srcAddress, dstAddress);
+    }
+
+    function migrate() public {
+        _releaseAll(msg.sender, msg.sender);
+    }
+
+    function _releaseAll(address srcAddress, address dstAddress) private {
         EscrowMintableStorage storage $ = _getEscrowMintableStorage();
         uint256 released = 0;
         uint256 count = $.sources.length;
