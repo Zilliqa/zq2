@@ -919,8 +919,8 @@ impl Forks {
                     .is_empty(),
                 ForkName::DistributeRewardsEveryEpoch => fork.distribute_rewards_every_epoch,
                 ForkName::DeployEscrowContractV1 => fork.deploy_escrow_contract_v1,
-                ForkName::DisablePermanentlyScillaPrecompiles => {
-                    fork.disable_permanently_scilla_precompiles
+                ForkName::DisablePermanentlyScillaPrecompilesV1 => {
+                    !fork.disable_permanently_scilla_precompiles_v1.is_empty()
                 }
                 ForkName::DeployEscrowMintableContractV1 => fork.deploy_escrow_mintable_contract_v1,
             } {
@@ -989,7 +989,7 @@ pub struct Fork {
     pub zil_transfers_only_to_escrow: bool,
     pub deploy_escrow_contract_v1: bool,
     pub evm_gas_fee_credited_once_to_zero_account: bool,
-    pub disable_permanently_scilla_precompiles: bool,
+    pub disable_permanently_scilla_precompiles_v1: Vec<Address>,
     pub deploy_escrow_mintable_contract_v1: bool,
     pub escrow_mintable_admin: Address,
     pub escrow_lodge_start_height: u64,
@@ -1030,7 +1030,7 @@ pub enum ForkName {
     AllowScillaCallPrecompileToBeCalledFromAddresses,
     DistributeRewardsEveryEpoch,
     DeployEscrowContractV1,
-    DisablePermanentlyScillaPrecompiles,
+    DisablePermanentlyScillaPrecompilesV1,
     DeployEscrowMintableContractV1,
 }
 
@@ -1189,7 +1189,8 @@ pub struct ForkDelta {
     /// [`Fork::deploy_escrow_contract_v1`].
     pub deploy_escrow_contract_v1: Option<bool>,
     pub evm_gas_fee_credited_once_to_zero_account: Option<bool>,
-    pub disable_permanently_scilla_precompiles: Option<bool>,
+    #[serde(default)]
+    pub disable_permanently_scilla_precompiles_v1: Vec<Address>,
     pub deploy_escrow_mintable_contract_v1: Option<bool>,
     pub escrow_mintable_admin: Option<Address>,
     pub escrow_lodge_start_height: Option<u64>,
@@ -1367,9 +1368,11 @@ impl Fork {
             evm_gas_fee_credited_once_to_zero_account: delta
                 .evm_gas_fee_credited_once_to_zero_account
                 .unwrap_or(self.evm_gas_fee_credited_once_to_zero_account),
-            disable_permanently_scilla_precompiles: delta
-                .disable_permanently_scilla_precompiles
-                .unwrap_or(self.disable_permanently_scilla_precompiles),
+            disable_permanently_scilla_precompiles_v1: {
+                let mut addrs = self.disable_permanently_scilla_precompiles_v1.clone();
+                addrs.extend_from_slice(&delta.disable_permanently_scilla_precompiles_v1);
+                addrs
+            },
             deploy_escrow_mintable_contract_v1: delta
                 .deploy_escrow_mintable_contract_v1
                 .unwrap_or(self.deploy_escrow_mintable_contract_v1),
@@ -1513,7 +1516,7 @@ pub fn genesis_fork_default() -> Fork {
         zil_transfers_only_to_escrow: false,
         deploy_escrow_contract_v1: false,
         evm_gas_fee_credited_once_to_zero_account: true,
-        disable_permanently_scilla_precompiles: false,
+        disable_permanently_scilla_precompiles_v1: vec![],
         deploy_escrow_mintable_contract_v1: false,
         escrow_mintable_admin: Address::ZERO,
         escrow_lodge_start_height: 0,
@@ -1916,7 +1919,7 @@ mod tests {
                 zil_transfers_only_to_escrow: None,
                 deploy_escrow_contract_v1: None,
                 evm_gas_fee_credited_once_to_zero_account: None,
-                disable_permanently_scilla_precompiles: None,
+                disable_permanently_scilla_precompiles_v1: vec![],
                 deploy_escrow_mintable_contract_v1: None,
                 escrow_mintable_admin: None,
                 escrow_lodge_start_height: None,
@@ -2001,7 +2004,7 @@ mod tests {
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                     evm_gas_fee_credited_once_to_zero_account: None,
-                    disable_permanently_scilla_precompiles: None,
+                    disable_permanently_scilla_precompiles_v1: vec![],
                     deploy_escrow_mintable_contract_v1: None,
                     escrow_mintable_admin: None,
                     escrow_lodge_start_height: None,
@@ -2066,7 +2069,7 @@ mod tests {
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                     evm_gas_fee_credited_once_to_zero_account: None,
-                    disable_permanently_scilla_precompiles: None,
+                    disable_permanently_scilla_precompiles_v1: vec![],
                     deploy_escrow_mintable_contract_v1: None,
                     escrow_mintable_admin: None,
                     escrow_lodge_start_height: None,
@@ -2168,7 +2171,7 @@ mod tests {
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                     evm_gas_fee_credited_once_to_zero_account: None,
-                    disable_permanently_scilla_precompiles: None,
+                    disable_permanently_scilla_precompiles_v1: vec![],
                     deploy_escrow_mintable_contract_v1: None,
                     escrow_mintable_admin: None,
                     escrow_lodge_start_height: None,
@@ -2233,7 +2236,7 @@ mod tests {
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                     evm_gas_fee_credited_once_to_zero_account: None,
-                    disable_permanently_scilla_precompiles: None,
+                    disable_permanently_scilla_precompiles_v1: vec![],
                     deploy_escrow_mintable_contract_v1: None,
                     escrow_mintable_admin: None,
                     escrow_lodge_start_height: None,
@@ -2323,7 +2326,7 @@ mod tests {
                 zil_transfers_only_to_escrow: false,
                 deploy_escrow_contract_v1: false,
                 evm_gas_fee_credited_once_to_zero_account: false,
-                disable_permanently_scilla_precompiles: false,
+                disable_permanently_scilla_precompiles_v1: vec![],
                 deploy_escrow_mintable_contract_v1: false,
                 escrow_mintable_admin: Address::ZERO,
                 escrow_lodge_start_height: 0,
@@ -2401,7 +2404,7 @@ mod tests {
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                     evm_gas_fee_credited_once_to_zero_account: None,
-                    disable_permanently_scilla_precompiles: None,
+                    disable_permanently_scilla_precompiles_v1: vec![],
                     deploy_escrow_mintable_contract_v1: None,
                     escrow_mintable_admin: None,
                     escrow_lodge_start_height: None,
@@ -2466,7 +2469,7 @@ mod tests {
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                     evm_gas_fee_credited_once_to_zero_account: None,
-                    disable_permanently_scilla_precompiles: None,
+                    disable_permanently_scilla_precompiles_v1: vec![],
                     deploy_escrow_mintable_contract_v1: None,
                     escrow_mintable_admin: None,
                     escrow_lodge_start_height: None,

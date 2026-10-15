@@ -2268,6 +2268,31 @@ pub fn scilla_call(
             ));
         }
 
+        if from_precompile
+            && fork
+                .disable_permanently_scilla_precompiles_v1
+                .contains(&to_addr)
+        {
+            return Ok((
+                ScillaResult {
+                    success: false,
+                    contract_address: None,
+                    logs: vec![],
+                    gas_used: (gas_limit - gas).into(),
+                    transitions: vec![],
+                    accepted: Some(false),
+                    errors: [(depth, vec![ScillaError::CallContractFailed])]
+                        .into_iter()
+                        .collect(),
+                    exceptions: vec![ScillaException {
+                        line: 0,
+                        message: format!("interop calls to {to_addr} are disabled"),
+                    }],
+                },
+                current_state,
+            ));
+        }
+
         let contract = current_state.load_account(to_addr)?;
         let code_and_data = match &contract.account.code {
             // Note that EOAs are represented by [Code::Evm] with no code.
