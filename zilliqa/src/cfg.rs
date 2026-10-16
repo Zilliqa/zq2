@@ -710,6 +710,21 @@ impl Forks {
         &self.0[index]
     }
 
+    pub fn denylisted_accounts_restored_at(&self, height: u64) -> &[(Address, u64)] {
+        let first = self
+            .0
+            .iter()
+            .find(|fork| !fork.restore_denylisted_accounts_v1.is_empty())
+            .map(|fork| fork.at_height);
+        if first != Some(height) {
+            return &[];
+        }
+        self.0
+            .iter()
+            .rfind(|fork| fork.at_height <= height)
+            .map_or(&[], |fork| fork.restore_denylisted_accounts_v1.as_slice())
+    }
+
     pub fn escrow_mintable_admin_at(&self, height: u64) -> Address {
         self.0
             .iter()
@@ -996,6 +1011,7 @@ pub struct Fork {
     pub escrow_lodge_file: String,
     pub invalidate_zq1_staking_contract: Address,
     pub staked_zils_file: String,
+    pub restore_denylisted_accounts_v1: Vec<(Address, u64)>,
 }
 
 pub enum ForkName {
@@ -1197,6 +1213,7 @@ pub struct ForkDelta {
     pub escrow_lodge_file: Option<String>,
     pub invalidate_zq1_staking_contract: Option<Address>,
     pub staked_zils_file: Option<String>,
+    pub restore_denylisted_accounts_v1: Option<Vec<(Address, u64)>>,
 }
 
 impl Fork {
@@ -1393,6 +1410,10 @@ impl Fork {
                 .staked_zils_file
                 .clone()
                 .unwrap_or_else(|| self.staked_zils_file.clone()),
+            restore_denylisted_accounts_v1: delta
+                .restore_denylisted_accounts_v1
+                .clone()
+                .unwrap_or_else(|| self.restore_denylisted_accounts_v1.clone()),
         }
     }
 }
@@ -1523,6 +1544,7 @@ pub fn genesis_fork_default() -> Fork {
         escrow_lodge_file: String::new(),
         invalidate_zq1_staking_contract: Address::ZERO,
         staked_zils_file: String::new(),
+        restore_denylisted_accounts_v1: vec![],
     }
 }
 
@@ -1926,6 +1948,7 @@ mod tests {
                 escrow_lodge_file: None,
                 invalidate_zq1_staking_contract: None,
                 staked_zils_file: None,
+                restore_denylisted_accounts_v1: None,
             }],
             ..Default::default()
         };
@@ -2011,6 +2034,7 @@ mod tests {
                     escrow_lodge_file: None,
                     invalidate_zq1_staking_contract: None,
                     staked_zils_file: None,
+                    restore_denylisted_accounts_v1: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -2076,6 +2100,7 @@ mod tests {
                     escrow_lodge_file: None,
                     invalidate_zq1_staking_contract: None,
                     staked_zils_file: None,
+                    restore_denylisted_accounts_v1: None,
                 },
             ],
             ..Default::default()
@@ -2178,6 +2203,7 @@ mod tests {
                     escrow_lodge_file: None,
                     invalidate_zq1_staking_contract: None,
                     staked_zils_file: None,
+                    restore_denylisted_accounts_v1: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -2243,6 +2269,7 @@ mod tests {
                     escrow_lodge_file: None,
                     invalidate_zq1_staking_contract: None,
                     staked_zils_file: None,
+                    restore_denylisted_accounts_v1: None,
                 },
             ],
             ..Default::default()
@@ -2333,6 +2360,7 @@ mod tests {
                 escrow_lodge_file: String::new(),
                 invalidate_zq1_staking_contract: Address::ZERO,
                 staked_zils_file: String::new(),
+                restore_denylisted_accounts_v1: vec![],
             },
             forks: vec![],
             ..Default::default()
@@ -2411,6 +2439,7 @@ mod tests {
                     escrow_lodge_file: None,
                     invalidate_zq1_staking_contract: None,
                     staked_zils_file: None,
+                    restore_denylisted_accounts_v1: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -2476,6 +2505,7 @@ mod tests {
                     escrow_lodge_file: None,
                     invalidate_zq1_staking_contract: None,
                     staked_zils_file: None,
+                    restore_denylisted_accounts_v1: None,
                 },
             ],
             ..Default::default()
