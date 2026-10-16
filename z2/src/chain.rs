@@ -237,6 +237,7 @@ impl Chain {
                 "escrow_lodge_file": "",
                 "invalidate_zq1_staking_contract": "0x0000000000000000000000000000000000000000",
                 "staked_zils_file": "",
+                "restore_denylisted_accounts_v1": [],
             })),
             Chain::Zq2Mainnet => Some(json!({
                 "at_height": 0,
@@ -302,6 +303,7 @@ impl Chain {
                 "escrow_lodge_file": "",
                 "invalidate_zq1_staking_contract": "0x0000000000000000000000000000000000000000",
                 "staked_zils_file": "",
+                "restore_denylisted_accounts_v1": [],
             })),
             Chain::Zq2Devnet => Some(json!({
                 "at_height": 0,
@@ -367,6 +369,7 @@ impl Chain {
                 "escrow_lodge_file": "",
                 "invalidate_zq1_staking_contract": "0x0000000000000000000000000000000000000000",
                 "staked_zils_file": "",
+                "restore_denylisted_accounts_v1": [],
             })),
             _ => None,
         }
@@ -442,6 +445,7 @@ impl Chain {
                 json!({ "at_height": 999999999, "evm_gas_fee_credited_once_to_zero_account": true }),
                 json!({ "at_height": 999999999, "deploy_escrow_mintable_contract_v1": true }),
                 json!({ "at_height": 999999999, "invalidate_zq1_staking_contract": "0x0000000000000000000000000000000000000000", "staked_zils_file": "" }),
+                json!({ "at_height": 999999999, "restore_denylisted_accounts_v1": [] }),
             ]),
             Chain::Zq2Mainnet => Some(vec![
                 json!({ "at_height": 4770088, "executable_blocks": true }),
@@ -619,6 +623,7 @@ impl Chain {
                 json!({ "at_height": 999999999, "evm_gas_fee_credited_once_to_zero_account": true }),
                 json!({ "at_height": 999999999, "deploy_escrow_mintable_contract_v1": true }),
                 json!({ "at_height": 999999999, "invalidate_zq1_staking_contract": "0x0000000000000000000000000000000000000000", "staked_zils_file": "" }),
+                json!({ "at_height": 999999999, "restore_denylisted_accounts_v1": [] }),
             ]),
             Chain::Zq2Devnet => Some(vec![
                 json!({
@@ -636,6 +641,7 @@ impl Chain {
                 json!({ "at_height": 43200, "pectra_active": true}),
                 json!({ "at_height": 43200, "evm_gas_fee_credited_once_to_zero_account": true }),
                 json!({ "at_height": 999999999, "invalidate_zq1_staking_contract": "0x0000000000000000000000000000000000000000", "staked_zils_file": "" }),
+                json!({ "at_height": 999999999, "restore_denylisted_accounts_v1": [] }),
             ]),
             _ => None,
         }

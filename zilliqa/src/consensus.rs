@@ -3934,6 +3934,19 @@ impl Consensus {
             self.sweep_blocked_recipients(state, file, start_height, block.header.number)?;
         }
 
+        for (address, nonce) in self
+            .state
+            .forks
+            .denylisted_accounts_restored_at(block.header.number)
+            .to_vec()
+        {
+            state.mutate_account(address, |account| {
+                account.nonce = nonce;
+                Ok(())
+            })?;
+            info!(%address, nonce, "restored denylisted account");
+        }
+
         // Deploys exactly at its fork's activation height, which need not be epoch-aligned.
         state.escrow_deploy_and_upgrade(&self.config.consensus, &block.header)?;
 
