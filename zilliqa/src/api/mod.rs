@@ -68,7 +68,7 @@ pub fn all_enabled() -> Vec<crate::cfg::EnabledApi> {
 }
 
 pub fn bundler_enabled() -> Vec<crate::cfg::EnabledApi> {
-    ["debug", "eth"]
+    ["debug", "eth", "net", "web3"]
         .into_iter()
         .map(|ns| crate::cfg::EnabledApi::EnableAll(ns.to_owned()))
         .collect()
