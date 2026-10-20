@@ -18,8 +18,7 @@ use jsonrpsee::{
 use crate::{
     api::{
         HandlerType, disabled_err, eth::build_errored_response_for_missing_block,
-        format_panic_as_error, into_rpc_error, make_panic_hook, rpc_base_attributes,
-        to_hex::ToHex as _,
+        format_panic_as_error, into_rpc_error, rpc_base_attributes, to_hex::ToHex as _,
     },
     cfg::EnabledApi,
     error::ensure_success,

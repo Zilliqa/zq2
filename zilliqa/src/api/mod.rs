@@ -90,46 +90,61 @@ fn format_panic_as_error(name: &'static str) -> anyhow::Error {
             )
         })
     });
-    let error_msg =
-        format!("Unhandled panic in RPC handler {name}: {panic_msg}\n\nBacktrace:\n{backtrace}");
     tracing::error!(
         "PANIC in RPC handler {}: {}\nBacktrace:\n{}",
         name,
         panic_msg,
         backtrace
     );
-    anyhow::anyhow!(error_msg)
+    // Only return a generic message to the caller; the panic message and backtrace may leak internal details.
+    RpcError::owned(
+        ErrorCode::InternalError.code(),
+        ErrorCode::InternalError.message(),
+        Option::<String>::None,
+    )
+    .into()
 }
 
-#[inline]
-pub fn make_panic_hook() -> Box<dyn Fn(&PanicHookInfo) + Sync + Send + 'static> {
-    Box::new(|panic_info: &PanicHookInfo| {
-        let backtrace = std::backtrace::Backtrace::force_capture();
-        let panic_msg = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
-            s.to_string()
-        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
-            s.clone()
-        } else {
-            "Unknown panic".to_string()
-        };
+/// Installs a process-wide panic hook, at most once, which records the panic message and backtrace for the current
+/// thread (so RPC handlers can report which handler panicked) and then calls the previously installed hook. The hook
+/// must not be swapped per-request, because it is global and requests are handled concurrently.
+pub fn install_panic_hook() {
+    static INSTALL: std::sync::Once = std::sync::Once::new();
+    INSTALL.call_once(|| {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |panic_info| {
+            record_panic_info(panic_info);
+            previous(panic_info);
+        }));
+    });
+}
 
-        let location = if let Some(location) = panic_info.location() {
-            format!(
-                " at {}:{}:{}",
-                location.file(),
-                location.line(),
-                location.column()
-            )
-        } else {
-            String::new()
-        };
+fn record_panic_info(panic_info: &PanicHookInfo) {
+    let backtrace = std::backtrace::Backtrace::force_capture();
+    let panic_msg = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
+        s.to_string()
+    } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "Unknown panic".to_string()
+    };
 
-        let full_panic_msg = format!("{panic_msg}{location}");
+    let location = if let Some(location) = panic_info.location() {
+        format!(
+            " at {}:{}:{}",
+            location.file(),
+            location.line(),
+            location.column()
+        )
+    } else {
+        String::new()
+    };
 
-        PANIC_INFO.with(|info| {
-            *info.borrow_mut() = Some((full_panic_msg, format!("{backtrace}")));
-        });
-    })
+    let full_panic_msg = format!("{panic_msg}{location}");
+
+    PANIC_INFO.with(|info| {
+        *info.borrow_mut() = Some((full_panic_msg, format!("{backtrace}")));
+    });
 }
 
 use anyhow::Error as AnyError;
@@ -201,6 +216,7 @@ macro_rules! declare_module {
     ) => {{
         let mut module: jsonrpsee::RpcModule<std::sync::Arc<crate::node::Node>> = jsonrpsee::RpcModule::new($node.clone());
         let meter = opentelemetry::global::meter("zilliqa");
+        crate::api::install_panic_hook();
 
         $(
             let enabled = $enabled_apis.iter().any(|n| n.enabled($name));
@@ -225,17 +241,11 @@ macro_rules! declare_module {
 
                         let start = std::time::SystemTime::now();
 
-                        // Store the original panic hook
-                        let original_hook = std::panic::take_hook();
-
-                        // Set our custom panic hook to capture backtrace
-                        std::panic::set_hook(make_panic_hook());
+                        // Discard any stale panic info from a previous panic on this thread
+                        crate::api::PANIC_INFO.with(|info| info.borrow_mut().take());
 
                         #[allow(clippy::redundant_closure_call)]
                         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| $method(params.clone(), &context)));
-
-                        // Restore the original panic hook
-                        std::panic::set_hook(original_hook);
 
                         let result = result.unwrap_or_else(|_| Err(format_panic_as_error($name)));
 
@@ -271,17 +281,11 @@ macro_rules! declare_module {
 
                         let start = std::time::SystemTime::now();
 
-                        // Store the original panic hook
-                        let original_hook = std::panic::take_hook();
-
-                        // Set our custom panic hook to capture backtrace
-                        std::panic::set_hook(make_panic_hook());
+                        // Discard any stale panic info from a previous panic on this thread
+                        crate::api::PANIC_INFO.with(|info| info.borrow_mut().take());
 
                         #[allow(clippy::redundant_closure_call)]
                         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| $method(params.clone(), context)));
-
-                        // Restore the original panic hook
-                        std::panic::set_hook(original_hook);
 
                         let result = result.unwrap_or_else(|_| Err(format_panic_as_error($name)));
 

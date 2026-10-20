@@ -7,7 +7,7 @@ use jsonrpsee::{RpcModule, types::Params};
 use super::{HandlerType, types};
 use crate::{
     api::{
-        disabled_err, format_panic_as_error, into_rpc_error, make_panic_hook, rpc_base_attributes,
+        disabled_err, format_panic_as_error, into_rpc_error, rpc_base_attributes,
         types::eth::Transaction,
     },
     cfg::EnabledApi,
