@@ -132,7 +132,7 @@ fn get_block_transactions(
     let mut params = params.sequence();
     let block_number: u64 = params.next()?;
     let page_number: usize = params.next()?;
-    let page_size: usize = params.next()?;
+    let page_size: usize = params.next::<usize>()?.min(25); // https://github.com/otterscan/otterscan/blob/67ac249315f00a9d13f1a9186b7c47b76a7692d3/src/params.ts#L3
 
     let (pool, db, miner, block, block_gas_limit) = {
         let Some(block) = node.get_block(block_number)? else {
@@ -148,8 +148,14 @@ fn get_block_transactions(
         )
     };
 
-    let start = usize::min(page_number * page_size, block.transactions.len());
-    let end = usize::min((page_number + 1) * page_size, block.transactions.len());
+    let start = usize::min(
+        page_number.saturating_mul(page_size),
+        block.transactions.len(),
+    );
+    let end = usize::min(
+        page_number.saturating_add(1).saturating_mul(page_size),
+        block.transactions.len(),
+    );
 
     let receipts = old_get_block_transaction_receipts_inner(db.clone(), &block)?;
     let transactions = block.transactions[start..end]
@@ -283,6 +289,10 @@ fn search_transactions_inner(
         touched.reverse();
     }
 
+    // https://github.com/otterscan/otterscan/blob/master/src/params.ts
+    if page_size > 25 {
+        return Err(anyhow!("page_size exceeds the limit of 25"));
+    }
     let mut transactions = Vec::with_capacity(page_size);
     let mut receipts = Vec::with_capacity(page_size);
 

@@ -150,6 +150,11 @@ fn trace_filter(params: Params, node: &Arc<Node>) -> Result<Vec<TraceResults>> {
         return Err(anyhow!("invalid block range"));
     }
 
+    // https://github.com/paradigmxyz/reth/blob/main/crates/rpc/rpc-server-types/src/constants.rs (DEFAULT_MAX_TRACE_FILTER_BLOCKS)
+    if end_block.number() - start_block.number() > 100 {
+        return Err(anyhow!("block range too large; limited to 100 blocks"));
+    }
+
     // Default trace types for filtering
     let trace_types = [TraceType::Trace, TraceType::StateDiff]
         .into_iter()

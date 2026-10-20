@@ -1343,9 +1343,11 @@ fn get_txn_bodies_for_tx_block_ex(
     params: Params,
     node: &Arc<Node>,
 ) -> Result<TxnBodiesForTxBlockExResponse> {
-    let params: Vec<String> = params.parse()?;
-    let block_number: u64 = params[0].parse()?;
-    let page_number: usize = params[1].parse()?;
+    let mut seq = params.sequence();
+    let block_number: String = seq.next()?;
+    let page_number: String = seq.next()?;
+    let block_number: u64 = block_number.parse()?;
+    let page_number: usize = page_number.parse()?;
 
     let db = node.db.clone();
     let block = data_access::get_block_by_number(db.clone(), block_number)?
