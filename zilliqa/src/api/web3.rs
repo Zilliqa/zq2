@@ -7,10 +7,7 @@ use sha3::{Digest, Keccak256};
 
 use super::to_hex::ToHex;
 use crate::{
-    api::{
-        HandlerType, disabled_err, format_panic_as_error, into_rpc_error, make_panic_hook,
-        rpc_base_attributes,
-    },
+    api::{HandlerType, disabled_err, format_panic_as_error, into_rpc_error, rpc_base_attributes},
     cfg::EnabledApi,
     node::Node,
 };
