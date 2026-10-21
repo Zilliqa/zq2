@@ -785,6 +785,20 @@ impl Forks {
             },
             &mut schedules,
         )?;
+        self.staged_schedules(
+            "blocked_recipients_v4",
+            (
+                "blocked_recipients_file_v4",
+                "blocked_recipients_start_height_v4",
+            ),
+            |fork| {
+                (
+                    fork.blocked_recipients_file_v4.as_str(),
+                    fork.blocked_recipients_start_height_v4,
+                )
+            },
+            &mut schedules,
+        )?;
         Ok(schedules)
     }
 
@@ -1001,6 +1015,8 @@ pub struct Fork {
     pub blocked_recipients_file_v2: String,
     pub blocked_recipients_start_height_v3: u64,
     pub blocked_recipients_file_v3: String,
+    pub blocked_recipients_start_height_v4: u64,
+    pub blocked_recipients_file_v4: String,
     pub zil_transfers_only_to_escrow: bool,
     pub deploy_escrow_contract_v1: bool,
     pub evm_gas_fee_credited_once_to_zero_account: bool,
@@ -1198,6 +1214,8 @@ pub struct ForkDelta {
     pub blocked_recipients_file_v2: Option<String>,
     pub blocked_recipients_start_height_v3: Option<u64>,
     pub blocked_recipients_file_v3: Option<String>,
+    pub blocked_recipients_start_height_v4: Option<u64>,
+    pub blocked_recipients_file_v4: Option<String>,
     /// If true, legacy Zilliqa transactions are only permitted when addressed to the escrow
     /// contract; see [`Fork::zil_transfers_only_to_escrow`].
     pub zil_transfers_only_to_escrow: Option<bool>,
@@ -1376,6 +1394,13 @@ impl Fork {
                 .blocked_recipients_file_v3
                 .clone()
                 .unwrap_or_else(|| self.blocked_recipients_file_v3.clone()),
+            blocked_recipients_start_height_v4: delta
+                .blocked_recipients_start_height_v4
+                .unwrap_or(self.blocked_recipients_start_height_v4),
+            blocked_recipients_file_v4: delta
+                .blocked_recipients_file_v4
+                .clone()
+                .unwrap_or_else(|| self.blocked_recipients_file_v4.clone()),
             zil_transfers_only_to_escrow: delta
                 .zil_transfers_only_to_escrow
                 .unwrap_or(self.zil_transfers_only_to_escrow),
@@ -1534,6 +1559,8 @@ pub fn genesis_fork_default() -> Fork {
         blocked_recipients_file_v2: String::new(),
         blocked_recipients_start_height_v3: 0,
         blocked_recipients_file_v3: String::new(),
+        blocked_recipients_start_height_v4: 0,
+        blocked_recipients_file_v4: String::new(),
         zil_transfers_only_to_escrow: false,
         deploy_escrow_contract_v1: false,
         evm_gas_fee_credited_once_to_zero_account: true,
@@ -1938,6 +1965,8 @@ mod tests {
                 blocked_recipients_file_v2: None,
                 blocked_recipients_start_height_v3: None,
                 blocked_recipients_file_v3: None,
+                blocked_recipients_start_height_v4: None,
+                blocked_recipients_file_v4: None,
                 zil_transfers_only_to_escrow: None,
                 deploy_escrow_contract_v1: None,
                 evm_gas_fee_credited_once_to_zero_account: None,
@@ -2024,6 +2053,8 @@ mod tests {
                     blocked_recipients_file_v2: None,
                     blocked_recipients_start_height_v3: None,
                     blocked_recipients_file_v3: None,
+                    blocked_recipients_start_height_v4: None,
+                    blocked_recipients_file_v4: None,
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                     evm_gas_fee_credited_once_to_zero_account: None,
@@ -2090,6 +2121,8 @@ mod tests {
                     blocked_recipients_file_v2: None,
                     blocked_recipients_start_height_v3: None,
                     blocked_recipients_file_v3: None,
+                    blocked_recipients_start_height_v4: None,
+                    blocked_recipients_file_v4: None,
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                     evm_gas_fee_credited_once_to_zero_account: None,
@@ -2193,6 +2226,8 @@ mod tests {
                     blocked_recipients_file_v2: None,
                     blocked_recipients_start_height_v3: None,
                     blocked_recipients_file_v3: None,
+                    blocked_recipients_start_height_v4: None,
+                    blocked_recipients_file_v4: None,
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                     evm_gas_fee_credited_once_to_zero_account: None,
@@ -2259,6 +2294,8 @@ mod tests {
                     blocked_recipients_file_v2: None,
                     blocked_recipients_start_height_v3: None,
                     blocked_recipients_file_v3: None,
+                    blocked_recipients_start_height_v4: None,
+                    blocked_recipients_file_v4: None,
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                     evm_gas_fee_credited_once_to_zero_account: None,
@@ -2350,6 +2387,8 @@ mod tests {
                 blocked_recipients_file_v2: String::new(),
                 blocked_recipients_start_height_v3: 0,
                 blocked_recipients_file_v3: String::new(),
+                blocked_recipients_start_height_v4: 0,
+                blocked_recipients_file_v4: String::new(),
                 zil_transfers_only_to_escrow: false,
                 deploy_escrow_contract_v1: false,
                 evm_gas_fee_credited_once_to_zero_account: false,
@@ -2429,6 +2468,8 @@ mod tests {
                     blocked_recipients_file_v2: None,
                     blocked_recipients_start_height_v3: None,
                     blocked_recipients_file_v3: None,
+                    blocked_recipients_start_height_v4: None,
+                    blocked_recipients_file_v4: None,
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                     evm_gas_fee_credited_once_to_zero_account: None,
@@ -2495,6 +2536,8 @@ mod tests {
                     blocked_recipients_file_v2: None,
                     blocked_recipients_start_height_v3: None,
                     blocked_recipients_file_v3: None,
+                    blocked_recipients_start_height_v4: None,
+                    blocked_recipients_file_v4: None,
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                     evm_gas_fee_credited_once_to_zero_account: None,

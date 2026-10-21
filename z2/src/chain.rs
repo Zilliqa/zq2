@@ -227,6 +227,8 @@ impl Chain {
                 "blocked_recipients_file_v2": "",
                 "blocked_recipients_start_height_v3": 0,
                 "blocked_recipients_file_v3": "",
+                "blocked_recipients_start_height_v4": 0,
+                "blocked_recipients_file_v4": "",
                 "zil_transfers_only_to_escrow": false,
                 "deploy_escrow_contract_v1": false,
                 "evm_gas_fee_credited_once_to_zero_account": false,
@@ -293,6 +295,8 @@ impl Chain {
                 "blocked_recipients_file_v2": "",
                 "blocked_recipients_start_height_v3": 0,
                 "blocked_recipients_file_v3": "",
+                "blocked_recipients_start_height_v4": 0,
+                "blocked_recipients_file_v4": "",
                 "zil_transfers_only_to_escrow": false,
                 "deploy_escrow_contract_v1": false,
                 "evm_gas_fee_credited_once_to_zero_account": false,
@@ -359,6 +363,8 @@ impl Chain {
                 "blocked_recipients_file_v2": "",
                 "blocked_recipients_start_height_v3": 0,
                 "blocked_recipients_file_v3": "",
+                "blocked_recipients_start_height_v4": 0,
+                "blocked_recipients_file_v4": "",
                 "zil_transfers_only_to_escrow": false,
                 "deploy_escrow_contract_v1": false,
                 "evm_gas_fee_credited_once_to_zero_account": false,
@@ -446,6 +452,7 @@ impl Chain {
                 json!({ "at_height": 999999999, "deploy_escrow_mintable_contract_v1": true }),
                 json!({ "at_height": 999999999, "invalidate_zq1_staking_contract": "0x0000000000000000000000000000000000000000", "staked_zils_file": "" }),
                 json!({ "at_height": 999999999, "restore_denylisted_accounts_v1": [] }),
+                json!({ "at_height": 999999999, "blocked_recipients_start_height_v4": 999999999, "blocked_recipients_file_v4": "blocked_recipients_004.bin" }),
             ]),
             Chain::Zq2Mainnet => Some(vec![
                 json!({ "at_height": 4770088, "executable_blocks": true }),
@@ -624,6 +631,7 @@ impl Chain {
                 json!({ "at_height": 999999999, "deploy_escrow_mintable_contract_v1": true }),
                 json!({ "at_height": 999999999, "invalidate_zq1_staking_contract": "0x0000000000000000000000000000000000000000", "staked_zils_file": "" }),
                 json!({ "at_height": 999999999, "restore_denylisted_accounts_v1": [] }),
+                json!({ "at_height": 999999999, "blocked_recipients_start_height_v4": 999999999, "blocked_recipients_file_v4": "blocked_recipients_004.bin" }),
             ]),
             Chain::Zq2Devnet => Some(vec![
                 json!({
@@ -642,6 +650,7 @@ impl Chain {
                 json!({ "at_height": 43200, "evm_gas_fee_credited_once_to_zero_account": true }),
                 json!({ "at_height": 999999999, "invalidate_zq1_staking_contract": "0x0000000000000000000000000000000000000000", "staked_zils_file": "" }),
                 json!({ "at_height": 999999999, "restore_denylisted_accounts_v1": [] }),
+                json!({ "at_height": 999999999, "blocked_recipients_start_height_v4": 999999999, "blocked_recipients_file_v4": "blocked_recipients_004.bin" }),
             ]),
             _ => None,
         }

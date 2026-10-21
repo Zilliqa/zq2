@@ -3930,6 +3930,10 @@ impl Consensus {
                 &fork.blocked_recipients_file_v3,
                 fork.blocked_recipients_start_height_v3,
             ),
+            (
+                &fork.blocked_recipients_file_v4,
+                fork.blocked_recipients_start_height_v4,
+            ),
         ] {
             self.sweep_blocked_recipients(state, file, start_height, block.header.number)?;
         }
