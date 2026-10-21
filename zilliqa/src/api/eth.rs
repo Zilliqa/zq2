@@ -39,7 +39,7 @@ use super::{
 };
 use crate::{
     api::{
-        disabled_err, format_panic_as_error, into_rpc_error, make_panic_hook, rpc_base_attributes,
+        disabled_err, format_panic_as_error, into_rpc_error, rpc_base_attributes,
         types::eth::GetAccountResult, zilliqa::ZilAddress,
     },
     cfg::EnabledApi,
@@ -1165,6 +1165,12 @@ fn fee_history(params: Params, node: &Arc<Node>) -> Result<FeeHistory> {
 
     let newest_block: BlockNumberOrTag = params.next()?;
     let reward_percentiles: Option<Vec<f64>> = params.optional_next()?;
+    if let Some(ref percentiles) = reward_percentiles
+        && percentiles.len() > 100
+    {
+        // https://github.com/ethereum/go-ethereum/blob/master/eth/gasprice/feehistory.go (maxQueryLimit)
+        return Err(anyhow!("reward_percentiles exceeds the limit of 100"));
+    }
     if let Some(ref percentiles) = reward_percentiles
         && (!percentiles.windows(2).all(|w| w[0] <= w[1])
             || percentiles.iter().any(|&p| !(0.0..=100.0).contains(&p)))

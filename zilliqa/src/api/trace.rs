@@ -11,10 +11,7 @@ use revm_inspectors::tracing::{TracingInspector, TracingInspectorConfig};
 use serde::Deserialize;
 
 use crate::{
-    api::{
-        HandlerType, disabled_err, format_panic_as_error, into_rpc_error, make_panic_hook,
-        rpc_base_attributes,
-    },
+    api::{HandlerType, disabled_err, format_panic_as_error, into_rpc_error, rpc_base_attributes},
     cfg::EnabledApi,
     crypto::Hash,
     exec::{PendingState, TransactionApplyResult},
@@ -148,6 +145,11 @@ fn trace_filter(params: Params, node: &Arc<Node>) -> Result<Vec<TraceResults>> {
     // Validate block range
     if start_block.number() > end_block.number() {
         return Err(anyhow!("invalid block range"));
+    }
+
+    // https://github.com/paradigmxyz/reth/blob/main/crates/rpc/rpc-server-types/src/constants.rs (DEFAULT_MAX_TRACE_FILTER_BLOCKS)
+    if end_block.number() - start_block.number() > 100 {
+        return Err(anyhow!("block range too large; limited to 100 blocks"));
     }
 
     // Default trace types for filtering
