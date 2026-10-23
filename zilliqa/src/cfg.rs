@@ -785,6 +785,20 @@ impl Forks {
             },
             &mut schedules,
         )?;
+        self.staged_schedules(
+            "blocked_recipients_v4",
+            (
+                "blocked_recipients_file_v4",
+                "blocked_recipients_start_height_v4",
+            ),
+            |fork| {
+                (
+                    fork.blocked_recipients_file_v4.as_str(),
+                    fork.blocked_recipients_start_height_v4,
+                )
+            },
+            &mut schedules,
+        )?;
         Ok(schedules)
     }
 
@@ -1001,6 +1015,8 @@ pub struct Fork {
     pub blocked_recipients_file_v2: String,
     pub blocked_recipients_start_height_v3: u64,
     pub blocked_recipients_file_v3: String,
+    pub blocked_recipients_start_height_v4: u64,
+    pub blocked_recipients_file_v4: String,
     pub zil_transfers_only_to_escrow: bool,
     pub deploy_escrow_contract_v1: bool,
     pub evm_gas_fee_credited_once_to_zero_account: bool,
@@ -1012,6 +1028,7 @@ pub struct Fork {
     pub invalidate_zq1_staking_contract: Address,
     pub staked_zils_file: String,
     pub restore_denylisted_accounts_v1: Vec<(Address, u64)>,
+    pub remove_scilla_contracts_from_evm_delta: bool,
 }
 
 pub enum ForkName {
@@ -1198,6 +1215,8 @@ pub struct ForkDelta {
     pub blocked_recipients_file_v2: Option<String>,
     pub blocked_recipients_start_height_v3: Option<u64>,
     pub blocked_recipients_file_v3: Option<String>,
+    pub blocked_recipients_start_height_v4: Option<u64>,
+    pub blocked_recipients_file_v4: Option<String>,
     /// If true, legacy Zilliqa transactions are only permitted when addressed to the escrow
     /// contract; see [`Fork::zil_transfers_only_to_escrow`].
     pub zil_transfers_only_to_escrow: Option<bool>,
@@ -1214,6 +1233,7 @@ pub struct ForkDelta {
     pub invalidate_zq1_staking_contract: Option<Address>,
     pub staked_zils_file: Option<String>,
     pub restore_denylisted_accounts_v1: Option<Vec<(Address, u64)>>,
+    pub remove_scilla_contracts_from_evm_delta: Option<bool>,
 }
 
 impl Fork {
@@ -1376,6 +1396,13 @@ impl Fork {
                 .blocked_recipients_file_v3
                 .clone()
                 .unwrap_or_else(|| self.blocked_recipients_file_v3.clone()),
+            blocked_recipients_start_height_v4: delta
+                .blocked_recipients_start_height_v4
+                .unwrap_or(self.blocked_recipients_start_height_v4),
+            blocked_recipients_file_v4: delta
+                .blocked_recipients_file_v4
+                .clone()
+                .unwrap_or_else(|| self.blocked_recipients_file_v4.clone()),
             zil_transfers_only_to_escrow: delta
                 .zil_transfers_only_to_escrow
                 .unwrap_or(self.zil_transfers_only_to_escrow),
@@ -1414,6 +1441,9 @@ impl Fork {
                 .restore_denylisted_accounts_v1
                 .clone()
                 .unwrap_or_else(|| self.restore_denylisted_accounts_v1.clone()),
+            remove_scilla_contracts_from_evm_delta: delta
+                .remove_scilla_contracts_from_evm_delta
+                .unwrap_or(self.remove_scilla_contracts_from_evm_delta),
         }
     }
 }
@@ -1534,6 +1564,8 @@ pub fn genesis_fork_default() -> Fork {
         blocked_recipients_file_v2: String::new(),
         blocked_recipients_start_height_v3: 0,
         blocked_recipients_file_v3: String::new(),
+        blocked_recipients_start_height_v4: 0,
+        blocked_recipients_file_v4: String::new(),
         zil_transfers_only_to_escrow: false,
         deploy_escrow_contract_v1: false,
         evm_gas_fee_credited_once_to_zero_account: true,
@@ -1545,6 +1577,7 @@ pub fn genesis_fork_default() -> Fork {
         invalidate_zq1_staking_contract: Address::ZERO,
         staked_zils_file: String::new(),
         restore_denylisted_accounts_v1: vec![],
+        remove_scilla_contracts_from_evm_delta: true,
     }
 }
 
@@ -1938,6 +1971,8 @@ mod tests {
                 blocked_recipients_file_v2: None,
                 blocked_recipients_start_height_v3: None,
                 blocked_recipients_file_v3: None,
+                blocked_recipients_start_height_v4: None,
+                blocked_recipients_file_v4: None,
                 zil_transfers_only_to_escrow: None,
                 deploy_escrow_contract_v1: None,
                 evm_gas_fee_credited_once_to_zero_account: None,
@@ -1949,6 +1984,7 @@ mod tests {
                 invalidate_zq1_staking_contract: None,
                 staked_zils_file: None,
                 restore_denylisted_accounts_v1: None,
+                remove_scilla_contracts_from_evm_delta: None,
             }],
             ..Default::default()
         };
@@ -2024,6 +2060,8 @@ mod tests {
                     blocked_recipients_file_v2: None,
                     blocked_recipients_start_height_v3: None,
                     blocked_recipients_file_v3: None,
+                    blocked_recipients_start_height_v4: None,
+                    blocked_recipients_file_v4: None,
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                     evm_gas_fee_credited_once_to_zero_account: None,
@@ -2035,6 +2073,7 @@ mod tests {
                     invalidate_zq1_staking_contract: None,
                     staked_zils_file: None,
                     restore_denylisted_accounts_v1: None,
+                    remove_scilla_contracts_from_evm_delta: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -2090,6 +2129,8 @@ mod tests {
                     blocked_recipients_file_v2: None,
                     blocked_recipients_start_height_v3: None,
                     blocked_recipients_file_v3: None,
+                    blocked_recipients_start_height_v4: None,
+                    blocked_recipients_file_v4: None,
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                     evm_gas_fee_credited_once_to_zero_account: None,
@@ -2101,6 +2142,7 @@ mod tests {
                     invalidate_zq1_staking_contract: None,
                     staked_zils_file: None,
                     restore_denylisted_accounts_v1: None,
+                    remove_scilla_contracts_from_evm_delta: None,
                 },
             ],
             ..Default::default()
@@ -2193,6 +2235,8 @@ mod tests {
                     blocked_recipients_file_v2: None,
                     blocked_recipients_start_height_v3: None,
                     blocked_recipients_file_v3: None,
+                    blocked_recipients_start_height_v4: None,
+                    blocked_recipients_file_v4: None,
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                     evm_gas_fee_credited_once_to_zero_account: None,
@@ -2204,6 +2248,7 @@ mod tests {
                     invalidate_zq1_staking_contract: None,
                     staked_zils_file: None,
                     restore_denylisted_accounts_v1: None,
+                    remove_scilla_contracts_from_evm_delta: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -2259,6 +2304,8 @@ mod tests {
                     blocked_recipients_file_v2: None,
                     blocked_recipients_start_height_v3: None,
                     blocked_recipients_file_v3: None,
+                    blocked_recipients_start_height_v4: None,
+                    blocked_recipients_file_v4: None,
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                     evm_gas_fee_credited_once_to_zero_account: None,
@@ -2270,6 +2317,7 @@ mod tests {
                     invalidate_zq1_staking_contract: None,
                     staked_zils_file: None,
                     restore_denylisted_accounts_v1: None,
+                    remove_scilla_contracts_from_evm_delta: None,
                 },
             ],
             ..Default::default()
@@ -2350,6 +2398,8 @@ mod tests {
                 blocked_recipients_file_v2: String::new(),
                 blocked_recipients_start_height_v3: 0,
                 blocked_recipients_file_v3: String::new(),
+                blocked_recipients_start_height_v4: 0,
+                blocked_recipients_file_v4: String::new(),
                 zil_transfers_only_to_escrow: false,
                 deploy_escrow_contract_v1: false,
                 evm_gas_fee_credited_once_to_zero_account: false,
@@ -2361,6 +2411,7 @@ mod tests {
                 invalidate_zq1_staking_contract: Address::ZERO,
                 staked_zils_file: String::new(),
                 restore_denylisted_accounts_v1: vec![],
+                remove_scilla_contracts_from_evm_delta: false,
             },
             forks: vec![],
             ..Default::default()
@@ -2429,6 +2480,8 @@ mod tests {
                     blocked_recipients_file_v2: None,
                     blocked_recipients_start_height_v3: None,
                     blocked_recipients_file_v3: None,
+                    blocked_recipients_start_height_v4: None,
+                    blocked_recipients_file_v4: None,
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                     evm_gas_fee_credited_once_to_zero_account: None,
@@ -2440,6 +2493,7 @@ mod tests {
                     invalidate_zq1_staking_contract: None,
                     staked_zils_file: None,
                     restore_denylisted_accounts_v1: None,
+                    remove_scilla_contracts_from_evm_delta: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -2495,6 +2549,8 @@ mod tests {
                     blocked_recipients_file_v2: None,
                     blocked_recipients_start_height_v3: None,
                     blocked_recipients_file_v3: None,
+                    blocked_recipients_start_height_v4: None,
+                    blocked_recipients_file_v4: None,
                     zil_transfers_only_to_escrow: None,
                     deploy_escrow_contract_v1: None,
                     evm_gas_fee_credited_once_to_zero_account: None,
@@ -2506,6 +2562,7 @@ mod tests {
                     invalidate_zq1_staking_contract: None,
                     staked_zils_file: None,
                     restore_denylisted_accounts_v1: None,
+                    remove_scilla_contracts_from_evm_delta: None,
                 },
             ],
             ..Default::default()

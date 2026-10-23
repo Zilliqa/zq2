@@ -17,6 +17,7 @@ contract EscrowMintableInit is UUPSUpgradeable, Groth16Verifier {
         address[] sources;
         mapping(address => address) targets;
         address admin;
+        mapping(address => bool) whitelisted;
     }
 
     // keccak256(abi.encode(uint256(keccak256("zilliqa.escrowmintable.storage")) - 1)) & ~bytes32(uint256(0xff))
@@ -72,8 +73,12 @@ contract EscrowMintableInit is UUPSUpgradeable, Groth16Verifier {
     function whitelist(address source, address target) external onlyAdmin {
         EscrowMintableStorage storage $ = _getEscrowMintableStorage();
         require(source != address(0), "Zero source");
-        require(target.code.length > 0, "Target is not a contract");
-        require($.targets[source] == address(0), "Already whitelisted");
+        require(
+            target == address(0) || target.code.length > 0,
+            "Target is not a contract"
+        );
+        require(!$.whitelisted[source], "Already whitelisted");
+        $.whitelisted[source] = true;
         $.sources.push(source);
         $.targets[source] = target;
         emit Whitelisted(source, target);
@@ -113,6 +118,10 @@ contract EscrowMintableInit is UUPSUpgradeable, Groth16Verifier {
         return _getEscrowMintableStorage().targets[source];
     }
 
+    function isWhitelisted(address source) public view returns (bool) {
+        return _getEscrowMintableStorage().whitelisted[source];
+    }
+
     function sources() public view returns (address[] memory) {
         return _getEscrowMintableStorage().sources;
     }
@@ -147,7 +156,9 @@ contract EscrowMintableInit is UUPSUpgradeable, Groth16Verifier {
         }
         $.balances[source][srcAddress] = 0;
         address target = $.targets[source];
-        IEscrowMintable(target).mint(dstAddress, amount);
+        if (target != address(0)) {
+            IEscrowMintable(target).mint(dstAddress, amount);
+        }
         emit Released(srcAddress, dstAddress, source, target, amount);
     }
 

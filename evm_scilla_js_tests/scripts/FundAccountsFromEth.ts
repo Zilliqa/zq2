@@ -31,7 +31,8 @@ async function main() {
     );
   }
 
-  await Promise.all(txns);
+  const sentTxns = await Promise.all(txns);
+  await Promise.all(sentTxns.map((txn) => txn.wait()));
 
   console.log("");
   await hre.run("balances", {zil: true});

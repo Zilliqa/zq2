@@ -30,4 +30,19 @@ cargo build -p zilliqa --bin generate-escrow-raw-input
   holders/gzil.csv=0x<gZIL ZRC2> holders/xsgd.csv=0x<XSGD ZRC2>
 ```
 
-No lodge file has been generated yet.
+## Files
+
+| File | Sources (regions, in order) | Entries | Lodge blocks | sha256 |
+|---|---|---|---|---|
+| `escrow_lodge_001.bin` | gZIL `0xA845c1034cD077bd8D32bE0447239c7e4BE6CB21` (66,748 holders), XSGD proxy `0x173CA6770aA56eb00511Dac8e6E13B3D7f16A5a5` (4,263 holders) | 71,011 | 711 | `447a2ce01b39d5e539de383835ef9c2514bf3cd9920ae771c235efaa389c9719` |
+
+`escrow_lodge_001.bin` holds every non-zero mainnet balance of both tokens at its original address,
+1:1 in base units (gZIL 15 decimals, XSGD 6), largest holders first, from state dumps taken at
+block 38,700,260 (balances unchanged since). Contract holders and exchange addresses on the
+blocked-recipient lists are included as-is. Built with:
+
+```sh
+./target/debug/generate-escrow-raw-input --out escrow_raw_lists/escrow_lodge_001.bin \
+  exchanges/mintable/analysis/gzil_holders.csv=0xA845c1034cD077bd8D32bE0447239c7e4BE6CB21 \
+  exchanges/mintable/analysis/xsgd_holders.csv=0x173CA6770aA56eb00511Dac8e6E13B3D7f16A5a5
+```
