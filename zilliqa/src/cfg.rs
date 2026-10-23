@@ -1028,6 +1028,7 @@ pub struct Fork {
     pub invalidate_zq1_staking_contract: Address,
     pub staked_zils_file: String,
     pub restore_denylisted_accounts_v1: Vec<(Address, u64)>,
+    pub remove_scilla_contracts_from_evm_delta: bool,
 }
 
 pub enum ForkName {
@@ -1232,6 +1233,7 @@ pub struct ForkDelta {
     pub invalidate_zq1_staking_contract: Option<Address>,
     pub staked_zils_file: Option<String>,
     pub restore_denylisted_accounts_v1: Option<Vec<(Address, u64)>>,
+    pub remove_scilla_contracts_from_evm_delta: Option<bool>,
 }
 
 impl Fork {
@@ -1439,6 +1441,9 @@ impl Fork {
                 .restore_denylisted_accounts_v1
                 .clone()
                 .unwrap_or_else(|| self.restore_denylisted_accounts_v1.clone()),
+            remove_scilla_contracts_from_evm_delta: delta
+                .remove_scilla_contracts_from_evm_delta
+                .unwrap_or(self.remove_scilla_contracts_from_evm_delta),
         }
     }
 }
@@ -1572,6 +1577,7 @@ pub fn genesis_fork_default() -> Fork {
         invalidate_zq1_staking_contract: Address::ZERO,
         staked_zils_file: String::new(),
         restore_denylisted_accounts_v1: vec![],
+        remove_scilla_contracts_from_evm_delta: true,
     }
 }
 
@@ -1978,6 +1984,7 @@ mod tests {
                 invalidate_zq1_staking_contract: None,
                 staked_zils_file: None,
                 restore_denylisted_accounts_v1: None,
+                remove_scilla_contracts_from_evm_delta: None,
             }],
             ..Default::default()
         };
@@ -2066,6 +2073,7 @@ mod tests {
                     invalidate_zq1_staking_contract: None,
                     staked_zils_file: None,
                     restore_denylisted_accounts_v1: None,
+                    remove_scilla_contracts_from_evm_delta: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -2134,6 +2142,7 @@ mod tests {
                     invalidate_zq1_staking_contract: None,
                     staked_zils_file: None,
                     restore_denylisted_accounts_v1: None,
+                    remove_scilla_contracts_from_evm_delta: None,
                 },
             ],
             ..Default::default()
@@ -2239,6 +2248,7 @@ mod tests {
                     invalidate_zq1_staking_contract: None,
                     staked_zils_file: None,
                     restore_denylisted_accounts_v1: None,
+                    remove_scilla_contracts_from_evm_delta: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -2307,6 +2317,7 @@ mod tests {
                     invalidate_zq1_staking_contract: None,
                     staked_zils_file: None,
                     restore_denylisted_accounts_v1: None,
+                    remove_scilla_contracts_from_evm_delta: None,
                 },
             ],
             ..Default::default()
@@ -2400,6 +2411,7 @@ mod tests {
                 invalidate_zq1_staking_contract: Address::ZERO,
                 staked_zils_file: String::new(),
                 restore_denylisted_accounts_v1: vec![],
+                remove_scilla_contracts_from_evm_delta: false,
             },
             forks: vec![],
             ..Default::default()
@@ -2481,6 +2493,7 @@ mod tests {
                     invalidate_zq1_staking_contract: None,
                     staked_zils_file: None,
                     restore_denylisted_accounts_v1: None,
+                    remove_scilla_contracts_from_evm_delta: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -2549,6 +2562,7 @@ mod tests {
                     invalidate_zq1_staking_contract: None,
                     staked_zils_file: None,
                     restore_denylisted_accounts_v1: None,
+                    remove_scilla_contracts_from_evm_delta: None,
                 },
             ],
             ..Default::default()

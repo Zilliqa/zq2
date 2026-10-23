@@ -679,10 +679,22 @@ impl State {
         let ResultAndState { result, state } = result_and_state;
 
         // Don't apply state delta to SCILLA CALL AND PENALTY precompiles as in previous versions of revm they were called by custom handler
-        let state = state
+        let mut state: EvmState = state
             .into_iter()
             .filter(|(addr, _)| *addr != SCILLA_CALL_ADDRESS && *addr != PENALTY_ADDRESS)
             .collect();
+
+        if fork.remove_scilla_contracts_from_evm_delta {
+            let mut scilla_contracts = Vec::new();
+            for address in state.keys() {
+                if self.get_account(*address)?.code.is_scilla() {
+                    scilla_contracts.push(*address);
+                }
+            }
+            for address in scilla_contracts {
+                state.remove(&address);
+            }
+        }
 
         let result_and_state = ResultAndState { result, state };
 
@@ -1570,13 +1582,19 @@ fn load_account<'a>(
     new_state: &'a mut HashMap<Address, PendingAccount>,
     evm_state: &Option<EvmState>,
     address: Address,
+    remove_scilla_contracts_from_evm_delta: bool,
 ) -> Result<&'a mut PendingAccount> {
-    match (
-        new_state.entry(address),
-        evm_state
-            .as_ref()
-            .and_then(|evm_state| evm_state.get(&address)),
-    ) {
+    let mut evm_account = evm_state
+        .as_ref()
+        .and_then(|evm_state| evm_state.get(&address));
+    if remove_scilla_contracts_from_evm_delta
+        && evm_account.is_some()
+        && !new_state.contains_key(&address)
+        && pre_state.get_account(address)?.code.is_scilla()
+    {
+        evm_account = None;
+    }
+    match (new_state.entry(address), evm_account) {
         (Entry::Occupied(entry), _) => Ok(entry.into_mut()),
         (Entry::Vacant(vac), Some(account)) => {
             let account = Account {
@@ -1644,6 +1662,7 @@ impl PendingState {
             &mut self.new_state,
             &self.evm_state,
             address,
+            self.fork.remove_scilla_contracts_from_evm_delta,
         )
     }
 
@@ -1672,6 +1691,7 @@ impl PendingState {
             &mut self.new_state,
             &self.evm_state,
             address,
+            self.fork.remove_scilla_contracts_from_evm_delta,
         )?;
 
         let mut current = account
@@ -1712,6 +1732,7 @@ impl PendingState {
             &mut self.new_state,
             &self.evm_state,
             address,
+            self.fork.remove_scilla_contracts_from_evm_delta,
         )?;
 
         fn get_cached<'a>(
@@ -1773,6 +1794,7 @@ impl PendingState {
             &mut self.new_state,
             &self.evm_state,
             address,
+            self.fork.remove_scilla_contracts_from_evm_delta,
         )?;
 
         // Even if we have something cached for this prefix, we don't know if it is a full representation of the map.
