@@ -7,10 +7,17 @@ mod post_exec_state;
 mod results;
 mod scilla_exec;
 
-use alloy::primitives::{Address, U256};
-use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 
+use alloy::primitives::{Address, U256};
+use anyhow::{Result, anyhow};
+pub use blessed::{BLESSED_TRANSACTIONS, BlessedTransaction};
+pub use env::{BaseFeeAndNonceCheck, ExecType, ExternalContext, ExtraOpts};
+pub use pending_state::{DatabaseError, PendingAccount, PendingState, StorageValue};
+pub(crate) use results::ScillaResultAndState;
+pub use results::{
+    ScillaError, ScillaException, ScillaResult, ScillaTransition, TransactionApplyResult,
+};
 use revm::{
     Inspector,
     context::{BlockEnv, CfgEnv, result::ResultAndState},
@@ -21,16 +28,8 @@ use revm::{
     },
 };
 use revm_context::TxEnv;
-use tracing::info;
-
-pub use blessed::{BLESSED_TRANSACTIONS, BlessedTransaction};
-pub use env::{BaseFeeAndNonceCheck, ExecType, ExternalContext, ExtraOpts};
-pub use pending_state::{DatabaseError, PendingAccount, PendingState, StorageValue};
-pub(crate) use results::ScillaResultAndState;
-pub use results::{
-    ScillaError, ScillaException, ScillaResult, ScillaTransition, TransactionApplyResult,
-};
 pub use scilla_exec::{scilla_call, store_external_libraries, zil_contract_address};
+use tracing::info;
 
 use crate::{
     crypto::Hash,

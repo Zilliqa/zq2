@@ -2,13 +2,6 @@ mod output;
 mod request;
 mod state_server;
 
-pub use output::{
-    CheckOutput, ContractInfo, CreateOutput, Error, ErrorResponse, InvokeOutput, Location, Message,
-    Param, ParamValue, ScillaEvent, Transition, TransitionParam,
-};
-use request::{ScillaServerRequestBuilder, ScillaServerRequestType};
-use state_server::StateServer;
-
 use std::{
     str,
     sync::{
@@ -26,8 +19,14 @@ use jsonrpsee::{
     core::{ClientError, client::ClientT, params::ObjectParams},
     http_client::HttpClientBuilder,
 };
+pub use output::{
+    CheckOutput, ContractInfo, CreateOutput, Error, ErrorResponse, InvokeOutput, Location, Message,
+    Param, ParamValue, ScillaEvent, Transition, TransitionParam,
+};
+use request::{ScillaServerRequestBuilder, ScillaServerRequestType};
 use serde::Deserialize;
 use serde_json::Value;
+use state_server::StateServer;
 use tokio::runtime;
 use tracing::trace;
 

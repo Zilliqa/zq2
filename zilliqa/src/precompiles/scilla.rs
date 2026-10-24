@@ -3,12 +3,11 @@ mod read;
 mod types;
 
 use alloy::primitives::Address;
+pub use call::ScillaCall;
+pub use read::ScillaRead;
 use revm::interpreter::CallInputs;
 use revm_precompile::PrecompileHalt;
 use tracing::trace;
-
-pub use call::ScillaCall;
-pub use read::ScillaRead;
 
 use crate::evm::ZQ2EvmContext;
 

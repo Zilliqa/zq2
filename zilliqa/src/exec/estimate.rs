@@ -1,8 +1,10 @@
 use alloy::primitives::Address;
 use anyhow::{Context, Result, anyhow};
 use jsonrpsee::types::ErrorObjectOwned;
-use revm::context::result::{ExecutionResult, HaltReason, ResultAndState};
-use revm::context_interface::transaction::{AccessList, SignedAuthorization};
+use revm::{
+    context::result::{ExecutionResult, HaltReason, ResultAndState},
+    context_interface::transaction::{AccessList, SignedAuthorization},
+};
 use tracing::debug;
 
 use super::{BaseFeeAndNonceCheck, ExtraOpts};
