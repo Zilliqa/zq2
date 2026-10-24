@@ -4,7 +4,7 @@ use alloy::{
 };
 use revm::{
     context_interface::ContextTr,
-    interpreter::{CallInputs, Gas, InstructionResult, InterpreterResult},
+    interpreter::{CallInputs, CallScheme, Gas, InstructionResult, InterpreterResult},
     primitives::{Address, Bytes, LogData},
 };
 use revm_context::JournalTr;
@@ -49,7 +49,9 @@ impl ContextPrecompile for ScillaCall {
 
         ctx.chain.has_called_scilla_precompile = true;
 
-        if inputs.is_static && ctx.chain.fork.tighten_precompile_rules {
+        if (inputs.is_static && ctx.chain.fork.tighten_precompile_rules)
+            || (ctx.chain.fork.unified_scilla_state && inputs.scheme != CallScheme::Call)
+        {
             ctx.chain.enforce_transaction_failure = true;
             return Ok(Some(InterpreterResult {
                 result: InstructionResult::PrecompileError,
@@ -421,6 +423,11 @@ fn handoff_legacy(
                 before.mark_touch();
             }
         }
+    }
+    if ctx.chain.fork.unified_scilla_state {
+        state
+            .new_state
+            .retain(|_, account| account.account.code.is_scilla());
     }
     ctx.journaled_state.database = state;
 

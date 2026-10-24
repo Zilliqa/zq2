@@ -48,7 +48,7 @@ impl State {
             .filter(|(addr, _)| *addr != SCILLA_CALL_ADDRESS && *addr != PENALTY_ADDRESS)
             .collect();
 
-        if fork.remove_scilla_contracts_from_evm_delta {
+        if fork.unified_scilla_state {
             let mut scilla_contracts = Vec::new();
             for address in state.keys() {
                 if self.get_account(*address)?.code.is_scilla() {

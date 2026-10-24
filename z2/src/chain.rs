@@ -240,7 +240,7 @@ impl Chain {
                 "invalidate_zq1_staking_contract": "0x0000000000000000000000000000000000000000",
                 "staked_zils_file": "",
                 "restore_denylisted_accounts_v1": [],
-                "remove_scilla_contracts_from_evm_delta": false,
+                "unified_scilla_state": false,
             })),
             Chain::Zq2Mainnet => Some(json!({
                 "at_height": 0,
@@ -309,7 +309,7 @@ impl Chain {
                 "invalidate_zq1_staking_contract": "0x0000000000000000000000000000000000000000",
                 "staked_zils_file": "",
                 "restore_denylisted_accounts_v1": [],
-                "remove_scilla_contracts_from_evm_delta": false,
+                "unified_scilla_state": false,
             })),
             Chain::Zq2Devnet => Some(json!({
                 "at_height": 0,
@@ -378,7 +378,7 @@ impl Chain {
                 "invalidate_zq1_staking_contract": "0x0000000000000000000000000000000000000000",
                 "staked_zils_file": "",
                 "restore_denylisted_accounts_v1": [],
-                "remove_scilla_contracts_from_evm_delta": false,
+                "unified_scilla_state": false,
             })),
             _ => None,
         }
@@ -456,7 +456,7 @@ impl Chain {
                 json!({ "at_height": 999999999, "invalidate_zq1_staking_contract": "0xa2e4657dE8108DD3730eb51F05A1D486D77bE2Df", "staked_zils_file": "" }),
                 json!({ "at_height": 999999999, "restore_denylisted_accounts_v1": [] }),
                 json!({ "at_height": 999999999, "blocked_recipients_start_height_v4": 999999999, "blocked_recipients_file_v4": "blocked_recipients_004.bin" }),
-                json!({ "at_height": 999999999, "remove_scilla_contracts_from_evm_delta": true }),
+                json!({ "at_height": 999999999, "unified_scilla_state": true }),
             ]),
             Chain::Zq2Mainnet => Some(vec![
                 json!({ "at_height": 4770088, "executable_blocks": true }),
@@ -637,7 +637,7 @@ impl Chain {
                 json!({ "at_height": 999999999, "invalidate_zq1_staking_contract": "0xA7c67d49C82c7DC1B73d231640B2E4d0661D37C1", "staked_zils_file": "staked_zils_001.bin" }),
                 json!({ "at_height": 999999999, "restore_denylisted_accounts_v1": [["0xEF86d624B26e2913e85F9BdC981FD7e95d35C2aE", 34]] }),
                 json!({ "at_height": 999999999, "blocked_recipients_start_height_v4": 999999999, "blocked_recipients_file_v4": "blocked_recipients_004.bin" }),
-                json!({ "at_height": 999999999, "remove_scilla_contracts_from_evm_delta": true }),
+                json!({ "at_height": 999999999, "unified_scilla_state": true }),
             ]),
             Chain::Zq2Devnet => Some(vec![
                 json!({
@@ -657,7 +657,7 @@ impl Chain {
                 json!({ "at_height": 999999999, "invalidate_zq1_staking_contract": "0x0000000000000000000000000000000000000000", "staked_zils_file": "" }),
                 json!({ "at_height": 999999999, "restore_denylisted_accounts_v1": [] }),
                 json!({ "at_height": 999999999, "blocked_recipients_start_height_v4": 999999999, "blocked_recipients_file_v4": "blocked_recipients_004.bin" }),
-                json!({ "at_height": 999999999, "remove_scilla_contracts_from_evm_delta": true }),
+                json!({ "at_height": 999999999, "unified_scilla_state": true }),
             ]),
             _ => None,
         }
