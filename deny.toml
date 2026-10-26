@@ -55,11 +55,4 @@ ignore = [
     { id = "RUSTSEC-2024-0436", reason = "unmaintained, we'll upgrade eventually" },
     { id = "RUSTSEC-2025-0057", reason = "unmaintained" },
     { id = "RUSTSEC-2025-0141", reason = "unmaintained"},
-    { id = "RUSTSEC-2026-0105", reason = "core2 via uint-zigzag 0.2.1 <- blsful; unmaintained, no core2-free uint-zigzag release" },
-    { id = "RUSTSEC-2026-0118", reason = "hickory-proto via libp2p-dns; dnssec features not enabled, DnssecDnsHandle not compiled" },
-    { id = "RUSTSEC-2026-0119", reason = "hickory-proto via libp2p-dns; stub resolver only encodes its own single-question queries; fix needs libp2p 0.57" },
-    { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2 via alloy-sol-macro 1.4; compile-time only, fix needs alloy-core >= 1.6.1" },
-    { id = "RUSTSEC-2026-0194", reason = "quick-xml 0.26 via pprof flamegraph dev-dependency; inferno only writes SVG, never parses XML" },
-    { id = "RUSTSEC-2026-0195", reason = "quick-xml 0.26 via pprof flamegraph dev-dependency; inferno only writes SVG, never parses XML" },
-    { id = "RUSTSEC-2026-0387", reason = "crypto-bigint 0.5 via elliptic-curve 0.13 (k256, alloy, revm-precompile, blsful); no 0.5.x fix; consensus signing is BLS via blst; k256 secret-key use is local only (EVM address derivation, z2 tx signing)" }
 ]

@@ -466,7 +466,7 @@ fn c_big_process_block(big: &mut Consensus, from: PeerId, proposal: Proposal) ->
 
 criterion_group!(
     name = benches;
-    config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
+    config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Protobuf));
     targets = process_empty, full_blocks_evm_transfers, full_blocks_erc20_transfers,
 );
 criterion_main!(benches);
