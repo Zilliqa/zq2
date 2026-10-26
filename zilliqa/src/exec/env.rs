@@ -1,10 +1,15 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
-use alloy::primitives::Address;
+use alloy::primitives::{Address, U256};
 use parking_lot::RwLock;
-use revm::{context_interface::TransactionType, primitives::hardfork::SpecId};
+use revm::{context_interface::TransactionType, primitives::hardfork::SpecId, state::EvmState};
 
-use crate::{cfg::Fork, inspector::TouchedAddressInspector, precompiles::ViewHistory};
+use super::PendingAccount;
+use crate::{
+    cfg::Fork,
+    inspector::TouchedAddressInspector,
+    precompiles::{SCILLA_CALL_ADDRESS, ViewHistory},
+};
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum ExecType {
@@ -30,6 +35,42 @@ pub struct ExternalContext {
     pub finalized_view: u64,
     pub view_history: Arc<RwLock<ViewHistory>>,
     pub spec_id: SpecId,
+    pub scilla_snapshots: Vec<PendingAccount>,
+}
+
+impl ExternalContext {
+    fn scilla_snapshot(&self, id: U256) -> Option<&PendingAccount> {
+        self.scilla_snapshots
+            .get(usize::try_from(id).ok()?.checked_sub(1)?)
+    }
+
+    pub fn pinned_scilla_state(&self, state: &EvmState) -> HashMap<Address, PendingAccount> {
+        state
+            .get(&SCILLA_CALL_ADDRESS)
+            .into_iter()
+            .flat_map(|account| &account.storage)
+            .filter_map(|(key, slot)| {
+                Some((
+                    Address::from_word((*key).into()),
+                    self.scilla_snapshot(slot.present_value)?.clone(),
+                ))
+            })
+            .collect()
+    }
+
+    pub fn pinned_scilla_account(
+        &self,
+        state: &EvmState,
+        address: Address,
+    ) -> Option<&PendingAccount> {
+        self.scilla_snapshot(
+            state
+                .get(&SCILLA_CALL_ADDRESS)?
+                .storage
+                .get(&U256::from_be_slice(address.as_slice()))?
+                .present_value,
+        )
+    }
 }
 
 pub enum BaseFeeAndNonceCheck {

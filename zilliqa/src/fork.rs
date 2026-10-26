@@ -329,7 +329,7 @@ pub struct Fork {
     pub invalidate_zq1_staking_contract: Address,
     pub staked_zils_file: String,
     pub restore_denylisted_accounts_v1: Vec<(Address, u64)>,
-    pub remove_scilla_contracts_from_evm_delta: bool,
+    pub unified_scilla_state: bool,
 }
 
 pub enum ForkName {
@@ -439,7 +439,7 @@ pub struct ForkDelta {
     pub invalidate_zq1_staking_contract: Option<Address>,
     pub staked_zils_file: Option<String>,
     pub restore_denylisted_accounts_v1: Option<Vec<(Address, u64)>>,
-    pub remove_scilla_contracts_from_evm_delta: Option<bool>,
+    pub unified_scilla_state: Option<bool>,
 }
 
 impl Fork {
@@ -647,9 +647,9 @@ impl Fork {
                 .restore_denylisted_accounts_v1
                 .clone()
                 .unwrap_or_else(|| self.restore_denylisted_accounts_v1.clone()),
-            remove_scilla_contracts_from_evm_delta: delta
-                .remove_scilla_contracts_from_evm_delta
-                .unwrap_or(self.remove_scilla_contracts_from_evm_delta),
+            unified_scilla_state: delta
+                .unified_scilla_state
+                .unwrap_or(self.unified_scilla_state),
         }
     }
 }
@@ -722,6 +722,6 @@ pub fn genesis_fork_default() -> Fork {
         invalidate_zq1_staking_contract: Address::ZERO,
         staked_zils_file: String::new(),
         restore_denylisted_accounts_v1: vec![],
-        remove_scilla_contracts_from_evm_delta: true,
+        unified_scilla_state: true,
     }
 }

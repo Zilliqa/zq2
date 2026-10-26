@@ -89,6 +89,21 @@ fn scilla_read(
     let address = Address::detokenize(decoder.decode().map_err(|_| err_inner("invalid address"))?);
     let field = String::detokenize(decoder.decode().map_err(|_| err_inner("invalid field"))?);
 
+    if ctx.chain.fork.unified_scilla_state {
+        let new_state = &mut ctx.journaled_state.database.new_state;
+        if let Some(account) = ctx
+            .chain
+            .pinned_scilla_account(&ctx.journaled_state.inner.state, address)
+        {
+            new_state.insert(address, account.clone());
+        } else if new_state
+            .get(&address)
+            .is_some_and(|account| account.touched)
+        {
+            new_state.remove(&address);
+        }
+    }
+
     let field_info = match ctx.db_mut().load_account(address) {
         Ok(account) => field_type(&account.account.code, address, &field),
         Err(e) => {

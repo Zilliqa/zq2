@@ -649,6 +649,20 @@ impl ConsensusConfig {
                     forks
                 });
 
+        if let Some(fork) = forks.iter().find(|fork| {
+            fork.unified_scilla_state
+                && !(fork.tighten_precompile_rules
+                    && fork.make_transfers_in_scilla_precompiles_with_journal_api
+                    && fork.scilla_call_respects_evm_state_changes
+                    && fork.evm_exec_failure_causes_scilla_precompile_to_fail
+                    && fork.apply_scilla_delta_when_evm_succeeded)
+        }) {
+            return Err(anyhow!(
+                "unified_scilla_state at height {} requires the interop safety flags",
+                fork.at_height
+            ));
+        }
+
         Ok(Forks(forks))
     }
 }
@@ -1144,7 +1158,7 @@ mod tests {
                 invalidate_zq1_staking_contract: None,
                 staked_zils_file: None,
                 restore_denylisted_accounts_v1: None,
-                remove_scilla_contracts_from_evm_delta: None,
+                unified_scilla_state: None,
             }],
             ..Default::default()
         };
@@ -1233,7 +1247,7 @@ mod tests {
                     invalidate_zq1_staking_contract: None,
                     staked_zils_file: None,
                     restore_denylisted_accounts_v1: None,
-                    remove_scilla_contracts_from_evm_delta: None,
+                    unified_scilla_state: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1302,7 +1316,7 @@ mod tests {
                     invalidate_zq1_staking_contract: None,
                     staked_zils_file: None,
                     restore_denylisted_accounts_v1: None,
-                    remove_scilla_contracts_from_evm_delta: None,
+                    unified_scilla_state: None,
                 },
             ],
             ..Default::default()
@@ -1408,7 +1422,7 @@ mod tests {
                     invalidate_zq1_staking_contract: None,
                     staked_zils_file: None,
                     restore_denylisted_accounts_v1: None,
-                    remove_scilla_contracts_from_evm_delta: None,
+                    unified_scilla_state: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1477,7 +1491,7 @@ mod tests {
                     invalidate_zq1_staking_contract: None,
                     staked_zils_file: None,
                     restore_denylisted_accounts_v1: None,
-                    remove_scilla_contracts_from_evm_delta: None,
+                    unified_scilla_state: None,
                 },
             ],
             ..Default::default()
@@ -1571,7 +1585,7 @@ mod tests {
                 invalidate_zq1_staking_contract: Address::ZERO,
                 staked_zils_file: String::new(),
                 restore_denylisted_accounts_v1: vec![],
-                remove_scilla_contracts_from_evm_delta: false,
+                unified_scilla_state: false,
             },
             forks: vec![],
             ..Default::default()
@@ -1653,7 +1667,7 @@ mod tests {
                     invalidate_zq1_staking_contract: None,
                     staked_zils_file: None,
                     restore_denylisted_accounts_v1: None,
-                    remove_scilla_contracts_from_evm_delta: None,
+                    unified_scilla_state: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1722,7 +1736,7 @@ mod tests {
                     invalidate_zq1_staking_contract: None,
                     staked_zils_file: None,
                     restore_denylisted_accounts_v1: None,
-                    remove_scilla_contracts_from_evm_delta: None,
+                    unified_scilla_state: None,
                 },
             ],
             ..Default::default()

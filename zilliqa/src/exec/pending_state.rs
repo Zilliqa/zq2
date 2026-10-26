@@ -153,12 +153,12 @@ fn load_account<'a>(
     new_state: &'a mut HashMap<Address, PendingAccount>,
     evm_state: &Option<EvmState>,
     address: Address,
-    remove_scilla_contracts_from_evm_delta: bool,
+    unified_scilla_state: bool,
 ) -> Result<&'a mut PendingAccount> {
     let mut evm_account = evm_state
         .as_ref()
         .and_then(|evm_state| evm_state.get(&address));
-    if remove_scilla_contracts_from_evm_delta
+    if unified_scilla_state
         && evm_account.is_some()
         && !new_state.contains_key(&address)
         && pre_state.get_account(address)?.code.is_scilla()
@@ -233,7 +233,7 @@ impl PendingState {
             &mut self.new_state,
             &self.evm_state,
             address,
-            self.fork.remove_scilla_contracts_from_evm_delta,
+            self.fork.unified_scilla_state,
         )
     }
 
@@ -260,7 +260,7 @@ impl PendingState {
             &mut self.new_state,
             &self.evm_state,
             address,
-            self.fork.remove_scilla_contracts_from_evm_delta,
+            self.fork.unified_scilla_state,
         )?;
 
         let mut current = account
@@ -299,7 +299,7 @@ impl PendingState {
             &mut self.new_state,
             &self.evm_state,
             address,
-            self.fork.remove_scilla_contracts_from_evm_delta,
+            self.fork.unified_scilla_state,
         )?;
 
         fn get_cached<'a>(
@@ -359,7 +359,7 @@ impl PendingState {
             &mut self.new_state,
             &self.evm_state,
             address,
-            self.fork.remove_scilla_contracts_from_evm_delta,
+            self.fork.unified_scilla_state,
         )?;
 
         let values_from_disk: Vec<_> = self
