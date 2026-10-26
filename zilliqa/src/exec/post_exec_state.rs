@@ -43,6 +43,10 @@ impl State {
     ) -> Result<(ResultAndState, HashMap<Address, PendingAccount>)> {
         let ResultAndState { result, state } = result_and_state;
 
+        let pinned_scilla_state = fork
+            .unified_scilla_state
+            .then(|| evm.0.ctx.chain.pinned_scilla_state(&state));
+
         let mut state: EvmState = state
             .into_iter()
             .filter(|(addr, _)| *addr != SCILLA_CALL_ADDRESS && *addr != PENALTY_ADDRESS)
@@ -70,7 +74,8 @@ impl State {
         let force_fail =
             failure::should_force_fail(&ctx_with_handler.chain, fork, extra_opts.exec_type);
 
-        let finalized_state = ctx_with_handler.db_mut().finalize();
+        let finalized_state =
+            pinned_scilla_state.unwrap_or_else(|| ctx_with_handler.db_mut().finalize());
 
         let deltas_overlap = fork
             .allow_scilla_call_precompile_to_be_called_from_addresses

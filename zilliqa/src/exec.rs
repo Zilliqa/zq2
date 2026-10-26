@@ -85,6 +85,7 @@ impl State {
             finalized_view,
             view_history,
             spec_id,
+            scilla_snapshots: Vec::new(),
         };
 
         let (tx_type, access_list, gas_priority_fee) = {

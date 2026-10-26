@@ -23,7 +23,7 @@ use crate::{
     constants::SCILLA_INVOKE_RUNNER,
     evm::ZQ2EvmContext,
     exec::{PendingState, ScillaError, ScillaResult, scilla_call},
-    precompiles::ContextPrecompile,
+    precompiles::{ContextPrecompile, SCILLA_CALL_ADDRESS},
     state::Code,
     transaction::{EvmGas, ScillaGas, ZilAmount},
 };
@@ -332,6 +332,10 @@ fn handoff_legacy(
         PendingState::new(ctx.journal().db().pre_state.clone(), ctx.chain.fork.clone());
     let mut state = std::mem::replace(&mut ctx.journaled_state.database, empty_state);
 
+    if ctx.chain.fork.unified_scilla_state {
+        state.new_state = ctx.chain.pinned_scilla_state(&ctx.journal().state);
+    }
+
     if ctx.chain.fork.scilla_call_respects_evm_state_changes {
         state.evm_state = Some(ctx.journal().evm_state().clone());
     }
@@ -428,6 +432,22 @@ fn handoff_legacy(
         state
             .new_state
             .retain(|_, account| account.account.code.is_scilla());
+        for (address, account) in state.new_state.iter().filter(|(_, a)| a.touched) {
+            ctx.chain.scilla_snapshots.push(account.clone());
+            let id = U256::from(ctx.chain.scilla_snapshots.len());
+            ctx.journal_mut()
+                .sstore(
+                    SCILLA_CALL_ADDRESS,
+                    U256::from_be_slice(address.as_slice()),
+                    id,
+                )
+                .map_err(|e| {
+                    tracing::error!(?e, "state access failed");
+                    PrecompileErrors::Fatal {
+                        msg: "state access failed".to_string(),
+                    }
+                })?;
+        }
     }
     ctx.journaled_state.database = state;
 
