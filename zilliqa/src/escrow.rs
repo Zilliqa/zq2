@@ -8,7 +8,7 @@ use revm::{
 use tracing::{debug, warn};
 
 use crate::{
-    cfg::{ConsensusConfig, Fork, ForkName},
+    cfg::{ConsensusConfig, ForkName},
     constants, contracts,
     error::ensure_success,
     escrow_raw_input::ENTRIES_PER_BLOCK,
@@ -176,7 +176,6 @@ impl State {
         current_block: BlockHeader,
         inspector: I,
         enable_inspector: bool,
-        fork: &Fork,
     ) -> Result<TransactionApplyResult> {
         let to_escrow = txn.to_addr == contract_addr::ESCROW_PROXY;
         let generic = Transaction::Zilliqa(txn);
@@ -273,14 +272,7 @@ impl State {
             },
         };
 
-        self.apply_delta_evm(&state, current_block.number)?;
-        if fork.apply_scilla_delta_when_evm_succeeded {
-            if let ExecutionResult::Success { .. } = result {
-                self.apply_delta_scilla(&scilla_state, Some(&state), current_block.number)?;
-            }
-        } else {
-            self.apply_delta_scilla(&scilla_state, Some(&state), current_block.number)?;
-        }
+        self.commit_evm_tx(&result, &state, &scilla_state, current_block.number)?;
 
         Ok(TransactionApplyResult::Evm(ResultAndState {
             result,

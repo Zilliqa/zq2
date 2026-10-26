@@ -21,11 +21,6 @@ pub(crate) fn should_force_fail(chain: &ExternalContext, fork: &Fork, exec_type:
             && exec_type == ExecType::Transact)
 }
 
-/// Returns `true` if the EVM and Scilla deltas would both write the same address. Applying both is
-/// ambiguous, so under the tightened rules such a transaction is force-failed rather than silently
-/// dropping the Scilla side (the behaviour of `dont_overwrite_evm_accounts_from_stale_scilla_state`).
-/// The condition mirrors that skip: a Scilla account that would be applied and is also present in the
-/// EVM delta.
 pub(crate) fn deltas_overlap(
     evm_state: &EvmState,
     scilla_state: &HashMap<Address, PendingAccount>,
@@ -43,7 +38,7 @@ pub(crate) fn failed(
     gas_price: u128,
     max_priority_fee_per_gas: Option<u128>,
     result_and_state: ResultAndState,
-) -> Result<(ResultAndState, HashMap<Address, PendingAccount>)> {
+) -> Result<ResultAndState> {
     if fork.tighten_precompile_rules {
         charge_gas(
             state,
@@ -58,21 +53,16 @@ pub(crate) fn failed(
     }
 }
 
-fn discard(
-    mut result_and_state: ResultAndState,
-) -> Result<(ResultAndState, HashMap<Address, PendingAccount>)> {
+fn discard(mut result_and_state: ResultAndState) -> Result<ResultAndState> {
     result_and_state.state.clear();
-    Ok((
-        ResultAndState {
-            result: ExecutionResult::Revert {
-                gas: *result_and_state.result.gas(),
-                logs: vec![],
-                output: Bytes::default(),
-            },
-            state: result_and_state.state,
+    Ok(ResultAndState {
+        result: ExecutionResult::Revert {
+            gas: *result_and_state.result.gas(),
+            logs: vec![],
+            output: Bytes::default(),
         },
-        HashMap::new(),
-    ))
+        state: result_and_state.state,
+    })
 }
 
 fn charge_gas(
@@ -82,7 +72,7 @@ fn charge_gas(
     gas_price: u128,
     max_priority_fee_per_gas: Option<u128>,
     result_and_state: ResultAndState,
-) -> Result<(ResultAndState, HashMap<Address, PendingAccount>)> {
+) -> Result<ResultAndState> {
     let effective_gas_price = match if fork.use_max_gas_priority_fee {
         max_priority_fee_per_gas
     } else {
@@ -103,8 +93,6 @@ fn charge_gas(
 
     let mut charged_state = EvmState::default();
 
-    // Keep the beneficiary's gas reward (zero-address coinbase) from the successful run so the fee
-    // routing matches a real revert. Skipped when it coincides with the sender.
     let beneficiary = Address::ZERO;
     if beneficiary != from_addr
         && let Some(beneficiary_acct) = evm_state.get(&beneficiary)
@@ -112,8 +100,6 @@ fn charge_gas(
         charged_state.insert(beneficiary, beneficiary_acct.clone());
     }
 
-    // Rebuild the sender from pre-state: original balance minus the gas fee, nonce incremented, no
-    // storage or value changes.
     let mut sender = evm_state
         .get(&from_addr)
         .cloned()
@@ -124,15 +110,12 @@ fn charge_gas(
     sender.mark_touch();
     charged_state.insert(from_addr, sender);
 
-    Ok((
-        ResultAndState {
-            result: ExecutionResult::Revert {
-                gas: *result.gas(),
-                logs: vec![],
-                output: Bytes::default(),
-            },
-            state: charged_state,
+    Ok(ResultAndState {
+        result: ExecutionResult::Revert {
+            gas: *result.gas(),
+            logs: vec![],
+            output: Bytes::default(),
         },
-        HashMap::new(),
-    ))
+        state: charged_state,
+    })
 }
