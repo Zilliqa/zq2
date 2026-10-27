@@ -448,15 +448,24 @@ impl Chain {
                 json!({ "at_height": 40408500, "deploy_escrow_contract_v1": true }),
                 json!({ "at_height": 40409000, "zil_transfers_only_to_escrow": true }),
                 json!({ "at_height": 41152000, "blocked_recipients_start_height_v3": 41152000, "blocked_recipients_file_v3": "blocked_recipients_003.bin" }),
-                json!({ "at_height": 99999999, "disable_permanently_scilla_precompiles_v1": [] }),
-                json!({ "at_height": 999999999, "distribute_rewards_every_epoch": true}),
-                json!({ "at_height": 999999999, "pectra_active": true}),
-                json!({ "at_height": 999999999, "evm_gas_fee_credited_once_to_zero_account": true }),
-                json!({ "at_height": 999999999, "deploy_escrow_mintable_contract_v1": true }),
-                json!({ "at_height": 999999999, "invalidate_zq1_staking_contract": "0xa2e4657dE8108DD3730eb51F05A1D486D77bE2Df", "staked_zils_file": "" }),
-                json!({ "at_height": 999999999, "restore_denylisted_accounts_v1": [] }),
-                json!({ "at_height": 999999999, "blocked_recipients_start_height_v4": 999999999, "blocked_recipients_file_v4": "blocked_recipients_004.bin" }),
-                json!({ "at_height": 999999999, "unified_scilla_state": true }),
+                // estimated: 2026-10-28T10:00:00Z
+                json!({ "at_height": 43125572, "unified_scilla_state": true }),
+                // estimated: 2026-10-28T10:00:01Z
+                json!({ "at_height": 43125573, "disable_permanently_scilla_precompiles_v1": [] }),
+                // estimated: 2026-10-28T11:00:00Z
+                json!({ "at_height": 43128429, "deploy_escrow_mintable_contract_v1": true }),
+                // estimated: 2026-10-28T12:00:00Z
+                json!({ "at_height": 43131286, "blocked_recipients_start_height_v4": 43131286, "blocked_recipients_file_v4": "blocked_recipients_004.bin" }),
+                // estimated: 2026-10-28T13:00:00Z
+                json!({ "at_height": 43134143, "restore_denylisted_accounts_v1": [] }),
+                // estimated: 2026-10-28T14:00:00Z
+                json!({ "at_height": 43137000, "invalidate_zq1_staking_contract": "0xa2e4657dE8108DD3730eb51F05A1D486D77bE2Df", "staked_zils_file": "" }),
+                // estimated: 2026-10-28T15:00:00Z
+                json!({ "at_height": 43139857, "evm_gas_fee_credited_once_to_zero_account": true }),
+                // estimated: 2026-10-28T16:00:00Z
+                json!({ "at_height": 43142715, "distribute_rewards_every_epoch": true }),
+                // estimated: 2026-10-28T18:00:00Z
+                json!({ "at_height": 43148429, "pectra_active": true }),
             ]),
             Chain::Zq2Mainnet => Some(vec![
                 json!({ "at_height": 4770088, "executable_blocks": true }),
@@ -628,16 +637,26 @@ impl Chain {
                 json!({ "at_height": 36383378, "deploy_escrow_contract_v1": true }),
                 json!({ "at_height": 36383379, "zil_transfers_only_to_escrow": true }),
                 json!({ "at_height": 37410000, "blocked_recipients_start_height_v3": 37410000, "blocked_recipients_file_v3": "blocked_recipients_003.bin" }),
-                json!({ "at_height": 99999999, "disable_permanently_scilla_precompiles_v1": ["0x173CA6770aA56eb00511Dac8e6E13B3D7f16A5a5", "0xA845c1034cD077bd8D32bE0447239c7e4BE6CB21"] }),
-                json!({ "at_height": 999999999, "distribute_rewards_every_epoch": true}),
-                json!({ "at_height": 999999999, "pectra_active": true}),
-                json!({ "at_height": 999999999, "evm_gas_fee_credited_once_to_zero_account": true }),
-                json!({ "at_height": 999999999, "deploy_escrow_mintable_contract_v1": true, "escrow_mintable_admin": "0xf865745c75E585718c8f115A9317E7Fc8e1195f3" }),
-                json!({ "at_height": 999999999, "escrow_lodge_start_height": 999999999, "escrow_lodge_file": "escrow_lodge_001.bin" }),
-                json!({ "at_height": 999999999, "invalidate_zq1_staking_contract": "0xA7c67d49C82c7DC1B73d231640B2E4d0661D37C1", "staked_zils_file": "staked_zils_001.bin" }),
-                json!({ "at_height": 999999999, "restore_denylisted_accounts_v1": [["0xEF86d624B26e2913e85F9BdC981FD7e95d35C2aE", 34]] }),
-                json!({ "at_height": 999999999, "blocked_recipients_start_height_v4": 999999999, "blocked_recipients_file_v4": "blocked_recipients_004.bin" }),
-                json!({ "at_height": 999999999, "unified_scilla_state": true }),
+                // estimated: 2026-10-30T07:00:00Z
+                json!({ "at_height": 39242023, "unified_scilla_state": true }),
+                // estimated: 2026-10-30T07:00:01Z
+                json!({ "at_height": 39242024, "disable_permanently_scilla_precompiles_v1": ["0x173CA6770aA56eb00511Dac8e6E13B3D7f16A5a5", "0xA845c1034cD077bd8D32bE0447239c7e4BE6CB21", "0xFa254e12C82ff62967185Cb144dB3768D176fbA5"] }),
+                // estimated: 2026-10-30T08:00:00Z
+                json!({ "at_height": 39245153, "deploy_escrow_mintable_contract_v1": true, "escrow_mintable_admin": "0xf865745c75E585718c8f115A9317E7Fc8e1195f3" }),
+                // estimated: 2026-10-30T09:00:00Z
+                json!({ "at_height": 39248284, "escrow_lodge_start_height": 39248284, "escrow_lodge_file": "escrow_lodge_001.bin" }),
+                // estimated: 2026-11-03T07:00:00Z
+                json!({ "at_height": 39542545, "blocked_recipients_start_height_v4": 39542545, "blocked_recipients_file_v4": "blocked_recipients_004.bin" }),
+                // estimated: 2026-11-03T08:00:00Z
+                json!({ "at_height": 39545675, "restore_denylisted_accounts_v1": [["0xEF86d624B26e2913e85F9BdC981FD7e95d35C2aE", 34]] }),
+                // estimated: 2026-11-03T09:00:00Z
+                json!({ "at_height": 39548806, "invalidate_zq1_staking_contract": "0xA7c67d49C82c7DC1B73d231640B2E4d0661D37C1", "staked_zils_file": "staked_zils_001.bin" }),
+                // estimated: 2026-11-03T10:00:00Z
+                json!({ "at_height": 39551936, "evm_gas_fee_credited_once_to_zero_account": true }),
+                // estimated: 2026-11-03T11:00:00Z
+                json!({ "at_height": 39555066, "distribute_rewards_every_epoch": true }),
+                // estimated: 2026-11-03T12:00:00Z
+                json!({ "at_height": 39558197, "pectra_active": true }),
             ]),
             Chain::Zq2Devnet => Some(vec![
                 json!({
