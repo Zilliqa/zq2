@@ -93,8 +93,8 @@ It can also be helpful to generate flamegraphs from benchmarks to see where time
 Append `--profile-time <time in seconds>` to the command to continue running the benchmark for the specified period of time, rather than stopping when enough samples have been gathered.
 You should select `profile-time` to be long enough to gather a representative set of samples.
 150 seconds has been a reasonable value in testing.
-After running this, a flamegraph should exist in `target/criterion/<benchmark-name>/<benchmark-name>/profile/flamegraph.svg`.
-Make sure to open the `.svg` in a web browser - the embedded JS provides some useful features for exploring the graph (such as being able to click on functions and CTRL+F).
+After running this, a pprof profile should exist in `target/criterion/<benchmark-name>/<benchmark-name>/profile/profile.pb`.
+Open it with `go tool pprof -http=:8080 <path-to-profile.pb>` and select the flame graph view to explore it in a web browser.
 
 ## Logging
 
