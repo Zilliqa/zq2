@@ -1092,6 +1092,7 @@ mod tests {
         let config = ConsensusConfig {
             genesis_fork: genesis_fork_default(),
             forks: vec![ForkDelta {
+                sunset_zq2: None,
                 at_height: 10,
                 executable_blocks: None,
                 failed_scilla_call_from_gas_exempt_caller_causes_revert: None,
@@ -1181,6 +1182,7 @@ mod tests {
             genesis_fork: genesis_fork_default(),
             forks: vec![
                 ForkDelta {
+                    sunset_zq2: None,
                     at_height: 10,
                     executable_blocks: Some(true),
                     failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(true),
@@ -1250,6 +1252,7 @@ mod tests {
                     unified_scilla_state: None,
                 },
                 ForkDelta {
+                    sunset_zq2: None,
                     at_height: 20,
                     executable_blocks: Some(true),
                     failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(false),
@@ -1356,6 +1359,7 @@ mod tests {
             genesis_fork: genesis_fork_default(),
             forks: vec![
                 ForkDelta {
+                    sunset_zq2: None,
                     at_height: 20,
                     executable_blocks: Some(true),
                     failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(false),
@@ -1425,6 +1429,7 @@ mod tests {
                     unified_scilla_state: None,
                 },
                 ForkDelta {
+                    sunset_zq2: None,
                     at_height: 10,
                     executable_blocks: Some(true),
                     failed_scilla_call_from_gas_exempt_caller_causes_revert: None,
@@ -1520,6 +1525,7 @@ mod tests {
         let config = ConsensusConfig {
             genesis_fork: Fork {
                 at_height: 1,
+                sunset_zq2: false,
                 executable_blocks: true,
                 failed_scilla_call_from_gas_exempt_caller_causes_revert: true,
                 call_mode_1_sets_caller_to_parent_caller: true,
@@ -1601,6 +1607,7 @@ mod tests {
             genesis_fork: genesis_fork_default(),
             forks: vec![
                 ForkDelta {
+                    sunset_zq2: None,
                     at_height: 10,
                     executable_blocks: None,
                     failed_scilla_call_from_gas_exempt_caller_causes_revert: None,
@@ -1670,6 +1677,7 @@ mod tests {
                     unified_scilla_state: None,
                 },
                 ForkDelta {
+                    sunset_zq2: None,
                     at_height: 20,
                     executable_blocks: None,
                     failed_scilla_call_from_gas_exempt_caller_causes_revert: None,

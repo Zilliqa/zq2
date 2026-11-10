@@ -1039,6 +1039,10 @@ impl Consensus {
         self.cleanup_votes()?;
 
         let (block, transactions) = proposal.into_parts();
+        if self.state.forks.get(block.number()).sunset_zq2 && !transactions.is_empty() {
+            warn!("Rejecting transaction payload after sunset_zq2");
+            return Ok(None);
+        }
         let head_block = self.head_block();
         let mut view = self.get_view()?;
 
@@ -1700,6 +1704,10 @@ impl Consensus {
 
         let proposal = early_proposal.as_ref().unwrap().0.clone();
 
+        if self.state.forks.get(proposal.number()).sunset_zq2 {
+            return Ok(());
+        }
+
         // Use state root hash of current early proposal
         state.set_to_root(proposal.state_root_hash().into());
         // Internal states
@@ -2201,6 +2209,10 @@ impl Consensus {
         txn: VerifiedTransaction,
         from_broadcast: bool,
     ) -> Result<TxAddResult> {
+        let next_height = self.get_highest_canonical_block_number().saturating_add(1);
+        if self.state.forks.get(next_height).sunset_zq2 {
+            return Ok(TxAddResult::ValidationFailed(ValidationOutcome::SunsetZq2));
+        }
         // Refuse legacy Zilliqa transactions at every ingress point - RPC, gossip and injection
         // all funnel through here. Until `zil_transfers_only_to_escrow` activates they are
         // refused outright; once it is active, only transfers to the escrow contract pass.
@@ -2737,6 +2749,27 @@ impl Consensus {
         Ok((file_name.display().to_string(), hash.to_string()))
     }
 
+    fn check_sunset_block(&self, block: &Block, parent: &Block) -> Result<()> {
+        if self.state.forks.get(block.number()).sunset_zq2 {
+            anyhow::ensure!(
+                block.transactions.is_empty(),
+                "Transactions after sunset_zq2"
+            );
+            anyhow::ensure!(
+                block.state_root_hash() == parent.state_root_hash(),
+                "State changes after sunset_zq2"
+            );
+            anyhow::ensure!(
+                block.gas_used() == EvmGas(0)
+                    && block.header.transactions_root_hash
+                        == Hash(alloy::consensus::EMPTY_ROOT_HASH.0)
+                    && block.receipts_root_hash() == Hash(alloy::consensus::EMPTY_ROOT_HASH.0),
+                "Non-empty block execution after sunset_zq2"
+            );
+        }
+        Ok(())
+    }
+
     /// Check the validity of a block. Returns `Err(_, true)` if this block could become valid in the future and
     /// `Err(_, false)` if this block could never be valid.
     fn check_block(&self, block: &Block, during_sync: bool) -> Result<()> {
@@ -2752,6 +2785,8 @@ impl Consensus {
             warn!("Missing parent of block number {}", block.number());
             return Err(MissingBlockError::from(block.parent_hash()).into());
         };
+
+        self.check_sunset_block(block, &parent)?;
 
         let finalized_view = self.get_finalized_view()?;
         let Some(finalized_block) = self.get_block_by_view(finalized_view)? else {
@@ -3535,6 +3570,12 @@ impl Consensus {
             .get_block(&block.parent_hash())?
             .ok_or_else(|| anyhow!("missing parent block when executing block!"))?;
 
+        self.check_sunset_block(block, &parent)?;
+        anyhow::ensure!(
+            !self.state.forks.get(block.number()).sunset_zq2 || transactions.is_empty(),
+            "Transaction payload after sunset_zq2"
+        );
+
         if !transactions.is_empty() {
             trace!("applying {} transactions to state", transactions.len());
         }
@@ -3801,6 +3842,10 @@ impl Consensus {
         cumulative_gas_fee: u128,
     ) -> Result<()> {
         let fork = self.state.forks.get(block.header.number).clone();
+
+        if fork.sunset_zq2 {
+            return Ok(());
+        }
 
         if fork.distribute_rewards_every_epoch {
             rewards::apply_for_blocks_in_epoch(

@@ -91,6 +91,7 @@ pub enum ValidationOutcome {
     ZilliqaTransactionsDisabled,
     /// Legacy Zilliqa transactions may only be addressed to the escrow contract
     ZilliqaTransactionsMustTargetEscrow,
+    SunsetZq2,
 }
 
 impl ValidationOutcome {
@@ -156,6 +157,7 @@ impl ValidationOutcome {
                 "Zilliqa transactions are only accepted when addressed to the escrow contract"
                     .to_string()
             }
+            Self::SunsetZq2 => "Transactions are no longer accepted after sunset_zq2".to_string(),
         }
     }
 }

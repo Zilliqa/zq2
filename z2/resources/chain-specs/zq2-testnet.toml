@@ -97,4 +97,5 @@ consensus.forks = [
     { at_height = 43139857, evm_gas_fee_credited_once_to_zero_account = true },
     { at_height = 43142715, distribute_rewards_every_epoch = true },
     { at_height = 43148429, pectra_active = true },
+    { at_height = 999999999, sunset_zq2 = true },
 ]
