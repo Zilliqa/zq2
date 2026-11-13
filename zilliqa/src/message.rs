@@ -243,9 +243,11 @@ pub struct UccbUserOp {
     pub chain: Chain,
     pub userop_hash: Hash,
     pub block_hash: Hash,
+    pub block_height: u64,
     pub public_key: NodePublicKey,
     pub userop: Option<AlloyUserOperation>,
     pub signature: BlsSignature,
+    pub send_id: B256,
 }
 
 /// Used to convey proposal processing internally, to avoid blocking threads for too long.
