@@ -35,10 +35,12 @@ cargo build -p zilliqa --bin generate-escrow-raw-input
 | File | Sources (regions, in order) | Entries | Lodge blocks | sha256 |
 |---|---|---|---|---|
 | `escrow_lodge_001.bin` | gZIL `0xA845c1034cD077bd8D32bE0447239c7e4BE6CB21` (66,748 holders), XSGD proxy `0x173CA6770aA56eb00511Dac8e6E13B3D7f16A5a5` (4,263 holders) | 71,011 | 711 | `447a2ce01b39d5e539de383835ef9c2514bf3cd9920ae771c235efaa389c9719` |
+| `escrow_lodge_002.bin` | gZIL corrections (7 holders, including 2 zero balances) | 7 | 1 | `bc49e8a7fb57db5453120e17d2333bb8e08df11ce72912054e94bde2ac5c1ab5` |
 
 `escrow_lodge_001.bin` holds every non-zero mainnet balance of both tokens at its original address,
 1:1 in base units (gZIL 15 decimals, XSGD 6), largest holders first, from state dumps taken at
-block 38,700,260 (balances unchanged since). Contract holders and exchange addresses on the
+block 38,700,260. Subsequent interop transfers changed seven gZIL balances; see the
+[correction evidence](gzil_corrections_002.md). Contract holders and exchange addresses on the
 blocked-recipient lists are included as-is. Built with:
 
 ```sh
@@ -46,3 +48,18 @@ blocked-recipient lists are included as-is. Built with:
   exchanges/mintable/analysis/gzil_holders.csv=0xA845c1034cD077bd8D32bE0447239c7e4BE6CB21 \
   exchanges/mintable/analysis/xsgd_holders.csv=0x173CA6770aA56eb00511Dac8e6E13B3D7f16A5a5
 ```
+
+`escrow_lodge_002.bin` assigns the corrected balances after those transfers. Generate it with
+`--include-zero` so the two holders who transferred their entire balance are cleared:
+
+```sh
+cargo run -p zilliqa --bin generate-escrow-raw-input -- \
+  --include-zero --out escrow_raw_lists/escrow_lodge_002.bin \
+  escrow_raw_lists/gzil_corrections_002.csv=0xA845c1034cD077bd8D32bE0447239c7e4BE6CB21
+python3 escrow_raw_lists/verify_gzil_correction.py
+```
+
+The mainnet chain spec schedules this correction at **placeholder height 999999998**. Replace both
+`at_height` and `escrow_lodge_start_height` with the release activation block before rollout.
+Run `python3 escrow_raw_lists/verify_gzil_correction.py --live` before activation to confirm that
+the affected escrow balances remain unclaimed and gZIL remains unwhitelisted.

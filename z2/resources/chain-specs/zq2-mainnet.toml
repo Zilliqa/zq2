@@ -65,4 +65,6 @@ consensus.forks = [
     { at_height = 39260806, evm_gas_fee_credited_once_to_zero_account = true },
     { at_height = 39263936, distribute_rewards_every_epoch = true },
     { at_height = 39267066, pectra_active = true },
+    # Placeholder: select the release activation height before rollout; keep it before sunset.
+    { at_height = 999999998, escrow_lodge_start_height = 999999998, escrow_lodge_file = "escrow_lodge_002.bin" },
 ]
