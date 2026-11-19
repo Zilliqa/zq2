@@ -657,6 +657,8 @@ impl Chain {
                 json!({ "at_height": 39263936, "distribute_rewards_every_epoch": true }),
                 // estimated: 2026-10-30T15:00:00Z
                 json!({ "at_height": 39267066, "pectra_active": true }),
+                // Placeholder for the next mainnet sweep.
+                json!({ "at_height": 999999999, "blocked_recipients_start_height_v4": 999999999, "blocked_recipients_file_v4": "blocked_recipients_005.bin" }),
             ]),
             Chain::Zq2Devnet => Some(vec![
                 json!({

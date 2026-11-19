@@ -23,6 +23,7 @@ verifies every (address, destination) pair before reporting success.
 | `blocked_recipients_002.bin` | 508,861 | 16 | 5,089 | `c7562003bc14fd1474d76f300cf73d8d3d3d292e98c5ea299682e2965e6c56d7` |
 | `blocked_recipients_003.bin` | 100,831 | 4 | 1,009 | `84db5851922ab2e474d5930efcfe7a2ae463cddcb9b5d13481e1c44e76118f71` |
 | `blocked_recipients_004.bin` | 3,420 | 3 | 35 | `4e676bc245ca37a5e6f08099b428cbad0a99daa54082e990afe377b5d9af507a` |
+| `blocked_recipients_005.bin` | 1 | 1 | 1 | `ecdedbe3a5f9972cb88d4eb2d806631433ff6d9bc134c00a18d62556558f88a6` |
 
 `blocked_recipients_001.bin` sweeps, in order: the devnet test pair, Binance US (`binance-us.csv`
 — this list was originally misfiled as `binance.csv`; global Binance is a disjoint set), Bitvavo,
@@ -164,6 +165,19 @@ earlier files, and bech32 source addresses throughout. Balances in the sheets we
   exchanges/xt.csv=0xDB3DED7731C781224EC292E2163D9554c094fD7c \
   exchanges/gopax4-1.csv=0x5b2B20ae1545E0959d1dd588f30522945A7cBae9 \
   exchanges/gopax4-2.csv=0x5B6fe4A6069f5BfD70f6209e0c695cEf917e4D1D
+```
+
+## `blocked_recipients_005.bin` — single-account mainnet sweep
+
+The mainnet fork at placeholder height `999999999` schedules this file using the existing
+`_v4` fields after the fourth batch has finished. It sweeps the balance of
+`zil1r56qev94kqqscp4lxkm0whd8cuhgycjes5layp` directly to
+`0x2D991698f0Be3fC013Ed4E65a356dbD7B70dF7a8` and freezes the source.
+
+```sh
+printf '%s\n' address zil1r56qev94kqqscp4lxkm0whd8cuhgycjes5layp > single-account.csv
+./target/debug/generate-blocked-recipients --out blocked_recipients/blocked_recipients_005.bin \
+  single-account.csv=0x2D991698f0Be3fC013Ed4E65a356dbD7B70dF7a8
 ```
 
 Escrow lodge lists follow the same rules but live in their own directory: see
