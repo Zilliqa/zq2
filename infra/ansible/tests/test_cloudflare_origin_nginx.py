@@ -256,6 +256,13 @@ def test_unknown_host_is_refused_at_tls_handshake(nginx: Origin) -> None:
 
 
 def test_faucet_is_proxied_with_the_visitor_ip(nginx: Origin) -> None:
-    result = curl(nginx, FAUCET, "/", "CF-Connecting-IP: 198.51.100.7")
+    result = curl(
+        nginx,
+        FAUCET,
+        "/",
+        "CF-Connecting-IP: 198.51.100.7",
+        "X-Forwarded-For: 203.0.113.66",
+    )
     assert result.returncode == 0, result.stderr
-    assert f"faucet host={FAUCET} client=198.51.100.7" in result.stdout
+    # Replaced, not appended: a client-supplied X-Forwarded-For must not reach the faucet.
+    assert f"faucet host={FAUCET} client=198.51.100.7\n" in result.stdout
