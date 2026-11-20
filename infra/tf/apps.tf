@@ -97,7 +97,7 @@ resource "google_compute_health_check" "otterscan" {
 }
 
 resource "google_compute_health_check" "spout" {
-  count = var.apps.enable_faucet ? 1 : 0
+  count = var.apps.enable_faucet && local.apps_load_balancer ? 1 : 0
   name  = "${var.chain_name}-spout"
 
   http_health_check {
@@ -140,7 +140,7 @@ resource "google_compute_backend_service" "otterscan" {
 }
 
 resource "google_compute_backend_service" "spout" {
-  count                 = var.apps.enable_faucet ? 1 : 0
+  count                 = var.apps.enable_faucet && local.apps_load_balancer ? 1 : 0
   name                  = "${var.chain_name}-apps-spout"
   health_checks         = [google_compute_health_check.spout[0].id]
   port_name             = "spout"
@@ -285,7 +285,7 @@ data "google_compute_global_address" "otterscan" {
 }
 
 data "google_compute_global_address" "faucet" {
-  count = var.apps.enable_faucet ? 1 : 0
+  count = var.apps.enable_faucet && local.apps_load_balancer ? 1 : 0
   name  = "faucet-${replace(var.subdomain, ".", "-")}"
 }
 
@@ -318,7 +318,7 @@ resource "google_compute_global_forwarding_rule" "otterscan_https" {
 }
 
 resource "google_compute_global_forwarding_rule" "faucet_http" {
-  count                 = var.apps.enable_faucet ? 1 : 0
+  count                 = var.apps.enable_faucet && local.apps_load_balancer ? 1 : 0
   name                  = "${var.chain_name}-faucet-forwarding-rule-http"
   ip_protocol           = "TCP"
   load_balancing_scheme = "EXTERNAL_MANAGED"
@@ -328,7 +328,7 @@ resource "google_compute_global_forwarding_rule" "faucet_http" {
 }
 
 resource "google_compute_global_forwarding_rule" "faucet_https" {
-  count                 = var.apps.enable_faucet ? 1 : 0
+  count                 = var.apps.enable_faucet && local.apps_load_balancer ? 1 : 0
   name                  = "${var.chain_name}-faucet-forwarding-rule-https"
   ip_protocol           = "TCP"
   load_balancing_scheme = "EXTERNAL_MANAGED"
@@ -360,7 +360,7 @@ resource "google_compute_global_forwarding_rule" "stats_https" {
 }
 
 module "spout_security_policies" {
-  count  = var.apps.enable_faucet && var.apps.enable_cloud_armor ? 1 : 0
+  count  = var.apps.enable_faucet && local.apps_load_balancer && var.apps.enable_cloud_armor ? 1 : 0
   source = "./modules/google-cloud-armor"
 
   project_id          = var.project_id

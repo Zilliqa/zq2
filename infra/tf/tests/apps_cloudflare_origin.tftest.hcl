@@ -147,12 +147,13 @@ run "cloudflare_origin_requires_ranges" {
   expect_failures = [var.apps]
 }
 
-run "remove_load_balancer_rejects_faucet" {
+run "remove_load_balancer_drops_the_faucet_load_balancer" {
   command = plan
 
   variables {
     apps = {
       enable_faucet        = true
+      enable_cloud_armor   = true
       generate_external_ip = true
       cloudflare_origin = {
         enabled              = true
@@ -162,7 +163,33 @@ run "remove_load_balancer_rejects_faucet" {
     }
   }
 
-  expect_failures = [var.apps]
+  assert {
+    condition = alltrue([
+      length(google_compute_global_forwarding_rule.faucet_http) == 0,
+      length(google_compute_global_forwarding_rule.faucet_https) == 0,
+      length(google_compute_backend_service.spout) == 0,
+      length(google_compute_health_check.spout) == 0,
+      length(module.spout_security_policies) == 0,
+      length(data.google_compute_global_address.faucet) == 0,
+    ])
+    error_message = "remove_load_balancer must drop the faucet load balancer and its Cloud Armor policy too"
+  }
+}
+
+run "faucet_keeps_its_load_balancer_by_default" {
+  command = plan
+
+  variables {
+    apps = {
+      enable_faucet      = true
+      enable_cloud_armor = true
+    }
+  }
+
+  assert {
+    condition     = length(google_compute_global_forwarding_rule.faucet_https) == 1 && length(module.spout_security_policies) == 1
+    error_message = "The faucet load balancer and Cloud Armor policy must stay by default"
+  }
 }
 
 run "cloudflare_origin_rejects_open_ranges" {

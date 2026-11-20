@@ -1,4 +1,4 @@
-# ABOUTME: Installs the nginx TLS front that lets Cloudflare reach Otterscan and stats directly on the apps VM.
+# ABOUTME: Installs the nginx TLS front that lets Cloudflare reach Otterscan, stats and the faucet directly on the apps VM.
 # ABOUTME: Needs the <chain>-cf-origin-cert/-key secrets (Cloudflare Origin CA) and cloudflare_origin_* group vars.
 ---
 - name: Install the Cloudflare origin for Otterscan and stats
