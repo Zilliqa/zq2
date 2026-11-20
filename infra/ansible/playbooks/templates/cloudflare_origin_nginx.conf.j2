@@ -3,6 +3,16 @@
 
 ssl_certificate     {{ cloudflare_origin_tls_dir }}/origin.pem;
 ssl_certificate_key {{ cloudflare_origin_tls_dir }}/origin.key;
+{% if cloudflare_origin_client_verify | default('') %}
+
+# Authenticated Origin Pulls: the firewall only proves a connection comes from Cloudflare, any Cloudflare account.
+# Cloudflare presents our own client certificate for our hostnames. "optional" only logs the result, to check every
+# hostname shows SUCCESS before switching to "on", which answers 400 to anything else.
+ssl_client_certificate {{ cloudflare_origin_tls_dir }}/cloudflare-aop-ca.pem;
+ssl_verify_client {{ cloudflare_origin_client_verify }};
+log_format cloudflare_origin_aop '$time_iso8601 $host $ssl_client_verify $status';
+access_log /var/log/nginx/cloudflare-origin-aop.log cloudflare_origin_aop;
+{% endif %}
 
 map $http_upgrade $cloudflare_origin_connection_upgrade {
     default upgrade;
