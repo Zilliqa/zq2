@@ -1,4 +1,4 @@
-# ABOUTME: nginx TLS front on the apps VM: Cloudflare (Full strict) -> nginx :443 -> Otterscan :80 and stats :3000 on localhost.
+# ABOUTME: nginx TLS front on the apps VM: Cloudflare (Full strict) -> nginx :443 -> Otterscan :80, stats :3000 and faucet :8080 on localhost.
 # ABOUTME: Rendered by install_cloudflare_origin.yml; the VPC firewall only lets Cloudflare IPv4 ranges reach port 443.
 
 ssl_certificate     {{ cloudflare_origin_tls_dir }}/origin.pem;
@@ -32,6 +32,21 @@ server {
     server_name {{ cloudflare_origin_otterscan_redirect_hosts | join(' ') }};
 
     return 301 https://{{ cloudflare_origin_otterscan_hosts | first }}$request_uri;
+}
+
+{% endif %}
+{% if cloudflare_origin_faucet_hosts | default([]) %}
+server {
+    listen 443 ssl;
+    server_name {{ cloudflare_origin_faucet_hosts | join(' ') }};
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        # The visitor address as seen by Cloudflare; the per-IP limit itself is a Cloudflare rate limiting rule.
+        proxy_set_header X-Forwarded-For $http_cf_connecting_ip;
+    }
 }
 
 {% endif %}

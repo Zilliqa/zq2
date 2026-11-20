@@ -17,6 +17,7 @@ TLS_DIR = "/etc/nginx/cloudflare-origin"
 OTTERSCAN = "otterscan.zilliqa.com"
 OTTERSCAN_LONG = "otterscan.zq2-mainnet.zilliqa.com"
 STATS = "stats.zq2-mainnet.zilliqa.com"
+FAUCET = "faucet.testnet.zilliqa.com"
 NGINX_IMAGE = "nginx:1.24-alpine"  # same major/minor as Ubuntu 24.04
 CURL_IMAGE = "curlimages/curl:8.11.1"
 
@@ -33,24 +34,44 @@ server {
     location / { return 200 "otterscan host=$host proto=$http_x_forwarded_proto\\n"; }
 }
 server {
+    listen 127.0.0.1:8080;
+    location / { return 200 "faucet host=$host client=$http_x_forwarded_for\\n"; }
+}
+server {
     listen 127.0.0.1:3000;
     location / { return 200 "stats host=$host upgrade=$http_upgrade connection=$http_connection\\n"; }
 }
 """
 
 
-def render_config() -> str:
+def render_config(**overrides: object) -> str:
     env = jinja2.Environment(
         loader=jinja2.FileSystemLoader(TEMPLATES),
         undefined=jinja2.StrictUndefined,
         keep_trailing_newline=True,
     )
-    return env.get_template("cloudflare_origin_nginx.conf.j2").render(
+    variables = {
+        "cloudflare_origin_tls_dir": TLS_DIR,
+        "cloudflare_origin_otterscan_hosts": [OTTERSCAN],
+        "cloudflare_origin_otterscan_redirect_hosts": [OTTERSCAN_LONG],
+        "cloudflare_origin_stats_hosts": [STATS],
+        "cloudflare_origin_faucet_hosts": [FAUCET],
+    } | overrides
+    return env.get_template("cloudflare_origin_nginx.conf.j2").render(**variables)
+
+
+def test_renders_without_faucet_or_redirects() -> None:
+    env = jinja2.Environment(
+        loader=jinja2.FileSystemLoader(TEMPLATES), undefined=jinja2.StrictUndefined
+    )
+    config = env.get_template("cloudflare_origin_nginx.conf.j2").render(
         cloudflare_origin_tls_dir=TLS_DIR,
         cloudflare_origin_otterscan_hosts=[OTTERSCAN],
-        cloudflare_origin_otterscan_redirect_hosts=[OTTERSCAN_LONG],
+        cloudflare_origin_otterscan_redirect_hosts=[],
         cloudflare_origin_stats_hosts=[STATS],
     )
+    assert "proxy_pass http://127.0.0.1:8080" not in config
+    assert "return 301" not in config
 
 
 @dataclass(frozen=True)
@@ -133,7 +154,9 @@ def issue_origin_certificate(tls: Path) -> None:
         "-out",
         str(tls / "origin.csr"),
     )
-    sans = ",".join(f"DNS:{host}" for host in (OTTERSCAN, OTTERSCAN_LONG, STATS))
+    sans = ",".join(
+        f"DNS:{host}" for host in (OTTERSCAN, OTTERSCAN_LONG, STATS, FAUCET)
+    )
     (tls / "san.ext").write_text(f"subjectAltName={sans}\n")
     openssl(
         "x509",
@@ -230,3 +253,16 @@ def test_unknown_host_is_refused_at_tls_handshake(nginx: Origin) -> None:
     result = curl(nginx, "attacker.example.com")
     # 35 = CURLE_SSL_CONNECT_ERROR: the handshake is rejected, not timed out or answered.
     assert result.returncode == 35, (result.returncode, result.stderr)
+
+
+def test_faucet_is_proxied_with_the_visitor_ip(nginx: Origin) -> None:
+    result = curl(
+        nginx,
+        FAUCET,
+        "/",
+        "CF-Connecting-IP: 198.51.100.7",
+        "X-Forwarded-For: 203.0.113.66",
+    )
+    assert result.returncode == 0, result.stderr
+    # Replaced, not appended: a client-supplied X-Forwarded-For must not reach the faucet.
+    assert f"faucet host={FAUCET} client=198.51.100.7\n" in result.stdout

@@ -75,11 +75,6 @@ variable "apps" {
     error_message = "apps.cloudflare_origin.remove_load_balancer needs apps.cloudflare_origin.enabled: without it the apps are unreachable."
   }
 
-  validation {
-    condition     = !var.apps.cloudflare_origin.remove_load_balancer || !var.apps.enable_faucet
-    error_message = "apps.cloudflare_origin.remove_load_balancer does not support the faucet yet: it is only served by the load balancer."
-  }
-
   # Validation for provisioning_model
   validation {
     condition     = var.apps.faucet_max_hourly_requests >= 1 && var.apps.faucet_max_hourly_requests <= 1000000

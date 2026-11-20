@@ -8,6 +8,8 @@ eth_chain_id: 33101
 chain_name: "zq2-testnet"
 dns_subdomain: "testnet.zilliqa.com"
 stats_endpoint: "stats.zq2-testnet.zilliqa.com"
+# Agents reach the stats dashboard through Cloudflare, which redirects plain HTTP (Always Use HTTPS)
+stats_ws_scheme: wss
 project_id: prj-d-zq2-testnet-g13pnaa8
 log_level: "zilliqa=info"
 enable_faucet: true
@@ -26,6 +28,13 @@ node_exporter_image: prom/node-exporter:v1.9.0
 # Persistence Configuration
 persistence_snapshot_id: ""
 checkpoint_url: ""
+
+# Cloudflare origin: Cloudflare -> nginx on the apps VM (install_cloudflare_origin.yml)
+cloudflare_origin_enabled: true
+cloudflare_origin_otterscan_hosts: ["otterscan.testnet.zilliqa.com"]
+cloudflare_origin_otterscan_redirect_hosts: ["otterscan.zq2-testnet.zilliqa.com"]
+cloudflare_origin_stats_hosts: ["stats.zq2-testnet.zilliqa.com"]
+cloudflare_origin_faucet_hosts: ["faucet.testnet.zilliqa.com", "faucet.zq2-testnet.zilliqa.com"]
 
 # KMS Configuration
 enable_kms: true
