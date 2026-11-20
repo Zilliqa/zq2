@@ -2,7 +2,31 @@
 # ZQ2 GCP Terraform apps resources
 ################################################################################
 
+locals {
+  ## The apps load balancer stays until cloudflare_origin.remove_load_balancer is set.
+  apps_load_balancer = !var.apps.cloudflare_origin.remove_load_balancer
+}
+
+resource "google_compute_firewall" "allow_apps_cloudflare" {
+  count = var.apps.cloudflare_origin.enabled ? 1 : 0
+
+  name    = "${var.chain_name}-apps-allow-cloudflare-https"
+  network = local.network_name
+
+  direction     = "INGRESS"
+  source_ranges = var.apps.cloudflare_origin.ipv4_ranges
+
+  target_tags = [format("%s-%s", var.chain_name, "apps")]
+
+  allow {
+    protocol = "tcp"
+    ports    = ["443"]
+  }
+}
+
 resource "google_compute_firewall" "allow_apps_external_http" {
+  count = local.apps_load_balancer ? 1 : 0
+
   name    = "${var.chain_name}-apps-allow-external-http"
   network = local.network_name
 
@@ -35,7 +59,7 @@ module "apps" {
 }
 
 resource "google_compute_instance_group" "apps" {
-  for_each = toset(module.apps.zones)
+  for_each = local.apps_load_balancer ? toset(module.apps.zones) : toset([])
 
   name      = "${var.chain_name}-apps-${each.key}"
   zone      = each.key
@@ -61,6 +85,8 @@ resource "google_compute_instance_group" "apps" {
 }
 
 resource "google_compute_health_check" "otterscan" {
+  count = local.apps_load_balancer ? 1 : 0
+
   name = "${var.chain_name}-otterscan"
 
   http_health_check {
@@ -82,6 +108,8 @@ resource "google_compute_health_check" "spout" {
 }
 
 resource "google_compute_health_check" "stats" {
+  count = local.apps_load_balancer ? 1 : 0
+
   name = "${var.chain_name}-stats"
 
   http_health_check {
@@ -92,8 +120,10 @@ resource "google_compute_health_check" "stats" {
 }
 
 resource "google_compute_backend_service" "otterscan" {
+  count = local.apps_load_balancer ? 1 : 0
+
   name                  = "${var.chain_name}-apps-otterscan"
-  health_checks         = [google_compute_health_check.otterscan.id]
+  health_checks         = [google_compute_health_check.otterscan[0].id]
   port_name             = "otterscan"
   load_balancing_scheme = "EXTERNAL_MANAGED"
   enable_cdn            = false
@@ -133,8 +163,10 @@ resource "google_compute_backend_service" "spout" {
 }
 
 resource "google_compute_backend_service" "stats" {
+  count = local.apps_load_balancer ? 1 : 0
+
   name                  = "${var.chain_name}-apps-stats"
-  health_checks         = [google_compute_health_check.stats.id]
+  health_checks         = [google_compute_health_check.stats[0].id]
   port_name             = "stats"
   load_balancing_scheme = "EXTERNAL_MANAGED"
   enable_cdn            = false
@@ -151,6 +183,8 @@ resource "google_compute_backend_service" "stats" {
 }
 
 resource "google_compute_url_map" "apps_http_redirect" {
+  count = local.apps_load_balancer ? 1 : 0
+
   name = "${var.chain_name}-apps-http-redirect"
 
   default_url_redirect {
@@ -161,6 +195,8 @@ resource "google_compute_url_map" "apps_http_redirect" {
 }
 
 resource "google_compute_url_map" "apps" {
+  count = local.apps_load_balancer ? 1 : 0
+
   name = "${var.chain_name}-apps"
 
   ## Reject requests whose Host header does not match any host_rule.
@@ -192,7 +228,7 @@ resource "google_compute_url_map" "apps" {
 
   path_matcher {
     name            = "otterscan"
-    default_service = google_compute_backend_service.otterscan.id
+    default_service = google_compute_backend_service.otterscan[0].id
   }
 
   dynamic "path_matcher" {
@@ -205,11 +241,13 @@ resource "google_compute_url_map" "apps" {
 
   path_matcher {
     name            = "stats"
-    default_service = google_compute_backend_service.stats.id
+    default_service = google_compute_backend_service.stats[0].id
   }
 }
 
 resource "google_compute_managed_ssl_certificate" "apps" {
+  count = local.apps_load_balancer ? 1 : 0
+
   name = "${var.chain_name}-apps"
 
   managed {
@@ -225,18 +263,24 @@ resource "google_compute_managed_ssl_certificate" "apps" {
 }
 
 resource "google_compute_target_http_proxy" "apps" {
+  count = local.apps_load_balancer ? 1 : 0
+
   name    = "${var.chain_name}-apps-target-proxy"
-  url_map = google_compute_url_map.apps.id
+  url_map = google_compute_url_map.apps[0].id
 }
 
 resource "google_compute_target_https_proxy" "apps" {
+  count = local.apps_load_balancer ? 1 : 0
+
   name             = "${var.chain_name}-apps-target-proxy"
-  url_map          = google_compute_url_map.apps.id
-  ssl_certificates = [google_compute_managed_ssl_certificate.apps.id]
+  url_map          = google_compute_url_map.apps[0].id
+  ssl_certificates = [google_compute_managed_ssl_certificate.apps[0].id]
   ssl_policy       = google_compute_ssl_policy.custom.id
 }
 
 data "google_compute_global_address" "otterscan" {
+  count = local.apps_load_balancer ? 1 : 0
+
   name = "otterscan-${replace(var.subdomain, ".", "-")}"
 }
 
@@ -246,25 +290,31 @@ data "google_compute_global_address" "faucet" {
 }
 
 data "google_compute_global_address" "stats" {
+  count = local.apps_load_balancer ? 1 : 0
+
   name = "stats-${replace(var.subdomain, ".", "-")}"
 }
 
 resource "google_compute_global_forwarding_rule" "otterscan_http" {
+  count = local.apps_load_balancer ? 1 : 0
+
   name                  = "${var.chain_name}-otterscan-forwarding-rule-http"
   ip_protocol           = "TCP"
   load_balancing_scheme = "EXTERNAL_MANAGED"
   port_range            = "80"
-  target                = google_compute_target_http_proxy.apps.id
-  ip_address            = data.google_compute_global_address.otterscan.address
+  target                = google_compute_target_http_proxy.apps[0].id
+  ip_address            = data.google_compute_global_address.otterscan[0].address
 }
 
 resource "google_compute_global_forwarding_rule" "otterscan_https" {
+  count = local.apps_load_balancer ? 1 : 0
+
   name                  = "${var.chain_name}-otterscan-forwarding-rule-https"
   ip_protocol           = "TCP"
   load_balancing_scheme = "EXTERNAL_MANAGED"
   port_range            = "443"
-  target                = google_compute_target_https_proxy.apps.id
-  ip_address            = data.google_compute_global_address.otterscan.address
+  target                = google_compute_target_https_proxy.apps[0].id
+  ip_address            = data.google_compute_global_address.otterscan[0].address
 }
 
 resource "google_compute_global_forwarding_rule" "faucet_http" {
@@ -273,7 +323,7 @@ resource "google_compute_global_forwarding_rule" "faucet_http" {
   ip_protocol           = "TCP"
   load_balancing_scheme = "EXTERNAL_MANAGED"
   port_range            = "80"
-  target                = google_compute_target_http_proxy.apps.id
+  target                = google_compute_target_http_proxy.apps[0].id
   ip_address            = data.google_compute_global_address.faucet[0].address
 }
 
@@ -283,26 +333,30 @@ resource "google_compute_global_forwarding_rule" "faucet_https" {
   ip_protocol           = "TCP"
   load_balancing_scheme = "EXTERNAL_MANAGED"
   port_range            = "443"
-  target                = google_compute_target_https_proxy.apps.id
+  target                = google_compute_target_https_proxy.apps[0].id
   ip_address            = data.google_compute_global_address.faucet[0].address
 }
 
 resource "google_compute_global_forwarding_rule" "stats_http" {
+  count = local.apps_load_balancer ? 1 : 0
+
   name                  = "${var.chain_name}-stats-forwarding-rule-http"
   ip_protocol           = "TCP"
   load_balancing_scheme = "EXTERNAL_MANAGED"
   port_range            = "80"
-  target                = google_compute_target_http_proxy.apps.id
-  ip_address            = data.google_compute_global_address.stats.address
+  target                = google_compute_target_http_proxy.apps[0].id
+  ip_address            = data.google_compute_global_address.stats[0].address
 }
 
 resource "google_compute_global_forwarding_rule" "stats_https" {
+  count = local.apps_load_balancer ? 1 : 0
+
   name                  = "${var.chain_name}-stats-forwarding-rule-https"
   ip_protocol           = "TCP"
   load_balancing_scheme = "EXTERNAL_MANAGED"
   port_range            = "443"
-  target                = google_compute_target_https_proxy.apps.id
-  ip_address            = data.google_compute_global_address.stats.address
+  target                = google_compute_target_https_proxy.apps[0].id
+  ip_address            = data.google_compute_global_address.stats[0].address
 }
 
 module "spout_security_policies" {
@@ -338,4 +392,75 @@ module "spout_security_policies" {
       }
     }
   }
+}
+
+## The apps load balancer resources became conditional on apps.cloudflare_origin.remove_load_balancer.
+moved {
+  from = google_compute_firewall.allow_apps_external_http
+  to   = google_compute_firewall.allow_apps_external_http[0]
+}
+
+moved {
+  from = google_compute_health_check.otterscan
+  to   = google_compute_health_check.otterscan[0]
+}
+
+moved {
+  from = google_compute_health_check.stats
+  to   = google_compute_health_check.stats[0]
+}
+
+moved {
+  from = google_compute_backend_service.otterscan
+  to   = google_compute_backend_service.otterscan[0]
+}
+
+moved {
+  from = google_compute_backend_service.stats
+  to   = google_compute_backend_service.stats[0]
+}
+
+moved {
+  from = google_compute_url_map.apps_http_redirect
+  to   = google_compute_url_map.apps_http_redirect[0]
+}
+
+moved {
+  from = google_compute_url_map.apps
+  to   = google_compute_url_map.apps[0]
+}
+
+moved {
+  from = google_compute_managed_ssl_certificate.apps
+  to   = google_compute_managed_ssl_certificate.apps[0]
+}
+
+moved {
+  from = google_compute_target_http_proxy.apps
+  to   = google_compute_target_http_proxy.apps[0]
+}
+
+moved {
+  from = google_compute_target_https_proxy.apps
+  to   = google_compute_target_https_proxy.apps[0]
+}
+
+moved {
+  from = google_compute_global_forwarding_rule.otterscan_http
+  to   = google_compute_global_forwarding_rule.otterscan_http[0]
+}
+
+moved {
+  from = google_compute_global_forwarding_rule.otterscan_https
+  to   = google_compute_global_forwarding_rule.otterscan_https[0]
+}
+
+moved {
+  from = google_compute_global_forwarding_rule.stats_http
+  to   = google_compute_global_forwarding_rule.stats_http[0]
+}
+
+moved {
+  from = google_compute_global_forwarding_rule.stats_https
+  to   = google_compute_global_forwarding_rule.stats_https[0]
 }

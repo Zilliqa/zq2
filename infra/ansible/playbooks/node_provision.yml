@@ -47,6 +47,10 @@
 - name: Stats Dashboard installation
   ansible.builtin.import_playbook: install_stats_dashboard.yml
 
+- name: Cloudflare origin installation
+  ansible.builtin.import_playbook: install_cloudflare_origin.yml
+  when: cloudflare_origin_enabled | default(false)
+
 - name: Stats Agent installation
   ansible.builtin.import_playbook: install_stats_agent.yml
 
