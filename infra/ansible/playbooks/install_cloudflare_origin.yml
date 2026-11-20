@@ -1,0 +1,101 @@
+# ABOUTME: Installs the nginx TLS front that lets Cloudflare reach Otterscan and stats directly on the apps VM.
+# ABOUTME: Needs the <chain>-cf-origin-cert/-key secrets (Cloudflare Origin CA) and cloudflare_origin_* group vars.
+---
+- name: Install the Cloudflare origin for Otterscan and stats
+  hosts: role_apps
+  become: true
+  tags:
+    - install
+    - all
+
+  vars:
+    cloudflare_origin_tls_dir: /etc/nginx/cloudflare-origin
+
+  tasks:
+    # Read on the controller with the operator's credentials: the apps VM service account needs no new access.
+    - name: Read the Cloudflare origin certificate and key from Secret Manager
+      delegate_to: localhost
+      become: false
+      no_log: true
+      ansible.builtin.command: >-
+        gcloud secrets versions access latest
+        --project={{ project_id }} --secret={{ chain_name }}-cf-origin-{{ item }}
+      loop: [cert, key]
+      register: cloudflare_origin_secrets
+      changed_when: false
+
+    - name: Check whether a policy-rc.d is already in place
+      ansible.builtin.stat:
+        path: /usr/sbin/policy-rc.d
+      register: policy_rc_d
+
+    # The nginx package starts its default site on port 80, which Otterscan already uses: keep it stopped until configured.
+    - name: Install nginx without starting it
+      when: not policy_rc_d.stat.exists
+      block:
+        - name: Stop package scripts from starting services
+          ansible.builtin.copy:
+            dest: /usr/sbin/policy-rc.d
+            content: "#!/bin/sh\nexit 101\n"
+            mode: "0755"
+
+        - name: Install nginx
+          ansible.builtin.apt:
+            name: nginx
+            state: present
+            update_cache: true
+      always:
+        - name: Let package scripts start services again
+          ansible.builtin.file:
+            path: /usr/sbin/policy-rc.d
+            state: absent
+
+    - name: Remove the default nginx site
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: Reload nginx
+
+    - name: Create the Cloudflare origin TLS directory
+      ansible.builtin.file:
+        path: "{{ cloudflare_origin_tls_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Install the Cloudflare origin certificate and key
+      no_log: true
+      ansible.builtin.copy:
+        dest: "{{ cloudflare_origin_tls_dir }}/{{ item.file }}"
+        content: "{{ item.content }}\n"
+        owner: root
+        group: root
+        mode: "0600"
+      loop:
+        - { file: origin.pem, content: "{{ cloudflare_origin_secrets.results[0].stdout }}" }
+        - { file: origin.key, content: "{{ cloudflare_origin_secrets.results[1].stdout }}" }
+      notify: Reload nginx
+
+    - name: Configure the nginx sites for Otterscan and stats
+      ansible.builtin.template:
+        src: templates/cloudflare_origin_nginx.conf.j2
+        dest: /etc/nginx/conf.d/cloudflare-origin.conf
+        mode: "0644"
+      notify: Reload nginx
+
+    - name: Validate the nginx configuration
+      ansible.builtin.command: nginx -t
+      changed_when: false
+
+    - name: Start and enable nginx
+      ansible.builtin.systemd:
+        name: nginx
+        state: started
+        enabled: true
+
+  handlers:
+    - name: Reload nginx
+      ansible.builtin.systemd:
+        name: nginx
+        state: reloaded
