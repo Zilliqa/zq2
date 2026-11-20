@@ -1,5 +1,5 @@
 # ABOUTME: Installs the nginx TLS front that lets Cloudflare reach Otterscan, stats and the faucet directly on the apps VM.
-# ABOUTME: Needs the <chain>-cf-origin-cert/-key secrets (Cloudflare Origin CA) and cloudflare_origin_* group vars.
+# ABOUTME: Needs the <chain>-cf-origin-cert/-key secrets, cloudflare_origin_* group vars and, for Authenticated Origin Pulls, files/cloudflare-aop-ca.pem.
 ---
 - name: Install the Cloudflare origin for Otterscan and stats
   hosts: role_apps
@@ -73,6 +73,19 @@
       loop:
         - { file: origin.pem, content: "{{ cloudflare_origin_secrets.results[0].stdout }}" }
         - { file: origin.key, content: "{{ cloudflare_origin_secrets.results[1].stdout }}" }
+      notify: Reload nginx
+
+    # Public certificate of the CA dedicated to Authenticated Origin Pulls. Cloudflare holds the client leaf and its key;
+    # the CA key is not kept: rotating means a new CA here and a new leaf on Cloudflare.
+    - name: Install the Authenticated Origin Pulls CA
+      when: cloudflare_origin_client_verify | default('')
+      ansible.builtin.copy:
+        src: files/cloudflare-aop-ca.pem
+        dest: "{{ cloudflare_origin_tls_dir }}/cloudflare-aop-ca.pem"
+        owner: root
+        group: root
+        mode: "0644"
+        validate: openssl x509 -noout -in %s
       notify: Reload nginx
 
     - name: Configure the nginx sites for Otterscan and stats

@@ -1,4 +1,4 @@
-# ABOUTME: Integration test for the Cloudflare origin nginx template used on the apps VM (Otterscan and stats).
+# ABOUTME: Integration test for the Cloudflare origin nginx template used on the apps VM (Otterscan, stats, faucet).
 # ABOUTME: Renders the Jinja2 template and drives a real nginx in Docker; run: uv run --with pytest --with jinja2 pytest infra/ansible/tests
 
 import shutil
@@ -86,8 +86,9 @@ def docker(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     )
 
 
-@pytest.fixture(scope="module")
-def nginx(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Origin]:
+def start_origin(
+    tmp_path_factory: pytest.TempPathFactory, **overrides: object
+) -> Iterator[Origin]:
     if shutil.which("docker") is None or docker("info", check=False).returncode != 0:
         pytest.skip("Docker is not available")
 
@@ -97,9 +98,11 @@ def nginx(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Origin]:
     confd.mkdir()
     tls.mkdir()
     (confd / "00-ubuntu-defaults.conf").write_text(UBUNTU_HTTP_DEFAULTS)
-    (confd / "cloudflare-origin.conf").write_text(render_config())
+    (confd / "cloudflare-origin.conf").write_text(render_config(**overrides))
     (confd / "upstream-stubs.conf").write_text(UPSTREAM_STUBS)
     issue_origin_certificate(tls)
+    issue_client_certificate(tls, "cloudflare-aop-ca", "client")
+    issue_client_certificate(tls, "other-ca", "other-client")
     tls.chmod(0o755)
     for pem in tls.iterdir():
         pem.chmod(0o644)
@@ -121,6 +124,25 @@ def nginx(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Origin]:
         yield Origin(container=name, ca_dir=tls)
     finally:
         docker("rm", "-f", name, check=False)
+
+
+@pytest.fixture(scope="module")
+def nginx(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Origin]:
+    yield from start_origin(tmp_path_factory)
+
+
+@pytest.fixture(scope="module")
+def nginx_aop(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Origin]:
+    """Authenticated Origin Pulls enforced: only our Cloudflare client certificate gets through."""
+    yield from start_origin(tmp_path_factory, cloudflare_origin_client_verify="on")
+
+
+@pytest.fixture(scope="module")
+def nginx_aop_staging(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Origin]:
+    """Authenticated Origin Pulls staged: every request is served and the verification result is logged."""
+    yield from start_origin(
+        tmp_path_factory, cloudflare_origin_client_verify="optional"
+    )
 
 
 def openssl(*args: str) -> None:
@@ -177,6 +199,55 @@ def issue_origin_certificate(tls: Path) -> None:
     )
 
 
+def issue_client_certificate(tls: Path, ca: str, client: str) -> None:
+    """A CA and a client certificate signed by it, like the pair whose leaf Cloudflare presents to the origin."""
+    ec_key = ("-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes")
+    openssl(
+        "req",
+        "-x509",
+        *ec_key,
+        "-days",
+        "1",
+        "-subj",
+        f"/CN={ca}",
+        "-keyout",
+        str(tls / f"{ca}.key"),
+        "-out",
+        str(tls / f"{ca}.pem"),
+    )
+    openssl(
+        "req",
+        "-new",
+        *ec_key,
+        "-subj",
+        f"/CN={client}",
+        "-keyout",
+        str(tls / f"{client}.key"),
+        "-out",
+        str(tls / f"{client}.csr"),
+    )
+    (tls / f"{client}.ext").write_text(
+        "basicConstraints=CA:FALSE\nextendedKeyUsage=clientAuth\n"
+    )
+    openssl(
+        "x509",
+        "-req",
+        "-days",
+        "1",
+        "-in",
+        str(tls / f"{client}.csr"),
+        "-CA",
+        str(tls / f"{ca}.pem"),
+        "-CAkey",
+        str(tls / f"{ca}.key"),
+        "-CAcreateserial",
+        "-extfile",
+        str(tls / f"{client}.ext"),
+        "-out",
+        str(tls / f"{client}.pem"),
+    )
+
+
 def wait_until_serving(container: str) -> None:
     for _ in range(50):
         probe = docker(
@@ -197,9 +268,18 @@ def wait_until_serving(container: str) -> None:
 
 
 def curl(
-    origin: Origin, host: str, path: str = "/", *headers: str
+    origin: Origin,
+    host: str,
+    path: str = "/",
+    *headers: str,
+    client_cert: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     header_args = [arg for header in headers for arg in ("-H", header)]
+    cert_args = (
+        ["--cert", f"/ca/{client_cert}.pem", "--key", f"/ca/{client_cert}.key"]
+        if client_cert
+        else []
+    )
     return docker(
         "run",
         "--rm",
@@ -220,6 +300,7 @@ def curl(
         "-w",
         "\\n%{http_code} %{redirect_url}",
         *header_args,
+        *cert_args,
         f"https://{host}{path}",
         check=False,
     )
@@ -266,3 +347,78 @@ def test_faucet_is_proxied_with_the_visitor_ip(nginx: Origin) -> None:
     assert result.returncode == 0, result.stderr
     # Replaced, not appended: a client-supplied X-Forwarded-For must not reach the faucet.
     assert f"faucet host={FAUCET} client=198.51.100.7\n" in result.stdout
+
+
+def test_origin_pulls_are_not_required_by_default() -> None:
+    config = render_config()
+    assert "ssl_verify_client" not in config
+
+
+def aop_log(origin: Origin) -> str:
+    return docker(
+        "exec", origin.container, "cat", "/var/log/nginx/cloudflare-origin-aop.log"
+    ).stdout
+
+
+def test_origin_pulls_config_is_valid(nginx_aop: Origin) -> None:
+    result = docker("exec", nginx_aop.container, "nginx", "-t", check=False)
+    assert result.returncode == 0, result.stderr
+
+
+def test_origin_pulls_let_our_cloudflare_certificate_through(nginx_aop: Origin) -> None:
+    for host in (OTTERSCAN, STATS, FAUCET):
+        result = curl(nginx_aop, host, client_cert="client")
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.rstrip().endswith("200"), (host, result.stdout)
+
+
+def test_origin_pulls_keep_the_redirect(nginx_aop: Origin) -> None:
+    result = curl(nginx_aop, OTTERSCAN_LONG, "/tx/1", client_cert="client")
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.rstrip().endswith(f"301 https://{OTTERSCAN}/tx/1")
+
+
+def test_origin_pulls_keep_the_stats_websocket(nginx_aop: Origin) -> None:
+    result = curl(
+        nginx_aop,
+        STATS,
+        "/primus",
+        "Upgrade: websocket",
+        "Connection: Upgrade",
+        client_cert="client",
+    )
+    assert result.returncode == 0, result.stderr
+    assert f"stats host={STATS} upgrade=websocket connection=upgrade" in result.stdout
+
+
+def test_origin_pulls_keep_refusing_unknown_hosts(nginx_aop: Origin) -> None:
+    result = curl(nginx_aop, "attacker.example.com", client_cert="client")
+    assert result.returncode == 35, (result.returncode, result.stderr)
+
+
+def test_origin_pulls_refuse_a_request_without_a_certificate(nginx_aop: Origin) -> None:
+    # Another Cloudflare account pointed at the VM sends no certificate, or Cloudflare's shared one.
+    for host in (OTTERSCAN, STATS, FAUCET):
+        result = curl(nginx_aop, host)
+        assert result.returncode == 0, result.stderr
+        assert "No required SSL certificate was sent" in result.stdout, host
+        assert result.stdout.rstrip().endswith("400"), (host, result.stdout)
+
+
+def test_origin_pulls_refuse_a_certificate_from_another_ca(nginx_aop: Origin) -> None:
+    result = curl(nginx_aop, FAUCET, client_cert="other-client")
+    assert result.returncode == 0, result.stderr
+    assert "The SSL certificate error" in result.stdout
+    assert result.stdout.rstrip().endswith("400"), result.stdout
+
+
+def test_staged_origin_pulls_serve_and_log_the_result(
+    nginx_aop_staging: Origin,
+) -> None:
+    without = curl(nginx_aop_staging, FAUCET)
+    with_ours = curl(nginx_aop_staging, OTTERSCAN, client_cert="client")
+    assert without.stdout.rstrip().endswith("200"), without.stdout
+    assert with_ours.stdout.rstrip().endswith("200"), with_ours.stdout
+    log = aop_log(nginx_aop_staging)
+    assert f" {FAUCET} NONE 200" in log, log
+    assert f" {OTTERSCAN} SUCCESS 200" in log, log

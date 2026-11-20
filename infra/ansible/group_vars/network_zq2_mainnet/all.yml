@@ -34,6 +34,8 @@ cloudflare_origin_enabled: true
 cloudflare_origin_otterscan_hosts: ["otterscan.zilliqa.com"]
 cloudflare_origin_otterscan_redirect_hosts: ["otterscan.zq2-mainnet.zilliqa.com"]
 cloudflare_origin_stats_hosts: ["stats.zq2-mainnet.zilliqa.com"]
+# Authenticated Origin Pulls (files/cloudflare-aop-ca.pem): optional logs the result, on enforces it.
+cloudflare_origin_client_verify: optional
 
 # KMS Configuration
 enable_kms: true
