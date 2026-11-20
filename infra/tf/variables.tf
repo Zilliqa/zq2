@@ -31,6 +31,15 @@ variable "apps" {
       faucet    = optional(list(string), [])
       stats     = optional(list(string), [])
     }), {})
+    # Serve Otterscan and stats through Cloudflare straight from the apps VM (nginx on 443, see
+    # infra/ansible/playbooks/install_cloudflare_origin.yml). Only Cloudflare reaches the VM: the firewall
+    # allows tcp:443 from ipv4_ranges. remove_load_balancer drops the GCP load balancer once DNS points
+    # at the VM.
+    cloudflare_origin = optional(object({
+      enabled              = optional(bool, false)
+      ipv4_ranges          = optional(list(string), [])
+      remove_load_balancer = optional(bool, false)
+    }), {})
     nodes = optional(list(object({
       count  = number
       region = optional(string)
@@ -42,6 +51,21 @@ variable "apps" {
     data_disk_size_override = optional(map(number), {})
   })
   default = {}
+
+  validation {
+    condition     = !var.apps.cloudflare_origin.enabled || length(var.apps.cloudflare_origin.ipv4_ranges) > 0
+    error_message = "apps.cloudflare_origin.enabled needs the Cloudflare IPv4 ranges in apps.cloudflare_origin.ipv4_ranges."
+  }
+
+  validation {
+    condition     = !var.apps.cloudflare_origin.remove_load_balancer || var.apps.cloudflare_origin.enabled
+    error_message = "apps.cloudflare_origin.remove_load_balancer needs apps.cloudflare_origin.enabled: without it the apps are unreachable."
+  }
+
+  validation {
+    condition     = !var.apps.cloudflare_origin.remove_load_balancer || !var.apps.enable_faucet
+    error_message = "apps.cloudflare_origin.remove_load_balancer does not support the faucet yet: it is only served by the load balancer."
+  }
 
   # Validation for provisioning_model
   validation {
