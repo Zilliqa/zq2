@@ -24,31 +24,29 @@
       register: cloudflare_origin_secrets
       changed_when: false
 
-    - name: Check whether a policy-rc.d is already in place
-      ansible.builtin.stat:
-        path: /usr/sbin/policy-rc.d
-      register: policy_rc_d
+    # Fail before touching the VM if the two secrets are not a pair (e.g. one of them was rotated alone).
+    - name: Check that the certificate and key match
+      delegate_to: localhost
+      become: false
+      no_log: true
+      ansible.builtin.shell: >-
+        set -o pipefail;
+        test "$(printf '%s\n' "$CERT" | openssl x509 -noout -pubkey | openssl sha256)"
+        = "$(printf '%s\n' "$KEY" | openssl pkey -pubout | openssl sha256)"
+      args:
+        executable: /bin/bash
+      environment:
+        CERT: "{{ cloudflare_origin_secrets.results[0].stdout }}"
+        KEY: "{{ cloudflare_origin_secrets.results[1].stdout }}"
+      changed_when: false
 
     # The nginx package starts its default site on port 80, which Otterscan already uses: keep it stopped until configured.
     - name: Install nginx without starting it
-      when: not policy_rc_d.stat.exists
-      block:
-        - name: Stop package scripts from starting services
-          ansible.builtin.copy:
-            dest: /usr/sbin/policy-rc.d
-            content: "#!/bin/sh\nexit 101\n"
-            mode: "0755"
-
-        - name: Install nginx
-          ansible.builtin.apt:
-            name: nginx
-            state: present
-            update_cache: true
-      always:
-        - name: Let package scripts start services again
-          ansible.builtin.file:
-            path: /usr/sbin/policy-rc.d
-            state: absent
+      ansible.builtin.apt:
+        name: nginx
+        state: present
+        update_cache: true
+        policy_rc_d: 101
 
     - name: Remove the default nginx site
       ansible.builtin.file:

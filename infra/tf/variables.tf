@@ -58,6 +58,19 @@ variable "apps" {
   }
 
   validation {
+    condition = alltrue([
+      for range in var.apps.cloudflare_origin.ipv4_ranges :
+      can(cidrhost(range, 0)) && strcontains(range, "/") && tonumber(split("/", range)[1]) >= 8
+    ])
+    error_message = "apps.cloudflare_origin.ipv4_ranges must be IPv4 CIDRs from Cloudflare's list (https://www.cloudflare.com/ips-v4), not open ranges such as 0.0.0.0/0."
+  }
+
+  validation {
+    condition     = !var.apps.cloudflare_origin.enabled || var.apps.generate_external_ip
+    error_message = "apps.cloudflare_origin.enabled needs apps.generate_external_ip: Cloudflare points at the VM address, which must survive a VM replacement."
+  }
+
+  validation {
     condition     = !var.apps.cloudflare_origin.remove_load_balancer || var.apps.cloudflare_origin.enabled
     error_message = "apps.cloudflare_origin.remove_load_balancer needs apps.cloudflare_origin.enabled: without it the apps are unreachable."
   }

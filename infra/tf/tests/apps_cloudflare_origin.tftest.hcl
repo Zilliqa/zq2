@@ -43,7 +43,8 @@ run "cloudflare_origin_next_to_load_balancer" {
 
   variables {
     apps = {
-      enable_faucet = false
+      enable_faucet        = false
+      generate_external_ip = true
       cloudflare_origin = {
         enabled     = true
         ipv4_ranges = ["173.245.48.0/20", "103.21.244.0/22"]
@@ -77,7 +78,8 @@ run "cloudflare_origin_without_load_balancer" {
 
   variables {
     apps = {
-      enable_faucet = false
+      enable_faucet        = false
+      generate_external_ip = true
       cloudflare_origin = {
         enabled              = true
         ipv4_ranges          = ["173.245.48.0/20"]
@@ -150,11 +152,62 @@ run "remove_load_balancer_rejects_faucet" {
 
   variables {
     apps = {
-      enable_faucet = true
+      enable_faucet        = true
+      generate_external_ip = true
       cloudflare_origin = {
         enabled              = true
         ipv4_ranges          = ["173.245.48.0/20"]
         remove_load_balancer = true
+      }
+    }
+  }
+
+  expect_failures = [var.apps]
+}
+
+run "cloudflare_origin_rejects_open_ranges" {
+  command = plan
+
+  variables {
+    apps = {
+      enable_faucet        = false
+      generate_external_ip = true
+      cloudflare_origin = {
+        enabled     = true
+        ipv4_ranges = ["0.0.0.0/0"]
+      }
+    }
+  }
+
+  expect_failures = [var.apps]
+}
+
+run "cloudflare_origin_rejects_invalid_ranges" {
+  command = plan
+
+  variables {
+    apps = {
+      enable_faucet        = false
+      generate_external_ip = true
+      cloudflare_origin = {
+        enabled     = true
+        ipv4_ranges = ["173.245.48.0"]
+      }
+    }
+  }
+
+  expect_failures = [var.apps]
+}
+
+run "cloudflare_origin_requires_static_ip" {
+  command = plan
+
+  variables {
+    apps = {
+      enable_faucet = false
+      cloudflare_origin = {
+        enabled     = true
+        ipv4_ranges = ["173.245.48.0/20"]
       }
     }
   }

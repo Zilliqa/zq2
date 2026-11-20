@@ -6,6 +6,7 @@ import subprocess
 import time
 import uuid
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 import jinja2
@@ -52,6 +53,12 @@ def render_config() -> str:
     )
 
 
+@dataclass(frozen=True)
+class Origin:
+    container: str
+    ca_dir: Path
+
+
 def docker(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["docker", *args], capture_output=True, text=True, check=check
@@ -59,7 +66,7 @@ def docker(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
 
 
 @pytest.fixture(scope="module")
-def nginx(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
+def nginx(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Origin]:
     if shutil.which("docker") is None or docker("info", check=False).returncode != 0:
         pytest.skip("Docker is not available")
 
@@ -71,28 +78,7 @@ def nginx(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
     (confd / "00-ubuntu-defaults.conf").write_text(UBUNTU_HTTP_DEFAULTS)
     (confd / "cloudflare-origin.conf").write_text(render_config())
     (confd / "upstream-stubs.conf").write_text(UPSTREAM_STUBS)
-    subprocess.run(
-        [
-            "openssl",
-            "req",
-            "-x509",
-            "-newkey",
-            "ec",
-            "-pkeyopt",
-            "ec_paramgen_curve:prime256v1",
-            "-nodes",
-            "-days",
-            "1",
-            "-subj",
-            f"/CN={OTTERSCAN}",
-            "-keyout",
-            str(tls / "origin.key"),
-            "-out",
-            str(tls / "origin.pem"),
-        ],
-        capture_output=True,
-        check=True,
-    )
+    issue_origin_certificate(tls)
     tls.chmod(0o755)
     for pem in tls.iterdir():
         pem.chmod(0o644)
@@ -111,9 +97,61 @@ def nginx(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
     )
     try:
         wait_until_serving(name)
-        yield name
+        yield Origin(container=name, ca_dir=tls)
     finally:
         docker("rm", "-f", name, check=False)
+
+
+def openssl(*args: str) -> None:
+    subprocess.run(["openssl", *args], capture_output=True, check=True)
+
+
+def issue_origin_certificate(tls: Path) -> None:
+    """A test CA and an origin certificate for every served host, so curl can verify like Full (strict)."""
+    ec_key = ("-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes")
+    openssl(
+        "req",
+        "-x509",
+        *ec_key,
+        "-days",
+        "1",
+        "-subj",
+        "/CN=test origin CA",
+        "-keyout",
+        str(tls / "ca.key"),
+        "-out",
+        str(tls / "ca.pem"),
+    )
+    openssl(
+        "req",
+        "-new",
+        *ec_key,
+        "-subj",
+        f"/CN={OTTERSCAN}",
+        "-keyout",
+        str(tls / "origin.key"),
+        "-out",
+        str(tls / "origin.csr"),
+    )
+    sans = ",".join(f"DNS:{host}" for host in (OTTERSCAN, OTTERSCAN_LONG, STATS))
+    (tls / "san.ext").write_text(f"subjectAltName={sans}\n")
+    openssl(
+        "x509",
+        "-req",
+        "-days",
+        "1",
+        "-in",
+        str(tls / "origin.csr"),
+        "-CA",
+        str(tls / "ca.pem"),
+        "-CAkey",
+        str(tls / "ca.key"),
+        "-CAcreateserial",
+        "-extfile",
+        str(tls / "san.ext"),
+        "-out",
+        str(tls / "origin.pem"),
+    )
 
 
 def wait_until_serving(container: str) -> None:
@@ -136,16 +174,20 @@ def wait_until_serving(container: str) -> None:
 
 
 def curl(
-    container: str, host: str, path: str = "/", *headers: str
+    origin: Origin, host: str, path: str = "/", *headers: str
 ) -> subprocess.CompletedProcess[str]:
     header_args = [arg for header in headers for arg in ("-H", header)]
     return docker(
         "run",
         "--rm",
         "--network",
-        f"container:{container}",
+        f"container:{origin.container}",
+        "-v",
+        f"{origin.ca_dir}:/ca:ro",
         CURL_IMAGE,
-        "-sk",
+        "-s",
+        "--cacert",
+        "/ca/ca.pem",
         "--max-time",
         "5",
         "--resolve",
@@ -160,30 +202,31 @@ def curl(
     )
 
 
-def test_config_is_valid(nginx: str) -> None:
-    result = docker("exec", nginx, "nginx", "-t", check=False)
+def test_config_is_valid(nginx: Origin) -> None:
+    result = docker("exec", nginx.container, "nginx", "-t", check=False)
     assert result.returncode == 0, result.stderr
 
 
-def test_otterscan_is_proxied_to_the_container(nginx: str) -> None:
+def test_otterscan_is_proxied_to_the_container(nginx: Origin) -> None:
     result = curl(nginx, OTTERSCAN, "/assets/index.js")
     assert result.returncode == 0, result.stderr
     assert f"otterscan host={OTTERSCAN} proto=https" in result.stdout
     assert result.stdout.rstrip().endswith("200")
 
 
-def test_long_otterscan_name_redirects_to_the_canonical_one(nginx: str) -> None:
+def test_long_otterscan_name_redirects_to_the_canonical_one(nginx: Origin) -> None:
     result = curl(nginx, OTTERSCAN_LONG, "/block/42?tab=txs")
     assert result.returncode == 0, result.stderr
     assert result.stdout.rstrip().endswith(f"301 https://{OTTERSCAN}/block/42?tab=txs")
 
 
-def test_stats_passes_websocket_upgrade(nginx: str) -> None:
+def test_stats_passes_websocket_upgrade(nginx: Origin) -> None:
     result = curl(nginx, STATS, "/primus", "Upgrade: websocket", "Connection: Upgrade")
     assert result.returncode == 0, result.stderr
     assert f"stats host={STATS} upgrade=websocket connection=upgrade" in result.stdout
 
 
-def test_unknown_host_is_refused_at_tls_handshake(nginx: str) -> None:
+def test_unknown_host_is_refused_at_tls_handshake(nginx: Origin) -> None:
     result = curl(nginx, "attacker.example.com")
-    assert result.returncode != 0, "nginx must not answer for hosts it does not serve"
+    # 35 = CURLE_SSL_CONNECT_ERROR: the handshake is rejected, not timed out or answered.
+    assert result.returncode == 35, (result.returncode, result.stderr)
