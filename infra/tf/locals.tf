@@ -11,8 +11,10 @@ locals {
     "35.191.0.0/16",
   ]
 
-  iap_ip_range        = "35.235.240.0/20"
-  monitoring_ip_range = "34.87.144.189/32"
+  iap_ip_range = "35.235.240.0/20"
+  # Egress of the Prometheus exporters (probes on 4202/8080): the prod-apps Cloud NAT, since the exporters moved to
+  # gke-p-prod-apps-02-ase1 (devops Phase B, 2026-11-24). 34.87.144.189 (devops-services NAT) is released.
+  monitoring_ip_range = "35.247.163.197/32"
 
   default_service_account_iam = [
     "roles/monitoring.metricWriter=>${var.project_id}",
