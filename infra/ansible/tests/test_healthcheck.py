@@ -85,9 +85,9 @@ def get_health(healthcheck: ModuleType) -> tuple[int, float]:
 
 
 def load_balancer_health_check_timeout() -> int:
-    block = re.search(r'resource "google_compute_health_check" "api" \{(.*?)\n\}', API_TF.read_text(), re.S)
+    block = re.search(r'resource "google_compute_health_check" "api" \{(.*?)\n\}', API_TF.read_text(), re.DOTALL)
     assert block is not None, "google_compute_health_check.api not found in infra/tf/api.tf"
-    timeout = re.search(r"^\s*timeout_sec\s*=\s*(\d+)", block.group(1), re.M)
+    timeout = re.search(r"^\s*timeout_sec\s*=\s*(\d+)", block.group(1), re.MULTILINE)
     assert timeout is not None, "google_compute_health_check.api has no timeout_sec"
     return int(timeout.group(1))
 
@@ -121,7 +121,9 @@ def test_a_hung_public_port_is_unhealthy(healthcheck: ModuleType, node: JsonRpcS
     status, elapsed = get_health(healthcheck)
 
     assert status == 503
-    assert elapsed < load_balancer_health_check_timeout(), "The node must answer 503 itself, before the load balancer gives up"
+    assert elapsed < load_balancer_health_check_timeout(), (
+        "The node must answer 503 itself, before the load balancer gives up"
+    )
 
 
 def test_a_closed_public_port_is_unhealthy(healthcheck: ModuleType, node: JsonRpcStub) -> None:

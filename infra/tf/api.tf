@@ -61,10 +61,12 @@ resource "google_compute_health_check" "api" {
     request_path       = "/health"
   }
 
+  # The probe outlasts /health's own 7 s wait on port 4201 (healthcheck.py.j2), so a node frozen by load for a
+  # few seconds stays in the pool; a dead node still goes after 3 failed probes (30 s).
   healthy_threshold   = 2
   unhealthy_threshold = 3
-  check_interval_sec  = 5
-  timeout_sec         = 5
+  check_interval_sec  = 10
+  timeout_sec         = 10
 }
 
 resource "google_compute_backend_service" "api" {
