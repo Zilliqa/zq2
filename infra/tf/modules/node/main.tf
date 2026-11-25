@@ -42,7 +42,7 @@ resource "google_compute_disk" "data" {
   }
 
   name = "${each.value.resource_name}-data"
-  type = "pd-ssd"
+  type = var.config.data_disk_type
   zone = each.value.zone
   size = each.value.data_disk_size
 

@@ -207,6 +207,7 @@ variable "bootstrap" {
   type = object({
     boot_disk_size       = optional(number, 100)
     data_disk_size       = optional(number, 100)
+    data_disk_type       = optional(string, "pd-ssd")
     instance_type        = optional(string, "e2-standard-2")
     provisioning_model   = optional(string, "STANDARD")
     generate_external_ip = optional(bool, true)
@@ -242,11 +243,14 @@ variable "opsnode" {
   type = object({
     boot_disk_size       = optional(number, 100)
     data_disk_size       = optional(number, 100)
+    data_disk_type       = optional(string, "pd-ssd")
     instance_type        = optional(string, "e2-standard-2")
     provisioning_model   = optional(string, "STANDARD")
     generate_external_ip = optional(bool, false)
     bucket_force_destroy = optional(bool, true)
     bucket_versioning    = optional(bool, true)
+    # How often the data disk is snapshotted; kept 7 days either way.
+    snapshot_frequency = optional(string, "hourly")
     alternative_ssl_domains = optional(object({
       default = optional(list(string), [])
     }), {})
@@ -261,6 +265,11 @@ variable "opsnode" {
     data_disk_size_override = optional(map(number), {})
   })
   default = {}
+
+  validation {
+    condition     = contains(["hourly", "daily"], var.opsnode.snapshot_frequency)
+    error_message = "Opsnode snapshot frequency must be one of 'hourly' or 'daily'."
+  }
 
   # Validation for provisioning_model
   validation {

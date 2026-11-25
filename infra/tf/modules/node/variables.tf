@@ -14,6 +14,7 @@ variable "config" {
   type = object({
     boot_disk_size       = optional(number, 100)
     data_disk_size       = optional(number, 0)
+    data_disk_type       = optional(string, "pd-ssd")
     instance_type        = optional(string, "e2-standard-2")
     provisioning_model   = optional(string, "STANDARD")
     generate_external_ip = optional(bool, false)
@@ -34,6 +35,12 @@ variable "config" {
         region = "asia-southeast1"
       }
     ]
+  }
+
+  # Changing the type of an existing disk replaces it (an empty disk): move a live disk through a snapshot first.
+  validation {
+    condition     = contains(["pd-ssd", "pd-balanced"], var.config.data_disk_type)
+    error_message = "Data disk type must be one of 'pd-ssd' or 'pd-balanced'."
   }
 
   # Validation for provisioning_model
