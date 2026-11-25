@@ -7,6 +7,10 @@ app = Flask(__name__)
 
 NODE_URL = "http://localhost:4202"
 JSONRPC_PORT = 4201
+# Under load the node's JSON-RPC runtime freezes for up to 6 s, on every method at once (2026-11-24). Waiting
+# through that keeps a busy node in the load balancer pool; failing it moves all traffic to the other node, which
+# then freezes in turn. Keep it below the load balancer probe timeout (infra/tf/api.tf, 10 s).
+JSONRPC_TIMEOUT_SECONDS = 7
 HEADERS = {"Content-Type": "application/json"}
 GCS_BUCKET = "gs://{{ chain_name }}-checkpoint"
 
@@ -41,7 +45,7 @@ def check_jsonrpc_port():
     """Check if the external JSON-RPC server on port 4201 can serve requests."""
     try:
         payload = {"jsonrpc": "2.0", "id": 1, "method": "web3_clientVersion", "params": []}
-        resp = requests.post(f"http://localhost:{JSONRPC_PORT}", json=payload, headers=HEADERS, timeout=1)
+        resp = requests.post(f"http://localhost:{JSONRPC_PORT}", json=payload, headers=HEADERS, timeout=JSONRPC_TIMEOUT_SECONDS)
         return resp.status_code == 200
     except requests.exceptions.RequestException:
         return False
