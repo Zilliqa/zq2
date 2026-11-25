@@ -50,6 +50,7 @@ run "a_network_can_take_daily_opsnode_snapshots" {
     condition = (
       length(google_compute_resource_policy.opsnode_snapshots_schedule.snapshot_schedule_policy[0].schedule[0].daily_schedule) == 1
       && google_compute_resource_policy.opsnode_snapshots_schedule.snapshot_schedule_policy[0].schedule[0].daily_schedule[0].days_in_cycle == 1
+      && google_compute_resource_policy.opsnode_snapshots_schedule.snapshot_schedule_policy[0].schedule[0].daily_schedule[0].start_time == "04:00"
       && length(google_compute_resource_policy.opsnode_snapshots_schedule.snapshot_schedule_policy[0].schedule[0].hourly_schedule) == 0
     )
     error_message = "A daily opsnode snapshot replaces the hourly one"
@@ -78,17 +79,14 @@ run "bootstrap_and_opsnode_pass_their_data_disk_type_to_the_nodes" {
 
   variables {
     bootstrap = {
-      data_disk_size = 1800
       data_disk_type = "pd-balanced"
-      nodes          = [{ count = 1, region = "asia-southeast1" }]
     }
     opsnode = {
-      data_disk_size = 1800
       data_disk_type = "pd-balanced"
-      nodes          = [{ count = 1, region = "asia-southeast1" }]
     }
   }
 
+  # Object variables drop attributes their type does not declare: the role variables must carry it to the node module.
   assert {
     condition     = var.bootstrap.data_disk_type == "pd-balanced" && var.opsnode.data_disk_type == "pd-balanced"
     error_message = "The bootstrap and opsnode roles accept a data disk type"

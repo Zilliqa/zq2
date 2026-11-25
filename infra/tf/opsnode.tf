@@ -242,9 +242,21 @@ resource "google_compute_resource_policy" "opsnode_snapshots_schedule" {
 
   snapshot_schedule_policy {
     schedule {
-      hourly_schedule {
-        hours_in_cycle = 1
-        start_time     = "03:00"
+      dynamic "hourly_schedule" {
+        for_each = var.opsnode.snapshot_frequency == "hourly" ? [1] : []
+        content {
+          hours_in_cycle = 1
+          start_time     = "03:00"
+        }
+      }
+
+      dynamic "daily_schedule" {
+        for_each = var.opsnode.snapshot_frequency == "daily" ? [1] : []
+        # A daily schedule must start at 00:00, 04:00, 08:00, 12:00, 16:00 or 20:00 UTC.
+        content {
+          days_in_cycle = 1
+          start_time    = "04:00"
+        }
       }
     }
 
