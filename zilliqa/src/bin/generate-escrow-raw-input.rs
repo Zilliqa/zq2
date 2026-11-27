@@ -19,6 +19,9 @@ struct Args {
     /// Header of the column holding the amount to lodge.
     #[clap(long)]
     amount_column: Option<String>,
+    /// Keep zero amounts to clear previously lodged balances in a correction list.
+    #[clap(long)]
+    include_zero: bool,
     /// `<csv>=<0x ZRC2>` pairs, lodged in the order given.
     #[clap(required = true, value_parser = parse_source)]
     sources: Vec<(PathBuf, Address)>,
@@ -145,7 +148,7 @@ fn main() -> Result<()> {
                 "{}: {user} already lodged into {token}",
                 context()
             );
-            if amount == 0 {
+            if amount == 0 && !args.include_zero {
                 zeros += 1;
                 continue;
             }

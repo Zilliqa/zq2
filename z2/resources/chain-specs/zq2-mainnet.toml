@@ -65,4 +65,6 @@ consensus.forks = [
     { at_height = 39260806, evm_gas_fee_credited_once_to_zero_account = true },
     { at_height = 39263936, distribute_rewards_every_epoch = true },
     { at_height = 39267066, pectra_active = true },
+    { at_height = 42680404, escrow_lodge_start_height = 42680404, escrow_lodge_file = "escrow_lodge_002.bin" },
+    { at_height = 42685201, sunset_zq2 = true },
 ]

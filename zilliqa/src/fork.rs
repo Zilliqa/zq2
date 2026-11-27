@@ -253,6 +253,7 @@ impl Forks {
                     !fork.disable_permanently_scilla_precompiles_v1.is_empty()
                 }
                 ForkName::DeployEscrowMintableContractV1 => fork.deploy_escrow_mintable_contract_v1,
+                ForkName::SunsetZq2 => fork.sunset_zq2,
             } {
                 return Some(fork.at_height);
             }
@@ -264,6 +265,8 @@ impl Forks {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Fork {
     pub at_height: u64,
+    #[serde(default)]
+    pub sunset_zq2: bool,
     pub executable_blocks: bool,
     pub failed_scilla_call_from_gas_exempt_caller_causes_revert: bool,
     pub call_mode_1_sets_caller_to_parent_caller: bool,
@@ -366,11 +369,13 @@ pub enum ForkName {
     DeployEscrowContractV1,
     DisablePermanentlyScillaPrecompilesV1,
     DeployEscrowMintableContractV1,
+    SunsetZq2,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ForkDelta {
     pub at_height: u64,
+    pub sunset_zq2: Option<bool>,
     pub executable_blocks: Option<bool>,
     pub failed_scilla_call_from_gas_exempt_caller_causes_revert: Option<bool>,
     pub call_mode_1_sets_caller_to_parent_caller: Option<bool>,
@@ -446,6 +451,7 @@ impl Fork {
     pub fn apply_delta_fork(&self, delta: &ForkDelta) -> Fork {
         Fork {
             at_height: delta.at_height,
+            sunset_zq2: delta.sunset_zq2.unwrap_or(self.sunset_zq2),
             executable_blocks: delta.executable_blocks.unwrap_or(self.executable_blocks),
             failed_scilla_call_from_gas_exempt_caller_causes_revert: delta
                 .failed_scilla_call_from_gas_exempt_caller_causes_revert
@@ -657,6 +663,7 @@ impl Fork {
 pub fn genesis_fork_default() -> Fork {
     Fork {
         at_height: 0,
+        sunset_zq2: false,
         executable_blocks: true,
         failed_scilla_call_from_gas_exempt_caller_causes_revert: true,
         call_mode_1_sets_caller_to_parent_caller: true,
