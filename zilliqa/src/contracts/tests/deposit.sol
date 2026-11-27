@@ -375,7 +375,6 @@ contract DepositTest is Test {
         (
             uint256 index,
             uint256 balance, // Staker memory stakerData
-
         ) = depositContract.getStakerData(blsPubKey);
         if (printGasUsage) {
             console.log("\ngetStakerData Gas used: %s", gasBefore - gasleft());
