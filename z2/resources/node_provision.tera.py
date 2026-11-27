@@ -118,12 +118,22 @@ echo yes | gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.de
 
 ZQ2_IMAGE="{{ docker_image }}"
 
+# RocksDB reads lean on the page cache, which the cgroup charges to the container: give it all but 4 GiB of the
+# host, and never less than the 6 GiB the 8 GB hosts have always had.
+container_memory_limit_mb() {
+    local total_mb limit_mb
+    total_mb=$(awk '/^MemTotal:/ {print int($2 / 1024)}' "${MEMINFO:-/proc/meminfo}")
+    limit_mb=$(( total_mb - 4096 ))
+    (( limit_mb < 6144 )) && limit_mb=6144
+    echo "${limit_mb}"
+}
+
 start() {
     docker rm zilliqa-""" + VERSIONS.get('zilliqa') + """ &> /dev/null || echo 0
     docker run --ulimit nofile=1000000:1000000 -td -p 3333:3333/udp -p 4201:4201 -p 4202:4202 --cap-add=SYS_PTRACE --cap-add=PERFMON --cap-add=BPF --cap-add=SYS_ADMIN \
         --net=host --name zilliqa-""" + VERSIONS.get('zilliqa') + """ \
         -v /config.toml:/config.toml -v /zilliqa.log:/zilliqa.log -v /data:/data \
-        --log-driver json-file --log-opt max-size=1g --log-opt max-file=1 --memory=6g \
+        --log-driver json-file --log-opt max-size=1g --log-opt max-file=1 --memory="$(container_memory_limit_mb)m" \
         -e RUST_LOG='""" + LOG_LEVEL + """' -e OTEL_METRIC_EXPORT_INTERVAL=60000 -e RUST_BACKTRACE=1 \
         -e REDIS_ENDPOINT=""" + REDIS_ENDPOINT_CMD + """ \
         -e SECRET_KEY=""" + PRIVATE_KEY_CMD + """ \
