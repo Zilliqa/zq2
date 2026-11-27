@@ -1,14 +1,14 @@
 use std::{str::FromStr as _, sync::Arc, time::Duration};
 
 use alloy::{
-    primitives::{Address, B256, Bytes, ChainId, address},
+    primitives::{Address, B256, Bytes, ChainId, U256, address, aliases::U48},
     providers::{
         Identity, Provider as _, ProviderBuilder, RootProvider,
         fillers::{BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller},
     },
     rpc::{client::RpcClient, types::PackedUserOperation as AlloyUserOperation},
     sol,
-    sol_types::SolValue as _,
+    sol_types::{SolCall as _, SolValue as _},
     transports::layers::RetryBackoffLayer,
 };
 use alloy_chains::Chain;
@@ -21,6 +21,7 @@ use rand::Rng as _;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
+    api::to_hex::ToHex,
     cfg::{NodeConfig, RemoteChain},
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey},
     db::Db,
@@ -42,34 +43,43 @@ pub const ENTRYPOINT_V09: Address = address!("0x433709009B8330FDa32311DF1C2AFA40
 #[cfg(not(doctest))]
 sol!(
     #[sol(rpc)]
-    "../vendor/openzeppelin-contracts/contracts/interfaces/draft-IERC4337.sol"
+    "../vendor/openzeppelin-contracts/contracts/interfaces/IERC4337.sol"
 );
 #[cfg(not(doctest))]
 sol!(
     #[sol(rpc)]
     "../vendor/openzeppelin-contracts/contracts/interfaces/draft-IERC7786.sol"
 );
-
-sol! {
-    interface IERC7786Attributes {
-        function eip1559_fees(uint128 max_priority_gas_fee,uint128 max_base_gas_fee) external;
-    }
-}
-
-sol! {
+#[cfg(not(doctest))]
+sol!(
     #[sol(rpc)]
-    interface IERC4337Extra {
-        function feeParams(uint128[6]);
-        event MessageReceived(bytes32 indexed receiveId, address relayer);
-        function getFees(
-            string chain_id
-        ) external view returns (uint128[6]);
-    }
-}
-
+    "./src/contracts/uccb/Uccb.sol"
+);
 // This is to pass doctest
 #[cfg(doctest)]
 sol! {
+    #[sol(rpc)]
+    interface IUccbGateway {
+        event MessageReceived(bytes32 indexed receiveId, address relayer);
+        function getFees(
+            uint64 chain_id
+        ) external view returns (uint128[6]);
+    }
+
+    #[sol(rpc)]
+    interface IUccbSender {
+        /// Sets the internal signers data.
+        function setSigners(
+            bytes[] calldata signers,
+            uint128[] calldata weights,
+            uint128 threshold,
+            uint48 effective
+        ) external;
+
+        /// Returns a Keccak256 hash of the internal signers data; useful for detecting changes
+        function getSignersHash() external view returns (bytes32);
+    }
+
     // https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/interfaces/draft-IERC7786.sol
     #[sol(rpc)]
     interface IERC7786GatewaySource {
@@ -120,10 +130,12 @@ pub struct SignUserOp {
     pub src_chain: Chain,
     pub blk_height: u64,
     pub uop_hash: Option<Hash>,
+    pub send_id: B256,
     retry_s: u16,
 }
 impl SignUserOp {
     pub fn new(
+        send_id: B256,
         userop: AlloyUserOperation,
         dst_chain: Chain,
         src_chain: Chain,
@@ -132,6 +144,7 @@ impl SignUserOp {
         blk_height: u64,
     ) -> Self {
         Self {
+            send_id,
             userop,
             dst_chain,
             src_chain,
@@ -161,12 +174,12 @@ pub struct RelayUserOp {
     pub userop: AlloyUserOperation,
     pub chain: Chain,
     pub userop_hash: Hash,
-    pub send_id: Hash,
+    pub send_id: B256,
     retry_s: u16,
 }
 
 impl RelayUserOp {
-    pub fn new(userop: AlloyUserOperation, chain: Chain, userop_hash: Hash, send_id: Hash) -> Self {
+    pub fn new(userop: AlloyUserOperation, chain: Chain, userop_hash: Hash, send_id: B256) -> Self {
         Self {
             userop,
             chain,
@@ -191,8 +204,11 @@ impl RelayUserOp {
 #[derive(Default)]
 pub struct BlsUserOp {
     pub userop: Option<AlloyUserOperation>,
-    pub signatures: Vec<(NodePublicKey, BlsSignature)>,
+    pub send_id: B256,
+    pub signatures: Vec<(PeerId, (NodePublicKey, BlsSignature))>,
     pub threshold: u128,
+    pub block_height: u64,
+    pub block_hash: B256,
 }
 
 // Used to send an updated list of SIGNER keys
@@ -270,6 +286,9 @@ impl Uccb {
     ) -> Result<Self> {
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
         let eth_chain_id = ChainId::from(config.eth_chain_id);
+        tracing::info!(compressed=%secret_key.as_bls().public_key().0.to_compressed().to_hex(),
+            uncompressed=%secret_key.as_bls().public_key().0.to_uncompressed().to_hex(),
+            "BLS Public Key");
 
         let message_sender = Arc::new(MessageSender {
             our_shard: eth_chain_id,
@@ -379,13 +398,17 @@ impl Uccb {
                 signature,
                 public_key,
                 block_hash,
+                block_height,
                 chain,
+                send_id,
             }) => {
                 // handle
                 self.relayer.collect_userop(
+                    send_id,
                     from,
                     chain,
                     block_hash,
+                    block_height,
                     userop_hash,
                     public_key,
                     signature,
@@ -470,15 +493,91 @@ impl From<AlloyUserOperation> for PackedUserOperation {
     }
 }
 
-// Represents the gas estimation for a user operation.
-//
-// alloy::UserOperationGasEstimation is v0.6, not v0.7/0.8
-// #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-// #[serde(rename_all = "camelCase")]
-// pub(crate) struct UserOperationGasEstimationV07 {
-//     pub pre_verification_gas: U256,
-//     pub verification_gas: U256,
-//     pub paymaster_verification_gas: U256,
-//     pub call_gas_limit: U256,
-//     pub paymaster_post_op_gas_limit: U256,
-// }
+/// Construct a partial UserOp
+///
+/// Constructs a partial UserOp during the Watching stage; to be completed during the Signing stage.
+/// Some dummy data is used to populate the UserOp initially. They *must* be replaced before submission.
+#[allow(clippy::too_many_arguments)]
+pub fn new_call_op(
+    send_id: B256,
+    payload: Bytes,
+    sender: &Address,
+    paymaster: &Address,
+    gateway: &Address,
+    not_before: u64,
+    not_after: u64,
+) -> AlloyUserOperation {
+    // we can encode some custom things in here
+
+    // Normal UserOps go to Sender::executeBatch()
+    let call_data = (
+        IAccountExecute::executeUserOpCall::SELECTOR,
+        UopTypes::Call,
+        gateway,
+        payload,
+    )
+        .abi_encode_packed();
+
+    let paymaster_data = (
+        U48::from(not_before),
+        U48::from(not_after),
+        Address::ZERO,
+        send_id,
+    )
+        .abi_encode_packed();
+
+    AlloyUserOperation {
+        sender: *sender,
+        nonce: U256::ZERO, // unpopulated nonce/sig
+        factory: None,
+        // Some bundlers reject any initdata for existing senders e.g.
+        // https://docs.candide.dev/wallet/technical-reference/aa10-sender-already-constructed/
+        factory_data: None,
+        call_data: call_data.into(),
+        call_gas_limit: U256::ZERO,         // estimateUserOpGas
+        verification_gas_limit: U256::ZERO, // estimateUserOpGas
+        pre_verification_gas: U256::ZERO,   // estimateUserOpGas
+        max_fee_per_gas: U256::MAX,
+        max_priority_fee_per_gas: U256::MAX,
+        paymaster: Some(*paymaster),
+        paymaster_verification_gas_limit: None, // estimateUserOpGas
+        paymaster_post_op_gas_limit: None,      // estimateUserOpGas
+        paymaster_data: Some(paymaster_data.into()),
+        signature: Bytes::new(), // blank signature
+    }
+}
+
+pub fn new_set_staker_op(
+    send_id: B256,
+    payload: Bytes,
+    sender: &Address,
+    paymaster: &Address,
+) -> AlloyUserOperation {
+    // Encode a MSG_ADDSTAKER operation
+    let call_data = (
+        IAccountExecute::executeUserOpCall::SELECTOR,
+        UopTypes::SetStaker,
+        payload,
+    )
+        .abi_encode_packed();
+
+    let paymaster_data = (U48::ZERO, U48::ZERO, Address::ZERO, send_id).abi_encode_packed();
+
+    AlloyUserOperation {
+        sender: *sender,
+        nonce: U256::ZERO, // unpopulated nonce/sig
+        factory: None,
+        factory_data: None,
+        call_data: call_data.into(),
+        call_gas_limit: U256::ZERO,         // estimateUserOpGas
+        verification_gas_limit: U256::ZERO, // estimateUserOpGas
+        pre_verification_gas: U256::ZERO,   // estimateUserOpGas
+        max_fee_per_gas: U256::MAX,
+        max_priority_fee_per_gas: U256::MAX,
+        paymaster: Some(*paymaster),
+        paymaster_verification_gas_limit: None, // estimateUserOpGas
+        paymaster_post_op_gas_limit: None,      // estimateUserOpGas
+        paymaster_data: Some(paymaster_data.into()),
+        signature: Bytes::new(), // blank signature
+    }
+}
