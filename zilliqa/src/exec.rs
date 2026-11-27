@@ -210,6 +210,10 @@ impl State {
         inspector: I,
         enable_inspector: bool,
     ) -> Result<TransactionApplyResult> {
+        anyhow::ensure!(
+            !self.forks.get(current_block.number).sunset_zq2,
+            "Transaction execution is disabled after sunset_zq2"
+        );
         let hash = txn.hash;
         let from_addr = txn.signer;
         let txn = txn.tx.into_transaction();

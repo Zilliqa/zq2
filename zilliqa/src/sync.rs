@@ -17,7 +17,7 @@ use tracing::{debug, error, info, trace, warn};
 
 use crate::{
     api::types::eth::{SyncingMeta, SyncingStruct},
-    cfg::NodeConfig,
+    cfg::{Forks, NodeConfig},
     constants::MIN_PRUNE_INTERVAL,
     crypto::Hash,
     data_access,
@@ -99,6 +99,7 @@ use crate::{
 
 #[derive(Debug)]
 pub struct Sync {
+    forks: Forks,
     // database
     db: Arc<Db>,
     // message bus
@@ -206,6 +207,7 @@ impl Sync {
             config.consensus.epochs_per_checkpoint * config.consensus.blocks_per_epoch;
 
         Ok(Self {
+            forks: config.consensus.get_forks()?,
             db,
             message_sender,
             peer_id,
@@ -1491,6 +1493,20 @@ impl Sync {
                     "StoreProposals : unverified {}",
                     block.number()
                 ));
+            }
+            if self.forks.get(block.number()).sunset_zq2 {
+                anyhow::ensure!(
+                    block.transactions.is_empty() && transaction_receipts.is_empty(),
+                    "Transactions after sunset_zq2"
+                );
+                anyhow::ensure!(
+                    block.header.gas_used.0 == 0
+                        && block.header.transactions_root_hash
+                            == Hash(alloy::consensus::EMPTY_ROOT_HASH.0)
+                        && block.header.receipts_root_hash
+                            == Hash(alloy::consensus::EMPTY_ROOT_HASH.0),
+                    "Non-empty block execution after sunset_zq2"
+                );
             }
             trace!(
                 number = %block.number(), hash = %block.hash(),

@@ -51,6 +51,7 @@ mod penalty;
 mod persistence;
 mod rewards;
 mod staking;
+mod sunset;
 mod sync;
 mod trace;
 mod txpool;

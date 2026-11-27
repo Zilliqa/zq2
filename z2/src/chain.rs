@@ -466,6 +466,8 @@ impl Chain {
                 json!({ "at_height": 43142715, "distribute_rewards_every_epoch": true }),
                 // estimated: 2026-10-28T18:00:00Z
                 json!({ "at_height": 43148429, "pectra_active": true }),
+                // Placeholder: set the testnet sunset height before rollout.
+                json!({ "at_height": 999999999, "sunset_zq2": true }),
             ]),
             Chain::Zq2Mainnet => Some(vec![
                 json!({ "at_height": 4770088, "executable_blocks": true }),
@@ -657,6 +659,10 @@ impl Chain {
                 json!({ "at_height": 39263936, "distribute_rewards_every_epoch": true }),
                 // estimated: 2026-10-30T15:00:00Z
                 json!({ "at_height": 39267066, "pectra_active": true }),
+                // estimated: 2026-12-15T09:00:00Z
+                json!({ "at_height": 42680404, "escrow_lodge_start_height": 42680404, "escrow_lodge_file": "escrow_lodge_002.bin" }),
+                // estimated: 2026-12-15T10:33:32Z
+                json!({ "at_height": 42685201, "sunset_zq2": true }),
             ]),
             Chain::Zq2Devnet => Some(vec![
                 json!({
